@@ -1,0 +1,41 @@
+[package]
+name = "spares_server"
+version = "0.0.1-alpha.1"
+description = "A server to facilitate interacting with spares"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# [features]
+# testing = [] # Used to mitigate effects to local data files in integration testing
+# # See <https://www.reddit.com/r/rust/comments/ny6k3f/cfgtest_doesnt_take_affect_when_running/>
+
+# [[test]]
+# name = "integration_tests"
+# required-features = ["testing"]
+
+[dependencies]
+axum = { version = "0.7.9", features = ["macros"] }
+clap = { version = "4.5.29", features = ["derive", "cargo"] }
+chrono = { version = "0.4.39", features = ["serde"] }
+env_logger = "0.11.6"
+serde_json = { version = "1.0.138", features = ["preserve_order"] }
+spares = { path = "../spares" }
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
+tokio = { version = "1.43.0", features = ["full"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
+
+[dev-dependencies]
+spares = { path = "../spares", features = ["testing"] }
+# tower = { version = "0.4", features = ["util"] }
+# tower-http = { version = "0.5.0", features = ["trace"] }
+# mime = "0.3"
+# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# http-body-util = "0.1.0"
+
+[lints]
+workspace = true

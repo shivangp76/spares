@@ -1,0 +1,3 @@
+[submodule "spares_io/frontend/svgedit"]
+	path = spares_io/frontend/svgedit
+	url = git@github.com:shivangp76/svgedit.git
