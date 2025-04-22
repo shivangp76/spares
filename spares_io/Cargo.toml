@@ -1,0 +1,17 @@
+[package]
+name = "spares_io"
+version = "0.0.1-alpha.1"
+description = "A utility to create image occlusions"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

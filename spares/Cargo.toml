@@ -1,0 +1,60 @@
+[package]
+name = "spares"
+description = "A spaced repetition system written in Rust"
+version = "0.0.1-alpha.1"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+async-trait = "0.1.86"
+chrono = { version = "0.4.39", features = ["serde"] }
+etcetera = "0.8.0"
+fancy-regex = "0.13.0"
+# fsrs = { git = "https://github.com/open-spaced-repetition/rs-fsrs" }
+rs-fsrs = { version = "1.2.1" }
+futures = "0.3.31"
+indexmap = "2.7.1"
+indicatif = { version = "0.17.11", features = ["rayon"] }
+indoc = "2.0.5"
+inquire = "0.7.5"
+itertools = "0.13.0"
+log = "0.4.25"
+miette = { version = "7.5.0" }
+rand = "0.8.5"
+rayon = "1.10.0"
+reqwest = { version = "0.12.12", features = ["json"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = { version = "1.0.138", features = ["preserve_order"] }
+serde_with = { version = "3.12.0", features = ["chrono_0_4"] }
+sha256 = "1.5.0"
+shellexpand = "3.1.0"
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
+strsim = "0.11.1"
+strum = { version = "0.26.3", features = ["derive"] }
+strum_macros = "0.26.4"
+thiserror = "2.0.11"
+toml_edit = { version = "0.22.24", features = ["serde"] }
+trash = "5.2.1"
+xmltree = { version = "0.11.0", features = ["attribute-order"] }
+unscanny = "0.1.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+uuid = { version = "1.13.1", features = [
+    "serde",
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]}
+
+[features]
+testing = [] # Used to mitigate effects to local data files in integration testing. See <https://www.reddit.com/r/rust/comments/ny6k3f/cfgtest_doesnt_take_affect_when_running/>.
+
+[lints]
+workspace = true

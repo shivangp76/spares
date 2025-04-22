@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "spares",
+    "spares_cli",
+    "spares_server",
+    "spares_io",
+]
+resolver = "2"
+
+# [workspace.dependencies]
+# tokio = { version = "1.39.1", features = ["full"] }
+
+[profile.release]
+debug = true
+
+[workspace.package]
+authors = ["Shivang Patel <shivangp76@gmail.com>"]
+edition = "2024"
+rust-version = "1.85"
+repository = "https://github.com/shivangp76/spares"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["spaced-repetition"]
+categories = ["education"]
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = 0 }
+pedantic = { level = "warn", priority = 1 }
+cargo = { level = "warn", priority = -1 }
+must_use_candidate = { level = "allow", priority = 5 }
+cast_possible_truncation = { level = "allow", priority = 5 }
+# To allow `tag::get_tag()` instead of forcing `tag::get()`
+module_name_repetitions = { level = "allow", priority = 5 }
+# To allow `format!("{}", e)` instead of forcing `format!("{e}")`.
+uninlined_format_args = { level = "allow", priority = 5 }
+# To allow `.map(|x| x.to_string())` instead of forcing `.map(std::string::ToString::to_string)`.
+redundant_closure_for_method_calls = { level = "allow", priority = 5 }
+# To allow functions to return `Result` without documentation.
+missing_errors_doc = { level = "allow", priority = 5 }
+# To allow functions to `unwrap` without documentation.
+missing_panics_doc = { level = "allow", priority = 5 }
+# To allow different dependencies to have different versions of their dependencies.
+multiple_crate_versions = { level = "allow", priority = 5 }
+# To allow functions that only accept `Range`s, not `RangeInclusive`s
+range-plus-one = { level = "allow", priority = 5 }
