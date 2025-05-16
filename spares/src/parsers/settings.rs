@@ -63,7 +63,7 @@ impl ReadWriteValue {
     pub fn matches_read(&self, value: &str) -> bool {
         match self {
             ReadWriteValue::Same(s) => *s == value,
-            ReadWriteValue::Different { read, .. } => read.iter().any(|&r| r == value),
+            ReadWriteValue::Different { read, .. } => read.contains(&value),
         }
     }
 }

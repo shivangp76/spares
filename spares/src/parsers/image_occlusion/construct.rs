@@ -76,7 +76,7 @@ pub fn construct_image_occlusion_from_image(
             output_rendered_filepath.push(
                 parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
             );
-            let result = construct_image_fn(
+            construct_image_fn(
                 get_image_occlusion_card_filepath(
                     &output_rendered_filepath,
                     side,
@@ -84,8 +84,7 @@ pub fn construct_image_occlusion_from_image(
                 )
                 .as_path(),
                 &caption,
-            );
-            result
+            )
         }
     }
 }
