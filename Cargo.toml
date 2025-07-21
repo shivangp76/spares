@@ -16,7 +16,7 @@ debug = true
 [workspace.package]
 authors = ["Shivang Patel <shivangp76@gmail.com>"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 repository = "https://github.com/shivangp76/spares"
 readme = "README.md"
 license = "MIT OR Apache-2.0"

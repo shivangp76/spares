@@ -43,15 +43,13 @@ pub async fn create_tag(db: &SqlitePool, body: CreateTagRequest) -> Result<TagRe
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    if let Some(parent_id) = body.parent_id {
-        if id == parent_id {
-            let _ = delete_tag(db, id).await;
-            return Err(Error::Library(LibraryError::Tag(
-                TagErrorKind::InvalidInput(
-                    "Cannot insert tag whose parent id is itself.".to_string(),
-                ),
-            )));
-        }
+    if let Some(parent_id) = body.parent_id
+        && id == parent_id
+    {
+        let _ = delete_tag(db, id).await;
+        return Err(Error::Library(LibraryError::Tag(
+            TagErrorKind::InvalidInput("Cannot insert tag whose parent id is itself.".to_string()),
+        )));
     }
     let tag = Tag {
         id,
