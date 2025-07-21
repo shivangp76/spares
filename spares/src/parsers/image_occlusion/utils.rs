@@ -47,10 +47,10 @@ pub fn get_image_occlusion_card_filepath(
 
 pub fn append_to_stem(path: &Path, suffix: &str) -> PathBuf {
     let mut result = path.to_path_buf();
-    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            result.set_file_name(format!("{}{}.{}", stem, suffix, ext));
-        }
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        && let Some(ext) = path.extension().and_then(|e| e.to_str())
+    {
+        result.set_file_name(format!("{}{}.{}", stem, suffix, ext));
     }
     result
 }

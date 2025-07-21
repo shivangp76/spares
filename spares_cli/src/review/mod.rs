@@ -127,7 +127,11 @@ async fn get_review_card(
             println!("Card Id: {}", &review_card.card_id);
             println!(
                 "Card Front File Name: {:?}",
-                &review_card.card_front_rendered_path.file_name().unwrap()
+                &review_card
+                    .card_front_rendered_path
+                    .file_name()
+                    .unwrap()
+                    .display()
             );
             // println!("Note Raw Path: {}", &review_card.note_raw_path.display());
 
