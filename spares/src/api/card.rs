@@ -62,19 +62,19 @@ pub async fn update_card(
             .desired_retention
             .unwrap_or(existing_card.desired_retention);
         let new_special_state = requested_special_state.unwrap_or(existing_card.special_state);
-        if let Some(Some(SpecialState::UserBuried)) = requested_special_state {
-            if let Some(special_state) = existing_card.special_state {
-                match special_state {
-                    SpecialState::Suspended => {
-                        return Err(Error::Library(LibraryError::Scheduler(
-                            SchedulerErrorKind::Suspended,
-                        )));
-                    }
-                    SpecialState::UserBuried | SpecialState::SchedulerBuried => {
-                        return Err(Error::Library(LibraryError::Scheduler(
-                            SchedulerErrorKind::AlreadyBuried,
-                        )));
-                    }
+        if let Some(Some(SpecialState::UserBuried)) = requested_special_state
+            && let Some(special_state) = existing_card.special_state
+        {
+            match special_state {
+                SpecialState::Suspended => {
+                    return Err(Error::Library(LibraryError::Scheduler(
+                        SchedulerErrorKind::Suspended,
+                    )));
+                }
+                SpecialState::UserBuried | SpecialState::SchedulerBuried => {
+                    return Err(Error::Library(LibraryError::Scheduler(
+                        SchedulerErrorKind::AlreadyBuried,
+                    )));
                 }
             }
         }
