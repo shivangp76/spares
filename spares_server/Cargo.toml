@@ -20,14 +20,14 @@ categories.workspace = true
 
 [dependencies]
 axum = { version = "0.7.9", features = ["macros"] }
-clap = { version = "4.5.29", features = ["derive", "cargo"] }
-chrono = { version = "0.4.39", features = ["serde"] }
-env_logger = "0.11.6"
-serde_json = { version = "1.0.138", features = ["preserve_order"] }
+clap = { version = "4.5.45", features = ["derive", "cargo"] }
+chrono = { version = "0.4.41", features = ["serde"] }
+env_logger = "0.11.8"
+serde_json = { version = "1.0.143", features = ["preserve_order"] }
 spares = { path = "../spares" }
-sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
-tokio = { version = "1.43.0", features = ["full"] }
-tower-http = { version = "0.6.2", features = ["cors"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
+tokio = { version = "1.47.1", features = ["full"] }
+tower-http = { version = "0.6.6", features = ["cors"] }
 
 [dev-dependencies]
 spares = { path = "../spares", features = ["testing"] }
