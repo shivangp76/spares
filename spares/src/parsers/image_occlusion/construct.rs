@@ -24,6 +24,8 @@ use strum::IntoEnumIterator;
 use toml_edit::DocumentMut;
 use xmltree::{Element, EmitterConfig};
 
+const DEBUG: bool = false;
+
 pub fn construct_image_occlusion_from_image(
     parser: &impl Parseable,
     construct_image_fn: fn(file_path: &Path, caption: &str) -> String,
@@ -311,7 +313,6 @@ fn create_image_occlusion_card(
     card_filepath: &Path,
     side: CardSide,
 ) -> Result<(), Error> {
-    let debug = false;
     let ImageOcclusionData {
         original_image_filepath,
         clozes_filepath,
@@ -404,7 +405,7 @@ fn create_image_occlusion_card(
     }
 
     // Remove temporary files
-    if !debug {
+    if !DEBUG {
         if temp_card_cloze_svg_filepath.exists() {
             fs::remove_file(&temp_card_cloze_svg_filepath).map_err(|e| {
                 LibraryError::Note(NoteErrorKind::Other {
