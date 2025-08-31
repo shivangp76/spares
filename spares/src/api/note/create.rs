@@ -101,7 +101,7 @@ pub async fn create_notes(
         tags.sort();
         let keywords_str = &keywords.join(",");
         let custom_data_str = Value::Object(custom_data.clone());
-        let (note_data, cards_count) = add_order_to_note_data(parser.as_ref(), data)?;
+        let (note_data, card_datas) = add_order_to_note_data(parser.as_ref(), data)?;
         // Create note
         // The RETURNING keyword is used instead of insert_result.last_insert_rowid() to prevent concurrency issues. If another writer writes in between the execution of the insert and the call of last_insert_rowid(), then the wrong id will be returned.
         let (note_id,): (NoteId,) = sqlx::query_as(r"INSERT INTO note (data, keywords, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")
@@ -117,11 +117,14 @@ pub async fn create_notes(
         let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
         note_tag_entries.extend(tag_ids.into_iter().map(|tag_id| (note_id, tag_id)));
         card_entries.extend(
-            (1..=cards_count)
-                .map(|i| {
+            card_datas
+                .iter()
+                .enumerate()
+                .map(|(i, card_data)| {
                     let mut card = Card::new(at);
                     card.note_id = note_id;
-                    card.order = i as u32;
+                    card.back_type = card_data.back_type;
+                    card.order = (i + 1) as u32;
                     if *is_suspended {
                         card.special_state = Some(SpecialState::Suspended);
                     }
@@ -138,7 +141,12 @@ pub async fn create_notes(
             parser_id: body.parser_id,
             custom_data: custom_data_str,
         };
-        note_responses.push(NoteResponse::new(&note, tags.clone(), None, cards_count));
+        note_responses.push(NoteResponse::new(
+            &note,
+            tags.clone(),
+            None,
+            card_datas.len(),
+        ));
 
         // Parse note
         let generate_files_request = GenerateNoteFilesRequest {

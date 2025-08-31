@@ -122,7 +122,6 @@ async fn get_review_card(
         Some(review_card) => {
             // Open rendered card
             let child = open_rendered_file(review_card.card_front_rendered_path.as_ref(), opener)?;
-
             println!("Note Id: {}", &review_card.note_id);
             println!("Card Id: {}", &review_card.card_id);
             println!(

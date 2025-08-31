@@ -171,6 +171,7 @@ fn complete_note(
         move_files,
         (local_settings.front_conceal, local_settings.back_reveal),
     )?;
+    // dbg!(&cards);
     validate_cards(&cards)?;
     local_settings.cards_count = Some(cards.len());
     // let card = cards
