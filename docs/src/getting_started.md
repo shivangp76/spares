@@ -131,9 +131,9 @@ This is a note about the brain.
 To create an image occlusion:
 
 1. Run the `spares_io` binary. This will automatically open the image occlusion editor in your web browser.
-2. Click "Change Background Image" and select the image you want to create clozes for.
+2. Click "SVG-Edit" -> "Change Background Image" and select the image you want to create clozes for.
 3. Add markup and clozes to the appropriate layer. You can add cloze settings strings to clozes as needed.
-4. Click "Save SVG" to save your work.
+4. Click "SVG-Edit" -> "Save SVG" to save your work.
 5. In your note document, use the image occlusion snippet to insert the saved SVG.
 
 The editor allows you to create multiple instances simultaneously, making it easy to work on different image occlusions at once. You can examine the generated SVG files to see exactly how the clozes are parsed. A more intuitive interface with `svg-edit` will be available in future updates.
