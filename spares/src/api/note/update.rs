@@ -368,6 +368,7 @@ pub async fn update_notes(
             all_parsers,
         )?;
 
+        // TODO: Can the underscore below be changed to `new_cards` and then the call above to get `new_cards` can be removed?
         // Update note, adding orders sequentially
         let (new_data, _) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;

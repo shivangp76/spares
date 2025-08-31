@@ -862,7 +862,7 @@ pub fn get_cards_main(
 pub fn add_order_to_note_data(
     parser: &dyn Parseable,
     original_note_data: &str,
-) -> Result<(String, usize), Error> {
+) -> Result<(String, Vec<CardData>), Error> {
     let card_datas = get_cards(parser, None, original_note_data, true, true)?;
     let note_data = card_datas
         .first()
@@ -881,5 +881,5 @@ pub fn add_order_to_note_data(
                 })
                 .collect::<String>()
         });
-    Ok((note_data, card_datas.len()))
+    Ok((note_data, card_datas))
 }
