@@ -60,16 +60,17 @@ async fn match_keyword_to_linked_note(
                             let searched_keyword = &data[searched_keyword_range];
                             let matched_keyword_data = keywords
                                 .par_iter()
-                                .min_by_key(|(_id, keyword)| {
-                                    // Do not return matches that are too far apart
+                                .filter_map(|(id, keyword)| {
                                     Some(strsim::levenshtein(searched_keyword, keyword))
-                                        .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE);
+                                        .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
+                                        .map(|score| ((id, keyword), score))
                                 })
-                                .cloned();
+                                .min_by_key(|(_, score)| *score)
+                                .map(|(data, _score)| data);
                             NoteLink {
                                 // id: None,
                                 parent_note_id: *note_id,
-                                linked_note_id: matched_keyword_data.as_ref().map(|x| x.0),
+                                linked_note_id: matched_keyword_data.as_ref().map(|x| x.0).copied(),
                                 order: i as u32,
                                 searched_keyword: searched_keyword.to_owned(),
                                 matched_keyword: matched_keyword_data.as_ref().map(|x| x.1.clone()),
@@ -92,7 +93,7 @@ async fn match_keyword_to_linked_note(
     Ok(linked_notes_ids)
 }
 
-/// - Determines linked notes for _all_ notes. This is not possible for all notes. See note below.
+/// - Determines linked notes for _all_ notes. This is not possible for only some notes. See note below.
 /// - Generates files for specified notes, usually all notes.
 ///
 /// Note: Only generating linked notes for some notes is not possible. Suppose a user has 3 notes: Notes A, B, and C. Suppose the user requests Note A to be rendered. Suppose Note B currently has a keyword that matches with Note C. However, the change to Note A could mean that Note B now has a better match with Note A. This means that Note B should be rendered as well. Therefore, it is possible that notes that are not requested need to have their linked notes regenerated as well.
