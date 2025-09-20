@@ -617,15 +617,14 @@ pub fn parse_card_settings(
     let mut settings_split_by_grouping =
         split_inclusive_following(&settings_split, |(k, _)| *k == grouping_key);
     let mut local_settings = None;
-    if let Some(first_grouping) = settings_split_by_grouping.first() {
-        if let Some(first_setting) = first_grouping.first() {
-            if first_setting.0 != grouping_key {
-                local_settings = Some(settings_split_by_grouping.remove(0));
-                if local_groups.is_empty() {
-                    local_groups.push(ClozeGrouping::Auto(*current_grouping_number));
-                    *current_grouping_number += 1;
-                }
-            }
+    if let Some(first_grouping) = settings_split_by_grouping.first()
+        && let Some(first_setting) = first_grouping.first()
+        && first_setting.0 != grouping_key
+    {
+        local_settings = Some(settings_split_by_grouping.remove(0));
+        if local_groups.is_empty() {
+            local_groups.push(ClozeGrouping::Auto(*current_grouping_number));
+            *current_grouping_number += 1;
         }
     }
     if local_groups.contains(&ClozeGrouping::All) {

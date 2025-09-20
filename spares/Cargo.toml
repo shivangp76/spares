@@ -41,6 +41,7 @@ strum_macros = "0.26.4"
 thiserror = "2.0.15"
 toml_edit = { version = "0.23.3", features = ["serde"] }
 trash = "5.2.3"
+# typst-syntax = "0.13.1"
 xmltree = { version = "0.11.0", features = ["attribute-order"] }
 unscanny = "0.1.0"
 

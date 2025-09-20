@@ -6,9 +6,18 @@ const CLOZE_FUNC_NAME: &str = "cl";
 const LINKED_NOTE_FUNC_NAME: &str = "lin";
 const SETTINGS_FUNC_NAME: &str = "se";
 
+#[derive(Debug, Default, PartialEq, Eq)]
+enum DataMode {
+    #[default]
+    Markup,
+    // Code,
+    Math,
+}
+
 pub struct TypstDataParser<'de> {
     s: Scanner<'de>,
-    math_mode: bool,
+    modes: Vec<DataMode>,
+    /// This counts open square brackets not in math mode. By not counting math mode, we can ensure that this count will always be balanced at the end of a document. This may be from a function call (`#strong[`), start of code mode (`#[`), or just bracketed text (`[`).
     open_square_bracket_count: u32,
 }
 
@@ -34,13 +43,14 @@ struct Cloze {
     first_arg_end: Option<Range<usize>>,
     // `]` or `None`
     // second_arg_end: Option<Range<usize>>,
+    depth: u32,
 }
 
 impl<'a> TypstDataParser<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             s: Scanner::new(input),
-            math_mode: false,
+            modes: vec![],
             open_square_bracket_count: 0,
         }
     }
@@ -69,7 +79,7 @@ impl<'a> TypstDataParser<'a> {
 
     #[allow(clippy::too_many_lines, reason = "off by a few")]
     fn next_data(&mut self, output_type: &OutputType) -> Option<Output> {
-        let mut nesting_level = 0;
+        let mut cloze_nesting_level = 0;
         let mut all_clozes = Vec::new();
         let mut current_clozes = Vec::new();
 
@@ -91,52 +101,76 @@ impl<'a> TypstDataParser<'a> {
                 }
                 // Handle math mode transitions
                 Some('$') => {
-                    self.math_mode = !self.math_mode;
+                    if let Some(DataMode::Math) = self.modes.last() {
+                        self.modes.pop();
+                    } else {
+                        self.modes.push(DataMode::Math);
+                    }
                 }
                 // Handle function argument opening
-                Some('#') if !self.math_mode => {
+                Some('#') => {
                     let func_name = self
                         .s
                         .eat_while(|c| char::is_alphanumeric(c) || c == '_' || c == '-');
-                    //.eat_until('[');
                     self.s.eat();
-                    // dbg!(&func_name);
-                    // dbg!(&self.s.string()[self.s.cursor()..]);
                     if func_name == CLOZE_FUNC_NAME && matches!(output_type, OutputType::Cloze) {
-                        nesting_level += 1;
+                        cloze_nesting_level += 1;
                         current_clozes.push(Cloze {
                             start: cursor_start..self.s.cursor(),
                             first_arg_end: None,
-                            // second_arg_end: None,
+                            depth: self.open_square_bracket_count + 1,
                         });
                     } else if func_name == LINKED_NOTE_FUNC_NAME
                         && matches!(output_type, OutputType::LinkedNote)
                     {
-                        current_linked_notes.push(cursor_start..self.s.cursor());
+                        current_linked_notes.push((
+                            cursor_start..self.s.cursor(),
+                            self.open_square_bracket_count + 1,
+                        ));
                     } else if func_name == SETTINGS_FUNC_NAME
                         && matches!(output_type, OutputType::Settings)
                     {
-                        current_settings.push(cursor_start..self.s.cursor());
-                    } else {
-                        self.s.uneat();
+                        current_settings.push((
+                            cursor_start..self.s.cursor(),
+                            self.open_square_bracket_count + 1,
+                        ));
                     }
+                    self.s.uneat();
+                    self.modes.push(DataMode::Markup);
                 }
-                Some('[') if !self.math_mode && !current_clozes.is_empty() => {
+                Some('[') if self.modes.last().is_none_or(|x| *x != DataMode::Math) => {
                     self.open_square_bracket_count += 1;
                 }
                 // Handle function argument closing
-                Some(']') if !self.math_mode && self.open_square_bracket_count == 0 => {
+                Some(']') if self.modes.last().is_none_or(|x| *x != DataMode::Math) => {
                     if self.s.eat_if('[') {
                         // Second argument
+                        // Don't increment `open_square_bracket_count` here.
                         let first_arg_end = self.s.cursor();
-                        if let Some(last) = current_clozes.last_mut() {
-                            last.first_arg_end = Some(cursor_start..first_arg_end);
+                        if let Some(cloze) = current_clozes.last_mut()
+                            && cloze.depth == self.open_square_bracket_count
+                        {
+                            cloze.first_arg_end = Some(cursor_start..first_arg_end);
                         }
                     } else {
-                        nesting_level -= 1;
-
                         // End of all arguments (could be 1 or 2 args)
-                        if let Some(mut cloze) = current_clozes.pop() {
+                        self.open_square_bracket_count -= 1;
+                        self.modes.pop();
+
+                        if matches!(output_type, OutputType::LinkedNote)
+                            && let Some(linked_note_start) = current_linked_notes
+                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
+                        {
+                            return Some(Output::LinkedNote(linked_note_start.0.end..cursor_start));
+                        } else if matches!(output_type, OutputType::Settings)
+                            && let Some(setting_start) = current_settings
+                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
+                        {
+                            return Some(Output::Settings(setting_start.0.end..cursor_start));
+                        } else if let Some(mut cloze) = current_clozes
+                            .pop_if(|c| c.depth == (self.open_square_bracket_count + 1))
+                        {
+                            cloze_nesting_level -= 1;
                             let second_arg_end = cloze
                                 .first_arg_end
                                 .as_ref()
@@ -154,29 +188,12 @@ impl<'a> TypstDataParser<'a> {
                                     .filter(|x| !x.is_empty())
                                     .unwrap_or_default(),
                             });
-                        }
-
-                        if matches!(output_type, OutputType::LinkedNote) {
-                            if let Some(linked_note_start) = current_linked_notes.pop() {
-                                return Some(Output::LinkedNote(
-                                    linked_note_start.end..cursor_start,
-                                ));
+                            if cloze_nesting_level == 0 && matches!(output_type, OutputType::Cloze)
+                            {
+                                break;
                             }
-                        }
-
-                        if matches!(output_type, OutputType::Settings) {
-                            if let Some(setting_start) = current_settings.pop() {
-                                return Some(Output::Settings(setting_start.end..cursor_start));
-                            }
-                        }
-
-                        if nesting_level == 0 && matches!(output_type, OutputType::Cloze) {
-                            break;
                         }
                     }
-                }
-                Some(']') if !self.math_mode => {
-                    self.open_square_bracket_count -= 1;
                 }
                 Some(_) => {}
                 None => {
@@ -219,13 +236,35 @@ mod tests {
 
     #[test]
     fn test_basic_linked_note() {
-        let input = "Test #lin[basic] asd";
+        let input = "Test #lin[basic] #test[p]asd";
         let mut parser = TypstDataParser::new(input);
         let mut all_linked_notes = Vec::new();
         while let Some(linked_note) = parser.next_linked_note() {
             all_linked_notes.push(linked_note);
         }
         assert_eq!(all_linked_notes, vec![10..15],);
+    }
+
+    #[test]
+    fn test_advanced_linked_note() {
+        let input = "Test #lin[basic [a] b] #test[p]asd";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_linked_notes = Vec::new();
+        while let Some(linked_note) = parser.next_linked_note() {
+            all_linked_notes.push(linked_note);
+        }
+        assert_eq!(all_linked_notes, vec![10..21],);
+    }
+
+    #[test]
+    fn test_linked_note_in_math() {
+        let input = "Test $ a &= b #[(bc of #lin[Rule A])] \\ b &=c $";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_linked_notes = Vec::new();
+        while let Some(linked_note) = parser.next_linked_note() {
+            all_linked_notes.push(linked_note);
+        }
+        assert_eq!(all_linked_notes, vec![28..34],);
     }
 
     #[test]
@@ -319,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_math_mode() {
-        let input = "test #cl[$\na b)\n\n$][g:1] test";
+        let input = "test #cl[$\n( b]\n\n$][g:1] test";
         let mut parser = TypstDataParser::new(input);
         let mut all_clozes = Vec::new();
         while let Some(cloze) = parser.next_cloze() {
@@ -350,6 +389,74 @@ mod tests {
                 end_match: 21..27,
                 settings_match: 23..26,
             }]]
+        );
+    }
+
+    #[test]
+    fn test_cloze_in_math_1() {
+        let input = "Test $ a &= b #[(bc of #cl[Rule A])] \\ b &=c #cl[a][g:1] $";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(
+            all_clozes,
+            vec![
+                vec![ClozeMatch {
+                    start_match: 23..27,
+                    end_match: 33..34,
+                    settings_match: Range::default(),
+                }],
+                vec![ClozeMatch {
+                    start_match: 45..49,
+                    end_match: 50..56,
+                    settings_match: 52..55
+                }],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_cloze_in_math_2_with_settings() {
+        let input = "Test $ a &= b #[(bc of #cl[Rule A][g:[1]])] \\ b &=c #cl[a][g:1] $";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(
+            all_clozes,
+            vec![
+                vec![ClozeMatch {
+                    start_match: 23..27,
+                    end_match: 33..41,
+                    settings_match: 35..40,
+                }],
+                vec![ClozeMatch {
+                    start_match: 52..56,
+                    end_match: 57..63,
+                    settings_match: 59..62
+                }],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_cloze_in_command() {
+        let input = "#strong[bc of #cl[Rule A])]";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(
+            all_clozes,
+            vec![vec![ClozeMatch {
+                start_match: 14..18,
+                end_match: 24..25,
+                settings_match: Range::default(),
+            }],]
         );
     }
 
@@ -411,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn test_other_func_in_cloze() {
+    fn test_other_func_in_cloze_1() {
         let input = indoc! { r#"#cl[ - mnemonic: #strong[c]url = #strong[c]ross product ]"# };
         let mut parser = TypstDataParser::new(input);
         let mut all_clozes = Vec::new();
@@ -447,36 +554,52 @@ mod tests {
     }
 
     // #[test]
-    // fn test_apple() {
+    // fn test_typst_as_library() {
     //     // TODO: Look into: https://github.com/tfachmann/typst-as-library
-    //     use typst::syntax::ast::FuncCall;
-    //     use typst::syntax::{SyntaxKind, parse};
-    //     use typst::{
-    //         WorldExt,
-    //         syntax::{
-    //             Source,
-    //             ast::{AstNode, Expr},
-    //         },
-    //     };
+    //     use typst_syntax::ast::FuncCall;
+    //     use typst_syntax::{SyntaxKind, parse};
+    //     use typst_syntax::ast::{AstNode, Expr, Ident};
+    //     // use typst::syntax::ast::FuncCall;
+    //     // use typst::syntax::{SyntaxKind, parse};
+    //     // use typst::{
+    //     //     WorldExt,
+    //     //     syntax::{
+    //     //         Source,
+    //     //         ast::{AstNode, Expr},
+    //     //     },
+    //     // };
     //     let input = "test #cl[#cl[b][g:1]#cl[$a s (d)$]][g:1] test";
     //     let a = parse(input);
-    //     let source = Source::detached(input);
+    //     dbg!(&a);
+    //     // let source = Source::detached(input);
+    //     // dbg!(&source);
     //     let b = &a
     //         .children()
     //         .filter(|x| matches!(x.kind(), SyntaxKind::FuncCall))
     //         .map(|x| x.cast::<FuncCall>().unwrap())
-    //         .map(|x| {
-    //             dbg!(x.span().range());
-    //             let res = x.span().into_raw();
-    //             dbg!(&res);
-    //             if let Expr::Ident(e) = x.callee() {
-    //                 dbg!(&e);
-    //                 if e.as_str() == "cl" {
-    //                     let span = e.span().range();
-    //                     dbg!(&span);
-    //                 }
+    //         .filter_map(|x| {
+    //             if let Expr::Ident(ident) = x.callee()
+    //                 && ident.as_str() == CLOZE_FUNC_NAME
+    //             {
+    //                 return Some(x);
     //             }
-    //             let c = x.args().items();
+    //             None
+    //         })
+    //         .map(|y| {
+    //             let a = &y.args().items().map(|x| x).collect::<Vec<_>>();
+    //             dbg!(&a);
+    //             // dbg!(&x.span());
+    //             // dbg!(x.span().range());
+    //             // let res = x.span().into_raw();
+    //             // dbg!(&res);
+    //             // if let Expr::Ident(e) = x.callee() {
+    //             //     dbg!(&e);
+    //             //     if e.as_str() == "cl" {
+    //             //         let span = e.span().range();
+    //             //         dbg!(&span);
+    //             //     }
+    //             // }
+    //             // let c = x.args().items();
     //             // dbg!(&c);
     //         })
     //         // .map(|x| x.clone().into_text())

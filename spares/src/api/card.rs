@@ -92,28 +92,27 @@ pub async fn update_card(
         updated_item.desired_retention = new_desired_retention;
         updated_item.special_state = new_special_state;
         updated_item.updated_at = updated_at;
-        if let Some(new_desired_retention) = body.desired_retention {
-            if (new_desired_retention - existing_card.desired_retention).abs() > f64::EPSILON
-                && updated_item.state != NEW_CARD_STATE
-            {
-                let review_logs: Vec<ReviewLog> = sqlx::query_as(
-                    r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC",
-                )
-                .bind(updated_item.id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-                if !review_logs.is_empty() {
-                    let latest_review_log = review_logs.last().unwrap();
-                    let scheduler =
-                        get_scheduler_from_string(latest_review_log.scheduler_name.as_str())?;
+        if let Some(new_desired_retention) = body.desired_retention
+            && (new_desired_retention - existing_card.desired_retention).abs() > f64::EPSILON
+            && updated_item.state != NEW_CARD_STATE
+        {
+            let review_logs: Vec<ReviewLog> = sqlx::query_as(
+                r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC",
+            )
+            .bind(updated_item.id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+            if !review_logs.is_empty() {
+                let latest_review_log = review_logs.last().unwrap();
+                let scheduler =
+                    get_scheduler_from_string(latest_review_log.scheduler_name.as_str())?;
 
-                    let config = read_external_config()?;
-                    // Reschedule card
-                    scheduler
-                        .reschedule(db, &config, vec![(updated_item.clone(), review_logs)], at)
-                        .await?;
-                }
+                let config = read_external_config()?;
+                // Reschedule card
+                scheduler
+                    .reschedule(db, &config, vec![(updated_item.clone(), review_logs)], at)
+                    .await?;
             }
         }
         card_responses.push(CardResponse::new(&updated_item));

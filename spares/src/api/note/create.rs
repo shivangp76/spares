@@ -123,8 +123,8 @@ pub async fn create_notes(
                 .map(|(i, card_data)| {
                     let mut card = Card::new(at);
                     card.note_id = note_id;
-                    card.back_type = card_data.back_type;
                     card.order = (i + 1) as u32;
+                    card.back_type = card_data.back_type;
                     if *is_suspended {
                         card.special_state = Some(SpecialState::Suspended);
                     }

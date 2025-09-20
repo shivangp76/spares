@@ -12,7 +12,6 @@ use crate::{
     schema::note::LinkedNote,
 };
 use data_parser::TypstDataParser;
-use fancy_regex::{Captures, Regex};
 use indoc::indoc;
 use std::{
     ops::Range,
@@ -41,12 +40,16 @@ impl Parseable for TypstParser {
     }
 
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        let linked_notes_regex = get_linked_notes_regex();
-        let linked_notes_data = linked_notes_regex
-            .captures_iter(data)
-            .filter_map(|c| c.unwrap().get(1).map(|x| (x.start()..x.end())))
-            .collect::<Vec<_>>();
-        Ok(linked_notes_data)
+        // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
+        // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
+        // TODO: HERE: Workaround
+        // Ok(vec![])
+        let mut all_linked_notes = Vec::new();
+        let mut parser = TypstDataParser::new(data);
+        while let Some(linked_note) = parser.next_linked_note() {
+            all_linked_notes.push(linked_note);
+        }
+        Ok(all_linked_notes.into_iter().collect::<Vec<_>>())
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
@@ -334,12 +337,6 @@ impl Parseable for TypstParser {
     }
 }
 
-// TODO: This doesn't properly match braces.
-// Ex. `#lin("test(a)") ( )`
-fn get_linked_notes_regex() -> Regex {
-    Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-}
-
 fn get_linked_notes_string(
     parser: &dyn Parseable,
     note_data: &str,
@@ -347,22 +344,14 @@ fn get_linked_notes_string(
 ) -> String {
     if let Some(linked_notes) = linked_notes_opt {
         // Order all linked notes in `note_data` sequentially
-        let mut count = 0;
+        // let mut count = 0;
 
-        // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        // TODO: This doesn't match the paren version, only the bracket version.
-        let mut all_linked_notes = Vec::new();
-        let mut data_parser = TypstDataParser::new(note_data);
-        while let Some(linked_note) = data_parser.next_linked_note() {
-            all_linked_notes.push(linked_note);
-        }
-        let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
-
-        let linked_notes_regex = get_linked_notes_regex();
-        let new_note_data = linked_notes_regex.replace_all(note_data, |caps: &Captures| {
-            count += 1;
-            format!("#lin({}, note_link: li{})", &caps[1], count)
-        });
+        // let mut all_linked_notes = Vec::new();
+        // let mut data_parser = TypstDataParser::new(note_data);
+        // while let Some(linked_note) = data_parser.next_linked_note() {
+        //     all_linked_notes.push(linked_note);
+        // }
+        // let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
 
         let items = linked_notes
             .iter()
@@ -387,8 +376,8 @@ fn get_linked_notes_string(
                         );
                         note_raw_path.set_extension(parser.file_extension());
                         format!(
-                            "#let li{} = {} // \"{} -> {}\"",
-                            i + 1,
+                            "+ #link(\"{}\")[{}] $->$ {}",
+                            // i + 1,
                             note_raw_path.display(),
                             searched_keyword,
                             matched_keyword,
@@ -399,8 +388,61 @@ fn get_linked_notes_string(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        // format!("{}\n\n{}", new_note_data, items)
-        format!("{}\n\n{}", items, new_note_data)
+        format!("{}\n\n{}", note_data, items)
+
+        // // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
+        // // TODO: This doesn't match the paren version, only the bracket version.
+        // let mut all_linked_notes = Vec::new();
+        // let mut data_parser = TypstDataParser::new(note_data);
+        // while let Some(linked_note) = data_parser.next_linked_note() {
+        //     all_linked_notes.push(linked_note);
+        // }
+        // let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
+        //
+        // // NOTE: Regex does not work here so if using this code, this will need to be fixed. See the comment in `get_linked_notes()` for an explanation.
+        // let linked_notes_regex = get_linked_notes_regex();
+        // let new_note_data = linked_notes_regex.replace_all(note_data, |caps: &Captures| {
+        //     count += 1;
+        //     format!("#lin({}, note_link: li{})", &caps[1], count)
+        // });
+        //
+        // let items = linked_notes
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(i, linked_note_request)| {
+        //         let LinkedNote {
+        //             searched_keyword,
+        //             linked_note_id,
+        //             matched_keyword,
+        //         } = linked_note_request;
+        //         assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
+        //         match (linked_note_id, matched_keyword) {
+        //             (None, None) => format!("#let li{} = \"\"", i + 1),
+        //             (Some(linked_note_id), Some(matched_keyword)) => {
+        //                 let mut note_raw_path = get_output_raw_dir(
+        //                     parser.get_parser_name(),
+        //                     RenderOutputType::Note,
+        //                     None,
+        //                 );
+        //                 note_raw_path.push(
+        //                     parser.get_output_filename(RenderOutputType::Note, *linked_note_id),
+        //                 );
+        //                 note_raw_path.set_extension(parser.file_extension());
+        //                 format!(
+        //                     "#let li{} = {} // \"{} -> {}\"",
+        //                     i + 1,
+        //                     note_raw_path.display(),
+        //                     searched_keyword,
+        //                     matched_keyword,
+        //                 )
+        //             }
+        //             (None, Some(_)) | (Some(_), None) => unreachable!(),
+        //         }
+        //     })
+        //     .collect::<Vec<_>>()
+        //     .join("\n");
+        // // format!("{}\n\n{}", new_note_data, items)
+        // format!("{}\n\n{}", items, new_note_data)
     } else {
         note_data.to_string()
     }
@@ -443,7 +485,8 @@ pub mod tests {
     #[test]
     fn test_typst_linked_notes() {
         let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
-        let note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
+        let note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
+        // let note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
         let linked_notes_res = parser.get_linked_notes(note_data);
         assert!(linked_notes_res.is_ok());
         assert_eq!(linked_notes_res.unwrap().len(), 3);
@@ -452,7 +495,8 @@ pub mod tests {
     #[test]
     fn test_typst_get_linked_notes_string() {
         let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
-        let original_note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
+        let original_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
+        // let original_note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
         let linked_notes_opt = Some(vec![
             LinkedNote {
                 searched_keyword: "keyword 1".to_string(),
@@ -475,7 +519,8 @@ pub mod tests {
             original_note_data,
             linked_notes_opt.as_ref(),
         );
-        let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/0002.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
+        let expected_new_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]\n\n+ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1] $->$ keyword 1\n+ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1.5] $->$ keyword 1\n+ #link(\"/tmp/spares/data/notes/typst/0002.typ\")[keyword 2] $->$ keyword 2";
+        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/0002.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
         assert_eq!(new_note_data, expected_new_note_data);
     }
 
