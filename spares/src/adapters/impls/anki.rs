@@ -661,7 +661,7 @@ impl AnkiAdapter {
             source: e,
             description: "Failed to copy Anki's DB.".to_string(),
         })?;
-        info!("Database copied to: {:?}", db_path);
+        info!("Database copied to: {}", db_path.display());
 
         // Create a connection pool
         let db_url = format!("sqlite://{}", db_path.to_str().unwrap());
