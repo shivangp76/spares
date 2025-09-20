@@ -153,8 +153,11 @@ impl Parseable for MarkdownParser {
         } = self.note_settings_keys();
         match output_type {
             ConstructFileDataType::Note => {
-                let note_data =
+                let (note_data, mut linked_notes_string) =
                     get_linked_notes_string(self, note_data.as_str(), linked_notes.as_ref());
+                if !linked_notes_string.is_empty() {
+                    linked_notes_string = format!("\nLinked Notes:\n{}", linked_notes_string);
+                }
                 let custom_data_str = if custom_data.is_empty() {
                     String::new()
                 } else {
@@ -213,9 +216,10 @@ impl Parseable for MarkdownParser {
                     self.construct_setting(&tags_string),
                     custom_data_str,
                     self.construct_comment("spares: note start"),
-                    note_data.to_string(),
+                    note_data,
                     "\n".to_string(),
                     self.construct_comment("spares: note end"),
+                    linked_notes_string,
                     "\n".to_string(),
                     // "\n".to_string(),
                     // self.construct_comment("spares: end"),
@@ -360,7 +364,7 @@ fn get_linked_notes_string(
     parser: &dyn Parseable,
     note_data: &str,
     linked_notes_opt: Option<&Vec<LinkedNote>>,
-) -> String {
+) -> (String, String) {
     if let Some(linked_notes) = linked_notes_opt {
         // Order all linked notes in `note_data` sequentially
         let mut count = 0;
@@ -370,7 +374,7 @@ fn get_linked_notes_string(
             format!("[{}][li{}]", &caps[1], count)
         });
 
-        let items = linked_notes
+        let linked_notes_string = linked_notes
             .iter()
             .enumerate()
             .map(|(i, linked_note_request)| {
@@ -405,9 +409,9 @@ fn get_linked_notes_string(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("{}\n\n{}", new_note_data, items)
+        (new_note_data.to_string(), linked_notes_string)
     } else {
-        note_data.to_string()
+        (note_data.to_string(), String::new())
     }
 }
 
@@ -451,13 +455,15 @@ pub mod tests {
                 matched_keyword: Some("keyword 2".to_string()),
             },
         ]);
-        let new_note_data = get_linked_notes_string(
+        let (new_note_data, linked_notes_string) = get_linked_notes_string(
             parser.as_ref(),
             original_note_data,
             linked_notes_opt.as_ref(),
         );
-        let expected_new_note_data = "Third {{[o:1] Cloze here, linking to [keyword 1][li1], [keyword 1.5][li2], and [keyword 2][li3] }}\n\n[li1]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/0002.md \"keyword 2 -> keyword 2\"";
+        let expected_new_note_data = "Third {{[o:1] Cloze here, linking to [keyword 1][li1], [keyword 1.5][li2], and [keyword 2][li3] }}";
         assert_eq!(new_note_data, expected_new_note_data);
+        let expected_linked_notes_string = "[li1]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/0002.md \"keyword 2 -> keyword 2\"";
+        assert_eq!(linked_notes_string, expected_linked_notes_string);
     }
 
     #[test]

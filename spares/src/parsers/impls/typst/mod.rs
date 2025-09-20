@@ -131,8 +131,14 @@ impl Parseable for TypstParser {
         } = self.note_settings_keys();
         match output_type {
             ConstructFileDataType::Note => {
-                let note_data =
+                let (note_data, mut linked_notes_string) =
                     get_linked_notes_string(self, note_data.as_str(), linked_notes.as_ref());
+                if !linked_notes_string.is_empty() {
+                    // This header is added so that if the note ends with a bulleted list. In this
+                    // case, the linked notes list will be merged with the list at the end of the
+                    // note which is not desired.
+                    linked_notes_string = format!("\nLinked Notes:\n{}", linked_notes_string);
+                }
                 let custom_data_str = if custom_data.is_empty() {
                     String::new()
                 } else {
@@ -195,6 +201,7 @@ impl Parseable for TypstParser {
                     note_data.to_string(),
                     "\n".to_string(),
                     self.construct_comment("spares: note end"),
+                    linked_notes_string,
                     "\n".to_string(),
                     // "\n".to_string(),
                     // self.construct_comment("spares: end"),
@@ -341,7 +348,7 @@ fn get_linked_notes_string(
     parser: &dyn Parseable,
     note_data: &str,
     linked_notes_opt: Option<&Vec<LinkedNote>>,
-) -> String {
+) -> (String, String) {
     if let Some(linked_notes) = linked_notes_opt {
         // Order all linked notes in `note_data` sequentially
         // let mut count = 0;
@@ -353,10 +360,9 @@ fn get_linked_notes_string(
         // }
         // let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
 
-        let items = linked_notes
+        let linked_notes_string = linked_notes
             .iter()
-            .enumerate()
-            .map(|(i, linked_note_request)| {
+            .map(|linked_note_request| {
                 let LinkedNote {
                     searched_keyword,
                     linked_note_id,
@@ -364,7 +370,11 @@ fn get_linked_notes_string(
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
-                    (None, None) => format!("#let li{} = \"\"", i + 1),
+                    (None, None) => format!(
+                        "+ {} $->$ (no match found)",
+                        // i + 1,
+                        searched_keyword,
+                    ),
                     (Some(linked_note_id), Some(matched_keyword)) => {
                         let mut note_raw_path = get_output_raw_dir(
                             parser.get_parser_name(),
@@ -376,10 +386,10 @@ fn get_linked_notes_string(
                         );
                         note_raw_path.set_extension(parser.file_extension());
                         format!(
-                            "+ #link(\"{}\")[{}] $->$ {}",
+                            "+ {} $->$ #link(\"{}\")[{}]",
                             // i + 1,
-                            note_raw_path.display(),
                             searched_keyword,
+                            note_raw_path.display(),
                             matched_keyword,
                         )
                     }
@@ -388,7 +398,7 @@ fn get_linked_notes_string(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("{}\n\n{}", note_data, items)
+        (note_data.to_string(), linked_notes_string)
 
         // // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
         // // TODO: This doesn't match the paren version, only the bracket version.
@@ -444,7 +454,7 @@ fn get_linked_notes_string(
         // // format!("{}\n\n{}", new_note_data, items)
         // format!("{}\n\n{}", items, new_note_data)
     } else {
-        note_data.to_string()
+        (note_data.to_string(), String::new())
     }
 }
 
@@ -514,14 +524,16 @@ pub mod tests {
                 matched_keyword: Some("keyword 2".to_string()),
             },
         ]);
-        let new_note_data = get_linked_notes_string(
+        let (new_note_data, linked_notes_string) = get_linked_notes_string(
             parser.as_ref(),
             original_note_data,
             linked_notes_opt.as_ref(),
         );
-        let expected_new_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]\n\n+ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1] $->$ keyword 1\n+ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1.5] $->$ keyword 1\n+ #link(\"/tmp/spares/data/notes/typst/0002.typ\")[keyword 2] $->$ keyword 2";
-        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/0002.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
+        let expected_new_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
         assert_eq!(new_note_data, expected_new_note_data);
+        let expected_linked_notes_string = "+ keyword 1 $->$ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1]\n+ keyword 1.5 $->$ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1]\n+ keyword 2 $->$ #link(\"/tmp/spares/data/notes/typst/0002.typ\")[keyword 2]";
+        assert_eq!(linked_notes_string, expected_linked_notes_string);
+        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/0002.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
     }
 
     #[test]
