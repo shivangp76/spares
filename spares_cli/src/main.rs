@@ -18,7 +18,7 @@ use spares::{
     adapters::get_adapter_from_string,
     api::tag::DEFAULT_TAG_AUTO_DELETE,
     config::{Environment, get_env_config},
-    model::{CardId, NoteId},
+    model::{CardId, NoteId, NoteLink},
     parsers::{
         RenderOutputDirectoryType, find_parser,
         generate_files::{CardSide, RenderOutputType},
@@ -28,8 +28,9 @@ use spares::{
         card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest},
         note::{
             CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
-            NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest, SearchKeywordRequest,
-            SearchNotesRequest, SearchNotesResponse, UnmatchedKeywordResponse, UpdateNotesRequest,
+            NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
+            SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+            UnmatchedKeywordResponse, UpdateNotesRequest,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse},
@@ -309,6 +310,10 @@ enum ListCommands {
         #[arg(long)]
         graph: bool,
     },
+    NoteLink {
+        #[arg(short, long)]
+        score_threshold: u32,
+    },
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -373,6 +378,13 @@ struct SearchArgs {
     output_format: OutputFormat,
     // Positional argument
     query: String,
+}
+
+#[derive(Args, Debug)]
+struct NoteLinks {
+    /// Score threshold (only notes with scores below this will be returned)
+    #[arg(short, long)]
+    score_threshold: u32,
 }
 
 async fn list_parsers(
@@ -970,6 +982,26 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     println!("{:#?}", &note_responses);
                 }
             }
+            ListCommands::NoteLink { score_threshold } => {
+                let url = format!("{}/api/notes/search/note-links", base_url);
+                let request = NoteLinksRequest { score_threshold };
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let status = response.status();
+                if status != StatusCode::OK {
+                    let response_json: Value =
+                        response.json().await.map_err(|e| miette!("{}", e))?;
+                    let message = response_json.get("message");
+                    return Err(miette!(message.unwrap().to_string()));
+                }
+                let response: Vec<NoteLink> =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                println!("{:#?}", &response);
+            }
         },
         Commands::Generate(GenerateArgs {
             query,
@@ -1034,11 +1066,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         }
         Commands::UnmatchedKeywords => {
             let url = format!("{}/api/notes/unmatched-keywords", base_url);
-            let response = client
-                .get(url)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
+            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
             let status = response.status();
             if status != StatusCode::OK {
                 let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;

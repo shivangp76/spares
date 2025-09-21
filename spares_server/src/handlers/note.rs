@@ -8,15 +8,15 @@ use axum::{
 use chrono::Utc;
 use spares::{
     api::note::{
-        create_notes, delete_note, get_note, get_unmatched_keywords, list_notes, render_notes, search_keyword,
-        search_notes, update_notes,
+        create_notes, delete_note, get_note, get_note_links, get_unmatched_keywords, list_notes,
+        render_notes, search_keyword, search_notes, update_notes,
     },
     parsers::get_all_parsers,
     schema::{
         FilterOptions,
         note::{
-            CreateNotesRequest, RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest,
-            UpdateNotesRequest,
+            CreateNotesRequest, NoteLinksRequest, RenderNotesRequest, SearchKeywordRequest,
+            SearchNotesRequest, UpdateNotesRequest,
         },
     },
 };
@@ -108,4 +108,14 @@ pub async fn get_unmatched_keywords_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(unmatched_keywords))
+}
+
+pub async fn get_note_links_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<NoteLinksRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let note_links = get_note_links(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(note_links))
 }
