@@ -8,6 +8,7 @@ use crate::{
         card::CardResponse,
         note::{
             MatchedKeywordResponse, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+            UnmatchedKeywordResponse,
         },
     },
     search::evaluator::Evaluator,
@@ -87,4 +88,25 @@ pub async fn search_keyword(
     results.sort_by_key(|x| x.score);
 
     Ok(results)
+}
+
+pub async fn get_unmatched_keywords(
+    db: &SqlitePool,
+) -> Result<Vec<UnmatchedKeywordResponse>, Error> {
+    let unmatched_keywords: Vec<(NoteId, String)> = sqlx::query_as(
+        r"SELECT parent_note_id, searched_keyword
+         FROM note_link
+         WHERE linked_note_id IS NULL AND matched_keyword IS NULL",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
+    Ok(unmatched_keywords
+        .into_iter()
+        .map(|(note_id, searched_keyword)| UnmatchedKeywordResponse {
+            note_id,
+            searched_keyword,
+        })
+        .collect())
 }
