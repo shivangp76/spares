@@ -8,7 +8,7 @@ use axum::{
 use chrono::Utc;
 use spares::{
     api::note::{
-        create_notes, delete_note, get_note, list_notes, render_notes, search_keyword,
+        create_notes, delete_note, get_note, get_unmatched_keywords, list_notes, render_notes, search_keyword,
         search_notes, update_notes,
     },
     parsers::get_all_parsers,
@@ -99,4 +99,13 @@ pub async fn generate_note_files_handler(
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)
+}
+
+pub async fn get_unmatched_keywords_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let unmatched_keywords = get_unmatched_keywords(&data.db)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(unmatched_keywords))
 }
