@@ -67,11 +67,18 @@ pub async fn search_keyword(
         keyword: searched_keyword,
     } = body;
     let keywords = get_keywords(db).await?;
-    let closest_keyword = keywords.into_iter().min_by_key(|(_id, keyword)| {
-        // Do not return matches that are too far apart
-        Some(strsim::levenshtein(searched_keyword.as_str(), keyword))
+    let closest_keyword = keywords
+        .into_iter()
+        .filter_map(|(id, keyword)| {
+            Some(strsim::levenshtein(
+                searched_keyword.as_str(),
+                keyword.as_str(),
+            ))
             .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
-    });
+            .map(|score| ((id, keyword), score))
+        })
+        .min_by_key(|(_, score)| *score)
+        .map(|(id, _)| id);
     if let Some((result_note_id, result_keyword)) = closest_keyword {
         // let result_note = get_note(db, result_note_id).await?;
         return Ok(Some((result_note_id, result_keyword.to_string())));
