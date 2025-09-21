@@ -1,6 +1,7 @@
-use super::{MAX_KEYWORD_DIFFERENCE_SCORE, enrich_note};
+use super::enrich_note;
 use crate::{
     Error,
+    api::note::match_keyword,
     config::read_internal_config,
     helpers::parse_list,
     model::{NoteId, NoteLink},
@@ -69,29 +70,13 @@ pub async fn search_keyword(
     let SearchKeywordRequest {
         keyword: searched_keyword,
     } = body;
-    let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
     let keywords = get_keywords(db).await?;
-    let mut results = keywords
-        .into_iter()
-        .map(|(id, keyword)| {
-            let score = strsim::levenshtein(
-                searched_keyword_lower.as_str(),
-                keyword.to_ascii_lowercase().as_str(),
-            );
-            (keyword, id, score as u32)
-        })
-        .filter(|(_, _, score)| *score <= MAX_KEYWORD_DIFFERENCE_SCORE as u32)
-        .map(|x| MatchedKeywordResponse {
-            matched_keyword: x.0,
-            note_id: x.1,
-            score: x.2,
-        })
-        .collect::<Vec<_>>();
+    let mut matched_keyword_data = match_keyword(searched_keyword.as_str(), keywords.as_ref());
 
     // Sort by score (ascending - lower scores are better matches)
-    results.sort_by_key(|x| x.score);
+    matched_keyword_data.sort_by_key(|x| x.score);
 
-    Ok(results)
+    Ok(matched_keyword_data)
 }
 
 pub async fn get_unmatched_keywords(

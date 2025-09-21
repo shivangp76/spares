@@ -10,7 +10,7 @@ use crate::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
         },
     },
-    schema::note::{GenerateFilesNoteIds, LinkedNote, RenderNotesRequest},
+    schema::note::{GenerateFilesNoteIds, LinkedNote, MatchedKeywordResponse, RenderNotesRequest},
     search::evaluator::Evaluator,
 };
 // use indicatif::ParallelProgressIterator;
@@ -31,6 +31,31 @@ struct RenderNoteData {
     pub custom_data: Value,
     pub parser_name: String,
     pub tags_str: String,
+}
+
+pub fn match_keyword(
+    searched_keyword: &str,
+    keywords: &[(NoteId, String)],
+) -> Vec<MatchedKeywordResponse> {
+    let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
+    keywords
+        .par_iter()
+        .filter_map(|(id, keyword)| {
+            Some(strsim::levenshtein(
+                searched_keyword_lower.as_str(),
+                keyword.to_ascii_lowercase().as_str(),
+            ))
+            .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
+            .map(|score| ((id, keyword), score))
+        })
+        .map(
+            |((note_id, matched_keyword), score)| MatchedKeywordResponse {
+                matched_keyword: matched_keyword.to_string(),
+                note_id: *note_id,
+                score: score as u32,
+            },
+        )
+        .collect::<Vec<_>>()
 }
 
 async fn match_keyword_to_linked_note(
@@ -58,31 +83,20 @@ async fn match_keyword_to_linked_note(
                         .enumerate()
                         .map(|(i, searched_keyword_range)| {
                             let searched_keyword = &data[searched_keyword_range];
-                            let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
-                            let matched_keyword_data = keywords
-                                .par_iter()
-                                .filter_map(|(id, keyword)| {
-                                    Some(strsim::levenshtein(
-                                        searched_keyword_lower.as_str(),
-                                        keyword.to_ascii_lowercase().as_str(),
-                                    ))
-                                    .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
-                                    .map(|score| ((id, keyword), score))
-                                })
-                                .min_by_key(|(_, score)| *score);
+                            let matched_keyword_data =
+                                match_keyword(searched_keyword, keywords.as_ref())
+                                    .into_iter()
+                                    .min_by_key(|x| x.score);
                             NoteLink {
                                 // id: None,
                                 parent_note_id: *note_id,
-                                linked_note_id: matched_keyword_data
-                                    .as_ref()
-                                    .map(|x| x.0.0)
-                                    .copied(),
+                                linked_note_id: matched_keyword_data.as_ref().map(|x| x.note_id),
                                 order: i as u32,
                                 searched_keyword: searched_keyword.to_owned(),
                                 matched_keyword: matched_keyword_data
                                     .as_ref()
-                                    .map(|x| x.0.1.clone()),
-                                score: matched_keyword_data.as_ref().map(|x| x.1 as u32),
+                                    .map(|x| x.matched_keyword.clone()),
+                                score: matched_keyword_data.as_ref().map(|x| x.score),
                             }
                         })
                         .collect::<Vec<_>>();
