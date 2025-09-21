@@ -69,11 +69,15 @@ pub async fn search_keyword(
     let SearchKeywordRequest {
         keyword: searched_keyword,
     } = body;
+    let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
     let keywords = get_keywords(db).await?;
     let mut results = keywords
         .into_iter()
         .map(|(id, keyword)| {
-            let score = strsim::levenshtein(searched_keyword.as_str(), keyword.as_str());
+            let score = strsim::levenshtein(
+                searched_keyword_lower.as_str(),
+                keyword.to_ascii_lowercase().as_str(),
+            );
             (keyword, id, score as u32)
         })
         .filter(|(_, _, score)| *score <= MAX_KEYWORD_DIFFERENCE_SCORE as u32)
@@ -126,15 +130,16 @@ pub async fn get_note_links(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    let idx = note_links
-        .binary_search_by(|nl| {
-            match nl.score {
-                Some(s) => s.cmp(&score_threshold),
-                None => std::cmp::Ordering::Less, // treat NULL as -∞
-            }
-        })
-        .unwrap_or_else(|i| i);
-    note_links.truncate(idx + 1);
+    // binary_search_by returns Ok(idx) if an exact match was found,
+    // otherwise Err(idx) = insertion point.
+    let cut = match note_links.binary_search_by(|nl| match nl.score {
+        Some(s) => s.cmp(&score_threshold),
+        None => std::cmp::Ordering::Less, // NULL = -∞
+    }) {
+        Ok(idx) => idx + 1, // include the matching element
+        Err(idx) => idx,    // idx is the first element > threshold
+    };
+    note_links.truncate(cut);
 
     Ok(note_links)
 }

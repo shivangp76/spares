@@ -58,12 +58,16 @@ async fn match_keyword_to_linked_note(
                         .enumerate()
                         .map(|(i, searched_keyword_range)| {
                             let searched_keyword = &data[searched_keyword_range];
+                            let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
                             let matched_keyword_data = keywords
                                 .par_iter()
                                 .filter_map(|(id, keyword)| {
-                                    Some(strsim::levenshtein(searched_keyword, keyword))
-                                        .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
-                                        .map(|score| ((id, keyword), score))
+                                    Some(strsim::levenshtein(
+                                        searched_keyword_lower.as_str(),
+                                        keyword.to_ascii_lowercase().as_str(),
+                                    ))
+                                    .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
+                                    .map(|score| ((id, keyword), score))
                                 })
                                 .min_by_key(|(_, score)| *score);
                             NoteLink {
