@@ -29,7 +29,7 @@ use spares::{
         note::{
             CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
             NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest, SearchKeywordRequest,
-            SearchNotesRequest, SearchNotesResponse, UpdateNotesRequest,
+            SearchNotesRequest, SearchNotesResponse, UnmatchedKeywordResponse, UpdateNotesRequest,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse},
@@ -74,6 +74,8 @@ enum Commands {
     Statistics(StatisticsArgs),
     /// Search for notes or cards
     Search(SearchArgs),
+    /// Get unmatched keywords
+    UnmatchedKeywords,
     /// Import notes data from file
     Import(ImportArgs),
     /// Sync data between local note files, database, and adapters.
@@ -1027,6 +1029,23 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 return Err(miette!(message.unwrap().to_string()));
             }
             let response: StatisticsResponse =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            println!("{:#?}", &response);
+        }
+        Commands::UnmatchedKeywords => {
+            let url = format!("{}/api/notes/unmatched-keywords", base_url);
+            let response = client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let status = response.status();
+            if status != StatusCode::OK {
+                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
+                let message = response_json.get("message");
+                return Err(miette!(message.unwrap().to_string()));
+            }
+            let response: Vec<UnmatchedKeywordResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{:#?}", &response);
         }
