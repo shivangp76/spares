@@ -65,15 +65,20 @@ async fn match_keyword_to_linked_note(
                                         .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
                                         .map(|score| ((id, keyword), score))
                                 })
-                                .min_by_key(|(_, score)| *score)
-                                .map(|(data, _score)| data);
+                                .min_by_key(|(_, score)| *score);
                             NoteLink {
                                 // id: None,
                                 parent_note_id: *note_id,
-                                linked_note_id: matched_keyword_data.as_ref().map(|x| x.0).copied(),
+                                linked_note_id: matched_keyword_data
+                                    .as_ref()
+                                    .map(|x| x.0.0)
+                                    .copied(),
                                 order: i as u32,
                                 searched_keyword: searched_keyword.to_owned(),
-                                matched_keyword: matched_keyword_data.as_ref().map(|x| x.1.clone()),
+                                matched_keyword: matched_keyword_data
+                                    .as_ref()
+                                    .map(|x| x.0.1.clone()),
+                                score: matched_keyword_data.as_ref().map(|x| x.1 as u32),
                             }
                         })
                         .collect::<Vec<_>>();
@@ -177,8 +182,8 @@ pub async fn render_notes(
         // Create note links
         if !note_links.is_empty() {
             let query_str = format!(
-                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword) VALUES {}",
-                vec!["(?, ?, ?, ?, ?)"; note_links.len()].join(", ")
+                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
+                vec!["(?, ?, ?, ?, ?, ?)"; note_links.len()].join(", ")
             );
             let mut query = sqlx::query(query_str.as_str());
             for NoteLink {
@@ -188,6 +193,7 @@ pub async fn render_notes(
                 order,
                 searched_keyword,
                 matched_keyword,
+                score,
             } in &note_links
             {
                 query = query.bind(parent_note_id);
@@ -195,6 +201,7 @@ pub async fn render_notes(
                 query = query.bind(order);
                 query = query.bind(searched_keyword);
                 query = query.bind(matched_keyword);
+                query = query.bind(score);
             }
             let _insert_result = query
                 .execute(db)

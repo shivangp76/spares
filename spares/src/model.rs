@@ -110,6 +110,7 @@ pub struct NoteLink {
     pub order: u32,
     pub searched_keyword: String,
     pub matched_keyword: Option<String>,
+    pub score: Option<u32>,
 }
 
 // Tree-like structure

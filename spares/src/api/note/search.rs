@@ -3,12 +3,12 @@ use crate::{
     Error,
     config::read_internal_config,
     helpers::parse_list,
-    model::NoteId,
+    model::{NoteId, NoteLink},
     schema::{
         card::CardResponse,
         note::{
-            MatchedKeywordResponse, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
-            UnmatchedKeywordResponse,
+            MatchedKeywordResponse, NoteLinksRequest, SearchKeywordRequest, SearchNotesRequest,
+            SearchNotesResponse, UnmatchedKeywordResponse,
         },
     },
     search::evaluator::Evaluator,
@@ -109,4 +109,32 @@ pub async fn get_unmatched_keywords(
             searched_keyword,
         })
         .collect())
+}
+
+pub async fn get_note_links(
+    db: &SqlitePool,
+    body: NoteLinksRequest,
+) -> Result<Vec<NoteLink>, Error> {
+    let NoteLinksRequest { score_threshold } = body;
+
+    let mut note_links: Vec<NoteLink> = sqlx::query_as(
+        r"SELECT * FROM note_link
+         WHERE linked_note_id IS NOT NULL AND matched_keyword IS NOT NULL
+         ORDER BY score ASC",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
+    let idx = note_links
+        .binary_search_by(|nl| {
+            match nl.score {
+                Some(s) => s.cmp(&score_threshold),
+                None => std::cmp::Ordering::Less, // treat NULL as -∞
+            }
+        })
+        .unwrap_or_else(|i| i);
+    note_links.truncate(idx + 1);
+
+    Ok(note_links)
 }

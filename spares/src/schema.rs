@@ -148,6 +148,11 @@ pub mod note {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct NoteLinksRequest {
+        pub score_threshold: u32,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct CreateNotesRequest {
         pub parser_id: i64,
         pub requests: Vec<CreateNoteRequest>,
