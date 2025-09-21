@@ -6,7 +6,9 @@ use crate::{
     model::NoteId,
     schema::{
         card::CardResponse,
-        note::{SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse},
+        note::{
+            MatchedKeywordResponse, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+        },
     },
     search::evaluator::Evaluator,
 };
@@ -62,26 +64,27 @@ pub async fn search_notes(
 pub async fn search_keyword(
     db: &SqlitePool,
     body: SearchKeywordRequest,
-) -> Result<Option<(NoteId, String)>, Error> {
+) -> Result<Vec<MatchedKeywordResponse>, Error> {
     let SearchKeywordRequest {
         keyword: searched_keyword,
     } = body;
     let keywords = get_keywords(db).await?;
-    let closest_keyword = keywords
+    let mut results = keywords
         .into_iter()
-        .filter_map(|(id, keyword)| {
-            Some(strsim::levenshtein(
-                searched_keyword.as_str(),
-                keyword.as_str(),
-            ))
-            .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
-            .map(|score| ((id, keyword), score))
+        .map(|(id, keyword)| {
+            let score = strsim::levenshtein(searched_keyword.as_str(), keyword.as_str());
+            (keyword, id, score as u32)
         })
-        .min_by_key(|(_, score)| *score)
-        .map(|(id, _)| id);
-    if let Some((result_note_id, result_keyword)) = closest_keyword {
-        // let result_note = get_note(db, result_note_id).await?;
-        return Ok(Some((result_note_id, result_keyword.to_string())));
-    }
-    Ok(None)
+        .filter(|(_, _, score)| *score <= MAX_KEYWORD_DIFFERENCE_SCORE as u32)
+        .map(|x| MatchedKeywordResponse {
+            matched_keyword: x.0,
+            note_id: x.1,
+            score: x.2,
+        })
+        .collect::<Vec<_>>();
+
+    // Sort by score (ascending - lower scores are better matches)
+    results.sort_by_key(|x| x.score);
+
+    Ok(results)
 }

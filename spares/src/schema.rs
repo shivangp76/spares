@@ -135,6 +135,13 @@ pub mod note {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct MatchedKeywordResponse {
+        pub matched_keyword: String,
+        pub note_id: NoteId,
+        pub score: u32,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct CreateNotesRequest {
         pub parser_id: i64,
         pub requests: Vec<CreateNoteRequest>,

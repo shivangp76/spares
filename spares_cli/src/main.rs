@@ -27,8 +27,8 @@ use spares::{
     schema::{
         card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest},
         note::{
-            CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, NoteResponse,
-            NotesResponse, NotesSelector, RenderNotesRequest, SearchKeywordRequest,
+            CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
+            NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest, SearchKeywordRequest,
             SearchNotesRequest, SearchNotesResponse, UpdateNotesRequest,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
@@ -356,6 +356,7 @@ enum SearchMode {
     #[default]
     Query,
     Keyword,
+    KeywordRanking,
 }
 
 #[derive(Args, Debug)]
@@ -1130,7 +1131,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     }
                 }
             }
-            SearchMode::Keyword => {
+            SearchMode::Keyword | SearchMode::KeywordRanking => {
                 let request = SearchKeywordRequest { keyword: query };
                 let url = format!("{}/api/notes/search/keyword", base_url);
                 let response = client
@@ -1146,9 +1147,13 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     let message = response_json.get("message");
                     return Err(miette!(message.unwrap().to_string()));
                 }
-                let response: Option<(NoteId, String)> =
+                let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                if search_mode == SearchMode::Keyword {
+                    println!("{:#?}", &response.first());
+                } else if search_mode == SearchMode::KeywordRanking {
+                    println!("{:#?}", &response);
+                }
             }
         },
         Commands::Sync(sync_args) => {
