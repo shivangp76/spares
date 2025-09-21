@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS note_link (
     "order" INTEGER NOT NULL,
     searched_keyword VARCHAR NOT NULL,
     matched_keyword VARCHAR,
+    score INTEGER,
     FOREIGN KEY (parent_note_id) REFERENCES note(id) ON DELETE CASCADE, -- When note is deleted, delete all corresponding linked notes
     FOREIGN KEY (linked_note_id) REFERENCES note(id)
     -- PRIMARY KEY (parent_note_id, linked_note_id)
