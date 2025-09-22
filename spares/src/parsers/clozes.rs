@@ -716,14 +716,14 @@ pub fn get_matched_clozes(
         .map(|c| {
             c.unwrap()
                 .get(settings_capture_group_index)
-                .map(|x| (x.start()..x.end()))
+                .map(|x| x.start()..x.end())
                 .unwrap_or_default()
         })
         .collect::<Vec<_>>();
     let start_matches = cloze_start_regex
         .find_iter(data)
         .map(|m| m.unwrap())
-        .map(|m| (m.start()..m.end()))
+        .map(|m| m.start()..m.end())
         .zip(start_settings)
         .map(|(match_range, capture_range)| RegexMatch {
             match_range,
@@ -735,14 +735,14 @@ pub fn get_matched_clozes(
         .map(|c| {
             c.unwrap()
                 .get(settings_capture_group_index)
-                .map(|x| (x.start()..x.end()))
+                .map(|x| x.start()..x.end())
                 .unwrap_or_default()
         })
         .collect::<Vec<_>>();
     let end_matches = cloze_end_regex
         .find_iter(data)
         .map(|m| m.unwrap())
-        .map(|m| (m.start()..m.end()))
+        .map(|m| m.start()..m.end())
         .zip(end_settings)
         .map(|(match_range, capture_range)| RegexMatch {
             match_range,

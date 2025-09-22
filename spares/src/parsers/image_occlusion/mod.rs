@@ -196,7 +196,7 @@ pub fn parse_image_occlusion_data(
         .map(|range| {
             let settings = image_occlusion_settings_regex
                 .captures_iter(&data[range.capture_range.start..range.capture_range.end])
-                .map(|c| c.unwrap().get(1).map(|x| (x.start()..x.end())).unwrap())
+                .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap())
                 .map(|r| (r.start + range.capture_range.start)..(r.end + range.capture_range.start))
                 .collect::<Vec<_>>();
             (range, settings)
