@@ -51,7 +51,7 @@ impl Parseable for MarkdownParser {
         let linked_notes_regex = get_linked_notes_regex();
         let linked_notes_data = linked_notes_regex
             .captures_iter(data)
-            .filter_map(|c| c.unwrap().get(1).map(|x| (x.start()..x.end())))
+            .filter_map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()))
             .collect::<Vec<_>>();
         Ok(linked_notes_data)
     }
@@ -62,11 +62,11 @@ impl Parseable for MarkdownParser {
         let settings_data = settings_regex
             .find_iter(data)
             .map(|m| m.unwrap())
-            .map(|m| (m.start()..m.end()))
+            .map(|m| m.start()..m.end())
             .zip(
                 settings_regex
                     .captures_iter(data)
-                    .map(|c| c.unwrap().get(1).map(|x| (x.start()..x.end())).unwrap()),
+                    .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap()),
             )
             .map(|(match_range, capture_range)| RegexMatch {
                 match_range,

@@ -53,9 +53,9 @@ impl Parseable for LatexParserExerciseSolution {
             .map(|c| c.unwrap())
             .filter(|c| c.get(3).is_some())
             .map(|c| NoteRawData {
-                metadata: c.get(1).map(|x| (x.start()..x.end())),
+                metadata: c.get(1).map(|x| x.start()..x.end()),
                 // keywords: c.get(2).map(|x| x.as_str()),
-                data: c.get(3).map(|x| (x.start()..x.end())).unwrap(),
+                data: c.get(3).map(|x| x.start()..x.end()).unwrap(),
             })
             .collect::<Vec<_>>();
         Ok(notes_data)
@@ -185,9 +185,9 @@ impl Parseable for LatexParserNote {
             .map(|c| c.unwrap())
             .filter(|c| c.get(3).is_some())
             .map(|c| NoteRawData {
-                metadata: c.get(1).map(|x| (x.start()..x.end())),
+                metadata: c.get(1).map(|x| x.start()..x.end()),
                 // keywords: c.get(2).map(|x| x.as_str()),
-                data: c.get(3).map(|x| (x.start()..x.end())).unwrap(),
+                data: c.get(3).map(|x| x.start()..x.end()).unwrap(),
             })
             .collect::<Vec<_>>();
         Ok(notes_data)
@@ -315,7 +315,7 @@ fn get_latex_command(
     let start_matches = start_regex
         .find_iter(data)
         .map(|m| m.unwrap())
-        .map(|m| (m.start()..m.end()))
+        .map(|m| m.start()..m.end())
         .collect::<Vec<_>>();
     let end_matches = start_matches
         .iter()
