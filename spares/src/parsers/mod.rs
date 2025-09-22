@@ -63,7 +63,7 @@ pub trait Parseable: Send + Sync {
             .filter(|c| c.get(1).is_some())
             .map(|c| NoteRawData {
                 metadata: None,
-                data: c.get(1).map(|x| (x.start()..x.end())).unwrap(),
+                data: c.get(1).map(|x| x.start()..x.end()).unwrap(),
             })
             .collect::<Vec<_>>();
         Ok(notes_data)
@@ -126,11 +126,11 @@ pub trait Parseable: Send + Sync {
         let image_occlusions = image_occlusion_regex
             .find_iter(data)
             .map(|m| m.unwrap())
-            .map(|m| (m.start()..m.end()))
+            .map(|m| m.start()..m.end())
             .zip(
                 image_occlusion_regex
                     .captures_iter(data)
-                    .map(|c| c.unwrap().get(1).map(|x| (x.start()..x.end())).unwrap()),
+                    .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap()),
             )
             .map(|(match_range, capture_range)| RegexMatch {
                 match_range,
