@@ -9,6 +9,7 @@ use chrono::{DateTime, Local, Utc};
 use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use graph::chart;
 use import::{ImportArgs, import_from_files};
+use inquire::Confirm;
 use miette::{Error, IntoDiagnostic, miette};
 use migrate::{MigrateArgs, migrate_from_adapter};
 use reqwest::{Client, StatusCode};
@@ -369,11 +370,11 @@ enum SearchMode {
 #[derive(Args, Debug)]
 struct SearchArgs {
     #[arg(short, long, default_value = "query")]
-    search_mode: SearchMode,
-    // This option does not work if `matches!(search_mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
+    mode: SearchMode,
+    // This option does not work if `matches!(mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
     #[arg(short, long, default_value = "notes")]
     output_type: OutputItemType,
-    // This option does not work if `matches!(search_mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
+    // This option does not work if `matches!(mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
     #[arg(long, default_value = "raw-filepath")]
     output_format: OutputFormat,
     // Positional argument
@@ -1011,6 +1012,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             render,
             force_render,
         }) => {
+            let prompt = "Note that this will overwrite any unsaved changes you have. Please sync your notes before proceeding. Are you sure you want to continue?";
+            let ans = Confirm::new(prompt).with_default(false).prompt();
+            if !ans.unwrap_or(false) {
+                return Ok(());
+            }
             let request = RenderNotesRequest {
                 generate_files_note_ids: query.map(GenerateFilesNoteIds::Query),
                 overridden_output_raw_dir,
@@ -1078,11 +1084,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             println!("{:#?}", &response);
         }
         Commands::Search(SearchArgs {
-            search_mode,
+            mode,
             query,
             output_type,
             output_format,
-        }) => match search_mode {
+        }) => match mode {
             SearchMode::Query => {
                 let return_item_type = match output_type {
                     OutputItemType::Cards => QueryReturnItemType::Cards,
@@ -1196,9 +1202,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 }
                 let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                if search_mode == SearchMode::Keyword {
+                if mode == SearchMode::Keyword {
                     println!("{:#?}", &response.first());
-                } else if search_mode == SearchMode::KeywordRanking {
+                } else if mode == SearchMode::KeywordRanking {
                     println!("{:#?}", &response);
                 }
             }

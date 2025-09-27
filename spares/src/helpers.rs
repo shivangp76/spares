@@ -288,7 +288,7 @@ pub(crate) mod tests {
         let end_matches = vec![(2, 2), (4, 4), (5, 5)];
         let start_matches = start_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -296,7 +296,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let end_matches = end_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -332,7 +332,7 @@ pub(crate) mod tests {
         let end_matches = vec![(2, 2), (3, 3), (5, 5), (7, 7)];
         let start_matches = start_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -340,7 +340,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let end_matches = end_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -381,7 +381,7 @@ pub(crate) mod tests {
         let end_matches = vec![(3, 3), (4, 4), (6, 6), (7, 7), (9, 9)];
         let start_matches = start_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -389,7 +389,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let end_matches = end_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -431,7 +431,7 @@ pub(crate) mod tests {
         let end_matches = vec![(0, 0)];
         let start_matches = start_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -439,7 +439,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let end_matches = end_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -457,7 +457,7 @@ pub(crate) mod tests {
         let end_matches = vec![(1, 1), (2, 2), (5, 5)];
         let start_matches = start_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
@@ -465,7 +465,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let end_matches = end_matches
             .into_iter()
-            .map(|(start, end)| (start..end))
+            .map(|(start, end)| start..end)
             .map(|x| RegexMatch {
                 match_range: x.clone(),
                 capture_range: x,
