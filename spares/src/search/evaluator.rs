@@ -151,6 +151,8 @@ enum CardField {
     State,
     CustomData(String),
     Rated,
+    // Custom
+    Count,
 }
 
 impl Field {
@@ -213,6 +215,7 @@ impl Field {
                 )))
             }
             "c.rated" => Ok(Field::Card(CardField::Rated)),
+            "c.count" => Ok(Field::Card(CardField::Count)),
             f => Err(miette!("Unrecognized field: {}", f)),
         }
     }
@@ -288,6 +291,9 @@ impl Field {
                         value_str
                     )
                 }
+                CardField::Count => {
+                    with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
+                }
             },
         }
     }
@@ -315,7 +321,9 @@ impl Field {
                 NoteField::CustomData(_) => FieldType::Json,
             },
             Field::Card(card_field) => match card_field {
-                CardField::Id | CardField::Rated | CardField::State => FieldType::Integer,
+                CardField::Id | CardField::Rated | CardField::State | CardField::Count => {
+                    FieldType::Integer
+                }
                 CardField::CreatedAt | CardField::UpdatedAt => FieldType::DateTime,
                 CardField::Stability | CardField::Difficulty | CardField::DesiredRetention => {
                     FieldType::Float
@@ -711,7 +719,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_misc() {
+    fn test_search_queries() {
         let inputs = vec![
             (
                 "c.stability>=2.1",
@@ -725,6 +733,15 @@ mod tests {
             (
                 "dog",
                 "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%'",
+            ),
+            // Card count
+            (
+                "c.count=2",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) = 2",
+            ),
+            (
+                "dog c.count>=2",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data LIKE '%dog%' AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2)",
             ),
             // Tag search - needs tag joins
             (
@@ -787,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn test_error() {
+    fn test_search_query_errors() {
         let inputs = [
             // Missing value
             "tag=",

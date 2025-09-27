@@ -23,6 +23,7 @@
 | c.custom_data       | Json     |
 | linked_to           | i64      |
 | c.rated             | u32      |
+| c.count             | u32      |
 
 ## Types
 
