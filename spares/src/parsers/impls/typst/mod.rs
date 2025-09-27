@@ -42,8 +42,6 @@ impl Parseable for TypstParser {
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-        // TODO: HERE: Workaround
-        // Ok(vec![])
         let mut all_linked_notes = Vec::new();
         let mut parser = TypstDataParser::new(data);
         while let Some(linked_note) = parser.next_linked_note() {
