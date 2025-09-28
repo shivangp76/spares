@@ -34,7 +34,7 @@ use itertools::Itertools;
 use log::info;
 use rand::{
     Rng,
-    distributions::{Distribution, WeightedIndex},
+    distr::{Distribution, weighted::WeightedIndex},
     rngs::ThreadRng,
 };
 use reposition::{MoveCardAction, get_safe_cards, move_cards};
@@ -122,7 +122,7 @@ impl SrsScheduler for FSRS {
                     .iter()
                     .fold((Card::new(first_review_date), Vec::new()), |acc, rating| {
                         let (card, mut review_logs): (_, Vec<ReviewLog>) = acc;
-                        let duration = Duration::new(rng.gen_range(5..=60), 0).unwrap();
+                        let duration = Duration::new(rng.random_range(5..=60), 0).unwrap();
                         let previous_review_log = review_logs.last();
                         let reviewed_at = previous_review_log.map_or_else(
                             || first_review_date,
@@ -498,12 +498,12 @@ impl SrsScheduler for FSRS {
         }
 
         // Sample from weights
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // if dispersed_siblings.is_some() {
         //     println!("AFTER");
         //     dbg!(&weights);
         // }
-        let dist = rand::distributions::WeightedIndex::new(&weights).unwrap();
+        let dist = WeightedIndex::new(&weights).unwrap();
         let chosen_interval = possible_intervals[dist.sample(&mut rng)];
         let chosen_due_date = main_review_logs.last().unwrap().reviewed_at + chosen_interval;
 

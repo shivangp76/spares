@@ -12,7 +12,7 @@
 // use fsrs::State;
 // use itertools::Itertools;
 // use log::info;
-// use rand::{distributions::Distribution, thread_rng};
+// use rand::{distr::Distribution, rng};
 // use sqlx::SqlitePool;
 // use std::collections::{HashMap, HashSet};
 //
@@ -94,7 +94,7 @@
 //         .zip(mask.iter())
 //         .map(|(&w, &m)| w * m)
 //         .collect::<Vec<_>>();
-//     let mut rng = thread_rng();
+//     let mut rng = rng();
 //     let mut chosen_weights = if final_weights.iter().sum::<f64>() > 0.0 {
 //         final_weights
 //     } else {

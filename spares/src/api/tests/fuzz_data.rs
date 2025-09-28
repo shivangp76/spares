@@ -13,7 +13,11 @@ use crate::{
     schedulers::{SrsScheduler, get_scheduler_from_string},
     schema::note::{CreateNoteRequest, CreateNotesRequest, NotesResponse},
 };
-use rand::{Rng, rngs::ThreadRng, seq::SliceRandom};
+use rand::{
+    Rng,
+    rngs::ThreadRng,
+    seq::{IndexedRandom, SliceRandom},
+};
 use serde_json::Map;
 use sqlx::SqlitePool;
 use std::{
@@ -104,7 +108,7 @@ fn test_unsorted() {
 //         let nesting_options = (0..(previous_nesting_level + 1).min(max_nesting_level))
 //             .into_iter()
 //             .collect::<Vec<_>>();
-//         let nesting_level = nesting_options.choose(&mut rand::thread_rng()).unwrap();
+//         let nesting_level = nesting_options.choose(&mut rand::rng()).unwrap();
 //
 //         // Card and cloze number
 //         let current_clozes = clozes
@@ -138,7 +142,7 @@ fn test_unsorted() {
 //             .map(|c| (c.card_number, c.cloze_number))
 //             .collect::<Vec<_>>();
 //         card_cloze_options.retain(|x| !ancestors.contains(&x));
-//         let card_cloze = card_cloze_options.choose(&mut rand::thread_rng()).unwrap();
+//         let card_cloze = card_cloze_options.choose(&mut rand::rng()).unwrap();
 //
 //         clozes.push(ClozeEntry {
 //             card_number: card_cloze.0,
@@ -212,8 +216,8 @@ fn generate_note_structure(
 fn generate_tags() -> Vec<String> {
     let all_tags: Vec<String> = ('a'..='z').map(|c| c.to_string()).collect();
     let max_options = all_tags.len().min(MAX_TAGS);
-    let mut rng = rand::thread_rng();
-    let chosen_num_tags = rng.gen_range(0..=max_options);
+    let mut rng = rand::rng();
+    let chosen_num_tags = rng.random_range(0..=max_options);
     let mut sampled = all_tags.to_vec();
     sampled.shuffle(&mut rng);
     sampled.truncate(chosen_num_tags);
@@ -295,7 +299,7 @@ pub async fn generate_notes(
     let scheduler = get_scheduler_from_string(&scheduler_name).unwrap();
     let parser_response = create_parser_helper(&pool, &parser_name).await;
     let parser = find_parser(&parser_name, &get_all_parsers()).unwrap();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let create_note_requests = (1..=*note_count)
         .into_iter()
         .map(|_| {
@@ -367,7 +371,7 @@ pub fn generate_review_logs(
     mut rng: &mut ThreadRng,
 ) -> (Card, Vec<ReviewLog>) {
     let num_siblings = 1;
-    let num_reviews = rng.gen_range(3..=5);
+    let num_reviews = rng.random_range(3..=5);
     let first_review_date = initial_card.created_at;
     let review_histories_all =
         scheduler.generate_review_history(num_siblings, num_reviews, first_review_date, &mut rng);

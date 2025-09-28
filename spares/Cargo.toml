@@ -13,33 +13,33 @@ categories.workspace = true
 
 [dependencies]
 async-trait = "0.1.89"
-chrono = { version = "0.4.41", features = ["serde"] }
-etcetera = "0.8.0"
-fancy-regex = "0.13.0"
+chrono = { version = "0.4.42", features = ["serde"] }
+etcetera = "0.10.0"
+fancy-regex = "0.16.2"
 # fsrs = { git = "https://github.com/open-spaced-repetition/rs-fsrs" }
 rs-fsrs = { version = "1.2.1" }
 futures = "0.3.31"
-indexmap = "2.10.0"
-indicatif = { version = "0.17.11", features = ["rayon"] }
+indexmap = "2.11.4"
+indicatif = { version = "0.18.0", features = ["rayon"] }
 indoc = "2.0.6"
-inquire = "0.7.5"
-itertools = "0.13.0"
-log = "0.4.27"
+inquire = "0.9.1"
+itertools = "0.14.0"
+log = "0.4.28"
 miette = { version = "7.6.0" }
-rand = "0.8.5"
+rand = "0.9.2"
 rayon = "1.11.0"
 reqwest = { version = "0.12.23", features = ["json"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.143", features = ["preserve_order"] }
-serde_with = { version = "3.14.0", features = ["chrono_0_4"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
+serde_with = { version = "3.14.1", features = ["chrono_0_4"] }
 sha256 = "1.6.0"
 shellexpand = "3.1.1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
 strsim = "0.11.1"
-strum = { version = "0.26.3", features = ["derive"] }
-strum_macros = "0.26.4"
-thiserror = "2.0.15"
-toml_edit = { version = "0.23.3", features = ["serde"] }
+strum = { version = "0.27.2", features = ["derive"] }
+strum_macros = "0.27.2"
+thiserror = "2.0.16"
+toml_edit = { version = "0.23.6", features = ["serde"] }
 trash = "5.2.3"
 # typst-syntax = "0.13.1"
 xmltree = { version = "0.11.0", features = ["attribute-order"] }
@@ -47,7 +47,7 @@ unscanny = "0.1.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
-uuid = { version = "1.18.0", features = [
+uuid = { version = "1.18.1", features = [
     "serde",
     "v4",                # Lets you generate random UUIDs
     "fast-rng",          # Use a faster (but still sufficiently random) RNG

@@ -31,23 +31,23 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/healthcheck", get(health_check_handler))
         // Parser
         .route("/api/parsers", post(create_parser_handler))
-        .route("/api/parsers/:id", get(get_parser_handler))
-        .route("/api/parsers/:id", patch(update_parser_handler))
-        .route("/api/parsers/:id", delete(delete_parser_handler))
+        .route("/api/parsers/{id}", get(get_parser_handler))
+        .route("/api/parsers/{id}", patch(update_parser_handler))
+        .route("/api/parsers/{id}", delete(delete_parser_handler))
         .route("/api/parsers", get(list_parsers_handler))
         // Tag
         .route("/api/tags", post(create_tag_handler))
-        .route("/api/tags/:id", get(get_tag_handler))
-        .route("/api/tags/name/:id", get(get_tag_by_name_handler))
-        .route("/api/tags/:id", patch(update_tag_handler))
-        .route("/api/tags/:id", delete(delete_tag_handler))
+        .route("/api/tags/{id}", get(get_tag_handler))
+        .route("/api/tags/name/{id}", get(get_tag_by_name_handler))
+        .route("/api/tags/{id}", patch(update_tag_handler))
+        .route("/api/tags/{id}", delete(delete_tag_handler))
         .route("/api/tags", get(list_tags_handler))
-        .route("/api/tags/:id/rebuild", get(rebuild_tag_handler))
+        .route("/api/tags/{id}/rebuild", get(rebuild_tag_handler))
         // Note
         .route("/api/notes", post(create_notes_handler))
-        .route("/api/notes/:id", get(get_note_handler))
+        .route("/api/notes/{id}", get(get_note_handler))
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>
-        .route("/api/notes/:id", delete(delete_note_handler))
+        .route("/api/notes/{id}", delete(delete_note_handler))
         .route("/api/notes", get(list_notes_handler))
         .route(
             "/api/notes/generate_files",
@@ -61,8 +61,8 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         )
         .route("/api/notes/search/note-links", post(get_note_links_handler))
         // Card
-        .route("/api/cards/:id", get(get_card_handler))
-        .route("/api/cards/note_id/:id", get(get_cards_handler))
+        .route("/api/cards/{id}", get(get_card_handler))
+        .route("/api/cards/note_id/{id}", get(get_cards_handler))
         .route("/api/cards/leeches", post(get_leeches_handler))
         .route("/api/cards", patch(update_card_handler))
         // Review
