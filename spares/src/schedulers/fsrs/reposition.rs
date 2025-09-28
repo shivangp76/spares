@@ -211,8 +211,8 @@ pub async fn move_cards(
                     .map_or_else(Duration::zero, |scheduled_time| {
                         card_internal.current_elapsed_time - scheduled_time
                     });
-                let mut rng = rand::thread_rng();
-                let rand_float: f64 = rng.r#gen();
+                let mut rng = rand::rng();
+                let rand_float: f64 = rng.random();
                 let new_scheduled_time = cmp::min(
                     cmp::max(
                         minimum_interval,

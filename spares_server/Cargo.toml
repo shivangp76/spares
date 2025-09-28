@@ -19,11 +19,11 @@ categories.workspace = true
 # required-features = ["testing"]
 
 [dependencies]
-axum = { version = "0.7.9", features = ["macros"] }
-clap = { version = "4.5.45", features = ["derive", "cargo"] }
-chrono = { version = "0.4.41", features = ["serde"] }
+axum = { version = "0.8.4", features = ["macros"] }
+clap = { version = "4.5.48", features = ["derive", "cargo"] }
+chrono = { version = "0.4.42", features = ["serde"] }
 env_logger = "0.11.8"
-serde_json = { version = "1.0.143", features = ["preserve_order"] }
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
 spares = { path = "../spares" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
 tokio = { version = "1.47.1", features = ["full"] }
