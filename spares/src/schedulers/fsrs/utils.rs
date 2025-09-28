@@ -177,8 +177,8 @@ pub fn get_fuzz_range(
 // let (obey_easy_days, obey_specific_due_dates) = if easy_days_config.review_ratio == 0.0 {
 //     (true, true)
 // } else {
-//     let mut rng = rand::thread_rng();
-//     let (sample_1, sample_2): (f64, f64) = rng.gen();
+//     let mut rng = rand::rng();
+//     let (sample_1, sample_2): (f64, f64) = rng.random();
 //     (
 //         sample_1 < p_obey_easy_days_val,
 //         sample_2 < p_obey_specific_due_dates_val,

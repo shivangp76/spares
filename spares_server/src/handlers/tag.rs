@@ -64,11 +64,12 @@ pub async fn delete_tag_handler(
 }
 
 pub async fn list_tags_handler(
-    opts: Option<Query<FilterOptions>>,
+    opts: Query<FilterOptions>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let Query(opts) = opts.unwrap_or_default();
-    let list_tags_res = list_tags(&data.db, opts).await.map_err(error_to_response)?;
+    let list_tags_res = list_tags(&data.db, opts.0)
+        .await
+        .map_err(error_to_response)?;
     Ok(Json(list_tags_res))
 }
 

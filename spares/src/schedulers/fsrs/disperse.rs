@@ -361,14 +361,14 @@ mod tests {
         let mut none_count = 0;
         let mut no_changes_count = 0;
         let total = 100;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let scheduler = get_scheduler_from_string("fsrs").unwrap();
         for _ in 1..=total {
-            let siblings_count = rng.gen_range(1..=20);
+            let siblings_count = rng.random_range(1..=20);
             let card_siblings = (1..=siblings_count)
                 .map(|_| {
                     let mut initial_card = Card::new(Utc::now());
-                    initial_card.id = rng.gen_range(1..=999);
+                    initial_card.id = rng.random_range(1..=999);
                     generate_review_logs(scheduler.as_ref(), initial_card, &mut rng)
                 })
                 .collect::<Vec<_>>();
