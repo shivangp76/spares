@@ -44,16 +44,22 @@ async fn update_cards(
         move_card_indices,
         delete_card_indices,
         create_card_indices,
+        same_indices,
     } = match_cards_result;
 
-    // Update moved cards
+    // TODO: Ideally only cards in `same_indices` where their `back_type` or `special_state` was updated should be updated below. Most of the time these won't change so this is wasteful.
+
+    // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
     let moved_cards_query_str = format!(
         "SELECT * FROM card WHERE \"order\" IN ({})",
-        vec!["?"; move_card_indices.len()].join(", ")
+        vec!["?"; move_card_indices.len() + same_indices.len()].join(", ")
     );
     let mut query = sqlx::query_as(moved_cards_query_str.as_str());
     for (from_card_index, _to_card_index) in &move_card_indices {
         query = query.bind(*from_card_index as u32);
+    }
+    for same_index in &same_indices {
+        query = query.bind(*same_index as u32);
     }
     let mut moved_cards: Vec<Card> = query
         .fetch_all(db)
@@ -61,6 +67,7 @@ async fn update_cards(
         .map_err(|e| Error::Sqlx { source: e })?;
     let move_card_indices_map = move_card_indices
         .into_iter()
+        .chain(same_indices.into_iter().map(|i| (i, i)))
         .collect::<HashMap<usize, usize>>();
     for moved_card in &mut moved_cards {
         let to_card_index = move_card_indices_map
