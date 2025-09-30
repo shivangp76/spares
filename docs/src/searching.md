@@ -13,6 +13,7 @@
 | c.id                | i64      |
 | c.created_at        | DateTime |
 | c.updated_at        | DateTime |
+| c.due               | DateTime |
 | c.stability         | f64      |
 | c.difficulty        | f64      |
 | c.desired_retention | f64      |

@@ -141,6 +141,7 @@ enum CardField {
     Id,
     CreatedAt,
     UpdatedAt,
+    Due,
     Stability,
     Difficulty,
     DesiredRetention,
@@ -197,6 +198,7 @@ impl Field {
             "c.id" => Ok(Field::Card(CardField::Id)),
             "c.created_at" => Ok(Field::Card(CardField::CreatedAt)),
             "c.updated_at" => Ok(Field::Card(CardField::UpdatedAt)),
+            "c.due" => Ok(Field::Card(CardField::Due)),
             "c.stability" => Ok(Field::Card(CardField::Stability)),
             "c.difficulty" => Ok(Field::Card(CardField::Difficulty)),
             "c.desired_retention" => Ok(Field::Card(CardField::DesiredRetention)),
@@ -256,6 +258,7 @@ impl Field {
                 CardField::Id => with_op("c.id"),
                 CardField::CreatedAt => with_op("c.created_at"),
                 CardField::UpdatedAt => with_op("c.updated_at"),
+                CardField::Due => with_op("c.due"),
                 CardField::Stability => with_op("c.stability"),
                 CardField::Difficulty => with_op("c.difficulty"),
                 CardField::DesiredRetention => with_op("c.desired_retention"),
@@ -324,7 +327,7 @@ impl Field {
                 CardField::Id | CardField::Rated | CardField::State | CardField::Count => {
                     FieldType::Integer
                 }
-                CardField::CreatedAt | CardField::UpdatedAt => FieldType::DateTime,
+                CardField::CreatedAt | CardField::UpdatedAt | CardField::Due => FieldType::DateTime,
                 CardField::Stability | CardField::Difficulty | CardField::DesiredRetention => {
                     FieldType::Float
                 }
