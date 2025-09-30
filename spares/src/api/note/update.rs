@@ -51,10 +51,11 @@ async fn update_cards(
 
     // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
     let moved_cards_query_str = format!(
-        "SELECT * FROM card WHERE \"order\" IN ({})",
+        "SELECT * FROM card WHERE note_id = ? AND \"order\" IN ({})",
         vec!["?"; move_card_indices.len() + same_indices.len()].join(", ")
     );
     let mut query = sqlx::query_as(moved_cards_query_str.as_str());
+    query = query.bind(note_id);
     for (from_card_index, _to_card_index) in &move_card_indices {
         query = query.bind(*from_card_index as u32);
     }
@@ -401,7 +402,6 @@ pub async fn update_notes(
             parser_id: new_parser_id,
             custom_data: new_custom_data.clone(),
         };
-
         update_cards(db, &old_cards, &new_cards, *note_id, at).await?;
 
         update_tags(db, tags_to_remove.as_ref(), tags_to_add.as_ref(), *note_id).await?;
