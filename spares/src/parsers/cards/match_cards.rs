@@ -7,6 +7,7 @@ pub struct MatchCardsResult {
     pub move_card_indices: Vec<(usize, usize)>,
     pub delete_card_indices: Vec<usize>,
     pub create_card_indices: Vec<usize>,
+    pub same_indices: Vec<usize>,
 }
 
 /// This function determines how cards were changed when a note changes. A note is rendered with its card indices in sequential order. This means that `old_cards` will be similar to `[Some(1), Some(2), Some(3)]`. New cards will contain the new indices. Consider the following example:
@@ -21,10 +22,12 @@ pub struct MatchCardsResult {
 ///     move_card_indices,
 ///     delete_card_indices,
 ///     create_card_indices,
+///     same_indices,
 /// } = match_cards_res.unwrap();
 /// assert_eq!(move_card_indices, vec![(3, 2), (2, 6)]);
 /// assert_eq!(delete_card_indices, vec![4]);
 /// assert_eq!(create_card_indices, vec![3, 4, 5]);
+/// assert_eq!(same_indices, vec![1]);
 /// ```
 /// This function parses the following:
 /// 1. By examining the position of `None` in `new_cards` it determines that new cards with indices 3, 4, and 5 need to be created.
@@ -135,6 +138,7 @@ pub fn match_cards(
         move_card_indices,
         delete_card_indices,
         create_card_indices,
+        same_indices,
     })
 }
 
@@ -152,11 +156,13 @@ mod tests {
             move_card_indices,
             delete_card_indices,
             create_card_indices,
+            same_indices,
         }) = match_cards_res
         {
             assert!(move_card_indices.is_empty());
             assert!(delete_card_indices.is_empty());
             assert!(create_card_indices.is_empty());
+            assert_eq!(same_indices, vec![1, 2, 3]);
         }
     }
 
@@ -170,11 +176,13 @@ mod tests {
             move_card_indices,
             delete_card_indices,
             create_card_indices,
+            same_indices,
         }) = match_cards_res
         {
             assert_eq!(move_card_indices, vec![(3, 2), (2, 6)]);
             assert_eq!(delete_card_indices, vec![4]);
             assert_eq!(create_card_indices, vec![3, 4, 5]);
+            assert_eq!(same_indices, vec![1]);
         }
     }
 
@@ -212,11 +220,13 @@ mod tests {
             move_card_indices,
             delete_card_indices,
             create_card_indices,
+            same_indices,
         }) = match_cards_res
         {
             assert_eq!(move_card_indices, vec![(2, 1), (1, 2)]);
             assert!(delete_card_indices.is_empty());
             assert!(create_card_indices.is_empty());
+            assert!(same_indices.is_empty());
         }
     }
 }
