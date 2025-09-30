@@ -71,7 +71,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/review/statistics", post(get_statistics_handler))
         // Scheduler
         .route(
-            "/api/scheduler/:name/ratings",
+            "/api/scheduler/{name}/ratings",
             get(get_scheduler_ratings_handler),
         )
         .with_state(app_state)
