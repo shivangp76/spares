@@ -45,6 +45,9 @@ pub struct FilterArgs {
 
 #[derive(Clone, Debug, Display, EnumIter, EnumString, PartialEq)]
 enum ReviewAction {
+    // Used to avoid accidentally pressing <Enter> twice and submitting a rating of 1 by accident
+    #[strum(serialize = "-")]
+    Loop,
     Flip,
     #[strum(to_string = "Rate: {description} ({id})")]
     Rate {
@@ -155,9 +158,9 @@ pub async fn review_cards(
     let mut all_options = ReviewAction::iter()
         .filter(|x| !matches!(*x, ReviewAction::Rate { .. }))
         .collect::<Vec<_>>();
-    // We want to keep the rating near the top so they are all visible
+    // Keep the ratings near the top (after the null action) so they are all visible
     all_options.splice(
-        1..1,
+        2..2,
         get_scheduler_ratings(scheduler_name, base_url, client).await?,
     );
 
@@ -204,7 +207,7 @@ pub async fn review_cards(
                 if card_flipped {
                     !matches!(*x, ReviewAction::Flip)
                 } else {
-                    !matches!(*x, ReviewAction::Rate { .. })
+                    !matches!(*x, ReviewAction::Rate { .. } | ReviewAction::Loop)
                 }
             })
             .collect::<Vec<_>>();
@@ -220,6 +223,7 @@ pub async fn review_cards(
         let chosen_action = chosen_action_res.as_ref().unwrap();
         advance_review_card = false;
         match chosen_action {
+            ReviewAction::Loop => {}
             ReviewAction::Rate {
                 description: _,
                 id: rating_id,
