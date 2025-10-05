@@ -26,8 +26,10 @@ pub struct ReviewArgs {
     pub filter_args: FilterArgs,
     #[arg(short, long, default_value = "fsrs")]
     pub scheduler_name: String,
-    #[arg(long, env = "SPARES_RENDERED_FILE_OPENER")]
-    pub opener: Option<String>,
+    #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
+    pub open_command: Option<String>,
+    #[arg(long, env = "SPARES_RENDERED_FILE_CLOSE_COMMAND")]
+    pub close_command: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -76,9 +78,10 @@ enum ReviewAction {
 
 async fn get_review_card(
     filter_args: &FilterArgs,
-    opener: Option<&str>,
+    open_command: Option<&str>,
     base_url: &str,
     client: &Client,
+    first: bool,
 ) -> Result<Option<(GetReviewCardResponse, Child)>, String> {
     let url = format!("{}/api/review", base_url);
     let filter = if let Some(ref query) = filter_args.query {
@@ -124,7 +127,11 @@ async fn get_review_card(
     match review_card_response {
         Some(review_card) => {
             // Open rendered card
-            let child = open_rendered_file(review_card.card_front_rendered_path.as_ref(), opener)?;
+            let child = open_rendered_file(
+                review_card.card_front_rendered_path.as_ref(),
+                open_command,
+                first,
+            )?;
             println!("Note Id: {}", &review_card.note_id);
             println!("Card Id: {}", &review_card.card_id);
             println!(
@@ -150,7 +157,8 @@ pub async fn review_cards(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    let opener = review_args.opener.as_deref();
+    let open_command = review_args.open_command.as_deref();
+    let close_command = review_args.close_command.as_deref();
     let scheduler_name = &review_args.scheduler_name;
     let tag_id = review_args.filter_args.tag_id;
 
@@ -171,8 +179,14 @@ pub async fn review_cards(
     let mut card_flipped = false;
     let mut advance_review_card = false;
 
-    let review_card_opt =
-        get_review_card(&review_args.filter_args, opener, base_url, client).await?;
+    let review_card_opt = get_review_card(
+        &review_args.filter_args,
+        open_command,
+        base_url,
+        client,
+        true,
+    )
+    .await?;
     let mut recall_start = Instant::now();
     // let mut recall_duration = std::time::Duration::MAX;
     let mut recall_duration = None;
@@ -189,8 +203,14 @@ pub async fn review_cards(
             println!();
             // Opening the card's raw file is not useful since edits must be made to the note, not the
             // card. Opening the note's raw file and the card's rendered file is more useful.
-            let review_card_opt =
-                get_review_card(&review_args.filter_args, opener, base_url, client).await?;
+            let review_card_opt = get_review_card(
+                &review_args.filter_args,
+                open_command,
+                base_url,
+                client,
+                false,
+            )
+            .await?;
             recall_start = Instant::now();
             recall_duration = None;
             if review_card_opt.is_none() {
@@ -231,7 +251,11 @@ pub async fn review_cards(
                 card_flipped = false;
 
                 // Close card back
-                close_rendered_file(&mut card_back_rendered_child.take().unwrap())?;
+                close_rendered_file(
+                    &mut card_back_rendered_child.take().unwrap(),
+                    close_command,
+                    false,
+                )?;
 
                 reviewed_cards_count += 1;
                 submit_rating(
@@ -259,7 +283,7 @@ pub async fn review_cards(
                 card_flipped = true;
 
                 // Close card
-                close_rendered_file(&mut card_front_rendered_child)?;
+                close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
 
                 // Open card back to see answer
                 // The duration is calculated before the card back is opened since the user already
@@ -278,8 +302,11 @@ pub async fn review_cards(
                     CardBackRenderedPath::CardBack(path_buf)
                     | CardBackRenderedPath::Note(path_buf) => path_buf,
                 };
-                card_back_rendered_child =
-                    Some(open_rendered_file(card_back_rendered_path, opener)?);
+                card_back_rendered_child = Some(open_rendered_file(
+                    card_back_rendered_path,
+                    open_command,
+                    false,
+                )?);
             }
             ReviewAction::OpenNote => {
                 // If the note is viewed before the card is flipped, then the answer is revealed.
@@ -316,10 +343,14 @@ pub async fn review_cards(
                 }
                 if card_flipped {
                     // Close card back
-                    close_rendered_file(&mut card_back_rendered_child.take().unwrap())?;
+                    close_rendered_file(
+                        &mut card_back_rendered_child.take().unwrap(),
+                        close_command,
+                        false,
+                    )?;
                 } else {
                     // Close card front
-                    close_rendered_file(&mut card_front_rendered_child)?;
+                    close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
                 }
                 card_flipped = false;
 
@@ -351,9 +382,9 @@ pub async fn review_cards(
             //     // TODO
             // }
             ReviewAction::Exit => {
-                close_rendered_file(&mut card_front_rendered_child)?;
+                close_rendered_file(&mut card_front_rendered_child, close_command, true)?;
                 if let Some(mut child) = card_back_rendered_child {
-                    close_rendered_file(&mut child)?;
+                    close_rendered_file(&mut child, close_command, true)?;
                 }
                 print_summary(session_start, session_recall, reviewed_cards_count);
                 return Ok(());
