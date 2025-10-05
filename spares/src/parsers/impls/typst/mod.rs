@@ -63,6 +63,12 @@ impl Parseable for TypstParser {
         Ok(all_settings.into_iter().collect::<Vec<_>>())
     }
 
+    fn note_settings_keys(&self) -> NoteSettingsKeys {
+        let mut note_settings_keys = NoteSettingsKeys::default();
+        note_settings_keys.groupings_all = "\\*";
+        note_settings_keys
+    }
+
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
         // Note that a regex approach will not work for nested clozes.
         let mut all_clozes = Vec::new();
@@ -399,7 +405,7 @@ fn get_linked_notes_string(
         (note_data.to_string(), linked_notes_string)
 
         // // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        // // TODO: This doesn't match the paren version, only the bracket version.
+        // // NOTE: This doesn't match the paren version, only the bracket version.
         // let mut all_linked_notes = Vec::new();
         // let mut data_parser = TypstDataParser::new(note_data);
         // while let Some(linked_note) = data_parser.next_linked_note() {

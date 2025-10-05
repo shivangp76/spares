@@ -31,7 +31,7 @@ use spares::{
             CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
             NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
             SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
-            UnmatchedKeywordResponse, UpdateNotesRequest,
+            UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse},
@@ -179,7 +179,7 @@ enum EditCommands {
         query: Option<Option<String>>,
         #[arg(short, long)]
         auto_delete: Option<bool>,
-        // This is really an action, not a setting that can be updated.
+        // TODO: This is really an action, not a setting that can be updated.
         #[arg(short, long, default_value_t = false)]
         rebuild: bool,
     },
@@ -196,6 +196,8 @@ enum EditCommands {
         tags_to_remove: Option<Vec<String>>,
         #[arg(long, value_delimiter = ' ', num_args = 1..)]
         tags_to_add: Option<Vec<String>>,
+        #[arg(long, default_value_t = false)]
+        remove_all_tags: bool,
     },
     Card {
         #[command(flatten)]
@@ -620,6 +622,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 keywords,
                 tags_to_remove,
                 tags_to_add,
+                remove_all_tags,
             } => {
                 let selector = if let Some(ids) = selector.ids {
                     NotesSelector::Ids(ids)
@@ -646,13 +649,21 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 } else {
                     unreachable!("by clap conflicts with")
                 };
+                let tags = if remove_all_tags {
+                    // If `tags_to_add` is empty, this will just set all tags to nothing which will remove all tags. Otherwise, it will remove all tags and then add `tags_to_add`
+                    UpdateTags::SetTags(tags_to_add.unwrap_or_default())
+                } else {
+                    UpdateTags::ModifyTags {
+                        tags_to_remove: tags_to_remove,
+                        tags_to_add: tags_to_add,
+                    }
+                };
                 let request = UpdateNotesRequest {
                     selector,
                     data,
                     parser_id,
                     keywords: keywords.as_deref().map(parse_list),
-                    tags_to_remove,
-                    tags_to_add,
+                    tags,
                     custom_data: None,
                 };
                 let url = format!("{}/api/notes", base_url);

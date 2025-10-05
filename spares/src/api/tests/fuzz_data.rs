@@ -251,6 +251,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
     let NoteSettingsKeys {
         settings_delim,
         settings_key_value_delim,
+        groupings_all,
         ..
     } = parser.note_settings_keys();
     let cloze_settings_string = construct_cloze_string(
@@ -260,6 +261,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
         settings_delim,
         settings_key_value_delim,
         None,
+        groupings_all,
     );
 
     let mut cloze_body = String::new();

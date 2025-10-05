@@ -9,7 +9,7 @@ use crate::model::CustomData;
 use crate::parsers::{NoteImportAction, NoteSettings, Parseable, get_all_parsers};
 use crate::schema::FilterOptions;
 use crate::schema::note::{
-    CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest,
+    CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
 };
 use crate::schema::parser::ParserResponse;
 use crate::{AdapterErrorKind, Error, LibraryError, ParserErrorKind};
@@ -88,8 +88,7 @@ impl SparesAdapter {
             parser_id: None,
             data: None,
             keywords: None,
-            tags_to_remove: None,
-            tags_to_add: None,
+            tags: UpdateTags::None,
         };
         if run {
             match &request_processor {
@@ -196,8 +195,7 @@ impl SrsAdapter for SparesAdapter {
                         parser_id: Some(parser_id),
                         data: Some(note_data),
                         keywords: Some(local_settings.keywords),
-                        tags_to_remove: Some(vec!["*".to_string()]),
-                        tags_to_add: Some(local_settings.tags),
+                        tags: UpdateTags::SetTags(local_settings.tags),
                         custom_data: Some(local_settings.custom_data),
                     };
                     if run {

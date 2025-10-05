@@ -20,7 +20,7 @@ pub(crate) mod tests {
     use crate::api::tag::create_tag;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::{
-        CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest,
+        CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
     };
     use crate::schema::tag::CreateTagRequest;
     use chrono::Utc;
@@ -101,8 +101,10 @@ pub(crate) mod tests {
             data: None,
             parser_id: None,
             keywords: None,
-            tags_to_add: Some(vec!["test filtered tag".to_string()]),
-            tags_to_remove: None,
+            tags: UpdateTags::ModifyTags {
+                tags_to_remove: None,
+                tags_to_add: Some(vec!["test filtered tag".to_string()]),
+            },
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
@@ -148,8 +150,10 @@ pub(crate) mod tests {
             data: None,
             parser_id: None,
             keywords: None,
-            tags_to_add: None,
-            tags_to_remove: Some(vec!["test filtered tag".to_string()]),
+            tags: UpdateTags::ModifyTags {
+                tags_to_add: None,
+                tags_to_remove: Some(vec!["test filtered tag".to_string()]),
+            },
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
@@ -240,8 +244,10 @@ pub(crate) mod tests {
             data: None,
             parser_id: None,
             keywords: None,
-            tags_to_add: None,
-            tags_to_remove: Some(vec!["math".to_string()]),
+            tags: UpdateTags::ModifyTags {
+                tags_to_add: None,
+                tags_to_remove: Some(vec!["math".to_string()]),
+            },
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;

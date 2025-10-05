@@ -16,7 +16,7 @@ use crate::{
         get_cards, match_cards,
     },
     schema::{
-        note::{NoteResponse, NotesSelector, UpdateNotesRequest},
+        note::{NoteResponse, NotesSelector, UpdateNotesRequest, UpdateTags},
         tag::CreateTagRequest,
     },
     search::evaluator::Evaluator,
@@ -133,12 +133,7 @@ async fn update_cards(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn update_tags(
-    db: &SqlitePool,
-    tags_to_remove: Option<&Vec<String>>,
-    tags_to_add: Option<&Vec<String>>,
-    note_id: NoteId,
-) -> Result<(), Error> {
+async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Result<(), Error> {
     // Validate tags do not contain filtered tags
     let existing_filtered_tags: Vec<(String,)> =
         sqlx::query_as(r"SELECT name FROM tag WHERE query IS NOT NULL")
@@ -150,70 +145,82 @@ async fn update_tags(
         .map(|(x,)| x.as_str())
         .collect::<Vec<_>>();
 
-    if let Some(tags_to_remove) = tags_to_remove {
-        if let Some(filtered_tag) = tags_to_remove
+    let remove_all_tags = matches!(tags, UpdateTags::SetTags(_));
+    let (tags_to_remove, tags_to_add) = match tags {
+        UpdateTags::ModifyTags {
+            tags_to_remove,
+            tags_to_add,
+        } => (tags_to_remove, tags_to_add),
+        UpdateTags::SetTags(items) => (&None, &Some(items.clone())),
+        UpdateTags::None => (&None, &None),
+    };
+
+    if let Some(tags_to_remove) = tags_to_remove
+        && let Some(filtered_tag) = tags_to_remove
             .iter()
             .find(|t| existing_filtered_tags_names.contains(&t.as_str()))
-        {
-            return Err(Error::Library(LibraryError::Tag(
-                TagErrorKind::InvalidInput(format!(
-                    "Cannot manually remove filtered tag `{}`. Filtered tags are dynamically assigned.",
-                    filtered_tag
-                )),
-            )));
-        }
-        // Remove tags
-        let mut tags_to_check = Vec::new();
-        if tags_to_remove.contains(&"*".to_string()) {
-            // Get tags for the note that have `auto_delete` enabled
-            let tags_tuple: Vec<(TagId,)> = sqlx::query_as(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
-                .bind(note_id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
-            tags_to_check.extend(tag_ids);
-
-            // Remove all tags
-            let _delete_note_tag_result = sqlx::query(r"DELETE FROM note_tag WHERE note_id = ?")
-                .bind(note_id)
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        } else if !tags_to_remove.is_empty() {
-            // Get tags for the note that have `auto_delete` enabled
-            let get_tags_query_str = format!(
-                "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
-                vec!["?"; tags_to_remove.len()].join(", ")
-            );
-            let mut query = sqlx::query_as(get_tags_query_str.as_str());
-            query = query.bind(note_id);
-            for tag_name in tags_to_remove {
-                query = query.bind(tag_name);
-            }
-            let tags_tuple: Vec<(TagId,)> = query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
-            tags_to_check.extend(tag_ids);
-
-            let delete_note_tag_query_str = format!(
-                "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
-                vec!["?"; tags_to_remove.len()].join(", ")
-            );
-            let mut query = sqlx::query(delete_note_tag_query_str.as_str());
-            for tag_name in tags_to_remove {
-                query = query.bind(tag_name);
-            }
-            let _delete_tags_res = query
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        }
-        // Delete tags with no more notes
-        delete_empty_tags(db, &tags_to_check).await?;
+    {
+        return Err(Error::Library(LibraryError::Tag(
+            TagErrorKind::InvalidInput(format!(
+                "Cannot manually remove filtered tag `{}`. Filtered tags are dynamically assigned.",
+                filtered_tag
+            )),
+        )));
     }
+    // Remove tags
+    let mut tags_to_check = Vec::new();
+    if remove_all_tags {
+        // Get tags for the note that have `auto_delete` enabled
+        let tags_tuple: Vec<(TagId,)> = sqlx::query_as(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
+                .bind(note_id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
+        tags_to_check.extend(tag_ids);
+
+        // Remove all tags
+        let _delete_note_tag_result = sqlx::query(r"DELETE FROM note_tag WHERE note_id = ?")
+            .bind(note_id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    } else if let Some(tags_to_remove) = tags_to_remove
+        && !tags_to_remove.is_empty()
+    {
+        // Get tags for the note that have `auto_delete` enabled
+        let get_tags_query_str = format!(
+            "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
+            vec!["?"; tags_to_remove.len()].join(", ")
+        );
+        let mut query = sqlx::query_as(get_tags_query_str.as_str());
+        query = query.bind(note_id);
+        for tag_name in tags_to_remove {
+            query = query.bind(tag_name);
+        }
+        let tags_tuple: Vec<(TagId,)> = query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
+        tags_to_check.extend(tag_ids);
+
+        let delete_note_tag_query_str = format!(
+            "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
+            vec!["?"; tags_to_remove.len()].join(", ")
+        );
+        let mut query = sqlx::query(delete_note_tag_query_str.as_str());
+        for tag_name in tags_to_remove {
+            query = query.bind(tag_name);
+        }
+        let _delete_tags_res = query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    // Delete tags with no more notes
+    delete_empty_tags(db, &tags_to_check).await?;
+
     if let Some(tags_to_add) = tags_to_add {
         if let Some(filtered_tag) = tags_to_add
             .iter()
@@ -324,8 +331,7 @@ pub async fn update_notes(
         parser_id,
         data,
         keywords,
-        tags_to_remove,
-        tags_to_add,
+        tags,
         custom_data,
     } = body;
 
@@ -376,7 +382,7 @@ pub async fn update_notes(
             all_parsers,
         )?;
 
-        // TODO: Can the underscore below be changed to `new_cards` and then the call above to get `new_cards` can be removed?
+        // TODO: `add_order_to_note_data()` calls `get_cards()` and so does `get_parser_and_cards()`. There should be a way to modify the `get_cards()` function itself to return the old indices while also updating the note data  with the new indices
         // Update note, adding orders sequentially
         let (new_data, _) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
@@ -404,7 +410,7 @@ pub async fn update_notes(
         };
         update_cards(db, &old_cards, &new_cards, *note_id, at).await?;
 
-        update_tags(db, tags_to_remove.as_ref(), tags_to_add.as_ref(), *note_id).await?;
+        update_tags(db, &tags, *note_id).await?;
 
         // Get all tags without a query
         let tags_tuple: Vec<(String,)> = sqlx::query_as(r"SELECT name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.query IS NULL ORDER BY name ASC")
@@ -552,7 +558,10 @@ mod tests {
         model::{Card, SpecialState},
         parsers::{BackType, get_all_parsers},
         schema::{
-            note::{CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest},
+            note::{
+                CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest,
+                UpdateTags,
+            },
             review::{RatingSubmission, StudyAction, SubmitStudyActionRequest},
         },
     };
@@ -632,8 +641,7 @@ mod tests {
             data: Some(new_note_data.to_string()),
             parser_id: None,
             keywords: None,
-            tags_to_add: None,
-            tags_to_remove: None,
+            tags: UpdateTags::None,
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
@@ -764,8 +772,7 @@ mod tests {
             data: Some(new_note_data.clone()),
             parser_id: None,
             keywords: None,
-            tags_to_add: None,
-            tags_to_remove: None,
+            tags: UpdateTags::None,
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;

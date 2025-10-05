@@ -6,7 +6,6 @@ use crate::{CardErrorKind, DelimiterErrorKind, LibraryError};
 use fancy_regex::Regex;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
 use std::ops::Range;
 use std::str::FromStr;
 
@@ -243,14 +242,12 @@ impl ClozeGrouping {
         *current_grouping_number += 1;
         result
     }
-}
 
-impl Display for ClozeGrouping {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    pub fn to_parser_string(&self, groupings_all: &str) -> String {
         match self {
-            ClozeGrouping::All => write!(f, "*"),
-            ClozeGrouping::Auto(_) => write!(f, ""),
-            ClozeGrouping::Custom(group) => write!(f, "{}", group),
+            ClozeGrouping::All => groupings_all.to_string(),
+            ClozeGrouping::Auto(_) => String::new(),
+            ClozeGrouping::Custom(group) => group.to_string(),
         }
     }
 }
@@ -317,6 +314,7 @@ pub fn construct_cloze_string(
     settings_delim: &str,
     settings_key_value_delim: &str,
     modify_defaults_fn: ModifyDefaultsFn,
+    groupings_all: &str,
 ) -> String {
     // Global settings
     let mut parts: Vec<String> = Vec::new();
@@ -334,9 +332,7 @@ pub fn construct_cloze_string(
     if global_settings.all_groupings {
         all_grouping_parts.push(format!(
             "{}{}{}",
-            cloze_settings_keys.grouping,
-            settings_key_value_delim,
-            ClozeGrouping::All
+            cloze_settings_keys.grouping, settings_key_value_delim, groupings_all
         ));
     }
     for (
@@ -360,7 +356,7 @@ pub fn construct_cloze_string(
         let mut grouping_parts: Vec<String> = Vec::new();
         let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
         if parse_grouping {
-            let grouping_str = grouping.to_string();
+            let grouping_str = grouping.to_parser_string(groupings_all);
             grouping_parts.push(format!(
                 "{}{}{}",
                 cloze_settings_keys.grouping, settings_key_value_delim, grouping_str
@@ -428,7 +424,7 @@ pub fn construct_cloze_string(
         {
             let groups_str = only_groups
                 .drain(0..)
-                .map(|grouping| grouping.to_string())
+                .map(|grouping| grouping.to_parser_string(groupings_all))
                 .collect::<Vec<_>>()
                 .join(",");
             all_grouping_parts.push(format!(
@@ -450,9 +446,13 @@ pub fn construct_cloze_string(
     parts.join(settings_delim)
 }
 
-fn parse_grouping(input: &str, current_grouping_number: &mut u32) -> Vec<ClozeGrouping> {
+fn parse_grouping(
+    input: &str,
+    current_grouping_number: &mut u32,
+    groupings_all: &str,
+) -> Vec<ClozeGrouping> {
     let values = input.split(',').collect::<Vec<_>>();
-    if values.contains(&ClozeGrouping::All.to_string().as_str()) {
+    if values.contains(&groupings_all) {
         vec![ClozeGrouping::All]
     } else if values.is_empty() {
         *current_grouping_number += 1;
@@ -587,6 +587,7 @@ pub fn parse_card_settings(
     NoteSettingsKeys {
         settings_delim,
         settings_key_value_delim,
+        groupings_all,
         ..
     }: &NoteSettingsKeys,
     cloze_settings_keys: &ClozeSettingsKeys,
@@ -612,7 +613,7 @@ pub fn parse_card_settings(
     let mut local_groups = settings_split
         .iter()
         .filter(|(k, _)| *k == grouping_key)
-        .flat_map(|(_, v)| parse_grouping(v, current_grouping_number))
+        .flat_map(|(_, v)| parse_grouping(v, current_grouping_number, groupings_all))
         .collect::<Vec<_>>();
     let mut settings_split_by_grouping =
         split_inclusive_following(&settings_split, |(k, _)| *k == grouping_key);
@@ -638,7 +639,7 @@ pub fn parse_card_settings(
             let grouping_value = grouping_settings.first().map(|x| x.1).unwrap();
             grouping_settings.remove(0);
             (
-                parse_grouping(grouping_value, current_grouping_number),
+                parse_grouping(grouping_value, current_grouping_number, groupings_all),
                 grouping_settings,
             )
         })
@@ -791,6 +792,7 @@ mod tests {
         let NoteSettingsKeys {
             settings_delim,
             settings_key_value_delim,
+            groupings_all,
             ..
         } = parser.note_settings_keys();
         let cloze_settings_keys = parser.cloze_settings_keys();
@@ -801,6 +803,7 @@ mod tests {
             settings_delim,
             settings_key_value_delim,
             None,
+            groupings_all,
         );
         let expected_result = "h:Test;o:1";
         assert_eq!(result, expected_result.to_string());
@@ -817,6 +820,7 @@ mod tests {
         let NoteSettingsKeys {
             settings_delim,
             settings_key_value_delim,
+            groupings_all,
             ..
         } = parser.note_settings_keys();
         let cloze_settings_keys = parser.cloze_settings_keys();
@@ -827,6 +831,7 @@ mod tests {
             settings_delim,
             settings_key_value_delim,
             None,
+            groupings_all,
         );
         let expected_result = "h:Test";
         assert_eq!(result, expected_result.to_string());
