@@ -9,10 +9,22 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub fn open_rendered_file(file_path: &Path, opener: Option<&str>) -> Result<Child, String> {
-    if let Some(command) = opener {
-        return Command::new(command)
-            .arg(file_path)
+pub fn open_rendered_file(
+    file_path: &Path,
+    open_command_opt: Option<&str>,
+    _first: bool,
+) -> Result<Child, String> {
+    let open_command_opt = open_command_opt.filter(|x| !x.is_empty());
+    if let Some(open_command) = open_command_opt {
+        let mut parts = open_command.split_whitespace();
+        let program = parts
+            .next()
+            .ok_or_else(|| "Unreachable by outer filter: Empty command".to_string())?;
+        let args = parts.collect::<Vec<_>>();
+        let mut command = Command::new(program);
+        command.args(&args);
+        command.arg(file_path);
+        return command
             .stdout(Stdio::null()) // Hide output from terminal
             .stderr(Stdio::null()) // Hide output from terminal
             .spawn()
@@ -30,8 +42,31 @@ pub fn open_rendered_file(file_path: &Path, opener: Option<&str>) -> Result<Chil
     // open::that(file_path).map_err(|e| format!("{}", e))
 }
 
-pub fn close_rendered_file(rendered_file_child: &mut Child) -> Result<(), String> {
-    rendered_file_child.kill().map_err(|e| format!("{}", e))
+pub fn close_rendered_file(
+    rendered_file_child: &mut Child,
+    close_command_opt: Option<&str>,
+    last: bool,
+) -> Result<(), String> {
+    let close_command_opt = close_command_opt.filter(|x| !x.is_empty());
+    if last && let Some(close_command) = close_command_opt {
+        let mut parts = close_command.split_whitespace();
+        let program = parts
+            .next()
+            .ok_or_else(|| "Unreachable by outer filter: Empty command".to_string())?;
+        let args = parts.collect::<Vec<_>>();
+        let mut command = Command::new(program);
+        command.args(&args);
+        return command
+            .stdout(Stdio::null()) // Hide output from terminal
+            .stderr(Stdio::null()) // Hide output from terminal
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to close rendered file: {}", e));
+    }
+    if close_command_opt.is_none() {
+        return rendered_file_child.kill().map_err(|e| format!("{}", e));
+    }
+    Ok(())
 }
 
 pub async fn get_scheduler_ratings(
