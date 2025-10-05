@@ -357,7 +357,7 @@ fn get_latex_command(
 }
 
 fn get_linked_notes(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-    let linked_notes_start_regex = Regex::new(r"\\li{").unwrap();
+    let linked_notes_start_regex = Regex::new(r"^[^%].*\\li{").unwrap();
     let linked_notes = get_latex_command(data, &linked_notes_start_regex)
         .map_err(LibraryError::Delimiter)?
         .into_iter()
@@ -367,7 +367,7 @@ fn get_linked_notes(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
 }
 
 fn get_settings(data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
-    let settings_start_regex = Regex::new(r"\\se{").unwrap();
+    let settings_start_regex = Regex::new(r"^[^%].*\\se{").unwrap();
     let settings_str =
         get_latex_command(data, &settings_start_regex).map_err(LibraryError::Delimiter)?;
     Ok(settings_str)
