@@ -351,7 +351,7 @@ pub(crate) mod tests {
     use crate::api::note::{create_notes, update_notes};
     use crate::api::parser::tests::create_parser_helper;
     use crate::parsers::get_all_parsers;
-    use crate::schema::note::NotesSelector;
+    use crate::schema::note::{NotesSelector, UpdateTags};
     use crate::{
         model::NoteTag,
         schema::note::{CreateNoteRequest, CreateNotesRequest, UpdateNotesRequest},
@@ -497,8 +497,7 @@ pub(crate) mod tests {
             data: Some(created_notes[1].data.to_string()),
             parser_id: None,
             keywords: None,
-            tags_to_add: None,
-            tags_to_remove: None,
+            tags: UpdateTags::None,
             custom_data: None,
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;

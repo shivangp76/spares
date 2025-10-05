@@ -3,7 +3,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use spares::model::{CardId, NoteId, RatingId, TagId};
 use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest};
-use spares::schema::note::{NotesSelector, UpdateNotesRequest};
+use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
 use spares::schema::review::{Rating, RatingSubmission, StudyAction, SubmitStudyActionRequest};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -103,8 +103,10 @@ pub async fn tag_note(
         data: None,
         parser_id: None,
         keywords: None,
-        tags_to_remove: None,
-        tags_to_add: Some(vec![tag_name.to_string()]),
+        tags: UpdateTags::ModifyTags {
+            tags_to_remove: None,
+            tags_to_add: Some(vec![tag_name.to_string()]),
+        },
         custom_data: None,
     };
     let url = format!("{}/api/notes", base_url);

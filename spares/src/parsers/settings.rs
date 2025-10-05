@@ -85,6 +85,7 @@ pub struct NoteSettingsKeys {
     pub settings_delim: &'static str,
     pub settings_key_value_delim: &'static str,
     pub global_settings_prefix: ReadWriteValue,
+    pub groupings_all: &'static str,
 }
 
 impl Default for NoteSettingsKeys {
@@ -111,6 +112,7 @@ impl Default for NoteSettingsKeys {
             settings_delim: ";",
             settings_key_value_delim: ":",
             global_settings_prefix: ReadWriteValue::Same("g-"),
+            groupings_all: "*",
         }
     }
 }
@@ -156,6 +158,7 @@ pub fn parse_note_settings(
         global_settings_prefix: global_prefix,
         settings_delim,
         settings_key_value_delim,
+        groupings_all,
     } = parser.note_settings_keys();
     let mut all_settings_split = Vec::new();
     for settings_indices in all_settings_indices {
@@ -221,7 +224,9 @@ pub fn parse_note_settings(
                     ));
                 }
             } else if tags_keys.matches_read(key) {
-                if let Err(items) = parse_settings_list(value, &mut settings.tags, true) {
+                if let Err(items) =
+                    parse_settings_list(value, &mut settings.tags, true, groupings_all)
+                {
                     settings.errors_and_warnings.extend(
                         items
                             .into_iter()
@@ -234,7 +239,9 @@ pub fn parse_note_settings(
                     );
                 }
             } else if keywords_keys.matches_read(key) {
-                if let Err(items) = parse_settings_list(value, &mut settings.keywords, false) {
+                if let Err(items) =
+                    parse_settings_list(value, &mut settings.keywords, false, groupings_all)
+                {
                     settings.errors_and_warnings.extend(
                         items
                             .into_iter()
@@ -288,7 +295,6 @@ pub fn parse_note_settings(
                     }
                 }
             } else if custom_data_key.matches_read(key) {
-                // TODO: Maybe convert this to TOML instead?
                 let parsed_custom_data: Result<CustomData, _> = serde_json::from_str(value);
                 match parsed_custom_data {
                     Ok(custom_data) => {
@@ -453,12 +459,13 @@ fn parse_settings_list(
     value: &str,
     existing: &mut Vec<String>,
     sort: bool,
+    groupings_all: &str,
 ) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     let new_items = parse_list(value);
     for item in new_items {
         if let Some(stripped) = item.strip_prefix('-') {
-            if stripped == "*" {
+            if stripped == groupings_all {
                 existing.clear();
             } else {
                 let index = existing.iter().position(|x| *x == stripped);

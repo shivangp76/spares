@@ -183,14 +183,20 @@ pub mod note {
         pub data: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub keywords: Option<Vec<String>>,
-        /// Note that `tags_to_remove` is processed before `tags_to_add`.
-        /// Passing "*" in `tags_to_remove` removes all tags, so that the entire field can be overridden.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub tags_to_remove: Option<Vec<String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub tags_to_add: Option<Vec<String>>,
+        pub tags: UpdateTags,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub custom_data: Option<CustomData>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    /// To remove all tags, `UpdateTags::SetTags`` must be used
+    pub enum UpdateTags {
+        ModifyTags {
+            tags_to_remove: Option<Vec<String>>,
+            tags_to_add: Option<Vec<String>>,
+        },
+        SetTags(Vec<String>),
+        None,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
