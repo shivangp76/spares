@@ -352,6 +352,7 @@ fn modify_card_settings(
     let NoteSettingsKeys {
         settings_delim,
         settings_key_value_delim,
+        groupings_all,
         ..
     } = output_parser.note_settings_keys();
     let cloze_settings_keys = output_parser.cloze_settings_keys();
@@ -385,6 +386,7 @@ fn modify_card_settings(
                     settings_delim,
                     settings_key_value_delim,
                     modify_defaults,
+                    groupings_all,
                 );
                 let replaced_range = current_cloze.0.borrow().start_delim.start
                     ..current_cloze.0.borrow().end_delim.end;
@@ -834,7 +836,7 @@ pub fn get_cards_main(
             {
                 return Err(LibraryError::Card(CardErrorKind::InvalidInput(format!(
                     "All clozes cannot be hidden. See grouping `{}`.",
-                    grouping
+                    grouping.to_parser_string(note_settings_keys.groupings_all)
                 ))));
             }
             if matches!(front_conceal, FrontConceal::OnlyGrouping)
