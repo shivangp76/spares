@@ -204,7 +204,7 @@ pub async fn create_notes(
         create_card_tags(db, &card_filtered_tag_entries).await?;
     }
 
-    // Create card files, without compiling
+    // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
     let parse_notes_request = GenerateNoteFilesRequests {
         requests: generate_files_requests,
         overridden_output_raw_dir: None,

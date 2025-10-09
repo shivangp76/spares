@@ -64,6 +64,7 @@ enum ReviewAction {
     SuspendNote,
     #[strum(serialize = "Tag to modify later")]
     TagNote,
+    #[strum(serialize = "Bury Card")]
     BuryCard,
     #[strum(serialize = "Bury Note (card + siblings)")]
     BuryNote,

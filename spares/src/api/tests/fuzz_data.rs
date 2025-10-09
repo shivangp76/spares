@@ -245,7 +245,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
         hidden_no_answer: false,
         front_conceal: FrontConceal::OnlyGrouping,
         back_reveal: BackReveal::FullNote,
-        hidden: false,
+        skip_serialization: false,
     };
     // NOTE: For simplicity, each cloze is only a part of 1 grouping.
     let NoteSettingsKeys {

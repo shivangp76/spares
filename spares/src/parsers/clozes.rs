@@ -113,7 +113,7 @@ pub struct ClozeGroupingSettings {
     pub back_reveal: BackReveal,
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
-    pub hidden: bool,
+    pub skip_serialization: bool,
 }
 
 #[derive(
@@ -266,7 +266,7 @@ impl ClozeGroupingSettings {
             hidden_no_answer: false,
             front_conceal: FrontConceal::default(),
             back_reveal: BackReveal::default(),
-            hidden: false,
+            skip_serialization: false,
         };
         if let Some((front_conceal, back_reveal)) = modify_defaults_fn {
             result.front_conceal = front_conceal;
@@ -346,11 +346,11 @@ pub fn construct_cloze_string(
             hidden_no_answer,
             front_conceal,
             back_reveal,
-            hidden,
+            skip_serialization,
         },
     ) in grouping_settings.iter().enumerate()
     {
-        if *hidden {
+        if *skip_serialization {
             continue;
         }
         let mut grouping_parts: Vec<String> = Vec::new();
