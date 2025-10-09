@@ -191,7 +191,7 @@ fn boil_up_settings(
     for clozes in &mut *cards_raw {
         // Get first non-hidden cloze to determine if it is an image occlusion cloze. This
         // determines the default settings.
-        let first_cloze = clozes.iter().find(|(_, x)| !x.hidden).unwrap();
+        let first_cloze = clozes.iter().find(|(_, x)| !x.skip_serialization).unwrap();
         let modify_defaults = first_cloze
             .0
             .image_occlusion
@@ -215,9 +215,9 @@ fn boil_up_settings(
                 back_reveal,
                 // Individual cloze settings. Don't boil up
                 hidden_no_answer: _,
-                hidden,
+                skip_serialization,
             } = grouping_settings;
-            if *hidden {
+            if *skip_serialization {
                 continue;
             }
 
@@ -250,7 +250,10 @@ fn boil_up_settings(
         }
 
         // Update first non-hidden cloze with boiled settings
-        let cloze = clozes.iter_mut().find(|(_, x)| !x.hidden).unwrap();
+        let cloze = clozes
+            .iter_mut()
+            .find(|(_, x)| !x.skip_serialization)
+            .unwrap();
         cloze.1.include_forward_card = boiled_cloze_settings.include_forward_card;
         cloze.1.include_backward_card = boiled_cloze_settings.include_backward_card;
         cloze.1.is_suspended = boiled_cloze_settings.is_suspended;
@@ -284,14 +287,14 @@ fn update_first_cloze_with_order(cards_raw: &mut [Vec<(ClozeData, ClozeGroupingS
         // Find first non-hidden cloze
         let cloze = &mut *cards_raw[card_index]
             .iter_mut()
-            .find(|(_, x)| !x.hidden)
+            .find(|(_, x)| !x.skip_serialization)
             .unwrap();
         let index = cloze.0.index;
         // Update first non-hidden cloze with order
         if !seen_clozes.contains(&index) {
             let all_cloze_groupings = cards_raw
                 .iter_mut()
-                .map(|x| x.iter_mut().find(|(_, x)| !x.hidden).unwrap())
+                .map(|x| x.iter_mut().find(|(_, x)| !x.skip_serialization).unwrap())
                 .filter(|cl| cl.0.index == index)
                 .map(|x| &mut x.1)
                 .collect::<Vec<_>>();
@@ -567,7 +570,7 @@ fn apply_conceal_and_reveal(
         let mut new_grouping_settings = ClozeGroupingSettings::default(&mut 0, None);
         new_grouping_settings.grouping = clozes.first().unwrap().1.grouping.clone();
         new_grouping_settings.hidden_no_answer = true;
-        new_grouping_settings.hidden = true;
+        new_grouping_settings.skip_serialization = true;
         clozes.extend(
             new_clozes
                 .into_iter()
@@ -728,8 +731,12 @@ pub fn get_cards_main(
             hidden_no_answer: _,
             front_conceal,
             back_reveal,
-            hidden: _,
-        } = &clozes.iter().find(|(_, x)| !x.hidden).unwrap().1;
+            skip_serialization: _,
+        } = &clozes
+            .iter()
+            .find(|(_, x)| !x.skip_serialization)
+            .unwrap()
+            .1;
         let ClozeSettings { hint, .. } = &clozes.first().unwrap().0.settings;
         let mut orders_iter = orders.as_ref().into_iter().flat_map(|v| v.iter().copied());
 

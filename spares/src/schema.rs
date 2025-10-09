@@ -189,7 +189,7 @@ pub mod note {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
-    /// To remove all tags, `UpdateTags::SetTags`` must be used
+    /// To remove all tags, `UpdateTags::SetTags` must be used
     pub enum UpdateTags {
         ModifyTags {
             tags_to_remove: Option<Vec<String>>,

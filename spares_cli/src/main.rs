@@ -654,8 +654,8 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     UpdateTags::SetTags(tags_to_add.unwrap_or_default())
                 } else {
                     UpdateTags::ModifyTags {
-                        tags_to_remove: tags_to_remove,
-                        tags_to_add: tags_to_add,
+                        tags_to_remove,
+                        tags_to_add,
                     }
                 };
                 let request = UpdateNotesRequest {

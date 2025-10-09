@@ -64,9 +64,10 @@ impl Parseable for TypstParser {
     }
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
-        let mut note_settings_keys = NoteSettingsKeys::default();
-        note_settings_keys.groupings_all = "\\*";
-        note_settings_keys
+        NoteSettingsKeys {
+            groupings_all: "\\*",
+            ..Default::default()
+        }
     }
 
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
