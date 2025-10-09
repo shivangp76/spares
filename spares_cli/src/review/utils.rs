@@ -153,6 +153,33 @@ pub async fn bury_card(
     Ok(())
 }
 
+pub async fn bury_cards(
+    card_ids: &[CardId],
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    let body = UpdateCardRequest {
+        selector: CardsSelector::Ids(card_ids.to_vec()),
+        desired_retention: None,
+        special_state: Some(Some(SpecialStateUpdate::Buried)),
+    };
+    let url = format!("{}/api/cards", base_url);
+    let response = client
+        .patch(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        dbg!(&message);
+        return Err("Failed to bury cards".to_string());
+    }
+    Ok(())
+}
+
 pub async fn suspend_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
     let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
     let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
@@ -166,6 +193,21 @@ pub async fn suspend_note(note_id: NoteId, base_url: &str, client: &Client) -> R
     let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
     let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
     suspend_cards(&card_ids, base_url, client).await
+}
+
+pub async fn bury_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
+    let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
+    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        dbg!(&message);
+        return Err("Failed to get cards from note id".to_string());
+    }
+    let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
+    let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
+    bury_cards(&card_ids, base_url, client).await
 }
 
 pub async fn suspend_cards(
