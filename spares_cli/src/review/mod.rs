@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{Display, EnumString};
 use utils::{
-    bury_card, close_rendered_file, get_scheduler_ratings, open_rendered_file,
+    bury_card, bury_note, close_rendered_file, get_scheduler_ratings, open_rendered_file,
     print_recall_duration, print_summary, submit_rating, suspend_cards, suspend_note, tag_note,
 };
 
@@ -64,8 +64,10 @@ enum ReviewAction {
     SuspendNote,
     #[strum(serialize = "Tag to modify later")]
     TagNote,
+    BuryCard,
+    #[strum(serialize = "Bury Note (card + siblings)")]
+    BuryNote,
     // Undo,
-    Bury,
     Exit,
 }
 
@@ -322,9 +324,12 @@ pub async fn review_cards(
                     println!("{}", e);
                 }
             }
-            ReviewAction::Bury | ReviewAction::SuspendCard | ReviewAction::SuspendNote => {
+            ReviewAction::BuryCard
+            | ReviewAction::BuryNote
+            | ReviewAction::SuspendCard
+            | ReviewAction::SuspendNote => {
                 match chosen_action {
-                    ReviewAction::Bury => {
+                    ReviewAction::BuryCard => {
                         bury_card(
                             scheduler_name,
                             review_card_response.card_id,
@@ -332,6 +337,9 @@ pub async fn review_cards(
                             client,
                         )
                         .await?;
+                    }
+                    ReviewAction::BuryNote => {
+                        bury_note(review_card_response.note_id, base_url, client).await?;
                     }
                     ReviewAction::SuspendCard => {
                         suspend_cards(&[review_card_response.card_id], base_url, client).await?;
