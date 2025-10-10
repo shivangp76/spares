@@ -1268,7 +1268,7 @@ fn test_get_cards_grouping_multiple_times() {
 }
 
 #[test]
-fn test_get_cards_front_conceal() {
+fn test_get_cards_front_conceal_1() {
     let data = r"a{{b}}c{{d{{[g:1;f:all]e}}f{{[g:1]g}}h}}i";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
@@ -1340,6 +1340,81 @@ fn test_get_cards_front_conceal() {
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
                     NotePart::SurroundingData("h}}i".to_string()),
+                ],
+            },
+        ];
+        assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_front_conceal_2() {
+    // Test `front_conceal` on a cloze where the other clozes are nested. In this example, order the clozes as 1, 2, 3 by their starting position. Then, for cloze 1 where we have `f:all`, we only need to get cloze 2 to be hidden. This is because cloze 3 is nested inside cloze 2 so it will automatically be hidden.
+    let data = r"a{{[f:all]b}}c{{d{{e}}f}}i";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
+    assert!(cards_res.is_ok());
+    if let Ok(cards) = cards_res {
+        let expected = vec![
+            CardData {
+                order: Some(1),
+                grouping: ClozeGrouping::Auto(1),
+                is_suspended: None,
+                front_conceal: FrontConceal::AllGroupings,
+                back_reveal: BackReveal::FullNote,
+                back_type: BackType::FullNote,
+                data: vec![
+                    NotePart::SurroundingData("a".to_string()),
+                    NotePart::ClozeStart("{{[o:1;f:all]".to_string()),
+                    NotePart::ClozeData(
+                        "b".to_string(),
+                        ClozeHiddenReplacement::ToAnswer { hint: None },
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::SurroundingData("c".to_string()),
+                    NotePart::ClozeStart("{{[o:2]".to_string()),
+                    NotePart::ClozeData(
+                        "d{{[o:3]e}}f".to_string(),
+                        ClozeHiddenReplacement::NotToAnswer,
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::SurroundingData("i".to_string()),
+                ],
+            },
+            CardData {
+                order: Some(2),
+                grouping: ClozeGrouping::Auto(2),
+                is_suspended: None,
+                front_conceal: FrontConceal::OnlyGrouping,
+                back_reveal: BackReveal::FullNote,
+                back_type: BackType::FullNote,
+                data: vec![
+                    NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
+                    NotePart::ClozeStart("{{[o:2]".to_string()),
+                    NotePart::ClozeData(
+                        "d{{[o:3]e}}f".to_string(),
+                        ClozeHiddenReplacement::ToAnswer { hint: None },
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::SurroundingData("i".to_string()),
+                ],
+            },
+            CardData {
+                order: Some(3),
+                grouping: ClozeGrouping::Auto(3),
+                is_suspended: None,
+                front_conceal: FrontConceal::OnlyGrouping,
+                back_reveal: BackReveal::FullNote,
+                back_type: BackType::FullNote,
+                data: vec![
+                    NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
+                    NotePart::ClozeStart("{{[o:3]".to_string()),
+                    NotePart::ClozeData(
+                        "e".to_string(),
+                        ClozeHiddenReplacement::ToAnswer { hint: None },
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::SurroundingData("f}}i".to_string()),
                 ],
             },
         ];
@@ -1458,7 +1533,7 @@ fn test_get_cards_back_reveal_2() {
 
 #[test]
 fn test_get_cards_back_reveal_err() {
-    // Both `front_conceal` and `back_reveal` cannot both be set to `OnlyGrouping` if there is more than 1 grouping
+    // If there is more than 1 grouping, then `FrontConceal::OnlyGrouping` and `BackReveal::OnlyAnswered` cannot both be set. This would mean the other groupings are visible on the front, but hidden on the back, even though they are not tested. Either change `front_conceal`, change `back_reveal`, or remove a grouping.
     let data = r"a{{b}}c{{[b:a]d}}e";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
