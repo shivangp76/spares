@@ -550,7 +550,7 @@ fn apply_conceal_and_reveal(
                 cloze_grouping_settings.back_reveal,
                 BackReveal::OnlyAnswered
             ) {
-                // Find all other clozes which are either completely before or completely after this cloze that are NOT a part of this card's grouping
+                // Find all other clozes which are either completely before or completely after this cloze that are NOT a part of this card's grouping.
                 let matching_clozes = all_clozes
                     .iter()
                     .filter(|(cloze_data, all_grouping_settings)| {
@@ -561,6 +561,22 @@ fn apply_conceal_and_reveal(
                                 .any(|x| x.grouping == cloze_grouping_settings.grouping)
                     })
                     .map(|(x, _)| x)
+                    .collect::<Vec<_>>();
+                // Filter these clozes to remove all nested clozes. This is because if the cloze is nested, then the outer cloze will hide the inner cloze.
+                let matching_clozes = matching_clozes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &cur_cloze_data)| {
+                        if i == 0 {
+                            return Some(cur_cloze_data);
+                        }
+                        let prev_cloze_data = matching_clozes[i - 1];
+                        if prev_cloze_data.end_delim.end <= cur_cloze_data.start_delim.start {
+                            Some(cur_cloze_data)
+                        } else {
+                            None
+                        }
+                    })
                     .collect::<Vec<_>>();
                 new_clozes.extend(matching_clozes);
             }
@@ -851,7 +867,7 @@ pub fn get_cards_main(
                 && groupings_count > 1
             {
                 return Err(LibraryError::Card(CardErrorKind::InvalidInput(
-                    "The front and back cannot both be set to `OnlyGrouping` if there is more than 1 grouping. This would mean the other groupings are visible on the front, but hidden on the back, even though they are not tested. Either change `front_conceal`, change `back_reveal`, or remove a grouping.".to_string()
+                    "If there is more than 1 grouping, then `FrontConceal::OnlyGrouping` and `BackReveal::OnlyAnswered` cannot both be set. This would mean the other groupings are visible on the front, but hidden on the back, even though they are not tested. Either change `front_conceal`, change `back_reveal`, or remove a grouping.".to_string()
                 )));
             }
             cards.push(CardData {
