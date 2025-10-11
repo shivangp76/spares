@@ -108,7 +108,8 @@ pub fn create_note_files_bulk(
 ) -> Result<Vec<Result<PathBuf, Error>>, Error> {
     // Get template
     let TemplateData {
-        template_contents,
+        note_template_contents,
+        card_template_contents,
         body_placeholder,
     } = parser.template_contents().map_err(|e| Error::Io {
         description: format!(
@@ -139,7 +140,8 @@ pub fn create_note_files_bulk(
             create_note_files(
                 parser,
                 create_note_files_request,
-                template_contents.as_str(),
+                note_template_contents.as_str(),
+                card_template_contents.as_str(),
                 body_placeholder.as_str(),
                 request.overridden_output_raw_dir.as_deref(),
                 request.include_cards,
@@ -158,7 +160,8 @@ pub fn create_note_files_bulk(
 fn create_note_files(
     parser: &dyn Parseable,
     request: &GenerateNoteFilesRequest,
-    template_contents: &str,
+    note_template_contents: &str,
+    card_template_contents: &str,
     body_placeholder: &str,
     overridden_output_raw_dir: Option<&Path>,
     include_cards: bool,
@@ -190,7 +193,7 @@ fn create_note_files(
     output_rendered_filepath.push(&output_rendered_filename);
 
     // Check cache
-    let mut file_contents = template_contents.replace(body_placeholder, &note_file_data);
+    let mut file_contents = note_template_contents.replace(body_placeholder, &note_file_data);
     let line_to_hash = |line: &str| -> Option<String> {
         parser
             .extract_comment(line)
@@ -226,7 +229,7 @@ fn create_note_files(
                         &NoteImportAction::Update(0),
                     );
                     let file_contents =
-                        template_contents.replace(body_placeholder, &card_file_data);
+                        card_template_contents.replace(body_placeholder, &card_file_data);
                     create_raw_and_rendered_file(
                         parser,
                         *note_id,
@@ -245,7 +248,7 @@ fn create_note_files(
                             &NoteImportAction::Update(0),
                         );
                         let file_contents =
-                            template_contents.replace(body_placeholder, &card_file_data);
+                            card_template_contents.replace(body_placeholder, &card_file_data);
                         create_raw_and_rendered_file(
                             parser,
                             *note_id,

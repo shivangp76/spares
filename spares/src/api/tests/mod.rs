@@ -259,10 +259,11 @@ async fn test_note_generator(pool: SqlitePool) {
         let note_file_data =
             parser.construct_full_file_data(&full_requests, &NoteImportAction::Add);
         let TemplateData {
-            template_contents,
+            note_template_contents,
+            card_template_contents: _,
             body_placeholder,
         } = parser.template_contents().unwrap();
-        let file_contents = template_contents
+        let file_contents = note_template_contents
             .as_str()
             .replace(&body_placeholder, &note_file_data);
 
