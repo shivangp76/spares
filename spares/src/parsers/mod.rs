@@ -38,7 +38,8 @@ pub enum RenderOutputDirectoryType {
 
 #[derive(Clone, Debug)]
 pub struct TemplateData {
-    pub template_contents: String,
+    pub note_template_contents: String,
+    pub card_template_contents: String,
     pub body_placeholder: String,
 }
 
@@ -208,26 +209,37 @@ pub trait Parseable: Send + Sync {
     fn file_extension(&self) -> &'static str;
 
     fn template_contents(&self) -> Result<TemplateData, std::io::Error> {
-        let body_placeholder = self.construct_comment("spares: note body");
+        let body_placeholder = self.construct_comment("spares: body");
         if cfg!(feature = "testing") {
             // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok(TemplateData {
-                template_contents: body_placeholder.clone(),
+                note_template_contents: body_placeholder.clone(),
+                card_template_contents: body_placeholder.clone(),
                 body_placeholder,
             });
         }
-        let mut template_path: PathBuf = get_config_dir();
+        let mut note_template_path: PathBuf = get_config_dir();
         let parser_name = self.get_parser_name();
-        template_path.push(parser_name);
-        template_path.push("templates");
+        note_template_path.push(parser_name);
+        note_template_path.push("templates");
         let file_extension = self.file_extension();
-        let template_filename = format!("template.{}", file_extension);
-        template_path.push(template_filename.as_str());
+        let note_template_filename = format!("note_template.{}", file_extension);
+        note_template_path.push(note_template_filename.as_str());
+        let note_template_contents = read_to_string(&note_template_path)?;
 
-        let template_contents = read_to_string(&template_path)?;
+        let mut card_template_path = note_template_path.clone();
+        let card_template_filename = format!("card_template.{}", file_extension);
+        card_template_path.set_file_name(card_template_filename);
+        let card_template_contents = if card_template_path.is_file() {
+            read_to_string(&card_template_path)?
+        } else {
+            note_template_contents.clone()
+        };
+
         Ok(TemplateData {
-            template_contents,
+            note_template_contents,
+            card_template_contents,
             body_placeholder,
         })
     }
