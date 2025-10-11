@@ -17,4 +17,4 @@
   [#highlight[#blank#[(#hint)]]]
 ]
 
-// spares: note body
+// spares: body

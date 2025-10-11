@@ -4,4 +4,4 @@ output: pdf_document
 documentclass: extarticle
 fontsize: 14pt
 ---
-<!--- spares: note body --->
+<!--- spares: body --->
