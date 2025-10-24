@@ -65,6 +65,7 @@ pub fn validate_cards(cards: &[CardData]) -> Result<(), LibraryError> {
 }
 
 #[allow(clippy::type_complexity, reason = "avoid creating extra struct")]
+#[allow(clippy::too_many_lines, reason = "off by a few")]
 fn group_clozes(
     mut all_clozes: Vec<(ClozeData, Vec<ClozeGroupingSettings>)>,
     data: &str,
@@ -83,22 +84,28 @@ fn group_clozes(
         .cloned()
         .collect::<Vec<_>>();
 
-    // Replace `ClozeGrouping::All` with all_groups
-    let relevant_clozes = all_clozes
+    let clozes_with_all_groupings = all_clozes
         .iter_mut()
-        .map(|(_, grouping_settings)| grouping_settings)
-        .filter(|grouping_settings| {
+        .filter_map(|(cloze_data, grouping_settings)| {
             grouping_settings
                 .iter()
-                .any(|g| g.grouping == ClozeGrouping::All)
+                .find(|g| g.grouping == ClozeGrouping::All)
+                .cloned()
+                .map(|all_groupings_settings| {
+                    (cloze_data, grouping_settings, all_groupings_settings)
+                })
         })
-        .inspect(|grouping_settings| assert_eq!(grouping_settings.len(), 1))
         .collect::<Vec<_>>();
-    for grouping_settings in relevant_clozes {
+
+    for (cloze_data, grouping_settings, all_groupings_settings) in clozes_with_all_groupings {
+        // Update cloze data with settings for `ClozeGrouping::All`
+        cloze_data.settings.all_groupings = Some(all_groupings_settings.clone());
+
+        // Replace `ClozeGrouping::All` with each grouping
         let new_grouping_settings = all_grouping_names
             .iter()
             .map(|grouping| {
-                let mut settings = grouping_settings.first().unwrap().clone();
+                let mut settings = all_groupings_settings.clone();
                 settings.grouping = grouping.clone();
                 settings
             })
@@ -135,7 +142,7 @@ fn group_clozes(
             // One image occlusion can have 2 clozes that are a part of the same card. In this case, we will have 2 `ClozeData`s with the same `start_delim` and `end_delim` that are consecutive. Calling `.unique()` removes these duplicates, while preserving order.
             .unique()
             .collect::<Vec<_>>();
-        // Not strictly increasing because image occlusion clozes have the samevalue for `start_delim.start` and `start_delim.end`.
+        // Not strictly increasing because image occlusion clozes have the same value for `start_delim.start` and `start_delim.end`.
         let not_increasing = flattened_matches
             .iter()
             .tuple_windows()

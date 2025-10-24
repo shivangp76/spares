@@ -32,8 +32,7 @@ pub struct ClozeData {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClozeSettings {
     pub hint: Option<String>,
-    /// Internal
-    all_groupings: bool,
+    pub all_groupings: Option<ClozeGroupingSettings>,
 }
 
 #[derive(Debug)]
@@ -253,12 +252,12 @@ impl ClozeGrouping {
 }
 
 impl ClozeGroupingSettings {
-    pub fn default(
-        current_grouping_number: &mut u32,
+    pub fn default_from_grouping(
+        grouping: ClozeGrouping,
         modify_defaults_fn: ModifyDefaultsFn,
     ) -> Self {
         let mut result = Self {
-            grouping: ClozeGrouping::default(current_grouping_number),
+            grouping,
             orders: None,
             include_forward_card: true,
             include_backward_card: false,
@@ -273,6 +272,16 @@ impl ClozeGroupingSettings {
             result.back_reveal = back_reveal;
         }
         result
+    }
+
+    pub fn default(
+        current_grouping_number: &mut u32,
+        modify_defaults_fn: ModifyDefaultsFn,
+    ) -> Self {
+        ClozeGroupingSettings::default_from_grouping(
+            ClozeGrouping::default(current_grouping_number),
+            modify_defaults_fn,
+        )
     }
 }
 
@@ -329,12 +338,14 @@ pub fn construct_cloze_string(
     let default = ClozeGroupingSettings::default(&mut 0, modify_defaults_fn);
     let mut all_grouping_parts: Vec<String> = Vec::new();
     let mut only_groups = Vec::new();
-    if global_settings.all_groupings {
-        all_grouping_parts.push(format!(
-            "{}{}{}",
-            cloze_settings_keys.grouping, settings_key_value_delim, groupings_all
-        ));
-    }
+    let grouping_settings_with_all =
+        if let Some(ref all_groupings_settings) = global_settings.all_groupings {
+            std::iter::once(all_groupings_settings)
+                .chain(grouping_settings.iter())
+                .collect::<Vec<_>>()
+        } else {
+            grouping_settings.iter().collect::<Vec<_>>()
+        };
     for (
         i,
         ClozeGroupingSettings {
@@ -348,7 +359,7 @@ pub fn construct_cloze_string(
             back_reveal,
             skip_serialization,
         },
-    ) in grouping_settings.iter().enumerate()
+    ) in grouping_settings_with_all.iter().enumerate()
     {
         if *skip_serialization {
             continue;
@@ -413,8 +424,8 @@ pub fn construct_cloze_string(
         }
 
         // Push settings
-        if parse_grouping && grouping_parts.len() == 1 {
-            if !global_settings.all_groupings {
+        if parse_grouping && grouping_parts.len() == 1 && *grouping != ClozeGrouping::All {
+            if global_settings.all_groupings.is_none() {
                 only_groups.push(grouping.clone());
             }
             grouping_parts.clear();
@@ -629,7 +640,10 @@ pub fn parse_card_settings(
         }
     }
     if local_groups.contains(&ClozeGrouping::All) {
-        settings.all_groupings = true;
+        settings.all_groupings = Some(ClozeGroupingSettings::default_from_grouping(
+            ClozeGrouping::All,
+            None,
+        ));
     }
     let mut grouped_settings = settings_split_by_grouping
         .clone()
