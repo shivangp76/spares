@@ -1,6 +1,6 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards, impls::markdown::MarkdownParser,
+    Parseable, add_order_to_note_data, get_cards, impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 
@@ -1004,6 +1004,65 @@ fn test_get_cards_grouping_all_3() {
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
                     NotePart::SurroundingData("g".to_string()),
+                ],
+            },
+        ];
+        assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_grouping_all_4() {
+    // Ensures that settings passed to all groupings persist. In other words, we cannot replace `g:*;hide:` with `g:*; g:1;hide:` since we also want all future groupings to have the setting `hide:`. This test highlights the need for the struct `ClozeGroupingSettings` when `g:*` is present. It is *not* sufficient to only duplicate the settings from `g:*` into settings for each grouping since this does not handle future changes.
+    let data_1 = r"a{{[g:1]b}}c{{[g:*;hide:]f}}";
+    // let data_1 = r"a{{[g:1]b}}c{{a}}{{[g:*;r:]f}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1).unwrap();
+    assert!(new_data.contains("g:*;hide:;"));
+    let data = r"a{{[g:1]b}}c{{d}}{{[g:*;hide:]f}}";
+    let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
+    assert!(cards_res.is_ok());
+    if let Ok(cards) = cards_res {
+        let expected = vec![
+            CardData {
+                order: Some(1),
+                grouping: ClozeGrouping::Custom("1".to_string()),
+                is_suspended: None,
+                front_conceal: FrontConceal::OnlyGrouping,
+                back_reveal: BackReveal::FullNote,
+                back_type: BackType::FullNote,
+                data: vec![
+                    NotePart::SurroundingData("a".to_string()),
+                    NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
+                    NotePart::ClozeData(
+                        "b".to_string(),
+                        ClozeHiddenReplacement::ToAnswer { hint: None },
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::SurroundingData("c{{[o:2]d}}".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
+                    NotePart::ClozeEnd("}}".to_string()),
+                ],
+            },
+            CardData {
+                order: Some(2),
+                grouping: ClozeGrouping::Auto(1),
+                is_suspended: None,
+                front_conceal: FrontConceal::OnlyGrouping,
+                back_reveal: BackReveal::FullNote,
+                back_type: BackType::FullNote,
+                data: vec![
+                    NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
+                    NotePart::ClozeStart("{{[o:2]".to_string()),
+                    NotePart::ClozeData(
+                        "d".to_string(),
+                        ClozeHiddenReplacement::ToAnswer { hint: None },
+                    ),
+                    NotePart::ClozeEnd("}}".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
+                    NotePart::ClozeEnd("}}".to_string()),
                 ],
             },
         ];
