@@ -40,8 +40,9 @@ CREATE TABLE IF NOT EXISTS tag (
     description TEXT NOT NULL,
     parent_id INTEGER, -- ID of parent tag
     query TEXT,
-    auto_delete BOOLEAN NOT NULL,
-    FOREIGN KEY (parent_id) REFERENCES tag(id)
+    auto_delete INTEGER NOT NULL CHECK (auto_delete IN (0, 1)),
+    -- To prevent cascades wiping large tag trees, but still keep all references valid.
+    FOREIGN KEY (parent_id) REFERENCES tag(id) ON DELETE SET NULL
 );
 
 -- Create the 'note' table
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS note (
     updated_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
     custom_data TEXT NOT NULL, -- JSON string
     parser_id INTEGER NOT NULL, -- Foreign key to 'parser' table
-    FOREIGN KEY (parser_id) REFERENCES parser(id)
+    -- Prevent deleting `parser_id` if notes depend on it
+    FOREIGN KEY (parser_id) REFERENCES parser(id) ON DELETE RESTRICT
 );
 
 -- Create the 'card' table
@@ -104,6 +106,7 @@ CREATE TABLE IF NOT EXISTS note_tag (
     tag_id INTEGER NOT NULL,
     FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE, -- When note is deleted, delete its corresponding note_tag entry
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE -- When tag is deleted, delete its corresponding note_tag entry
+    UNIQUE (note_id, tag_id)
     -- PRIMARY KEY (note_id, tag_id)
 );
 
@@ -114,6 +117,7 @@ CREATE TABLE IF NOT EXISTS card_tag (
     tag_id INTEGER NOT NULL,
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE CASCADE, -- When card is deleted, delete its corresponding card_tag entry
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE -- When tag is deleted, delete its corresponding card_tag entry
+    UNIQUE (card_id, tag_id)
     -- PRIMARY KEY (card_id, tag_id)
 );
 
@@ -126,7 +130,7 @@ CREATE TABLE IF NOT EXISTS card_tag (
 -- Create the 'review_log' table
 CREATE TABLE IF NOT EXISTS review_log (
     id INTEGER PRIMARY KEY NOT NULL,
-    card_id INTEGER NOT NULL,
+    card_id INTEGER,
     reviewed_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
     rating INTEGER NOT NULL,
     -- scheduler_id INTEGER NOT NULL,
@@ -136,7 +140,8 @@ CREATE TABLE IF NOT EXISTS review_log (
     -- elapsed_time INTEGER NOT NULL,
     previous_state INTEGER NOT NULL,
     custom_data TEXT NOT NULL, -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
-    FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE CASCADE
+    -- Do _NOT_ delete review logs when cards are deleted. We want to know how many cards were reviewed in the past for historical reasons. Instead, set the `card_id` column to null, to signify the row is an orphan.
+    FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE SET NULL
     -- FOREIGN KEY (scheduler_id) REFERENCES scheduler(id)
     --FOREIGN KEY (rating_id) REFERENCES rating(id),
     --FOREIGN KEY (state_id) REFERENCES state(id)
