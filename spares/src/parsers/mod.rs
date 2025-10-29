@@ -53,7 +53,7 @@ pub trait Parseable: Send + Sync {
         let start = self.construct_comment("spares: note start");
         let end = self.construct_comment("spares: note end");
         let regex_string = format!(
-            "(?ms){}(.*?)\n{}?",
+            "(?ms)(?<=\\A|\n){}(.*?)\n{}?",
             fancy_regex::escape(&start),
             fancy_regex::escape(&end)
         );
@@ -83,7 +83,7 @@ pub trait Parseable: Send + Sync {
         let start = self.construct_comment("spares: start");
         let end = self.construct_comment("spares: end");
         let regex_string = format!(
-            "(?s){}(.*?)\n{}?",
+            "(?s)(?<=\\A|\n){}(.*?)\n{}?",
             fancy_regex::escape(&start),
             fancy_regex::escape(&end)
         );
