@@ -273,6 +273,27 @@ pub async fn submit_rating(
     Ok(())
 }
 
+pub async fn forget_card(
+    card_id: i64,
+    base_url: &str,
+    client: &Client,
+) -> Result<spares::schema::card::CardResponse, String> {
+    let url = format!("{}/api/cards/{}/forget", base_url, card_id);
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    if response.status() != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(message.unwrap().to_string());
+    }
+    let card_response: spares::schema::card::CardResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(card_response)
+}
+
 fn format_duration(duration: chrono::Duration) -> String {
     let total_seconds = duration.num_seconds();
     let days = total_seconds / (24 * 3600);

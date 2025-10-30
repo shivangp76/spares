@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     handlers::{
-        card::{get_card_handler, get_cards_handler, get_leeches_handler, update_card_handler},
+        card::{get_card_handler, get_cards_handler, get_leeches_handler, update_card_handler, forget_card_handler},
         health_check_handler,
         note::{
             create_notes_handler, delete_note_handler, generate_note_files_handler,
@@ -65,6 +65,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/cards/note_id/{id}", get(get_cards_handler))
         .route("/api/cards/leeches", post(get_leeches_handler))
         .route("/api/cards", patch(update_card_handler))
+        .route("/api/cards/{id}/forget", post(forget_card_handler))
         // Review
         .route("/api/review", post(get_review_card_handler))
         .route("/api/review/submit", post(submit_study_action_handler))

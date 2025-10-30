@@ -134,6 +134,38 @@ pub async fn get_leeches(
     Ok(card_responses)
 }
 
+// NOTE: Anki also has the option to "Reset reviews and lapses" when forgetting a card. This is
+// never used since past reviews are always needed to keep track of how many cards were reviewed in
+// the past on any given day.
+pub async fn forget_card(
+    db: &SqlitePool,
+    card_id: CardId,
+    now: DateTime<Utc>,
+) -> Result<CardResponse, Error> {
+    let mut card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+        .bind(card_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    card.stability = 0.0;
+    card.difficulty = 0.0;
+    card.due = now;
+    card.state = NEW_CARD_STATE;
+    card.updated_at = now;
+    sqlx::query("UPDATE card SET stability = ?, difficulty = ?, due = ?, state = ?, updated_at = ? WHERE id = ?")
+        .bind(card.stability)
+        .bind(card.difficulty)
+        .bind(card.due.timestamp())
+        .bind(card.state)
+        .bind(card.updated_at.timestamp())
+        .bind(card_id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(CardResponse::new(&card))
+}
+
 pub async fn create_card_tags(
     db: &SqlitePool,
     card_tag_entries: &[(CardId, TagId)],
