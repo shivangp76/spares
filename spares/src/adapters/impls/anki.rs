@@ -494,6 +494,7 @@ impl AnkiAdapter {
                             selector: CardsSelector::Ids(vec![card.id]),
                             desired_retention: Some(desired_retention),
                             special_state: None,
+                            due: None,
                         };
                         update_card(spares_pool, body, card.created_at).await?;
                     }

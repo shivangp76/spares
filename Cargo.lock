@@ -1420,6 +1420,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2628910d0114e9139056161d8644a2026be7b117f8498943f9437748b04c9e0a"
 dependencies = [
  "bitflags",
+ "chrono",
  "crossterm",
  "dyn-clone",
  "fuzzy-matcher",
