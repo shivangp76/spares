@@ -18,6 +18,7 @@ use utils::{
 };
 
 mod utils;
+pub use utils::forget_card;
 
 #[derive(Args, Debug)]
 pub struct ReviewArgs {
@@ -68,6 +69,8 @@ enum ReviewAction {
     BuryCard,
     #[strum(serialize = "Bury Note (card + siblings)")]
     BuryNote,
+    #[strum(serialize = "Forget Card (reset scheduling, keep reviews)")]
+    ForgetCard,
     // Undo,
     Exit,
 }
@@ -328,7 +331,8 @@ pub async fn review_cards(
             ReviewAction::BuryCard
             | ReviewAction::BuryNote
             | ReviewAction::SuspendCard
-            | ReviewAction::SuspendNote => {
+            | ReviewAction::SuspendNote
+            | ReviewAction::ForgetCard => {
                 match chosen_action {
                     ReviewAction::BuryCard => {
                         bury_card(
@@ -347,6 +351,12 @@ pub async fn review_cards(
                     }
                     ReviewAction::SuspendNote => {
                         suspend_note(review_card_response.note_id, base_url, client).await?;
+                    }
+                    ReviewAction::ForgetCard => {
+                        let card_response =
+                            forget_card(review_card_response.card_id, base_url, client).await?;
+                        println!("Card forgotten (scheduling reset):");
+                        println!("{:#?}", &card_response);
                     }
                     _ => unreachable!(),
                 }
@@ -385,10 +395,8 @@ pub async fn review_cards(
             //         close_rendered_file(&mut card_front_rendered_child)?;
             //     }
             //     // Remove previously submitted rating
-            //     // TODO
             //
             //     // Get review card (which should be the same as the previous card)
-            //     // TODO
             // }
             ReviewAction::Exit => {
                 close_rendered_file(&mut card_front_rendered_child, close_command, true)?;

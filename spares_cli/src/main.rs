@@ -13,7 +13,7 @@ use inquire::Confirm;
 use miette::{Error, IntoDiagnostic, miette};
 use migrate::{MigrateArgs, migrate_from_adapter};
 use reqwest::{Client, StatusCode};
-use review::{ReviewArgs, review_cards};
+use review::{ReviewArgs, forget_card, review_cards};
 use serde_json::{Map, Value};
 use spares::{
     adapters::get_adapter_from_string,
@@ -95,6 +95,8 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete_command::Shell,
     },
+    /// Forget cards (reset scheduling, keep review logs)
+    ForgetCard(ForgetCardArgs),
 }
 
 #[derive(Args, Debug)]
@@ -342,6 +344,14 @@ struct StatisticsArgs {
     scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
     date: DateTime<Utc>,
+}
+
+#[derive(Debug, Parser)]
+struct ForgetCardArgs {
+    #[arg(long, value_delimiter = ' ', num_args = 1..)]
+    ids: Option<Vec<i64>>,
+    #[arg(short, long)]
+    query: Option<String>,
 }
 
 fn get_current_utc_datetime() -> DateTime<Utc> {
@@ -1285,6 +1295,44 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::GenerateShellCompletion { shell } => {
             shell.generate(&mut Cli::command(), &mut io::stdout());
             // generate(shell, &mut Cli::command(), "spares_cli", &mut io::stdout());
+        }
+        Commands::ForgetCard(ForgetCardArgs { ids, query }) => {
+            let mut card_ids = Vec::new();
+            if let Some(ids_vec) = ids {
+                card_ids = ids_vec;
+            } else if let Some(q) = query {
+                // Fetch card ids using existing search endpoint, adapt for cards
+                let url = format!("{}/api/notes/search", base_url);
+                let req = spares::schema::note::SearchNotesRequest {
+                    query: q,
+                    output_type: spares::search::QueryReturnItemType::Cards,
+                };
+                let response = client
+                    .post(&url)
+                    .json(&req)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                if response.status() != StatusCode::OK {
+                    let response_json: Value =
+                        response.json().await.map_err(|e| miette!("{}", e))?;
+                    let message = response_json.get("message");
+                    return Err(miette!(message.unwrap().to_string()));
+                }
+                let search_response: spares::schema::note::SearchNotesResponse =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                if let spares::schema::note::SearchNotesResponse::Cards(cards) = search_response {
+                    for (card, _) in cards {
+                        card_ids.push(card.id);
+                    }
+                }
+            }
+            for card_id in card_ids {
+                let card_response = forget_card(card_id, &base_url, &client)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                println!("Forgot card: {:#?}", &card_response);
+            }
         }
     }
     Ok(())
