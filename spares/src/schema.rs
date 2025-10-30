@@ -309,6 +309,8 @@ pub mod card {
         pub desired_retention: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub special_state: Option<Option<SpecialStateUpdate>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub due: Option<DateTime<Utc>>,
     }
 
     impl CardResponse {

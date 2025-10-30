@@ -18,6 +18,7 @@ use utils::{
 };
 
 mod utils;
+use crate::review::utils::set_due_date_with_prompt;
 pub use utils::forget_card;
 
 #[derive(Args, Debug)]
@@ -71,6 +72,8 @@ enum ReviewAction {
     BuryNote,
     #[strum(serialize = "Forget Card (reset scheduling, keep reviews)")]
     ForgetCard,
+    #[strum(serialize = "Set Due Date")]
+    SetDueDate,
     // Undo,
     Exit,
 }
@@ -332,7 +335,8 @@ pub async fn review_cards(
             | ReviewAction::BuryNote
             | ReviewAction::SuspendCard
             | ReviewAction::SuspendNote
-            | ReviewAction::ForgetCard => {
+            | ReviewAction::ForgetCard
+            | ReviewAction::SetDueDate => {
                 match chosen_action {
                     ReviewAction::BuryCard => {
                         bury_card(
@@ -357,6 +361,18 @@ pub async fn review_cards(
                             forget_card(review_card_response.card_id, base_url, client).await?;
                         println!("Card forgotten (scheduling reset):");
                         println!("{:#?}", &card_response);
+                    }
+                    ReviewAction::SetDueDate => {
+                        let completed = set_due_date_with_prompt(
+                            review_card_response.card_id,
+                            base_url,
+                            client,
+                        )
+                        .await?;
+                        if !completed {
+                            continue;
+                        }
+                        println!("Due date updated.");
                     }
                     _ => unreachable!(),
                 }

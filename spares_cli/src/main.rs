@@ -208,6 +208,8 @@ enum EditCommands {
         desired_retention: Option<f64>,
         #[arg(short, long)]
         special_state: Option<Option<SpecialStateLocal>>,
+        #[arg(long)]
+        due: Option<DateTime<Utc>>,
     },
 }
 
@@ -698,6 +700,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 selector: selector_local,
                 desired_retention,
                 special_state: special_state_local,
+                due,
             } => {
                 let selector = if let Some(ids) = selector_local.ids {
                     CardsSelector::Ids(ids)
@@ -716,6 +719,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     selector,
                     desired_retention,
                     special_state,
+                    due,
                 };
                 let url = format!("{}/api/cards", base_url);
                 let response = client

@@ -62,6 +62,7 @@ pub async fn update_card(
             .desired_retention
             .unwrap_or(existing_card.desired_retention);
         let new_special_state = requested_special_state.unwrap_or(existing_card.special_state);
+        let new_due = body.due.unwrap_or(existing_card.due);
         if let Some(Some(SpecialState::UserBuried)) = requested_special_state
             && let Some(special_state) = existing_card.special_state
         {
@@ -79,9 +80,10 @@ pub async fn update_card(
             }
         }
         let (updated_at,): (i64,) =
-        sqlx::query_as(r"UPDATE card SET desired_retention = ?, special_state = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
+        sqlx::query_as(r"UPDATE card SET desired_retention = ?, special_state = ?, due = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
             .bind(new_desired_retention)
             .bind(new_special_state)
+            .bind(new_due.timestamp())
             .bind(at.timestamp())
             .bind(card_id)
             .fetch_one(db)
@@ -91,6 +93,7 @@ pub async fn update_card(
         let mut updated_item: Card = existing_card.clone();
         updated_item.desired_retention = new_desired_retention;
         updated_item.special_state = new_special_state;
+        updated_item.due = new_due;
         updated_item.updated_at = updated_at;
         if let Some(new_desired_retention) = body.desired_retention
             && (new_desired_retention - existing_card.desired_retention).abs() > f64::EPSILON
@@ -247,6 +250,7 @@ mod tests {
             selector: CardsSelector::Ids(vec![card_id]),
             desired_retention: None,
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
+            due: None,
         };
         let update_card_response = update_card(&pool, update_card_request, Utc::now()).await;
         assert!(update_card_response.is_ok());
