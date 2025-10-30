@@ -1,4 +1,6 @@
 use super::ReviewAction;
+use chrono::{DateTime, Utc};
+use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use spares::model::{CardId, NoteId, RatingId, TagId};
@@ -162,6 +164,7 @@ pub async fn bury_cards(
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Buried)),
+        due: None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -219,6 +222,7 @@ pub async fn suspend_cards(
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Suspended)),
+        due: None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -292,6 +296,40 @@ pub async fn forget_card(
     let card_response: spares::schema::card::CardResponse =
         response.json().await.map_err(|e| format!("{}", e))?;
     Ok(card_response)
+}
+
+pub async fn set_due_date_with_prompt(
+    card_id: CardId,
+    base_url: &str,
+    client: &Client,
+) -> Result<bool, String> {
+    let prompt = DateSelect::new("Select due date:");
+    let date_res = prompt.prompt();
+    if let Ok(naive_date) = date_res {
+        let naive_dt = naive_date.and_hms_opt(0, 0, 0).unwrap();
+        let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, chrono::Utc);
+        // Send update
+        let request = UpdateCardRequest {
+            selector: CardsSelector::Ids(vec![card_id]),
+            desired_retention: None,
+            special_state: None,
+            due: Some(dt_utc),
+        };
+        let url = format!("{}/api/cards", base_url);
+        let response = client
+            .patch(url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("{}", e))?;
+        if response.status() != StatusCode::OK {
+            let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+            let message = response_json.get("message");
+            return Err(message.unwrap().to_string());
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn format_duration(duration: chrono::Duration) -> String {
