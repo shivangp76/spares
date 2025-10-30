@@ -1,14 +1,15 @@
 use super::SvgClozeType;
 use crate::{
-    Error, LibraryError, NoteErrorKind,
     config::{get_cache_dir, get_data_dir},
     parsers::generate_files::CardSide,
 };
-use std::{
-    fs::{self, create_dir_all},
-    path::{Path, PathBuf},
-    process::Command,
+use image::{ImageBuffer, Rgba, RgbaImage};
+use resvg::{
+    tiny_skia::{Pixmap, Transform},
+    usvg::fontdb,
 };
+use std::fs::create_dir_all;
+use std::path::{Path, PathBuf};
 use xmltree::Element;
 
 pub fn get_image_occlusion_directory() -> PathBuf {
@@ -144,88 +145,102 @@ pub fn get_center_of_shape(shape_type: SvgClozeType, element: &Element) -> (f64,
     }
 }
 
-pub fn convert_image_to_png(
-    card_filepath: &Path,
-    original_image_filepath: &Path,
-) -> Result<PathBuf, Error> {
-    let mut temp_original_image_filepath_png = card_filepath.to_path_buf();
-    let temp_file_name = format!(
-        "{}-temp.png",
-        original_image_filepath
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap()
-    );
-    temp_original_image_filepath_png.set_file_name(&temp_file_name);
-    if original_image_filepath.extension().unwrap() == "png" {
-        fs::copy(original_image_filepath, &temp_original_image_filepath_png).map_err(|_| {
-            LibraryError::Note(NoteErrorKind::Other {
-                description: format!(
-                    "Failed to move original image: {}",
-                    original_image_filepath.display()
-                ),
-            })
-        })?;
-    } else {
-        let status = Command::new("magick")
-            .arg(original_image_filepath)
-            .arg(&temp_original_image_filepath_png)
-            .status()
-            .map_err(|e| {
-                LibraryError::Note(NoteErrorKind::Other {
-                    description: format!("Failed to convert original image to png: {}", e),
-                })
-            })?;
-        if !status.success() {
-            return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: "Failed to convert original image to png.".to_string(),
-            })));
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_sign_loss)]
+pub fn render_svg_to_rgba(
+    svg_data: &[u8],
+    target_w: Option<u32>,
+    target_h: Option<u32>,
+) -> Result<RgbaImage, String> {
+    // let svg_data = std::fs::read(svg_path)
+    //     .map_err(|e| format!("Failed to read SVG {}: {}", svg_path.display(), e))?;
+
+    // Prepare usvg options, set base dir for relative resources
+    let mut opt = resvg::usvg::Options::default();
+    // if let Ok(abs) = std::fs::canonicalize(svg_path) {
+    //     if let Some(dir) = abs.parent() {
+    //         opt.resources_dir = Some(dir.to_path_buf());
+    //     }
+    // }
+
+    // Build a font DB and load a bundled fallback font from bytes
+    // (compile-time embed; no local file path at runtime).
+    let mut db = fontdb::Database::new();
+    // Replace with a redistributable font you can ship. Example path:
+    db.load_font_data(include_bytes!("./fonts/LibertinusSerif-Regular.ttf").to_vec());
+    db.load_font_data(include_bytes!("./fonts/LibertinusSans-Regular.ttf").to_vec());
+
+    // Optional: set generic family fallbacks to your bundled font
+    // so 'serif'/'sans-serif' in SVG map to something present.
+    db.set_serif_family("Libertinus Serif");
+    db.set_sans_serif_family("Libertinus Sans");
+
+    // Use the DB for text layout
+    opt.fontdb = db.into();
+    opt.font_family = "Libertinus Sans".to_string();
+
+    let tree = resvg::usvg::Tree::from_data(svg_data, &opt)
+        .map_err(|e| format!("Failed to parse SVG: {e}"))?;
+
+    // Determine output size based on SVG viewbox and optional target size
+    let svg_size = tree.size().to_int_size();
+    let (mut out_w, mut out_h) = (svg_size.width(), svg_size.height());
+
+    match (target_w, target_h) {
+        (Some(w), Some(h)) => {
+            out_w = w.max(1);
+            out_h = h.max(1);
+        }
+        (Some(w), None) => {
+            // Preserve aspect ratio
+            let aspect = out_h as f32 / out_w as f32;
+            out_w = w.max(1);
+            out_h = ((out_w as f32) * aspect).round().max(1.0) as u32;
+        }
+        (None, Some(h)) => {
+            let aspect = out_w as f32 / out_h as f32;
+            out_h = h.max(1);
+            out_w = ((out_h as f32) * aspect).round().max(1.0) as u32;
+        }
+        (None, None) => {
+            // Keep natural size
         }
     }
-    if !temp_original_image_filepath_png.exists() {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "Failed to get png version of the original image.".to_string(),
-        })));
-    }
-    Ok(temp_original_image_filepath_png)
+
+    let mut pixmap = Pixmap::new(out_w, out_h)
+        .ok_or_else(|| format!("Failed to create pixmap of size {out_w}x{out_h}"))?;
+
+    resvg::render(&tree, Transform::default(), &mut pixmap.as_mut());
+
+    // Convert premultiplied RGBA from tiny-skia to unpremultiplied RGBA for image crate
+    let unpremul = unpremultiply_rgba(pixmap.data());
+
+    let img = ImageBuffer::<Rgba<u8>, _>::from_raw(out_w, out_h, unpremul)
+        .ok_or_else(|| "Failed to build overlay image buffer".to_string())?;
+
+    Ok(img)
 }
 
-pub fn convert_svg_to_png(temp_card_cloze_svg_filepath: &Path) -> Result<PathBuf, Error> {
-    let mut temp_card_cloze_png_filepath = temp_card_cloze_svg_filepath.to_path_buf();
-    temp_card_cloze_png_filepath.set_extension("png");
-    let status = Command::new("magick")
-        // Adding this back causes a problem since the size of the image is different, so the clozes and original image no longer line up when overlaying them.
-        // .arg("-density")
-        // .arg("1000")
-        .arg(temp_card_cloze_svg_filepath)
-        .arg("-transparent")
-        .arg("white")
-        // .arg("-background")
-        // .arg("none")
-        .arg(&temp_card_cloze_png_filepath)
-        .status()
-        .map_err(|e| {
-            LibraryError::Note(NoteErrorKind::Other {
-                description: format!(
-                    "Failed to convert clozes svg to png with transparent background: {}",
-                    e
-                ),
-            })
-        })?;
-    if !temp_card_cloze_png_filepath.exists() || !status.success() {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "Failed to convert clozes svg to png with transparent background."
-                .to_string(),
-        })));
+#[allow(clippy::many_single_char_names)]
+pub fn unpremultiply_rgba(premul: &[u8]) -> Vec<u8> {
+    debug_assert!(premul.len().is_multiple_of(4));
+    let mut out = Vec::with_capacity(premul.len());
+    let mut i = 0;
+    while i < premul.len() {
+        let r = u32::from(premul[i]);
+        let g = u32::from(premul[i + 1]);
+        let b = u32::from(premul[i + 2]);
+        let a = u32::from(premul[i + 3]);
+        if a == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            // Unpremultiply with rounding: c = (c * 255 + a/2) / a
+            let r_u = ((r * 255 + (a / 2)) / a).min(255) as u8;
+            let g_u = ((g * 255 + (a / 2)) / a).min(255) as u8;
+            let b_u = ((b * 255 + (a / 2)) / a).min(255) as u8;
+            out.extend_from_slice(&[r_u, g_u, b_u, a as u8]);
+        }
+        i += 4;
     }
-    Ok(temp_card_cloze_png_filepath)
-}
-
-pub fn is_imagemagick_installed() -> bool {
-    Command::new("magick")
-        .arg("-version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    out
 }

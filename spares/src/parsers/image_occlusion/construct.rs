@@ -1,7 +1,6 @@
 use super::utils::{
-    append_to_stem, convert_image_to_png, convert_svg_to_png, get_center_of_shape,
-    get_image_occlusion_card_filepath, get_image_occlusion_directory,
-    get_image_occlusion_rendered_directory, is_imagemagick_installed,
+    append_to_stem, get_center_of_shape, get_image_occlusion_card_filepath,
+    get_image_occlusion_directory, get_image_occlusion_rendered_directory,
 };
 use super::{
     CLOZE_SETTINGS_KEY, CLOZES_GROUP_ID, ConstructImageOcclusionType, FrontConceal,
@@ -11,20 +10,19 @@ use super::{
 use crate::config::read_external_config;
 use crate::helpers::to_title_case;
 use crate::parsers::generate_files::{CardSide, RenderOutputType};
+use crate::parsers::image_occlusion::utils::render_svg_to_rgba;
 use crate::parsers::{
     BackReveal, CardData, ClozeData, ClozeGroupingSettings, ClozeHiddenReplacement, ClozeSettings,
     ClozeSettingsKeys, NotePart, NoteSettingsKeys, Parseable, parse_card_settings,
 };
 use crate::{Error, LibraryError, NoteErrorKind};
-use std::fs::{self, File, OpenOptions, read_to_string};
+use image::{ImageFormat, imageops};
+use std::fs::{self, read_to_string};
 use std::ops::Range;
 use std::path::Path;
-use std::process::Command;
 use strum::IntoEnumIterator;
 use toml_edit::DocumentMut;
 use xmltree::{Element, EmitterConfig};
-
-const DEBUG: bool = false;
 
 pub fn construct_image_occlusion_from_image(
     parser: &impl Parseable,
@@ -44,9 +42,8 @@ pub fn construct_image_occlusion_from_image(
             let start = parser.construct_comment("spares: image occlusion start");
             result.push_str(&start);
 
-            // SAFETY: The underlying struct is validated to be serializable.
-            let image_occlusion_data_toml =
-                toml_edit::ser::to_string_pretty(&image_occlusion_data).unwrap();
+            let image_occlusion_data_toml = toml_edit::ser::to_string_pretty(&image_occlusion_data)
+                .expect("SAFETY: The underlying struct is validated to be serializable.");
             // .map_err(|e| {
             //     LibraryError::InvalidConfig(format!(
             //         "Failed to serialize image occlusion data: {}",
@@ -271,7 +268,6 @@ fn modify_hint_cloze(cloze: &mut Element, hint: &str, cloze_hint_font_size: u32)
     hint_element.name = "text".to_string();
     hint_element.children.clear();
     hint_element.attributes.clear();
-    // hint_element.attributes.insert("font-family".to_string(), "Verdana".to_string());
     hint_element
         .attributes
         .insert("font-size".to_string(), cloze_hint_font_size.to_string());
@@ -306,7 +302,6 @@ fn modify_hide_cloze_mask(cloze: &mut Element) {
     // .insert("visibility".to_string(), "hidden".to_string());
 }
 
-#[allow(clippy::too_many_lines, reason = "off by a few")]
 fn create_image_occlusion_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
@@ -346,87 +341,63 @@ fn create_image_occlusion_card(
         side,
         &config.image_occlusion,
     );
-    // Write card's clozes to file
-    let mut temp_card_cloze_svg_filepath = append_to_stem(card_filepath, "-temp");
-    temp_card_cloze_svg_filepath.set_extension("svg");
-    // Create file (necessary for xml package)
-    File::create(&temp_card_cloze_svg_filepath).map_err(|e| {
-        LibraryError::Note(NoteErrorKind::InvalidSettings {
-            description: e.to_string(),
-            advice: None,
-            src: clozes_file_contents.to_string(),
-            at: (0..clozes_file_contents.len()).into(),
-        })
-    })?;
+
+    // Get card's clozes as bytes
+    let mut clozes_file_contents_buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element.write_with_config(
-        OpenOptions::new()
-            .write(true)
-            .open(&temp_card_cloze_svg_filepath)
-            .unwrap(),
+        &mut clozes_file_contents_buffer,
         EmitterConfig::new().perform_indent(true),
     );
 
-    // Verify imagemagick is installed
-    if !is_imagemagick_installed() {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "ImageMagick is not installed".to_string(),
-        })));
-    }
+    // - x and y: The top-left position (in pixels) where the rendered SVG is placed on the base image. Measured in the base image’s pixel coordinate space. Defaults: 0, 0.
+    // - width and height: The output pixel size to render the SVG before compositing.
+    //   - Both provided: SVG is scaled to exactly width×height (may distort aspect ratio).
+    //   - Only width: Height is computed to preserve the SVG’s aspect ratio.
+    //   - Only height: Width is computed to preserve the SVG’s aspect ratio.
+    //   - Neither provided: Renders at the SVG’s intrinsic size.
+    // - Notes:
+    //   - Values are non-negative integers (u32).
+    //   - If the overlay extends beyond the base image bounds, it gets clipped.
+    let x: u32 = 0;
+    let y: u32 = 0;
+    let opt_w: Option<u32> = None;
+    let opt_h: Option<u32> = None;
 
-    // Convert original image to PNG
-    let temp_original_image_filepath_png =
-        convert_image_to_png(card_filepath, original_image_filepath)?;
-
-    // Convert clozes SVG to PNG with transparent background
-    let temp_card_cloze_png_filepath = convert_svg_to_png(&temp_card_cloze_svg_filepath)?;
-
-    // Composite clozes on original image
-    let status = Command::new("magick")
-        .arg(&temp_original_image_filepath_png)
-        .arg(&temp_card_cloze_png_filepath)
-        .arg("-gravity")
-        .arg("center")
-        .arg("-composite")
-        .arg(card_filepath)
-        .status()
+    // Load the base image (any supported format: jpeg, png, etc.)
+    let mut base_img = image::open(original_image_filepath)
         .map_err(|e| {
-            LibraryError::Note(NoteErrorKind::Other {
+            Error::Library(LibraryError::Note(NoteErrorKind::Other {
                 description: format!(
-                    "Failed to compose clozes and original image to create card file: {}",
+                    "Failed to open input image {}: {}",
+                    original_image_filepath.display(),
                     e
                 ),
-            })
+            }))
+        })?
+        .to_rgba8();
+
+    // Render SVG to RGBA (unpremultiplied) with optional scaling
+    let overlay_img = render_svg_to_rgba(clozes_file_contents_buffer.as_slice(), opt_w, opt_h)
+        .map_err(|e| Error::Library(LibraryError::Note(NoteErrorKind::Other { description: e })))?;
+
+    // Composite overlay onto base at (x, y)
+    // imageops::overlay performs alpha blending using unpremultiplied RGBA
+    imageops::overlay(&mut base_img, &overlay_img, x.into(), y.into());
+
+    // Save to file as PNG
+    base_img
+        .save_with_format(card_filepath, ImageFormat::Png)
+        .map_err(|e| {
+            Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                description: format!("Failed to save PNG {}: {}", card_filepath.display(), e),
+            }))
         })?;
-    if !card_filepath.exists() || !status.success() {
+
+    if !card_filepath.exists() {
         return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
             description: "Failed to compose clozes and original image to create card file."
                 .to_string(),
         })));
-    }
-
-    // Remove temporary files
-    if !DEBUG {
-        if temp_card_cloze_svg_filepath.exists() {
-            fs::remove_file(&temp_card_cloze_svg_filepath).map_err(|e| {
-                LibraryError::Note(NoteErrorKind::Other {
-                    description: format!("Failed to remove temporary file: {}", e),
-                })
-            })?;
-        }
-        if temp_card_cloze_png_filepath.exists() {
-            fs::remove_file(&temp_card_cloze_png_filepath).map_err(|e| {
-                LibraryError::Note(NoteErrorKind::Other {
-                    description: format!("Failed to remove temporary file: {}", e),
-                })
-            })?;
-        }
-        if temp_original_image_filepath_png.exists() {
-            fs::remove_file(&temp_original_image_filepath_png).map_err(|e| {
-                LibraryError::Note(NoteErrorKind::Other {
-                    description: format!("Failed to remove temporary file: {}", e),
-                })
-            })?;
-        }
     }
     Ok(())
 }
