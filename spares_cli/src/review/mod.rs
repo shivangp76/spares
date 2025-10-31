@@ -70,7 +70,7 @@ enum ReviewAction {
     BuryCard,
     #[strum(serialize = "Bury Note (card + siblings)")]
     BuryNote,
-    #[strum(serialize = "Forget Card (reset scheduling, keep reviews)")]
+    #[strum(serialize = "Forget Card")]
     ForgetCard,
     #[strum(serialize = "Set Due Date")]
     SetDueDate,
