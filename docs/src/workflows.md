@@ -21,6 +21,33 @@ spares_cli edit note --tags-to-add tag1 tag2 --files 0001.tex 0002.tex
 spares_cli edit note --tags-to-remove tag1 tag2 --files 0001.tex 0002.tex
 ```
 
+## Getting notes created `n` days before a note
+
+You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may be a theorem that depends on a definition introduced a few days earlier in class. This utility allows you to find all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
+
+```sh
+# Get notes created $NUM_DAYS days before the note with id $ID, where $NUM_DAYS defaults to 5: `get_notes_before $ID $NUM_DAYS`
+get_notes_before() {
+  local note_id=$1
+  local days_before=${2:-5}
+
+  # Get the creation date of the input note
+  local note_date=$(spares_cli get note "$note_id" | jq -r '.created_at')
+
+  # Check if we successfully got a date
+  if [[ -z "$note_date" || "$note_date" == "null" ]]; then
+    echo "Error: Could not retrieve note $note_id or it has no creation date" >&2
+    return 1
+  fi
+
+  # Calculate the date N days before
+  local start_date=$(date -j -v-${days_before}d -f "%Y-%m-%dT%H:%M:%SZ" "$note_date" "+%Y-%m-%dT%H:%M:%SZ")
+
+  # Search for notes in the date range
+  spares_cli search "created_at<=$note_date and created_at>=$start_date"
+}
+```
+
 ## Visualizations
 
 Print tags as a tree:
