@@ -140,6 +140,14 @@ JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The que
 **Search for "dog" AND either "cat" OR "mouse"**
 - `dog and (cat or mouse)`
 
+### Sorting
+
+- Use sorting keys to order results by numeric or DateTime fields:
+  - Ascending: `sort_by_asc=created_at`
+  - Descending: `sort_by_desc=c.stability`
+- Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
+- Multiple sorts are allowed; later keys are appended to the ORDER BY list.
+
 **Search for notes with the tag "math"**
 - `tag=math`
 

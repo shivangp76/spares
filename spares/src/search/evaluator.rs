@@ -114,6 +114,8 @@ impl<'de> Evaluator<'de> {
 enum Field {
     Note(NoteField),
     Card(CardField),
+    SortAsc(String),
+    SortDesc(String),
 }
 
 impl Default for Field {
@@ -152,8 +154,17 @@ enum CardField {
     State,
     CustomData(String),
     Rated,
-    // Custom
     Count,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum FieldType {
+    Integer,
+    Float,
+    String,
+    DateTime,
+    Json,
+    Boolean,
 }
 
 impl Field {
@@ -218,12 +229,12 @@ impl Field {
             }
             "c.rated" => Ok(Field::Card(CardField::Rated)),
             "c.count" => Ok(Field::Card(CardField::Count)),
+            "sort_by_asc" => Ok(Field::SortAsc(String::new())),
+            "sort_by_desc" => Ok(Field::SortDesc(String::new())),
             f => Err(miette!("Unrecognized field: {}", f)),
         }
     }
-}
 
-impl Field {
     fn to_sql_str(&self, value_str: &str) -> String {
         let with_op = move |field_name: &str| format!("{} {}", field_name, value_str);
         match self {
@@ -298,21 +309,10 @@ impl Field {
                     with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
                 }
             },
+            Field::SortAsc(_) | Field::SortDesc(_) => String::new(),
         }
     }
-}
 
-#[derive(Debug, Clone, PartialEq)]
-enum FieldType {
-    Integer,
-    Float,
-    String,
-    DateTime,
-    Json,
-    Boolean,
-}
-
-impl Field {
     fn get_field_type(&self) -> FieldType {
         match self {
             Field::Note(note_field) => match note_field {
@@ -337,6 +337,54 @@ impl Field {
                 }
                 CardField::CustomData(_) => FieldType::Json,
             },
+            Field::SortAsc(_) | Field::SortDesc(_) => FieldType::String,
+        }
+    }
+
+    fn to_order_by_expr(field: &Field) -> Result<String, Error> {
+        let field_type = field.get_field_type();
+        match field_type {
+            FieldType::Integer | FieldType::Float | FieldType::DateTime => {}
+            _ => {
+                return Err(miette!(
+                    "Can only sort by numeric or DateTime fields. Got `{:?}` of type `{:?}`",
+                    field,
+                    field_type
+                ));
+            }
+        }
+        match field {
+            Field::Note(note_field) => match note_field {
+                NoteField::Id | NoteField::LinkedTo => Ok("n.id".to_string()),
+                NoteField::CreatedAt => Ok("n.created_at".to_string()),
+                NoteField::UpdatedAt => Ok("n.updated_at".to_string()),
+                // Unsupported types
+                NoteField::Data
+                | NoteField::ParserName
+                | NoteField::Tag
+                | NoteField::Keyword
+                | NoteField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
+            },
+            Field::Card(card_field) => match card_field {
+                CardField::Id => Ok("c.id".to_string()),
+                CardField::CreatedAt => Ok("c.created_at".to_string()),
+                CardField::UpdatedAt => Ok("c.updated_at".to_string()),
+                CardField::Due => Ok("c.due".to_string()),
+                CardField::Stability => Ok("c.stability".to_string()),
+                CardField::Difficulty => Ok("c.difficulty".to_string()),
+                CardField::DesiredRetention => Ok("c.desired_retention".to_string()),
+                CardField::State => Ok("c.state".to_string()),
+                CardField::Rated => Ok("c.rated".to_string()),
+                CardField::Count => {
+                    Ok("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)".to_string())
+                }
+                // Unsupported types
+                CardField::Suspended
+                | CardField::UserBuried
+                | CardField::SchedulerBuried
+                | CardField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
+            },
+            Field::SortAsc(_) | Field::SortDesc(_) => unreachable!(),
         }
     }
 }
@@ -365,6 +413,9 @@ impl TableRequirements {
             Field::Card(_card_field) => {
                 req.needs_card = true;
             }
+            // Sort fields don't have requirements until we know the target field name,
+            // which is determined during evaluation, not parsing
+            Field::SortAsc(_) | Field::SortDesc(_) => {}
         }
         req
     }
@@ -394,6 +445,7 @@ struct EvaluationContext<'a> {
     table_requirements: TableRequirements,
     where_clauses: Vec<String>,
     root_context: bool,
+    order_by: Vec<String>,
 }
 
 impl EvaluationContext<'_> {
@@ -406,6 +458,7 @@ impl EvaluationContext<'_> {
             table_requirements: TableRequirements::default(),
             where_clauses: Vec::new(),
             root_context: false,
+            order_by: Vec::new(),
         }
     }
 
@@ -467,6 +520,16 @@ impl EvaluationContext<'_> {
             }
         }
 
+        if !self.order_by.is_empty() {
+            self.query_builder.push(" ORDER BY ");
+            for (i, ob) in self.order_by.iter().enumerate() {
+                if i > 0 {
+                    self.query_builder.push(", ");
+                }
+                self.query_builder.push(ob);
+            }
+        }
+
         self.query_builder.sql().to_string()
     }
 
@@ -497,9 +560,23 @@ impl Evaluate for TokenTree<'_> {
                     for tree in trees {
                         let mut inner_context = EvaluationContext::new();
                         tree.evaluate(&mut inner_context)?;
+                        // Cannot use sort operations with 'or' operator
+                        if matches!(op, Op::Or) && !inner_context.order_by.is_empty() {
+                            return Err(miette!(
+                                "Cannot use sort operations with 'or' operator. Sort operations cannot be used in alternative conditions."
+                            ));
+                        }
                         if let Some(clause) = inner_context.where_clauses.first() {
                             clauses.push(clause.clone());
                         }
+                        // Merge order_by clauses
+                        // This is necessary to not allow sort by conditions
+                        // inside groups "c.stability>=2 or (a sort_by_asc=linked_to)"
+                        context.order_by.extend(inner_context.order_by);
+                        // Merge table requirements
+                        context
+                            .table_requirements
+                            .merge(&inner_context.table_requirements);
                     }
                     let join_op = match op {
                         Op::And => " AND ",
@@ -508,7 +585,13 @@ impl Evaluate for TokenTree<'_> {
                         _ => unreachable!("by outer match"),
                     };
                     if !clauses.is_empty() {
-                        context.add_where_clause(format!("({})", clauses.join(join_op)));
+                        let clause_str = clauses.join(join_op);
+                        // Only wrap in parentheses if there are multiple clauses
+                        if clauses.len() > 1 {
+                            context.add_where_clause(format!("({})", clause_str));
+                        } else {
+                            context.add_where_clause(clause_str);
+                        }
                     }
                     Ok(())
                 }
@@ -568,9 +651,17 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
         return Err(miette!("Minus operation requires a comparison operand."));
     }
     trees[0].evaluate(&mut inner_context)?;
+    // Cannot negate sort operations
+    if !inner_context.order_by.is_empty() {
+        return Err(miette!(
+            "Cannot negate sort operations. Sort operations cannot be used with the minus operator."
+        ));
+    }
     if let Some(clause) = inner_context.where_clauses.first() {
         context.add_where_clause(format!("NOT ({})", clause));
     }
+    // Merge order_by clauses (should be empty due to check above, but merge anyway)
+    // context.order_by.extend(inner_context.order_by);
     context
         .table_requirements
         .merge(&inner_context.table_requirements);
@@ -636,6 +727,33 @@ fn evaluate_field_value(
     let value_type = value_context
         .value_type
         .ok_or_else(|| miette!("Missing value"))?;
+
+    // Special-case sorting keys
+    if matches!(field, Field::SortAsc(_) | Field::SortDesc(_)) {
+        if !matches!(op, Op::Equal) {
+            return Err(miette!(
+                "Sorting requires '=' operator, e.g., sort_by_asc=created_at"
+            ));
+        }
+        let rhs_field_name = value_context
+            .params
+            .first()
+            .ok_or_else(|| miette!("Missing sort field name"))?
+            .to_string();
+        let target_field = Field::from_str(&[&rhs_field_name])?;
+        let order_expr = Field::to_order_by_expr(&target_field)?;
+        // Merge table requirements for the sort target field
+        context
+            .table_requirements
+            .merge(&TableRequirements::analyze_field(target_field.clone()));
+        // Build order by expression
+        match field {
+            Field::SortAsc(_) => context.order_by.push(format!("{} ASC", order_expr)),
+            Field::SortDesc(_) => context.order_by.push(format!("{} DESC", order_expr)),
+            _ => {}
+        }
+        return Ok(());
+    }
     match op {
         Op::Equal | Op::GreaterThan | Op::GreaterThanEqual | Op::LessThan | Op::LessThanEqual => {
             if let Some(mut value_param) = value_context.params.pop() {
@@ -672,6 +790,27 @@ fn evaluate_field_value(
                 value_type
             ));
         }
+    }
+
+    // Ensure field and operator have valid type
+    // - Strings do not have an order
+    // - Booleans do not have an order
+    // - Booleans cannot use containment operator
+    // - Numbers cannot use containment operator
+    match (&field_type, &op) {
+        (
+            FieldType::String | FieldType::Boolean,
+            Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual,
+        )
+        | (FieldType::Integer | FieldType::Float | FieldType::Boolean, Op::Tilde) => {
+            return Err(miette!(
+                "The field `{:?}` has a type of `{:?}` which cannot use operator `{}`",
+                field,
+                field_type,
+                op,
+            ));
+        }
+        _ => {}
     }
 
     let sql_condition = field.to_sql_str(&value_str);
@@ -818,6 +957,11 @@ mod tests {
             "tags=math",
             // Field type and value type do not match
             "card.scheduler_buried=test",
+            // Field type and operator type do not match
+            "data>2",        // Strings do not have an order
+            "id~2",          // Numbers cannot use containment operator
+            "c.suspended~2", // Booleans cannot use containment operator
+            "c.suspended>2", // Booleans do not have an order
             // String as field is not allowed
             "\"test\"=2",
             // Custom data with field, but no comparison op
@@ -834,6 +978,141 @@ mod tests {
             let query_str_res = evaluator.evaluate(EvaluatorReturnItemType::NoteIds);
             dbg!(&query_str_res);
             assert!(query_str_res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_sorting() {
+        let inputs = vec![
+            // Basic ascending sort on note field
+            (
+                "sort_by_asc=created_at",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC",
+            ),
+            // Basic descending sort on note field
+            (
+                "sort_by_desc=updated_at",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.updated_at DESC",
+            ),
+            // Sort by note id
+            (
+                "sort_by_asc=id",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.id ASC",
+            ),
+            // Sort by card field
+            (
+                "sort_by_asc=c.stability",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability ASC",
+            ),
+            // Sort by card due date
+            (
+                "sort_by_desc=c.due",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.due DESC",
+            ),
+            // Sort by numeric card fields
+            (
+                "sort_by_asc=c.difficulty",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.difficulty ASC",
+            ),
+            (
+                "sort_by_desc=c.desired_retention",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.desired_retention DESC",
+            ),
+            // Sort by card id
+            (
+                "sort_by_asc=c.id",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.id ASC",
+            ),
+            // Sort by card created_at
+            (
+                "sort_by_desc=c.created_at",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.created_at DESC",
+            ),
+            // Sort by card count
+            (
+                "sort_by_asc=c.count",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) ASC",
+            ),
+            // Multiple sorts
+            (
+                "sort_by_desc=c.stability sort_by_asc=c.id",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability DESC, c.id ASC",
+            ),
+            // Sort combined with WHERE clause
+            (
+                "tag=math sort_by_asc=created_at",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") ORDER BY n.created_at ASC",
+            ),
+            (
+                "c.stability>=2 sort_by_desc=c.due",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC",
+            ),
+            // Sort with linked_to field
+            (
+                "sort_by_asc=linked_to",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id ORDER BY n.id ASC",
+            ),
+            // Sort with parenthesis
+            (
+                "(tag=math and c.stability>=2) sort_by_asc=linked_to)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") AND c.stability >= 2) ORDER BY n.id ASC",
+            ),
+            // The following should be equivalent to the one above.
+            (
+                "tag=math and (c.stability>=2 sort_by_asc=linked_to)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") AND c.stability >= 2) ORDER BY n.id ASC",
+            ),
+        ];
+
+        for (input, expected_sql) in inputs {
+            dbg!(&input);
+            let evaluator = Evaluator::new(input);
+            let query_str = evaluator
+                .evaluate(EvaluatorReturnItemType::NoteIds)
+                .unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_sorting_errors() {
+        let inputs = [
+            // Cannot sort by string fields
+            "sort_by_asc=tag",
+            "sort_by_desc=data",
+            "sort_by_asc=parser_name",
+            "sort_by_desc=keyword",
+            // Cannot sort by boolean fields
+            "sort_by_asc=c.suspended",
+            "sort_by_desc=c.user_buried",
+            // Cannot sort by json fields
+            "sort_by_desc=custom_data",
+            // Cannot use non-equal operator for sorting
+            "sort_by_asc>=created_at",
+            "sort_by_desc~c.stability",
+            // Invalid field name
+            "sort_by_asc=invalid_field",
+            "sort_by_asc=sort_by_asc",
+            "sort_by_asc=sort_by_desc",
+            // Cannot use certain operators for sorting
+            "-sort_by_asc=linked_to",
+            "c.stability>=2 or sort_by_asc=linked_to",
+            // `and` is fine since that is implictly used everywhere
+            // Cannot use sort by inside grouping
+            "c.stability>=2 or (a sort_by_asc=linked_to)",
+            // NOTE: Even though this is equivalent to `(c.stability >=2 or a) sort_by_asc=linked_to`, this creates more confusion, so it is not allowed at the moment.
+            "c.stability>=2 -(a sort_by_asc=linked_to)",
+        ];
+        for input in inputs {
+            dbg!(&input);
+            let evaluator = Evaluator::new(input);
+            let query_str_res = evaluator.evaluate(EvaluatorReturnItemType::NoteIds);
+            dbg!(&query_str_res);
+            assert!(
+                query_str_res.is_err(),
+                "Expected error for input: {}",
+                input
+            );
         }
     }
 }
