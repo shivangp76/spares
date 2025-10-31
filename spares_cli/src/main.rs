@@ -76,8 +76,6 @@ enum Commands {
     Statistics(StatisticsArgs),
     /// Search for notes or cards
     Search(SearchArgs),
-    /// Get unmatched keywords
-    UnmatchedKeywords,
     /// Import notes data from file
     Import(ImportArgs),
     /// Sync data between local note files, database, and adapters.
@@ -90,13 +88,20 @@ enum Commands {
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),
+    /// Get unmatched keywords
+    UnmatchedKeywords,
+    /// Rebuild a tag's dynamic membership
+    RebuildTag {
+        #[arg(short, long)]
+        id: i64,
+    },
+    /// Forget cards (reset scheduling, keep review logs)
+    ForgetCard(ForgetCardArgs),
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
         shell: clap_complete_command::Shell,
     },
-    /// Forget cards (reset scheduling, keep review logs)
-    ForgetCard(ForgetCardArgs),
 }
 
 #[derive(Args, Debug)]
@@ -181,9 +186,6 @@ enum EditCommands {
         query: Option<Option<String>>,
         #[arg(short, long)]
         auto_delete: Option<bool>,
-        // TODO: This is really an action, not a setting that can be updated.
-        #[arg(short, long, default_value_t = false)]
-        rebuild: bool,
     },
     Note {
         #[command(flatten)]
@@ -582,13 +584,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 description,
                 query,
                 auto_delete,
-                rebuild,
             } => {
-                let rebuild_only = parent_id.is_none()
-                    && name.is_none()
-                    && description.is_none()
-                    && query.is_none()
-                    && auto_delete.is_none();
                 let request = UpdateTagRequest {
                     parent_id,
                     name,
@@ -611,21 +607,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     return Err(miette!(message.unwrap().to_string()));
                 }
                 let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
-                if !rebuild_only {
-                    println!("{:#?}", &response);
-                }
-                if rebuild {
-                    let url = format!("{}/api/tags/{}/rebuild", base_url, id);
-                    let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-                    let status = response.status();
-                    if status != StatusCode::OK {
-                        let response_json: Value =
-                            response.json().await.map_err(|e| miette!("{}", e))?;
-                        let message = response_json.get("message");
-                        return Err(miette!(message.unwrap().to_string()));
-                    }
-                    println!("Done");
-                }
+                println!("{:#?}", &response);
             }
             EditCommands::Note {
                 selector,
@@ -1107,6 +1089,17 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let response: Vec<UnmatchedKeywordResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{:#?}", &response);
+        }
+        Commands::RebuildTag { id } => {
+            let url = format!("{}/api/tags/{}/rebuild", base_url, id);
+            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+            let status = response.status();
+            if status != StatusCode::OK {
+                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
+                let message = response_json.get("message");
+                return Err(miette!(message.unwrap().to_string()));
+            }
+            println!("Done");
         }
         Commands::Search(SearchArgs {
             mode,
