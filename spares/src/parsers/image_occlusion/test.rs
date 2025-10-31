@@ -540,3 +540,112 @@ fn test_get_cards_image_occlusion_front_conceal() {
     };
     assert_eq!(card_cloze_data, expected_card_cloze_data);
 }
+
+#[test]
+fn test_get_cards_image_occlusion_grouping() {
+    // Tests:
+    // - Creating a text cloze with no settings and an image occlusion cloze with no settings
+    // should create 2 cards (1 per cloze, since they are not grouped)
+    //
+    // Create an image occlusion image
+    let seed = "grouping";
+    let image_1_file_stem = format!("test-{}-1", seed);
+    let temp_dir = get_image_occlusion_directory();
+    let mut original_image_filepath_1 = temp_dir.clone();
+    original_image_filepath_1.push(format!("{}.svg", image_1_file_stem));
+    let text = indoc! { r##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 124 124" fill="none">
+          <rect width="124" height="124" rx="24" fill="#F97316"/>
+        </svg>"##
+    };
+    std::fs::write(&original_image_filepath_1, text).unwrap();
+    let clozes_filedata_1 = indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="800" height="400">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+             <rect fill="blue" height="75" id="svg_1" stroke="#2D2D2D" width="123.21" x="53.68" y="65.18"  data-cloze-settings="" />
+          </g>
+        </svg>"## };
+    let mut clozes_filepath_1 = temp_dir.clone();
+    clozes_filepath_1.push(format!("{}_clozes.svg", image_1_file_stem));
+    std::fs::write(&clozes_filepath_1, clozes_filedata_1).unwrap();
+
+    // Construct note data
+    let note_data = format!(
+        indoc! { "
+            a{{{{b}}}}
+            <!--- spares: image occlusion start --->
+            <!--- original_image_filepath = \"{}\" --->
+            <!--- clozes_filepath = \"{}\" --->
+            <!--- front_conceal = \"{:?}\" --->
+            <!--- back_reveal = \"{:?}\" --->
+            <!--- spares: image occlusion end --->
+            " },
+        original_image_filepath_1.display(),
+        clozes_filepath_1.display(),
+        FrontConceal::AllGroupings,
+        BackReveal::OnlyAnswered,
+    );
+
+    // Get cards
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, note_data.as_str(), true, MOVE_FILES);
+    assert!(cards_res.is_ok());
+
+    let image_occlusion_1 = Arc::new(ImageOcclusionData {
+        original_image_filepath: PathBuf::from(format!(
+            "/tmp/spares/data/image_occlusions/test-{}-1.svg",
+            seed
+        )),
+        clozes_filepath: PathBuf::from(format!(
+            "/tmp/spares/data/image_occlusions/test-{}-1_clozes.svg",
+            seed
+        )),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+    });
+    let cards = cards_res.unwrap();
+    let expected = vec![
+        CardData {
+            order: Some(1),
+            grouping: ClozeGrouping::Auto(1),
+            is_suspended: None,
+            front_conceal: FrontConceal::OnlyGrouping,
+            back_reveal: BackReveal::FullNote,
+            back_type: BackType::FullNote,
+            data: vec![
+                NotePart::SurroundingData("a".to_string()),
+                NotePart::ClozeStart("{{[o:1]".to_string()),
+                NotePart::ClozeData(
+                    "b".to_string(),
+                    ClozeHiddenReplacement::ToAnswer { hint: None },
+                ),
+                NotePart::ClozeEnd("}}".to_string()),
+                NotePart::SurroundingData("\n<!--- spares: image occlusion start --->\n<!--- original_image_filepath = \"/tmp/spares/data/image_occlusions/test-grouping-1.svg\" --->\n<!--- clozes_filepath = \"/tmp/spares/data/image_occlusions/test-grouping-1_clozes.svg\" --->\n<!--- front_conceal = \"AllGroupings\" --->\n<!--- back_reveal = \"OnlyAnswered\" --->\n![Test Grouping 1](/tmp/spares/data/image_occlusions/test-grouping-1.svg)\n<!--- spares: image occlusion end --->\n".to_string()),
+            ],
+        },
+        CardData {
+            order: Some(2),
+            grouping: ClozeGrouping::Auto(2),
+            is_suspended: None,
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_type: BackType::OnlyAnswered,
+            data: vec![
+                NotePart::SurroundingData("a".to_string()),
+                NotePart::ClozeStart("{{[o:1]".to_string()),
+                NotePart::ClozeData("b".to_string(), ClozeHiddenReplacement::NotToAnswer),
+                NotePart::ClozeEnd("}}".to_string()),
+                NotePart::SurroundingData("\n".to_string()),
+                NotePart::ImageOcclusion {
+                    cloze_indices: vec![(0, ClozeHiddenReplacement::ToAnswer { hint: None })],
+                    data: image_occlusion_1.clone(),
+                },
+            ],
+        },
+    ];
+    assert_eq!(cards, expected);
+}

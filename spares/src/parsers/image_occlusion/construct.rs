@@ -239,12 +239,14 @@ pub fn modify_clozes_for_card(
                         modify_hide_cloze_mask(cloze);
                     }
                     BackReveal::OnlyAnswered => {
-                        if cloze_replacement_opt.is_some() {
-                            // Cloze is a part of the grouping, so reveal it by hiding the cloze mask
+                        if let Some((_, r)) = cloze_replacement_opt
+                            && r != &ClozeHiddenReplacement::NotToAnswer
+                        {
+                            // Cloze is a part of the grouping and required an answer, so reveal it by hiding the cloze mask
                             modify_hide_cloze_mask(cloze);
                         }
-                        // Otherwise, the cloze is not a part of the grouping and we only want
-                        // to reveal the grouping, so keep this cloze mask.
+                        // Otherwise, the cloze is not a part of the grouping or did not require
+                        // and answer, so keep this cloze mask.
                     }
                 }
             }
@@ -348,6 +350,7 @@ fn create_image_occlusion_card(
         &mut clozes_file_contents_buffer,
         EmitterConfig::new().perform_indent(true),
     );
+    // let clozes_file_contents = String::from_utf8(clozes_file_contents_buffer.clone()).unwrap();
 
     // - x and y: The top-left position (in pixels) where the rendered SVG is placed on the base image. Measured in the base image’s pixel coordinate space. Defaults: 0, 0.
     // - width and height: The output pixel size to render the SVG before compositing.
@@ -664,6 +667,7 @@ pub fn get_clozes_from_svg_str(
     data: &str,
     front_conceal: FrontConceal,
     back_reveal: BackReveal,
+    current_grouping_number: &mut u32,
 ) -> Result<Vec<ParsedImageOcclusionCloze>, LibraryError> {
     let mut svg_element = Element::parse(data.as_bytes()).map_err(|e| {
         LibraryError::Note(NoteErrorKind::Other {
@@ -680,7 +684,6 @@ pub fn get_clozes_from_svg_str(
     })?;
     let note_settings_keys = NoteSettingsKeys::default();
     let cloze_settings_keys = ClozeSettingsKeys::default();
-    let mut current_grouping_number = 1;
     let result = clozes
         .into_iter()
         .map(|element| {
@@ -694,7 +697,7 @@ pub fn get_clozes_from_svg_str(
             parse_card_settings(
                 &cloze_settings_string,
                 &(0..cloze_settings_string.len()),
-                &mut current_grouping_number,
+                current_grouping_number,
                 &note_settings_keys,
                 &cloze_settings_keys,
                 Some((front_conceal, back_reveal)),

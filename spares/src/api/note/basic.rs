@@ -111,7 +111,7 @@ pub fn delete_note_files(
         trash::delete(note_rendered_path).map_err(Error::Trash)?;
     }
 
-    let image_occlusion_clozes = parse_image_occlusion_data(note_data, parser, false)?;
+    let image_occlusion_clozes = parse_image_occlusion_data(note_data, parser, false, &mut 0)?;
 
     for current_card_order in card_orders {
         // Card front raw path
