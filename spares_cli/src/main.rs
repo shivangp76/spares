@@ -44,6 +44,16 @@ use std::{io, path::PathBuf};
 use sync::{SyncArgs, sync_notes};
 use tree::{build_tree, print_tree};
 
+async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Response, Error> {
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(miette!(message.unwrap().to_string()));
+    }
+    Ok(response)
+}
+
 /// Spaced Repetition System
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -430,12 +440,7 @@ async fn list_parsers(
         .send()
         .await
         .map_err(|e| miette!("{}", e))?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(miette!(message.unwrap().to_string()));
-    }
+    let response = ensure_ok(response).await?;
     let parser_responses: Vec<ParserResponse> =
         response.json().await.map_err(|e| miette!("{}", e))?;
     Ok(parser_responses)
@@ -477,13 +482,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
@@ -509,13 +508,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
             }
@@ -544,13 +537,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: NotesResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
@@ -566,13 +553,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
@@ -599,13 +580,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
             }
@@ -667,13 +642,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let responses: Vec<NoteResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &responses);
@@ -710,13 +679,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: Vec<CardResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
@@ -730,13 +693,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let _ = ensure_ok(response).await?;
                 println!("Done");
             }
             DeleteCommands::Tag { id } => {
@@ -746,13 +703,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let _ = ensure_ok(response).await?;
                 println!("Done");
             }
             DeleteCommands::Note { id } => {
@@ -762,13 +713,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let _ = ensure_ok(response).await?;
                 println!("Done");
             }
         },
@@ -780,13 +725,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let parser_response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &parser_response);
@@ -804,13 +743,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let tag_response: TagResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &tag_response);
@@ -822,13 +755,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let note_response: NoteResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &note_response);
@@ -852,13 +779,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 if id.is_some() {
                     let card_response: CardResponse =
                         response.json().await.map_err(|e| miette!("{}", e))?;
@@ -903,13 +824,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let tag_responses: Vec<TagResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 match output {
@@ -972,13 +887,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
 
                 let note_responses: Vec<NoteResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
@@ -999,13 +908,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: Vec<NoteLink> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{:#?}", &response);
@@ -1039,12 +942,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .send()
                 .await
                 .map_err(|e| miette!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-                let message = response_json.get("message");
-                return Err(miette!(message.unwrap().to_string()));
-            }
+            let _ = ensure_ok(response).await?;
             println!("Done");
         }
         Commands::Review(review_args) => {
@@ -1067,12 +965,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .send()
                 .await
                 .map_err(|e| miette!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-                let message = response_json.get("message");
-                return Err(miette!(message.unwrap().to_string()));
-            }
+            let response = ensure_ok(response).await?;
             let response: StatisticsResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{:#?}", &response);
@@ -1080,12 +973,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::UnmatchedKeywords => {
             let url = format!("{}/api/notes/unmatched-keywords", base_url);
             let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-                let message = response_json.get("message");
-                return Err(miette!(message.unwrap().to_string()));
-            }
+            let response = ensure_ok(response).await?;
             let response: Vec<UnmatchedKeywordResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{:#?}", &response);
@@ -1093,12 +981,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::RebuildTag { id } => {
             let url = format!("{}/api/tags/{}/rebuild", base_url, id);
             let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-                let message = response_json.get("message");
-                return Err(miette!(message.unwrap().to_string()));
-            }
+            let _ = ensure_ok(response).await?;
             println!("Done");
         }
         Commands::Search(SearchArgs {
@@ -1123,13 +1006,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: SearchNotesResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 match response {
@@ -1211,13 +1088,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 if mode == SearchMode::Keyword {
@@ -1310,12 +1181,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                if response.status() != StatusCode::OK {
-                    let response_json: Value =
-                        response.json().await.map_err(|e| miette!("{}", e))?;
-                    let message = response_json.get("message");
-                    return Err(miette!(message.unwrap().to_string()));
-                }
+                let response = ensure_ok(response).await?;
                 let search_response: spares::schema::note::SearchNotesResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 if let spares::schema::note::SearchNotesResponse::Cards(cards) = search_response {
