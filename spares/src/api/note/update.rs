@@ -47,7 +47,7 @@ async fn update_cards(
         same_indices,
     } = match_cards_result;
 
-    // TODO: Ideally only cards in `same_indices` where their `back_type` or `special_state` was updated should be updated below. Most of the time these won't change so this is wasteful.
+    // NOTE: Only cards in `same_indices` which had their `back_type` or `special_state` updated should be updated below. Most of the time these field won't change, so this is wasteful. However, there is no way to know if these fields updated without querying them first which would be wasteful as well.
 
     // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
     let moved_cards_query_str = format!(
