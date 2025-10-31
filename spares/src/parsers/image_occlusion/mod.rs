@@ -186,6 +186,7 @@ pub fn parse_image_occlusion_data(
     data: &str,
     parser: &dyn Parseable,
     move_files: bool,
+    current_grouping_number: &mut u32,
 ) -> Result<Vec<ParsedImageOcclusionData>, LibraryError> {
     let start = parser.construct_comment("(.*)");
     let regex_string = format!(r"(?m){}", start.trim());
@@ -226,6 +227,7 @@ pub fn parse_image_occlusion_data(
             clozes_file_contents.as_str(),
             image_occlusion_data.front_conceal,
             image_occlusion_data.back_reveal,
+            current_grouping_number,
         )?;
         clozes.push(ParsedImageOcclusionData {
             image_occlusion: image_occlusion_data,

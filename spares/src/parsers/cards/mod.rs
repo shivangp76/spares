@@ -557,7 +557,7 @@ fn apply_conceal_and_reveal(
                 cloze_grouping_settings.back_reveal,
                 BackReveal::OnlyAnswered
             ) {
-                // Find all other clozes which are either completely before or completely after this cloze that are NOT a part of this card's grouping.
+                // Find all other clozes which are either completely before or completely after this cloze and are NOT a part of this card's grouping
                 let matching_clozes = all_clozes
                     .iter()
                     .filter(|(cloze_data, all_grouping_settings)| {
@@ -569,12 +569,12 @@ fn apply_conceal_and_reveal(
                     })
                     .map(|(x, _)| x)
                     .collect::<Vec<_>>();
-                // Filter these clozes to remove all nested clozes. This is because if the cloze is nested, then the outer cloze will hide the inner cloze.
+                // Filter these clozes to remove all nested clozes. This is because if the cloze is nested, then the outer cloze will hide the inner cloze. Note that this is not true for image occlusion clozes since they all have the same indicies, but are not nested, so we exclude them.
                 let matching_clozes = matching_clozes
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &cur_cloze_data)| {
-                        if i == 0 {
+                        if i == 0 || cur_cloze_data.image_occlusion.is_some() {
                             return Some(cur_cloze_data);
                         }
                         let prev_cloze_data = matching_clozes[i - 1];
@@ -592,6 +592,8 @@ fn apply_conceal_and_reveal(
         // NOTE: The value of `is_image_occlusion` doesn't matter here since that property won't be read.
         let mut new_grouping_settings = ClozeGroupingSettings::default(&mut 0, None);
         new_grouping_settings.grouping = clozes.first().unwrap().1.grouping.clone();
+        // new_grouping_settings.front_conceal = clozes.first().unwrap().1.front_conceal;
+        // new_grouping_settings.back_reveal = clozes.first().unwrap().1.back_reveal;
         new_grouping_settings.hidden_no_answer = true;
         new_grouping_settings.skip_serialization = true;
         clozes.extend(
@@ -669,47 +671,52 @@ pub fn get_cards_main(
         .collect::<Result<Vec<_>, _>>()?;
 
     // Parse image occlusion data
-    let image_occlusion_clozes = parse_image_occlusion_data(data.as_str(), parser, move_files)?
-        .into_iter()
-        .flat_map(
-            |ParsedImageOcclusionData {
-                 start_delim,
-                 end_delim,
-                 image_occlusion,
-                 clozes,
-             }| {
-                let shared_image_occlusion_data = Arc::new(image_occlusion);
-                clozes
-                    .into_iter()
-                    .enumerate()
-                    .map(
-                        |(
-                            i,
-                            ParsedImageOcclusionCloze {
-                                settings,
-                                grouping_settings,
-                            },
-                        )| {
-                            (
-                                ClozeData {
-                                    // This will be renumbered anyway
-                                    index: 0,
-                                    start_delim: start_delim.clone(),
-                                    end_delim: end_delim.clone(),
-                                    settings,
-                                    image_occlusion: Some(ImageOcclusionCloze {
-                                        index: ImageOcclusionClozeIndex::OriginalIndex(i),
-                                        data: shared_image_occlusion_data.clone(),
-                                    }),
-                                },
-                                grouping_settings,
-                            )
+    let image_occlusion_clozes = parse_image_occlusion_data(
+        data.as_str(),
+        parser,
+        move_files,
+        &mut current_grouping_number,
+    )?
+    .into_iter()
+    .flat_map(
+        |ParsedImageOcclusionData {
+             start_delim,
+             end_delim,
+             image_occlusion,
+             clozes,
+         }| {
+            let shared_image_occlusion_data = Arc::new(image_occlusion);
+            clozes
+                .into_iter()
+                .enumerate()
+                .map(
+                    |(
+                        i,
+                        ParsedImageOcclusionCloze {
+                            settings,
+                            grouping_settings,
                         },
-                    )
-                    .collect::<Vec<_>>()
-            },
-        )
-        .collect::<Vec<_>>();
+                    )| {
+                        (
+                            ClozeData {
+                                // This will be renumbered anyway
+                                index: 0,
+                                start_delim: start_delim.clone(),
+                                end_delim: end_delim.clone(),
+                                settings,
+                                image_occlusion: Some(ImageOcclusionCloze {
+                                    index: ImageOcclusionClozeIndex::OriginalIndex(i),
+                                    data: shared_image_occlusion_data.clone(),
+                                }),
+                            },
+                            grouping_settings,
+                        )
+                    },
+                )
+                .collect::<Vec<_>>()
+        },
+    )
+    .collect::<Vec<_>>();
 
     // Interweave text and image occlusion clozes
     let mut all_clozes = merge_by_key(&text_clozes, &image_occlusion_clozes, |x| {
