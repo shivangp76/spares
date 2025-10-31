@@ -292,6 +292,7 @@ enum GetCommands {
         id: Option<i64>,
         #[arg(short, long, conflicts_with_all = ["id", "leeches"])]
         note_id: Option<i64>,
+        // TODO: Move this to a top level command
         #[arg(short, long, conflicts_with_all = ["id", "note_id"])]
         leeches: bool,
     },
@@ -485,7 +486,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
             AddCommands::Tag {
                 name,
@@ -510,7 +511,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
                 let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
             AddCommands::Note {
                 data,
@@ -540,7 +541,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: NotesResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
         },
         Commands::Edit(edit_args) => match edit_args.command {
@@ -556,7 +557,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
             EditCommands::Tag {
                 id,
@@ -582,7 +583,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
                 let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
             EditCommands::Note {
                 selector,
@@ -645,7 +646,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let responses: Vec<NoteResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &responses);
+                println!("{}", serde_json::to_string_pretty(&responses).unwrap());
             }
             EditCommands::Card {
                 selector: selector_local,
@@ -682,7 +683,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: Vec<CardResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
         },
         Commands::Delete(delete_args) => match delete_args.command {
@@ -728,7 +729,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let parser_response: ParserResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &parser_response);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&parser_response).unwrap()
+                );
             }
             GetCommands::Tag { id, name } => {
                 let url = if let Some(id) = id {
@@ -746,7 +750,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let tag_response: TagResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &tag_response);
+                println!("{}", serde_json::to_string_pretty(&tag_response).unwrap());
             }
             GetCommands::Note { id } => {
                 let url = format!("{}/api/notes/{}", base_url, id);
@@ -756,9 +760,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .await
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let note_response: NoteResponse =
+                let mut note_response: NoteResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &note_response);
+                note_response.linked_notes = None;
+                println!("{}", serde_json::to_string_pretty(&note_response).unwrap());
             }
             GetCommands::Card {
                 id,
@@ -783,11 +788,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 if id.is_some() {
                     let card_response: CardResponse =
                         response.json().await.map_err(|e| miette!("{}", e))?;
-                    println!("{:#?}", &card_response);
+                    println!("{}", serde_json::to_string_pretty(&card_response).unwrap());
                 } else if note_id.is_some() || leeches {
                     let card_responses: Vec<CardResponse> =
                         response.json().await.map_err(|e| miette!("{}", e))?;
-                    println!("{:#?}", &card_responses);
+                    println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
                 } else {
                     unreachable!()
                 }
@@ -797,7 +802,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             ListCommands::Parser { page, limit } => {
                 let parser_responses =
                     list_parsers(page, limit, base_url.as_str(), &client).await?;
-                println!("{:#?}", &parser_responses);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&parser_responses).unwrap()
+                );
             }
             ListCommands::Tag {
                 page,
@@ -829,7 +837,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 match output {
                     ListTagOutput::Full => {
-                        println!("{:#?}", &tag_responses);
+                        println!("{}", serde_json::to_string_pretty(&tag_responses).unwrap());
                     }
                     ListTagOutput::Short => {
                         let tag_names = tag_responses
@@ -896,7 +904,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 if graph {
                     chart(note_responses);
                 } else {
-                    println!("{:#?}", &note_responses);
+                    println!("{}", serde_json::to_string_pretty(&note_responses).unwrap());
                 }
             }
             ListCommands::NoteLink { score_threshold } => {
@@ -911,7 +919,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: Vec<NoteLink> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{:#?}", &response);
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
         },
         Commands::Generate(GenerateArgs {
@@ -968,7 +976,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let response = ensure_ok(response).await?;
             let response: StatisticsResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{:#?}", &response);
+            println!("{}", serde_json::to_string_pretty(&response).unwrap());
         }
         Commands::UnmatchedKeywords => {
             let url = format!("{}/api/notes/unmatched-keywords", base_url);
@@ -976,7 +984,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let response = ensure_ok(response).await?;
             let response: Vec<UnmatchedKeywordResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{:#?}", &response);
+            println!("{}", serde_json::to_string_pretty(&response).unwrap());
         }
         Commands::RebuildTag { id } => {
             let url = format!("{}/api/tags/{}/rebuild", base_url, id);
@@ -1092,9 +1100,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 if mode == SearchMode::Keyword {
-                    println!("{:#?}", &response.first());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&response.first()).unwrap()
+                    );
                 } else if mode == SearchMode::KeywordRanking {
-                    println!("{:#?}", &response);
+                    println!("{}", serde_json::to_string_pretty(&response).unwrap());
                 }
             }
         },
