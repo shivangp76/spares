@@ -1,4 +1,4 @@
-const MAX_KEYWORD_DIFFERENCE_SCORE: f64 = 5.0;
+const MAX_KEYWORD_DIFFERENCE_SCORE: f64 = 7.0;
 
 pub fn weighted_levenshtein(a: &str, b: &str) -> Option<f64> {
     let a_chars: Vec<char> = a.chars().collect();
