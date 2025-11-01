@@ -278,7 +278,7 @@ impl Parseable for TypstParser {
                 }
                 ClozeHiddenReplacement::NotToAnswer => "#cloze(to_answer: false)".to_string(),
             },
-            ClozeReplacement::Reveal(data) => format!("#block(fill: aqua)[{}]", data),
+            ClozeReplacement::Reveal(data) => format!("#block(fill: aqua, outset: .2em)[{}]", data),
         }
     }
 
