@@ -67,10 +67,18 @@ impl SrsScheduler for FSRS {
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
         let cards_lapses: Vec<(i64, u32)> = sqlx::query_as(
-            r"SELECT card_id, COUNT(*)
-            FROM review_log
-            WHERE state = ? AND rating = ?
-            GROUP BY card_id",
+            r"SELECT
+              c.id AS card_id,
+              COUNT(r.id) AS review_count
+            FROM
+              card c
+            JOIN
+              review_log r ON r.card_id = c.id
+            WHERE
+              c.state = ?
+              AND r.rating = ?
+            GROUP BY
+              c.id",
         )
         .bind(state_to_number(State::Review))
         .bind(rating_to_number(rs_fsrs::Rating::Again))
