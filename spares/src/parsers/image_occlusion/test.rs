@@ -3,14 +3,16 @@ use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
     Parseable, get_cards,
     image_occlusion::{
-        ImageOcclusionConfig, ImageOcclusionData, get_clozes_from_svg,
-        get_image_occlusion_directory, modify_clozes_for_card,
+        ImageOcclusionConfig, ImageOcclusionData,
+        construct::{get_clozes_from_svg, modify_clozes_for_card},
+        create_image_occlusion_cards, get_image_occlusion_directory,
+        get_image_occlusion_rendered_directory,
     },
     impls::markdown::MarkdownParser,
 };
 use indoc::indoc;
 use pretty_assertions::assert_eq;
-use std::{fs::read_to_string, path::PathBuf, sync::Arc};
+use std::{fs::read_to_string, path::PathBuf, sync::Arc, time::Instant};
 use xmltree::{Element, EmitterConfig};
 
 const MOVE_FILES: bool = false;
@@ -648,4 +650,187 @@ fn test_get_cards_image_occlusion_grouping() {
         },
     ];
     assert_eq!(cards, expected);
+}
+
+#[test]
+fn test_image_occlusion_parallel_performance() {
+    // Test that parallel processing is faster than sequential processing
+    // for multiple image occlusion cards
+
+    use crate::config::read_external_config;
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+    use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
+
+    let seed = "perf-test";
+    let num_cards = 8; // Create 8 cards to test parallelism
+
+    let temp_dir = get_image_occlusion_directory();
+    let rendered_dir = get_image_occlusion_rendered_directory();
+
+    // Create test image occlusion files
+    let mut image_occlusions = Vec::new();
+    for i in 1..=num_cards {
+        let file_stem = format!("{}-{}", seed, i);
+        let mut original_image_filepath = temp_dir.clone();
+        original_image_filepath.set_extension("");
+        original_image_filepath.push(format!("{}.png", file_stem));
+
+        // Create a simple PNG image (400x400 orange rectangle)
+        use image::{Rgba, RgbaImage};
+        let mut img = RgbaImage::new(400, 400);
+        for pixel in img.pixels_mut() {
+            *pixel = Rgba([249, 115, 22, 255]); // Orange color
+        }
+        img.save(&original_image_filepath).unwrap();
+
+        let mut clozes_filepath = temp_dir.clone();
+        clozes_filepath.push(format!("{}_clozes.svg", file_stem));
+
+        // Create clozes SVG
+        let clozes_svg = format!(
+            r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="350">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="75" width="123.21429" stroke="#2D2D2D" y="65.17857" id="svg_1" x="53.67857" />
+            <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" />
+          </g>
+        </svg>"##
+        );
+        std::fs::write(&clozes_filepath, clozes_svg).unwrap();
+
+        let image_occlusion = Arc::new(ImageOcclusionData {
+            original_image_filepath: original_image_filepath.clone(),
+            clozes_filepath: clozes_filepath.clone(),
+            front_conceal: FrontConceal::OnlyGrouping,
+            back_reveal: BackReveal::FullNote,
+        });
+        image_occlusions.push((
+            vec![(0, ClozeHiddenReplacement::ToAnswer { hint: None })],
+            image_occlusion,
+        ));
+    }
+
+    // Create card data
+    let card_data = CardData {
+        order: Some(1),
+        grouping: ClozeGrouping::Auto(1),
+        is_suspended: None,
+        front_conceal: FrontConceal::OnlyGrouping,
+        back_reveal: BackReveal::FullNote,
+        back_type: BackType::FullNote,
+        data: image_occlusions
+            .iter()
+            .map(|(cloze_indices, data)| NotePart::ImageOcclusion {
+                cloze_indices: cloze_indices.clone(),
+                data: data.clone(),
+            })
+            .collect(),
+    };
+
+    // Ensure output directory exists
+    std::fs::create_dir_all(&rendered_dir).unwrap();
+
+    let mut output_path = rendered_dir.clone();
+    output_path.push("perf-test-card-front");
+    output_path.set_extension("txt"); // append_to_stem requires an extension
+
+    // Test parallel version
+    let parallel_start = Instant::now();
+    let parallel_result = create_image_occlusion_cards(&card_data, CardSide::Front, &output_path);
+    let parallel_duration = parallel_start.elapsed();
+
+    if let Err(e) = parallel_result {
+        // List what files actually exist
+        let files: Vec<_> = std::fs::read_dir(&rendered_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect();
+        panic!(
+            "Parallel processing failed: {:?}. Files in dir: {:?}",
+            e, files
+        );
+    }
+
+    // Verify files were created
+    for i in 1..=num_cards {
+        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        if !card_filepath.exists() {
+            // List what files actually exist
+            let files: Vec<_> = std::fs::read_dir(&rendered_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .collect();
+            panic!(
+                "Card file {} should exist at {:?}. Files in dir: {:?}",
+                i, card_filepath, files
+            );
+        }
+        // Clean up
+        let _ = std::fs::remove_file(&card_filepath);
+    }
+
+    // Test sequential version for comparison
+    let config = read_external_config().unwrap();
+    let sequential_start = Instant::now();
+
+    let image_occlusions_seq: Vec<_> = card_data
+        .data
+        .iter()
+        .filter_map(|note_part| match note_part {
+            NotePart::ImageOcclusion {
+                cloze_indices,
+                data,
+            } => Some((cloze_indices, data)),
+            _ => None,
+        })
+        .enumerate()
+        .collect();
+
+    for (i, (cloze_indices, image_occlusion_data)) in image_occlusions_seq.iter() {
+        let image_occlusion_order_in_card = i + 1;
+        let card_filepath = get_image_occlusion_card_filepath(
+            &output_path,
+            CardSide::Front,
+            image_occlusion_order_in_card,
+        );
+        let _ = create_image_occlusion_card(
+            cloze_indices,
+            image_occlusion_data,
+            &card_filepath,
+            CardSide::Front,
+            &config.image_occlusion,
+        );
+    }
+
+    let sequential_duration = sequential_start.elapsed();
+
+    // Clean up sequential test files
+    for i in 1..=num_cards {
+        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        let _ = std::fs::remove_file(&card_filepath);
+    }
+
+    // Assert that parallel processing is faster (or at least not significantly slower)
+    // With multiple cards, parallel should show improvement
+    println!(
+        "Parallel: {:?}, Sequential: {:?}, Speedup: {:.2}x",
+        parallel_duration,
+        sequential_duration,
+        sequential_duration.as_secs_f64() / parallel_duration.as_secs_f64()
+    );
+
+    // Parallel should be faster or at least not more than 10% slower
+    // (to account for thread overhead on systems with few cores)
+    assert!(
+        parallel_duration <= sequential_duration * 11 / 10,
+        "Parallel processing should be faster than sequential. Parallel: {:?}, Sequential: {:?}",
+        parallel_duration,
+        sequential_duration
+    );
 }
