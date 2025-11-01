@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    api::note::get_keywords,
+    api::note::{get_keywords, keyword_distance::weighted_levenshtein},
     config::{read_internal_config, write_internal_config},
     helpers::parse_list,
     model::{NoteId, NoteLink},
@@ -21,8 +21,6 @@ use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
 
-pub const MAX_KEYWORD_DIFFERENCE_SCORE: usize = 10;
-
 #[derive(Debug, FromRow)]
 struct RenderNoteData {
     pub note_id: NoteId,
@@ -41,18 +39,17 @@ pub fn match_keyword(
     keywords
         .par_iter()
         .filter_map(|(id, keyword)| {
-            Some(strsim::levenshtein(
+            weighted_levenshtein(
                 searched_keyword_lower.as_str(),
                 keyword.to_ascii_lowercase().as_str(),
-            ))
-            .filter(|&score| score <= MAX_KEYWORD_DIFFERENCE_SCORE)
+            )
             .map(|score| ((id, keyword), score))
         })
         .map(
             |((note_id, matched_keyword), score)| MatchedKeywordResponse {
                 matched_keyword: matched_keyword.to_string(),
                 note_id: *note_id,
-                score: score as u32,
+                score,
             },
         )
         .collect::<Vec<_>>()
@@ -86,7 +83,12 @@ async fn match_keyword_to_linked_note(
                             let matched_keyword_data =
                                 match_keyword(searched_keyword, keywords.as_ref())
                                     .into_iter()
-                                    .min_by_key(|x| x.score);
+                                    .min_by(|a, b| {
+                                        a.score
+                                            .partial_cmp(&b.score)
+                                            // ignore NaN and always rank it last (i.e., treat NaN as largest)
+                                            .unwrap_or(std::cmp::Ordering::Greater)
+                                    });
                             NoteLink {
                                 // id: None,
                                 parent_note_id: *note_id,

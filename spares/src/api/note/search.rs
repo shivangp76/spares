@@ -74,7 +74,12 @@ pub async fn search_keyword(
     let mut matched_keyword_data = match_keyword(searched_keyword.as_str(), keywords.as_ref());
 
     // Sort by score (ascending - lower scores are better matches)
-    matched_keyword_data.sort_by_key(|x| x.score);
+    matched_keyword_data.sort_by(|a, b| {
+        a.score
+            .partial_cmp(&b.score)
+            // NaNs to sort last (so valid scores come first)
+            .unwrap_or(std::cmp::Ordering::Greater)
+    });
 
     Ok(matched_keyword_data)
 }
@@ -118,7 +123,9 @@ pub async fn get_note_links(
     // binary_search_by returns Ok(idx) if an exact match was found,
     // otherwise Err(idx) = insertion point.
     let cut = match note_links.binary_search_by(|nl| match nl.score {
-        Some(s) => s.cmp(&score_threshold),
+        Some(s) => s
+            .partial_cmp(&score_threshold)
+            .unwrap_or(std::cmp::Ordering::Greater), // NaN = +∞
         None => std::cmp::Ordering::Less, // NULL = -∞
     }) {
         Ok(idx) => idx + 1, // include the matching element
