@@ -134,7 +134,6 @@ pub fn parse_anki_revlog_rows(
     Ok(review_logs.into_iter().flatten().collect::<Vec<_>>())
 }
 
-// #[allow(clippy::too_many_lines)]
 pub async fn populate_reviews(
     run: bool,
     spares_and_anki_note_ids: Vec<(NoteId, i64)>,
