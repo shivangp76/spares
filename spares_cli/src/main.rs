@@ -26,7 +26,9 @@ use spares::{
         get_all_parsers, get_note_info_from_filepath, get_output_raw_dir,
     },
     schema::{
-        card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest},
+        card::{
+            CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
+        },
         note::{
             CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
             NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
@@ -107,6 +109,11 @@ enum Commands {
     },
     /// Forget cards (reset scheduling, keep review logs)
     ForgetCard(ForgetCardArgs),
+    /// Get leeches (cards that are frequently forgotten)
+    Leeches {
+        #[arg(short, long, default_value = "fsrs")]
+        scheduler_name: String,
+    },
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
@@ -290,11 +297,8 @@ enum GetCommands {
     Card {
         #[arg(short, long)]
         id: Option<i64>,
-        #[arg(short, long, conflicts_with_all = ["id", "leeches"])]
+        #[arg(short, long, conflicts_with = "id")]
         note_id: Option<i64>,
-        // TODO: Move this to a top level command
-        #[arg(short, long, conflicts_with_all = ["id", "note_id"])]
-        leeches: bool,
     },
 }
 
@@ -765,17 +769,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 note_response.linked_notes = None;
                 println!("{}", serde_json::to_string_pretty(&note_response).unwrap());
             }
-            GetCommands::Card {
-                id,
-                note_id,
-                leeches,
-            } => {
+            GetCommands::Card { id, note_id } => {
                 let url = if let Some(id) = id {
                     format!("{}/api/cards/{}", base_url, id)
                 } else if let Some(note_id) = note_id {
                     format!("{}/api/cards/note_id/{}", base_url, note_id)
-                } else if leeches {
-                    format!("{}/api/cards/leeches", base_url)
                 } else {
                     unreachable!()
                 };
@@ -789,7 +787,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     let card_response: CardResponse =
                         response.json().await.map_err(|e| miette!("{}", e))?;
                     println!("{}", serde_json::to_string_pretty(&card_response).unwrap());
-                } else if note_id.is_some() || leeches {
+                } else if note_id.is_some() {
                     let card_responses: Vec<CardResponse> =
                         response.json().await.map_err(|e| miette!("{}", e))?;
                     println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
@@ -1207,6 +1205,20 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .map_err(|e| miette!("{}", e))?;
                 println!("Forgot card: {:#?}", &card_response);
             }
+        }
+        Commands::Leeches { scheduler_name } => {
+            let url = format!("{}/api/cards/leeches", base_url);
+            let req = GetLeechesRequest { scheduler_name };
+            let response = client
+                .post(&url)
+                .json(&req)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let response = ensure_ok(response).await?;
+            let card_responses: Vec<CardResponse> =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
         }
     }
     Ok(())
