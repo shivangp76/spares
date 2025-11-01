@@ -3,7 +3,6 @@ pub mod utils;
 
 use crate::import::import_from_files;
 use clap::{Args, Subcommand, ValueEnum, command};
-use colored::Colorize;
 use interactive::sync_notes_interactive;
 use itertools::Itertools;
 use log::info;
@@ -29,6 +28,7 @@ use spares::{
 use std::path::{Path, PathBuf};
 use std::{fs, process::Command};
 use std::{fs::remove_dir_all, io::Write};
+use std::collections::HashMap;
 use strum::EnumIter;
 use strum_macros::{Display, EnumString};
 use utils::{GroupByInsertion as _, clear_dir, hub_spoke_error};
@@ -397,7 +397,7 @@ async fn generate_notes(
                 spares_output_dir = Some(returned_output_dir.clone());
 
                 // If we have a valid cache and we're doing incremental generation, reuse it
-                if let Some(_) = spares_cache_dir {
+                if spares_cache_dir.is_some() {
                     // Cache already exists at returned_output_dir, so we can use it directly
                     // We'll regenerate changed notes later after diffing
                     info!("Reusing cached database notes");
@@ -695,6 +695,41 @@ pub async fn sync_notes(
     }
 }
 
+/// Build a map of relative paths (from the base directory) to full file paths
+/// for all files in the given directory.
+fn build_file_map(base_dir: &Path) -> Result<HashMap<PathBuf, PathBuf>, String> {
+    let mut file_map = HashMap::new();
+    for entry in WalkDir::new(base_dir) {
+        let entry = entry.map_err(|e| format!("Failed to walk directory: {}", e))?;
+        if entry.file_type().is_file() {
+            let full_path = entry.path().to_path_buf();
+            let relative_path = full_path
+                .strip_prefix(base_dir)
+                .map_err(|e| format!("Failed to get relative path: {}", e))?
+                .to_path_buf();
+            file_map.insert(relative_path, full_path);
+        }
+    }
+    Ok(file_map)
+}
+
+/// Compare file contents. Returns true if files are identical.
+fn files_are_identical(path1: &Path, path2: &Path) -> Result<bool, String> {
+    // First check file sizes as a fast filter
+    let metadata1 = fs::metadata(path1).map_err(|e| format!("Failed to read metadata for {}: {}", path1.display(), e))?;
+    let metadata2 = fs::metadata(path2).map_err(|e| format!("Failed to read metadata for {}: {}", path2.display(), e))?;
+    
+    if metadata1.len() != metadata2.len() {
+        return Ok(false);
+    }
+    
+    // If sizes match, compare contents byte-by-byte
+    let contents1 = fs::read(path1).map_err(|e| format!("Failed to read {}: {}", path1.display(), e))?;
+    let contents2 = fs::read(path2).map_err(|e| format!("Failed to read {}: {}", path2.display(), e))?;
+    
+    Ok(contents1 == contents2)
+}
+
 #[expect(clippy::too_many_lines)]
 fn get_import_data(
     from_output_dir: &Path,
@@ -703,104 +738,131 @@ fn get_import_data(
     sync_all_notes: bool,
 ) -> Result<Vec<SyncImportData>, String> {
     let from_output_base_dir = &from_output_dir.parent().unwrap();
-    // TODO: Is there a faster method than using git here?
-    let base_command = "git";
-    let args = vec![
-        "diff",
-        "--no-index",
-        "--name-status",
-        "--no-renames",
-        // Think of `to_output_dir` like the main branch that we want to merge _into_, so it goes first.
-        &to_output_dir.to_str().unwrap(),
-        &from_output_dir.to_str().unwrap(),
-    ];
+    
     if !run {
-        let command_str = format!("{} {}", base_command, args.join(" "));
-        println!("Running command: {}", command_str.purple());
+        println!("Comparing directories: {} vs {}", to_output_dir.display(), from_output_dir.display());
     }
-    let git_diff_output = Command::new(base_command)
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to diff notes: {}", e))?;
-    let output_str = String::from_utf8(git_diff_output.stdout)
-        .map_err(|e| format!("Failed to parse git diff output: {}", e))?;
-    let diff_lines = output_str.lines().collect::<Vec<&str>>();
-    let mut note_filepaths_raw = diff_lines
-        .iter()
-        .filter_map(|line| {
-            // Split at the first whitespace, which separates the modifier and the filename
-            let mut parts = line.splitn(2, char::is_whitespace);
-            let modifier = parts.next()?.to_string();
-            let note_filepath_str = parts.next()?.trim().to_string();
-            let note_filepath = PathBuf::from(note_filepath_str);
-            Some((modifier, note_filepath))
-        })
-        .collect::<Vec<_>>();
-    if sync_all_notes {
-        // Get all notes
-        let mut all_files = WalkDir::new(to_output_dir)
-            .into_iter()
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().to_path_buf())
-            .filter(|x| x.is_file())
-            .collect::<Vec<_>>();
-        let modified_filepaths = note_filepaths_raw
-            .iter()
-            .map(|(_, y)| y)
-            .collect::<Vec<_>>();
-        all_files.retain(|x| !modified_filepaths.contains(&x));
-        note_filepaths_raw.extend(
-            all_files
-                .into_iter()
-                .map(|x| ("M".to_string(), x))
-                .collect::<Vec<_>>(),
-        );
-    }
-    let import_data = note_filepaths_raw
-        .into_iter()
-        .map(|(modifier, note_to_filepath)| {
-            let note_info_opt = get_note_info_from_filepath(&note_to_filepath).ok();
-            if note_info_opt.is_none() {
-                return Ok(None);
+    
+    // Build file maps for both directories
+    let to_files = build_file_map(to_output_dir)?;
+    let from_files = build_file_map(from_output_dir)?;
+    
+    let mut import_data = Vec::new();
+    
+    // Find files that are in 'from' but not in 'to' (Add)
+    // or in both but different (Modified)
+    for (relative_path, from_path) in &from_files {
+        let note_info_opt = get_note_info_from_filepath(from_path).ok();
+        if note_info_opt.is_none() {
+            continue;
+        }
+        
+        let NoteFilepathData {
+            parser_name,
+            note_id,
+        } = note_info_opt.unwrap();
+        
+        if let Some(to_path) = to_files.get(relative_path) {
+            // File exists in both directories - check if modified
+            if !files_are_identical(to_path, from_path)? {
+                let parser = find_parser(parser_name.as_str(), &get_all_parsers())
+                    .map_err(|e| format!("{:?}", e))?;
+                let mut note_from_filepath = get_output_raw_dir(
+                    parser.get_parser_name(),
+                    RenderOutputType::Note,
+                    Some(from_output_base_dir),
+                );
+                let note_filename = from_path.file_name().unwrap().to_str().unwrap();
+                note_from_filepath.push(note_filename);
+                
+                import_data.push(SyncImportData {
+                    note_id,
+                    parser_name,
+                    action: SyncImportAction::Update {
+                        from: note_from_filepath,
+                        to: to_path.clone(),
+                    },
+                });
             }
+        } else {
+            // File only exists in 'from' - this is an Add
+            // Note: for Add, the 'to' field actually contains the source file path (in 'from')
+            import_data.push(SyncImportData {
+                note_id,
+                parser_name,
+                action: SyncImportAction::Add {
+                    to: from_path.clone(),
+                },
+            });
+        }
+    }
+    
+    // Find files that are in 'to' but not in 'from' (Delete)
+    for (relative_path, to_path) in &to_files {
+        if !from_files.contains_key(relative_path) {
+            let note_info_opt = get_note_info_from_filepath(to_path).ok();
+            if note_info_opt.is_none() {
+                continue;
+            }
+            
             let NoteFilepathData {
                 parser_name,
                 note_id,
             } = note_info_opt.unwrap();
-            let parser = find_parser(parser_name.as_str(), &get_all_parsers())
-                .map_err(|e| format!("{:?}", e))?;
-            let mut note_from_filepath = get_output_raw_dir(
-                parser.get_parser_name(),
-                RenderOutputType::Note,
-                Some(from_output_base_dir),
-            );
-            let note_filename = note_to_filepath.file_name().unwrap().to_str().unwrap();
-            note_from_filepath.push(note_filename);
-
-            let update_action = match modifier.as_str() {
-                // For Add, git diff returns note_from_filepath, so this is actually note_from_filepath
-                "A" => SyncImportAction::Add {
-                    to: note_to_filepath,
-                },
-                "M" => SyncImportAction::Update {
-                    from: note_from_filepath,
-                    to: note_to_filepath,
-                },
-                "D" => SyncImportAction::Delete {
-                    to: note_to_filepath,
-                },
-                key => panic!("Unsupported git diff --name-status action: {}", key),
-            };
-            Ok(Some(SyncImportData {
+            
+            import_data.push(SyncImportData {
                 note_id,
                 parser_name,
-                action: update_action,
-            }))
-        })
-        .collect::<Result<Vec<_>, String>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+                action: SyncImportAction::Delete {
+                    to: to_path.clone(),
+                },
+            });
+        }
+    }
+    
+    // If sync_all_notes is true, include all files from 'to' as modified
+    if sync_all_notes {
+        let existing_import_paths: std::collections::HashSet<_> = import_data
+            .iter()
+            .filter_map(|d| match &d.action {
+                SyncImportAction::Update { to, .. } | SyncImportAction::Delete { to } => Some(to.clone()),
+                SyncImportAction::Add { .. } => None,
+            })
+            .collect();
+        
+        for to_path in to_files.values() {
+            if !existing_import_paths.contains(to_path) {
+                let note_info_opt = get_note_info_from_filepath(to_path).ok();
+                if note_info_opt.is_none() {
+                    continue;
+                }
+                
+                let NoteFilepathData {
+                    parser_name,
+                    note_id,
+                } = note_info_opt.unwrap();
+                
+                let parser = find_parser(parser_name.as_str(), &get_all_parsers())
+                    .map_err(|e| format!("{:?}", e))?;
+                let mut note_from_filepath = get_output_raw_dir(
+                    parser.get_parser_name(),
+                    RenderOutputType::Note,
+                    Some(from_output_base_dir),
+                );
+                let note_filename = to_path.file_name().unwrap().to_str().unwrap();
+                note_from_filepath.push(note_filename);
+                
+                import_data.push(SyncImportData {
+                    note_id,
+                    parser_name,
+                    action: SyncImportAction::Update {
+                        from: note_from_filepath,
+                        to: to_path.clone(),
+                    },
+                });
+            }
+        }
+    }
     // Identify notes that had their parser changed. This will appear as 2 actions: deleting the note from the old parser and adding the note to the new parser. These should be fused to an update.
     let mut import_data_map = import_data
         .into_iter()
