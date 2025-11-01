@@ -4,6 +4,7 @@ const AUTOMATIC_REBUILD: bool = false;
 
 mod basic;
 mod create;
+mod keyword_distance;
 mod render;
 mod search;
 mod update;
