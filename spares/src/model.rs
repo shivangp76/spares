@@ -11,6 +11,7 @@ pub type CardId = i64;
 pub type TagId = i64;
 pub type StateId = u32;
 pub type RatingId = u32;
+pub type Score = f64;
 pub type CustomData = Map<String, Value>;
 
 pub const NEW_CARD_STATE: StateId = 0;
@@ -110,7 +111,7 @@ pub struct NoteLink {
     pub order: u32,
     pub searched_keyword: String,
     pub matched_keyword: Option<String>,
-    pub score: Option<u32>,
+    pub score: Option<Score>,
 }
 
 // Tree-like structure

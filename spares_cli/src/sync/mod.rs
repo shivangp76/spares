@@ -25,10 +25,10 @@ use spares::{
     },
     schema::note::{GenerateFilesNoteIds, RenderNotesRequest},
 };
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::{fs, process::Command};
 use std::{fs::remove_dir_all, io::Write};
-use std::collections::HashMap;
 use strum::EnumIter;
 use strum_macros::{Display, EnumString};
 use utils::{GroupByInsertion as _, clear_dir, hub_spoke_error};
@@ -353,6 +353,7 @@ async fn regenerate_notes(
 }
 
 /// Generate all notes (not cards) in temp directory
+#[allow(clippy::too_many_lines)]
 async fn generate_notes(
     base_url: &str,
     client: &Client,
@@ -716,17 +717,21 @@ fn build_file_map(base_dir: &Path) -> Result<HashMap<PathBuf, PathBuf>, String> 
 /// Compare file contents. Returns true if files are identical.
 fn files_are_identical(path1: &Path, path2: &Path) -> Result<bool, String> {
     // First check file sizes as a fast filter
-    let metadata1 = fs::metadata(path1).map_err(|e| format!("Failed to read metadata for {}: {}", path1.display(), e))?;
-    let metadata2 = fs::metadata(path2).map_err(|e| format!("Failed to read metadata for {}: {}", path2.display(), e))?;
-    
+    let metadata1 = fs::metadata(path1)
+        .map_err(|e| format!("Failed to read metadata for {}: {}", path1.display(), e))?;
+    let metadata2 = fs::metadata(path2)
+        .map_err(|e| format!("Failed to read metadata for {}: {}", path2.display(), e))?;
+
     if metadata1.len() != metadata2.len() {
         return Ok(false);
     }
-    
+
     // If sizes match, compare contents byte-by-byte
-    let contents1 = fs::read(path1).map_err(|e| format!("Failed to read {}: {}", path1.display(), e))?;
-    let contents2 = fs::read(path2).map_err(|e| format!("Failed to read {}: {}", path2.display(), e))?;
-    
+    let contents1 =
+        fs::read(path1).map_err(|e| format!("Failed to read {}: {}", path1.display(), e))?;
+    let contents2 =
+        fs::read(path2).map_err(|e| format!("Failed to read {}: {}", path2.display(), e))?;
+
     Ok(contents1 == contents2)
 }
 
@@ -738,17 +743,21 @@ fn get_import_data(
     sync_all_notes: bool,
 ) -> Result<Vec<SyncImportData>, String> {
     let from_output_base_dir = &from_output_dir.parent().unwrap();
-    
+
     if !run {
-        println!("Comparing directories: {} vs {}", to_output_dir.display(), from_output_dir.display());
+        println!(
+            "Comparing directories: {} vs {}",
+            to_output_dir.display(),
+            from_output_dir.display()
+        );
     }
-    
+
     // Build file maps for both directories
     let to_files = build_file_map(to_output_dir)?;
     let from_files = build_file_map(from_output_dir)?;
-    
+
     let mut import_data = Vec::new();
-    
+
     // Find files that are in 'from' but not in 'to' (Add)
     // or in both but different (Modified)
     for (relative_path, from_path) in &from_files {
@@ -756,12 +765,12 @@ fn get_import_data(
         if note_info_opt.is_none() {
             continue;
         }
-        
+
         let NoteFilepathData {
             parser_name,
             note_id,
         } = note_info_opt.unwrap();
-        
+
         if let Some(to_path) = to_files.get(relative_path) {
             // File exists in both directories - check if modified
             if !files_are_identical(to_path, from_path)? {
@@ -774,7 +783,7 @@ fn get_import_data(
                 );
                 let note_filename = from_path.file_name().unwrap().to_str().unwrap();
                 note_from_filepath.push(note_filename);
-                
+
                 import_data.push(SyncImportData {
                     note_id,
                     parser_name,
@@ -796,7 +805,7 @@ fn get_import_data(
             });
         }
     }
-    
+
     // Find files that are in 'to' but not in 'from' (Delete)
     for (relative_path, to_path) in &to_files {
         if !from_files.contains_key(relative_path) {
@@ -804,12 +813,12 @@ fn get_import_data(
             if note_info_opt.is_none() {
                 continue;
             }
-            
+
             let NoteFilepathData {
                 parser_name,
                 note_id,
             } = note_info_opt.unwrap();
-            
+
             import_data.push(SyncImportData {
                 note_id,
                 parser_name,
@@ -819,29 +828,31 @@ fn get_import_data(
             });
         }
     }
-    
+
     // If sync_all_notes is true, include all files from 'to' as modified
     if sync_all_notes {
         let existing_import_paths: std::collections::HashSet<_> = import_data
             .iter()
             .filter_map(|d| match &d.action {
-                SyncImportAction::Update { to, .. } | SyncImportAction::Delete { to } => Some(to.clone()),
+                SyncImportAction::Update { to, .. } | SyncImportAction::Delete { to } => {
+                    Some(to.clone())
+                }
                 SyncImportAction::Add { .. } => None,
             })
             .collect();
-        
+
         for to_path in to_files.values() {
             if !existing_import_paths.contains(to_path) {
                 let note_info_opt = get_note_info_from_filepath(to_path).ok();
                 if note_info_opt.is_none() {
                     continue;
                 }
-                
+
                 let NoteFilepathData {
                     parser_name,
                     note_id,
                 } = note_info_opt.unwrap();
-                
+
                 let parser = find_parser(parser_name.as_str(), &get_all_parsers())
                     .map_err(|e| format!("{:?}", e))?;
                 let mut note_from_filepath = get_output_raw_dir(
@@ -851,7 +862,7 @@ fn get_import_data(
                 );
                 let note_filename = to_path.file_name().unwrap().to_str().unwrap();
                 note_from_filepath.push(note_filename);
-                
+
                 import_data.push(SyncImportData {
                     note_id,
                     parser_name,

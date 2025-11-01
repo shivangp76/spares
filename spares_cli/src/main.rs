@@ -19,7 +19,7 @@ use spares::{
     adapters::get_adapter_from_string,
     api::tag::DEFAULT_TAG_AUTO_DELETE,
     config::{Environment, get_env_config},
-    model::{CardId, NoteId, NoteLink},
+    model::{CardId, NoteId, NoteLink, Score},
     parsers::{
         RenderOutputDirectoryType, find_parser,
         generate_files::{CardSide, RenderOutputType},
@@ -335,8 +335,9 @@ enum ListCommands {
         graph: bool,
     },
     NoteLink {
+        /// Only notes with scores below this will be returned
         #[arg(short, long)]
-        score_threshold: u32,
+        score_threshold: Score,
     },
 }
 
@@ -410,13 +411,6 @@ struct SearchArgs {
     output_format: OutputFormat,
     // Positional argument
     query: String,
-}
-
-#[derive(Args, Debug)]
-struct NoteLinks {
-    /// Score threshold (only notes with scores below this will be returned)
-    #[arg(short, long)]
-    score_threshold: u32,
 }
 
 async fn list_parsers(

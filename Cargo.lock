@@ -3374,7 +3374,6 @@ dependencies = [
  "sha256",
  "shellexpand",
  "sqlx",
- "strsim",
  "strum",
  "strum_macros",
  "thiserror 2.0.16",

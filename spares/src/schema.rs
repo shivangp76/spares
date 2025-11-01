@@ -92,7 +92,7 @@ pub mod note {
     use super::card::CardResponse;
     use crate::{
         helpers::parse_list,
-        model::{CustomData, Note, NoteId, NoteLink},
+        model::{CustomData, Note, NoteId, NoteLink, Score},
         search::QueryReturnItemType,
     };
     use chrono::{DateTime, Utc};
@@ -138,7 +138,7 @@ pub mod note {
     pub struct MatchedKeywordResponse {
         pub matched_keyword: String,
         pub note_id: NoteId,
-        pub score: u32,
+        pub score: Score,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -149,7 +149,7 @@ pub mod note {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct NoteLinksRequest {
-        pub score_threshold: u32,
+        pub score_threshold: Score,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
