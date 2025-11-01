@@ -17,6 +17,7 @@ use crate::parsers::{
 };
 use crate::{Error, LibraryError, NoteErrorKind};
 use image::{ImageFormat, imageops};
+use rayon::prelude::*;
 use std::fs::{self, read_to_string};
 use std::ops::Range;
 use std::path::Path;
@@ -166,27 +167,55 @@ pub fn create_image_occlusion_cards(
     side: CardSide,
     image_occlusion_output_rendered_filepath: &Path,
 ) -> Result<(), LibraryError> {
-    let _image_occlusion_card_filepaths = card_data
+    // Collect image occlusion data first
+    let image_occlusions = card_data
         .data
         .iter()
         .filter_map(|note_part| match note_part {
             NotePart::ImageOcclusion {
                 cloze_indices,
                 data,
-            } => Some((cloze_indices, data)),
+            } => Some((cloze_indices.as_slice(), data.as_ref())),
             _ => None,
         })
         .enumerate()
-        .map(|(i, (cloze_indices, image_occlusion_data))| {
+        .map(|(i, (cloze_indices, image_occlusion_data))| (i, cloze_indices, image_occlusion_data))
+        .collect::<Vec<_>>();
+
+    // Read config once and share across all threads
+    let config = read_external_config().map_err(|e| match e {
+        Error::Library(le) => le,
+        _ => LibraryError::InvalidConfig(format!("Failed to read config: {}", e)),
+    })?;
+
+    // Process image occlusions in parallel
+    let _image_occlusion_card_filepaths = image_occlusions
+        .par_iter()
+        .map(|(i, cloze_indices, image_occlusion_data)| {
             let image_occlusion_order_in_card = i + 1;
             let card_filepath = get_image_occlusion_card_filepath(
                 image_occlusion_output_rendered_filepath,
                 side,
                 image_occlusion_order_in_card,
             );
-            create_image_occlusion_card(cloze_indices, image_occlusion_data, &card_filepath, side)
+            create_image_occlusion_card(
+                cloze_indices,
+                image_occlusion_data,
+                &card_filepath,
+                side,
+                &config.image_occlusion,
+            )
+            .map_err(|e| match e {
+                Error::Library(le) => le,
+                _ => LibraryError::Note(NoteErrorKind::Other {
+                    description: format!(
+                        "Failed to create card {}: {}",
+                        image_occlusion_order_in_card, e
+                    ),
+                }),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(())
 }
 
@@ -304,11 +333,12 @@ fn modify_hide_cloze_mask(cloze: &mut Element) {
     // .insert("visibility".to_string(), "hidden".to_string());
 }
 
-fn create_image_occlusion_card(
+pub(crate) fn create_image_occlusion_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     card_filepath: &Path,
     side: CardSide,
+    config: &ImageOcclusionConfig,
 ) -> Result<(), Error> {
     let ImageOcclusionData {
         original_image_filepath,
@@ -334,14 +364,13 @@ fn create_image_occlusion_card(
             at: (0..clozes_file_contents.len()).into(),
         })
     })?;
-    let config = read_external_config()?;
     modify_clozes_for_card(
         cloze_indices,
         &mut clozes,
         *front_conceal,
         *back_reveal,
         side,
-        &config.image_occlusion,
+        config,
     );
 
     // Get card's clozes as bytes
