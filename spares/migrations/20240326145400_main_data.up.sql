@@ -146,3 +146,18 @@ CREATE TABLE IF NOT EXISTS review_log (
     --FOREIGN KEY (rating_id) REFERENCES rating(id),
     --FOREIGN KEY (state_id) REFERENCES state(id)
 );
+
+-- Add indexes to optimize JOIN operations in note rendering queries
+
+-- Index on note.parser_id for faster parser joins
+CREATE INDEX IF NOT EXISTS idx_note_parser_id ON note(parser_id);
+
+-- Indexes on note_tag for faster tag joins
+CREATE INDEX IF NOT EXISTS idx_note_tag_note_id ON note_tag(note_id);
+CREATE INDEX IF NOT EXISTS idx_note_tag_tag_id ON note_tag(tag_id);
+
+-- Index on note_link.parent_note_id for faster note link lookups
+CREATE INDEX IF NOT EXISTS idx_note_link_parent_note_id ON note_link(parent_note_id);
+
+-- Index on tag.query for faster filtering in WHERE clause
+CREATE INDEX IF NOT EXISTS idx_tag_query ON tag(query);
