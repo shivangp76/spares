@@ -1,7 +1,10 @@
 use crate::{
     AppState,
     handlers::{
-        card::{get_card_handler, get_cards_handler, get_leeches_handler, update_card_handler, forget_card_handler},
+        card::{
+            forget_card_handler, get_card_handler, get_cards_handler, get_leeches_handler,
+            update_card_handler,
+        },
         health_check_handler,
         note::{
             create_notes_handler, delete_note_handler, generate_note_files_handler,
