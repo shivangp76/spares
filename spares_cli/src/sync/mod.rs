@@ -34,6 +34,23 @@ use strum_macros::{Display, EnumString};
 use utils::{GroupByInsertion as _, clear_dir, hub_spoke_error};
 use walkdir::WalkDir;
 
+/// Check if cached database notes directory exists and is valid (has files)
+fn is_cache_valid(cache_dir: &Path) -> bool {
+    if !cache_dir.exists() || !cache_dir.is_dir() {
+        return false;
+    }
+    // Check if directory has at least one file
+    WalkDir::new(cache_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_type().is_file())
+}
+
+/// Extract note IDs from `SyncImportData`
+fn extract_note_ids_from_import_data(import_data: &[SyncImportData]) -> Vec<NoteId> {
+    import_data.iter().map(|d| d.note_id).collect()
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct SyncArgs {
     #[command(subcommand)]
@@ -348,6 +365,27 @@ async fn generate_notes(
     base_dir.push(clap::crate_name!());
 
     let mut output_dirs: Vec<PathBuf> = Vec::with_capacity(2);
+
+    // Check if we can use incremental generation for spares-local-files -> spares
+    let use_incremental = matches!(
+        (sync_source_from, sync_source_to),
+        (SyncSource::SparesLocalFiles, SyncSource::Spares)
+    );
+
+    let mut spares_cache_dir: Option<PathBuf> = None;
+    if use_incremental {
+        let mut cache_dir = base_dir.clone();
+        cache_dir.push("spares");
+        cache_dir.push("notes");
+        if is_cache_valid(&cache_dir) {
+            spares_cache_dir = Some(cache_dir);
+            info!("Using cached database notes for faster sync");
+        }
+    }
+
+    // Process sources, handling Spares specially for incremental generation
+    let mut spares_output_dir: Option<PathBuf> = None;
+
     for source in [sync_source_from, sync_source_to] {
         match source {
             SyncSource::Spares => {
@@ -355,36 +393,47 @@ async fn generate_notes(
                 output_dir.push("spares");
                 let mut returned_output_dir = output_dir.clone();
                 returned_output_dir.push("notes");
-                output_dirs.push(returned_output_dir);
+                output_dirs.push(returned_output_dir.clone());
+                spares_output_dir = Some(returned_output_dir.clone());
 
-                // Clear directory first
-                if output_dir.exists() {
-                    clear_dir(&output_dir).map_err(|e| format!("{}", e))?;
-                }
+                // If we have a valid cache and we're doing incremental generation, reuse it
+                if let Some(_) = spares_cache_dir {
+                    // Cache already exists at returned_output_dir, so we can use it directly
+                    // We'll regenerate changed notes later after diffing
+                    info!("Reusing cached database notes");
+                    // Don't clear or regenerate - the cache files are already there
+                } else {
+                    // Full generation path
+                    // Clear directory first
+                    if output_dir.exists() {
+                        clear_dir(&output_dir).map_err(|e| format!("{}", e))?;
+                    }
 
-                info!("Rendering notes from Spares...");
-                let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
-                    || sync_source_to == SyncSource::SparesLocalFiles;
-                let request = RenderNotesRequest {
-                    generate_files_note_ids: None,
-                    overridden_output_raw_dir: Some(output_dir.clone()),
-                    include_linked_notes,
-                    include_cards: false,
-                    generate_rendered: false,
-                    force_generate_rendered: false,
-                };
-                let url = format!("{}/api/notes/generate_files", base_url);
-                let response = client
-                    .post(url)
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|e| format!("{}", e))?;
-                let status = response.status();
-                if status != StatusCode::OK {
-                    let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                    dbg!(&response);
-                    return Err(response.to_string());
+                    info!("Rendering notes from Spares...");
+                    let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
+                        || sync_source_to == SyncSource::SparesLocalFiles;
+                    let request = RenderNotesRequest {
+                        generate_files_note_ids: None,
+                        overridden_output_raw_dir: Some(output_dir.clone()),
+                        include_linked_notes,
+                        include_cards: false,
+                        generate_rendered: false,
+                        force_generate_rendered: false,
+                    };
+                    let url = format!("{}/api/notes/generate_files", base_url);
+                    let response = client
+                        .post(url)
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(|e| format!("{}", e))?;
+                    let status = response.status();
+                    if status != StatusCode::OK {
+                        let response: Value =
+                            response.json().await.map_err(|e| format!("{}", e))?;
+                        dbg!(&response);
+                        return Err(response.to_string());
+                    }
                 }
             }
             SyncSource::SparesLocalFiles => {
@@ -449,7 +498,53 @@ async fn generate_notes(
         }
     }
     assert_eq!(output_dirs.len(), 2);
-    Ok((output_dirs[0].clone(), output_dirs[1].clone()))
+    let (from_output_dir, to_output_dir) = (output_dirs[0].clone(), output_dirs[1].clone());
+
+    // If we used cache and are doing incremental generation, we need to regenerate changed notes
+    if let (Some(_), Some(ref spares_dir)) = (spares_cache_dir, spares_output_dir) {
+        // Diff local files against cache to find changed notes
+        let changed_import_data =
+            get_import_data(&from_output_dir, spares_dir, true, false).unwrap_or_default();
+
+        if !changed_import_data.is_empty() {
+            let changed_note_ids = extract_note_ids_from_import_data(&changed_import_data);
+            info!(
+                "Regenerating {} changed note(s) from database...",
+                changed_note_ids.len()
+            );
+
+            // Regenerate only changed notes
+            let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
+                || sync_source_to == SyncSource::SparesLocalFiles;
+            let request = RenderNotesRequest {
+                generate_files_note_ids: Some(GenerateFilesNoteIds::NoteIds(changed_note_ids)),
+                overridden_output_raw_dir: Some({
+                    let mut parent = spares_dir.clone();
+                    parent.pop(); // Go up from "notes" to "spares"
+                    parent
+                }),
+                include_linked_notes,
+                include_cards: false,
+                generate_rendered: false,
+                force_generate_rendered: false,
+            };
+            let url = format!("{}/api/notes/generate_files", base_url);
+            let response = client
+                .post(url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| format!("{}", e))?;
+            let status = response.status();
+            if status != StatusCode::OK {
+                let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
+                dbg!(&response);
+                return Err(response.to_string());
+            }
+        }
+    }
+
+    Ok((from_output_dir, to_output_dir))
 }
 
 // Render diffs in `/tmp/spares_cli/{from_source_name}/diffs`
@@ -608,6 +703,7 @@ fn get_import_data(
     sync_all_notes: bool,
 ) -> Result<Vec<SyncImportData>, String> {
     let from_output_base_dir = &from_output_dir.parent().unwrap();
+    // TODO: Is there a faster method than using git here?
     let base_command = "git";
     let args = vec![
         "diff",
