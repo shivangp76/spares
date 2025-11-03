@@ -11,7 +11,7 @@ pub mod impls;
 pub mod migration;
 
 #[async_trait]
-pub trait SrsAdapter {
+pub trait SrsAdapter: Send + Sync {
     fn get_adapter_name(&self) -> &'static str;
 
     async fn migrate(

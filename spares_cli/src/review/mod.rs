@@ -1,17 +1,23 @@
+use crate::import::import_from_file;
 use clap::Args;
 use inquire::Select;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
+use spares::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
 use spares::config::read_external_config;
-use spares::model::{RatingId, TagId};
+use spares::model::{NoteId, RatingId, TagId};
+use spares::parsers::{find_parser, get_all_parsers};
+use spares::schema::note::{GenerateFilesNoteIds, RenderNotesRequest};
 use spares::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
 };
 use spares::schema::tag::TagResponse;
+use std::path::PathBuf;
 use std::process::Child;
 use std::time::{Duration, Instant};
 use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{Display, EnumString};
+use tokio::sync::mpsc;
 use utils::{
     bury_card, bury_note, close_rendered_file, get_scheduler_ratings, open_rendered_file,
     print_recall_duration, print_summary, submit_rating, suspend_cards, suspend_note, tag_note,
@@ -74,6 +80,8 @@ enum ReviewAction {
     ForgetCard,
     #[strum(serialize = "Set Due Date")]
     SetDueDate,
+    #[strum(serialize = "Sync Note")]
+    SyncNote,
     // Undo,
     Exit,
 }
@@ -171,6 +179,88 @@ async fn get_review_card(
     }
 }
 
+async fn sync_note_background(
+    note_id: NoteId,
+    note_raw_path: PathBuf,
+    parser_name: String,
+    base_url: String,
+    client: Client,
+    tx: mpsc::UnboundedSender<String>,
+) {
+    // Import note from local file to database
+    let mut adapter = SparesAdapter::new(SparesRequestProcessor::Server);
+    let parser = match find_parser(&parser_name, &get_all_parsers()) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = tx.send(format!(
+                "[Note Id: {}] Failed to sync note: Failed to find parser: {}",
+                note_id, e
+            ));
+            return;
+        }
+    };
+
+    if let Err(e) = import_from_file(
+        &mut adapter,
+        Some(parser.as_ref()),
+        None,
+        &note_raw_path,
+        true,
+        true, // quiet mode
+    )
+    .await
+    {
+        let _ = tx.send(format!(
+            "[Note Id: {}] Failed to sync note: Failed to import note: {}",
+            note_id, e
+        ));
+        return;
+    }
+
+    // Regenerate rendered files for this note
+    let request = RenderNotesRequest {
+        generate_files_note_ids: Some(GenerateFilesNoteIds::NoteIds(vec![note_id])),
+        overridden_output_raw_dir: None,
+        include_linked_notes: true,
+        include_cards: true,
+        generate_rendered: true,
+        force_generate_rendered: false,
+    };
+    let url = format!("{}/api/notes/generate_files", base_url);
+    let response = match client.post(&url).json(&request).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = tx.send(format!(
+                "[Note Id: {}] Failed to sync note: Failed to regenerate files: {}",
+                note_id, e
+            ));
+            return;
+        }
+    };
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = match response.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.send(format!(
+                    "[Note Id: {}] Failed to sync note: Failed to parse error response: {}",
+                    note_id, e
+                ));
+                return;
+            }
+        };
+        let message = response_json.get("message");
+        let _ = tx.send(format!(
+            "[Note Id: {}] Failed to sync note: {}",
+            note_id,
+            message.unwrap_or(&Value::String("Unknown error".to_string()))
+        ));
+        return;
+    }
+
+    let _ = tx.send(format!("[Note Id: {}] Note synced successfully.", note_id));
+}
+
 #[allow(clippy::too_many_lines)]
 pub async fn review_cards(
     review_args: ReviewArgs,
@@ -191,6 +281,8 @@ pub async fn review_cards(
         2..2,
         get_scheduler_ratings(scheduler_name, base_url, client).await?,
     );
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
     let session_start = Instant::now();
     let mut session_recall = Duration::default();
@@ -261,6 +353,17 @@ pub async fn review_cards(
             return Ok(());
         }
         let chosen_action = chosen_action_res.as_ref().unwrap();
+
+        // Drain any pending messages from background tasks
+        let mut pending_messages = false;
+        while let Ok(message) = rx.try_recv() {
+            if !pending_messages {
+                println!();
+                pending_messages = true;
+            }
+            println!("{}", message);
+        }
+
         advance_review_card = false;
         match chosen_action {
             ReviewAction::Loop => {}
@@ -412,6 +515,30 @@ pub async fn review_cards(
                     client,
                 )
                 .await?;
+            }
+            ReviewAction::SyncNote => {
+                println!("Syncing note in background...");
+
+                // Clone values needed for background task
+                let note_id = review_card_response.note_id;
+                let note_raw_path = review_card_response.note_raw_path.clone();
+                let parser_name = review_card_response.parser_name.clone();
+                let base_url_string = base_url.to_string();
+                let client_clone = client.clone();
+                let tx_clone = tx.clone();
+
+                // Spawn background task
+                tokio::spawn(async move {
+                    sync_note_background(
+                        note_id,
+                        note_raw_path,
+                        parser_name,
+                        base_url_string,
+                        client_clone,
+                        tx_clone,
+                    )
+                    .await;
+                });
             }
             // ReviewAction::Undo => {
             //     if card_flipped {
