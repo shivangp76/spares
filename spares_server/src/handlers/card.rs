@@ -56,3 +56,12 @@ pub async fn forget_card_handler(
         .map_err(error_to_response)?;
     Ok(Json(card_res))
 }
+
+pub async fn unbury_cards_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    spares::api::card::unbury_cards(&data.db, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(()))
+}

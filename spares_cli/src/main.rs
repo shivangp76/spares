@@ -114,6 +114,8 @@ enum Commands {
         #[arg(short, long, default_value = "fsrs")]
         scheduler_name: String,
     },
+    /// Unbury all cards
+    Unbury,
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
@@ -1213,6 +1215,16 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let card_responses: Vec<CardResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
+        }
+        Commands::Unbury => {
+            let url = format!("{}/api/cards/unbury", base_url);
+            let response = client
+                .post(&url)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let _ = ensure_ok(response).await?;
+            println!("Done");
         }
     }
     Ok(())

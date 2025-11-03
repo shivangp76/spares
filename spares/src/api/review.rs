@@ -1,7 +1,7 @@
 use super::note::delete_empty_tags;
 use crate::{
     Error, LibraryError, SchedulerErrorKind, TagErrorKind,
-    api::card::delete_card_tags,
+    api::card::{delete_card_tags, unbury_cards},
     config::{read_external_config, read_internal_config, write_internal_config},
     helpers::get_start_end_local_date,
     model::{
@@ -26,7 +26,7 @@ use serde_json::Value;
 use sqlx::{FromRow, sqlite::SqlitePool};
 use std::collections::HashMap;
 
-async fn unbury_cards(db: &SqlitePool) -> Result<(), Error> {
+async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config()?;
     let now = Utc::now();
     let unburied_limit =
@@ -38,15 +38,7 @@ async fn unbury_cards(db: &SqlitePool) -> Result<(), Error> {
             )))?;
     if unburied_limit < now {
         // Unbury
-        let _unbury_result = sqlx::query(
-            r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
-        )
-        .bind(now.timestamp())
-        .bind(SpecialState::UserBuried)
-        .bind(SpecialState::SchedulerBuried)
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        unbury_cards(db, now).await?;
 
         // Update config
         config.last_unburied = now;
@@ -74,7 +66,7 @@ pub async fn get_review_card(
     let GetReviewCardRequest { filter } = body;
 
     // Unbury cards, if needed
-    unbury_cards(db).await?;
+    unbury_cards_and_update_config(db).await?;
 
     // Get cards reviewed on `requested_date`
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
