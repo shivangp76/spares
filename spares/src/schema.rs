@@ -373,6 +373,7 @@ pub mod review {
         pub card_back_rendered_path: CardBackRenderedPath, // To allow the user to see the answer after rating the card
         pub note_raw_path: PathBuf, // To allow the user to edit the note if they find an error while reviewing the card
         pub parser_name: String,
+        pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
     }
 
     #[derive(Debug, Deserialize, Serialize)]
