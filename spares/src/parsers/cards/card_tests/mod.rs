@@ -15,6 +15,7 @@ fn test_get_cards_basic_1_markdown() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -38,6 +39,7 @@ fn test_get_cards_basic_1_markdown() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: None,
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -68,6 +70,7 @@ fn test_get_cards_add_order_1() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: Some(1),
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -116,6 +119,7 @@ fn test_get_cards_order() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(2),
+            previous_order: Some(2),
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -145,6 +149,7 @@ fn test_get_cards_hint() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: None,
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -174,6 +179,7 @@ fn test_get_cards_hidden_1() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: None,
+            previous_order: None,
             grouping: ClozeGrouping::Custom("1".to_string()),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -216,6 +222,7 @@ fn test_get_cards_hidden_3() {
             // _a_ _ c
             CardData {
                 order: None,
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -237,6 +244,7 @@ fn test_get_cards_hidden_3() {
             // _ _b_ c
             CardData {
                 order: None,
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("3".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -258,6 +266,7 @@ fn test_get_cards_hidden_3() {
             // a _ _
             CardData {
                 order: None,
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -317,6 +326,7 @@ fn test_get_cards_reverse_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -334,8 +344,9 @@ fn test_get_cards_reverse_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -368,6 +379,7 @@ fn test_get_cards_reverse_2() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -413,6 +425,7 @@ fn test_get_cards_nested_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -430,8 +443,9 @@ fn test_get_cards_nested_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -462,6 +476,7 @@ fn test_get_cards_nested_1_reverse() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -479,8 +494,9 @@ fn test_get_cards_nested_1_reverse() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -500,8 +516,9 @@ fn test_get_cards_nested_1_reverse() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -544,6 +561,7 @@ fn test_get_cards_nested_siblings() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -561,8 +579,9 @@ fn test_get_cards_nested_siblings() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -579,8 +598,9 @@ fn test_get_cards_nested_siblings() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Auto(3),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(3),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -615,6 +635,7 @@ fn test_get_cards_grouping_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -642,8 +663,9 @@ fn test_get_cards_grouping_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -660,8 +682,9 @@ fn test_get_cards_grouping_1() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -698,6 +721,7 @@ fn test_get_cards_grouping_multiple() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -722,8 +746,9 @@ fn test_get_cards_grouping_multiple() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -740,8 +765,9 @@ fn test_get_cards_grouping_multiple() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -772,6 +798,7 @@ fn test_get_cards_grouping_all_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -796,8 +823,9 @@ fn test_get_cards_grouping_all_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -838,6 +866,7 @@ fn test_get_cards_grouping_all_2() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -860,8 +889,9 @@ fn test_get_cards_grouping_all_2() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("1".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -898,6 +928,7 @@ fn test_get_cards_grouping_all_3() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -922,8 +953,9 @@ fn test_get_cards_grouping_all_3() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -958,6 +990,7 @@ fn test_get_cards_grouping_all_3() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -982,8 +1015,9 @@ fn test_get_cards_grouping_all_3() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1026,6 +1060,7 @@ fn test_get_cards_grouping_all_4() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1046,8 +1081,9 @@ fn test_get_cards_grouping_all_4() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(1),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1094,6 +1130,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1110,8 +1147,9 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1150,6 +1188,7 @@ fn test_get_cards_circular_grouping_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1172,8 +1211,9 @@ fn test_get_cards_circular_grouping_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1195,8 +1235,9 @@ fn test_get_cards_circular_grouping_1() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Custom("3".to_string()),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("3".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1239,6 +1280,7 @@ fn test_get_cards_order_before_grouping() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: Some(1),
             grouping: ClozeGrouping::Custom("1".to_string()),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -1275,6 +1317,7 @@ fn test_get_cards_grouping_multiple_times() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1302,8 +1345,9 @@ fn test_get_cards_grouping_multiple_times() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Custom("2".to_string()),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("2".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1336,6 +1380,7 @@ fn test_get_cards_front_conceal_1() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1355,8 +1400,9 @@ fn test_get_cards_front_conceal_1() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1373,8 +1419,9 @@ fn test_get_cards_front_conceal_1() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Custom("1".to_string()),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
@@ -1417,6 +1464,7 @@ fn test_get_cards_front_conceal_2() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
@@ -1441,8 +1489,9 @@ fn test_get_cards_front_conceal_2() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1459,8 +1508,9 @@ fn test_get_cards_front_conceal_2() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Auto(3),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(3),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1490,6 +1540,7 @@ fn test_get_cards_back_reveal_1() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -1520,6 +1571,7 @@ fn test_get_cards_back_reveal_2() {
         let expected = vec![
             CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -1539,8 +1591,9 @@ fn test_get_cards_back_reveal_2() {
                 ],
             },
             CardData {
-                order: Some(2),
-                grouping: ClozeGrouping::Auto(2),
+            order: Some(2),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -1557,8 +1610,9 @@ fn test_get_cards_back_reveal_2() {
                 ],
             },
             CardData {
-                order: Some(3),
-                grouping: ClozeGrouping::Custom("1".to_string()),
+            order: Some(3),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::OnlyAnswered,
@@ -1609,6 +1663,7 @@ fn test_get_cards_suspended_only_deserialized() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: Some(true),
             front_conceal: FrontConceal::OnlyGrouping,
@@ -1639,6 +1694,7 @@ fn test_get_cards_suspended_false() {
     if let Ok(cards) = cards_res {
         let expected = vec![CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: Some(false),
             front_conceal: FrontConceal::OnlyGrouping,

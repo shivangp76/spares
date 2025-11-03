@@ -25,6 +25,7 @@ pub use match_cards::*;
 #[derive(Clone, Debug, PartialEq)]
 pub struct CardData {
     pub order: Option<usize>,
+    pub previous_order: Option<usize>,
     pub grouping: ClozeGrouping,
     pub is_suspended: Option<bool>,
     pub front_conceal: FrontConceal,
@@ -739,6 +740,17 @@ pub fn get_cards_main(
     // This must be done after the image occlusions are interweaved since `FrontConceal` works across image occlusion clozes.
     apply_conceal_and_reveal(&mut cards_raw, &all_clozes);
 
+    // Extract old orders before they're modified by `modify_card_settings()`
+    let old_orders: Vec<Option<Vec<usize>>> = cards_raw
+        .iter()
+        .map(|clozes| {
+            clozes
+                .iter()
+                .find(|(_, x)| !x.skip_serialization)
+                .and_then(|(_, settings)| settings.orders.clone())
+        })
+        .collect::<Vec<_>>();
+
     // Modify card settings
     modify_card_settings(&mut cards_raw, &mut data, parser, to_parser, add_order)?;
 
@@ -750,6 +762,7 @@ pub fn get_cards_main(
 
     // Convert Vec<ClozeData> to CardData
     let mut cards: Vec<CardData> = Vec::new();
+    let mut old_orders_iter = old_orders.into_iter();
     for clozes in cards_raw {
         // Since cloze settings are boiled up, just examine the first cloze for the settings.
         let ClozeGroupingSettings {
@@ -769,6 +782,15 @@ pub fn get_cards_main(
             .1;
         let ClozeSettings { hint, .. } = &clozes.first().unwrap().0.settings;
         let mut orders_iter = orders.as_ref().into_iter().flat_map(|v| v.iter().copied());
+
+        // Extract old orders for this grouping
+        let old_orders_for_grouping = old_orders_iter.next().flatten();
+        let old_orders_vec = old_orders_for_grouping.clone();
+        let mut old_orders_iter_grouping = old_orders_vec
+            .as_ref()
+            .map(|v| v.iter().copied())
+            .into_iter()
+            .flatten();
 
         // Construct directions
         #[allow(clippy::type_complexity)]
@@ -886,6 +908,7 @@ pub fn get_cards_main(
             }
             cards.push(CardData {
                 order: orders_iter.next(),
+                previous_order: old_orders_iter_grouping.next(),
                 grouping: grouping.clone(),
                 is_suspended: *is_suspended,
                 data: card_data,
