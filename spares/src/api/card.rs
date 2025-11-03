@@ -169,6 +169,19 @@ pub async fn forget_card(
     Ok(CardResponse::new(&card))
 }
 
+pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>) -> Result<(), Error> {
+    let _unbury_result = sqlx::query(
+        r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
+    )
+    .bind(now.timestamp())
+    .bind(SpecialState::UserBuried)
+    .bind(SpecialState::SchedulerBuried)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
+}
+
 pub async fn create_card_tags(
     db: &SqlitePool,
     card_tag_entries: &[(CardId, TagId)],
