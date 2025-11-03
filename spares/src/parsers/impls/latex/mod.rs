@@ -761,6 +761,7 @@ mod tests {
         if let Ok(cards) = cards_res {
             let expected = vec![CardData {
                 order: Some(1),
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
@@ -785,6 +786,7 @@ mod tests {
         if let Ok(cards) = cards_res {
             let expected = vec![CardData {
                 order: None,
+                previous_order: None,
                 grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,

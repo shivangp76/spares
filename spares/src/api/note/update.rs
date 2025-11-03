@@ -53,7 +53,9 @@ async fn update_cards(
     // Line up cards
     // The card's id in the database cannot change since they are referred to in `review_log`.
     let old_cards_orders = old_cards.iter().map(|x| x.order).collect::<Vec<_>>();
-    let new_cards_orders = new_cards.iter().map(|x| x.order).collect::<Vec<_>>();
+    // `previous_order` holds the order references from the submitted note text (before
+    // sequential renumbering), which is what `match_cards` needs to reconcile with old DB cards.
+    let new_cards_orders = new_cards.iter().map(|x| x.previous_order).collect::<Vec<_>>();
     let match_cards_result = match_cards(&old_cards_orders, &new_cards_orders)?;
     let MatchCardsResult {
         move_card_indices,
@@ -443,12 +445,11 @@ async fn update_note_links(
     Ok(())
 }
 
-fn get_parser_and_cards(
+fn get_parser_only(
     parser_rows: &[(i64, String)],
     parser_id: i64,
-    note_data: &str,
     all_parsers: &[fn() -> Box<dyn Parseable>],
-) -> Result<(Box<dyn Parseable>, Vec<CardData>), Error> {
+) -> Result<Box<dyn Parseable>, Error> {
     let (_, parser_name) =
         parser_rows
             .iter()
@@ -456,7 +457,16 @@ fn get_parser_and_cards(
             .ok_or(Error::Library(LibraryError::Parser(
                 ParserErrorKind::NotFound(String::new()),
             )))?;
-    let parser = find_parser(parser_name.as_str(), all_parsers)?;
+    find_parser(parser_name.as_str(), all_parsers)
+}
+
+fn get_parser_and_cards(
+    parser_rows: &[(i64, String)],
+    parser_id: i64,
+    note_data: &str,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<(Box<dyn Parseable>, Vec<CardData>), Error> {
+    let parser = get_parser_only(parser_rows, parser_id, all_parsers)?;
     let cards = get_cards(parser.as_ref(), None, note_data, false, true)?;
     Ok((parser, cards))
 }
@@ -542,16 +552,12 @@ pub async fn update_notes(
             existing_note.data.as_str(),
             all_parsers,
         )?;
-        let (new_parser, new_cards) = get_parser_and_cards(
-            &parser_rows,
-            new_parser_id,
-            submitted_new_data.as_str(),
-            all_parsers,
-        )?;
-
-        // TODO: PERF: `add_order_to_note_data()` calls `get_cards()` and so does `get_parser_and_cards()`. There should be a way to modify the `get_cards()` function itself to return the old indices while also updating the note data with the new indices
-        // Update note, adding orders sequentially
-        let (new_data, _) =
+        let new_parser = get_parser_only(&parser_rows, new_parser_id, all_parsers)?;
+        // `add_order_to_note_data` renumbers orders sequentially and returns cards with:
+        //   - `order`: new sequential positions (what the DB will store)
+        //   - `previous_order`: the orders from the submitted text (references to old positions,
+        //     used by `match_cards` to reconcile old DB cards with the new layout)
+        let (new_data, new_cards) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
         let created_at: i64 =
         sqlx::query_scalar(r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
