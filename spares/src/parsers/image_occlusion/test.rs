@@ -115,6 +115,7 @@ fn test_get_cards_image_occlusion_1() {
         let expected = vec![
                 CardData {
                     order: Some(1),
+                    previous_order: None,
                     grouping: ClozeGrouping::Auto(1),
                     is_suspended: None,
                     front_conceal: FrontConceal::OnlyGrouping,
@@ -129,6 +130,7 @@ fn test_get_cards_image_occlusion_1() {
                 },
                 CardData {
                     order: Some(2),
+                    previous_order: None,
                     grouping: ClozeGrouping::Auto(2),
                     is_suspended: None,
                     front_conceal: FrontConceal::OnlyGrouping,
@@ -143,6 +145,7 @@ fn test_get_cards_image_occlusion_1() {
                 },
                 CardData {
                     order: Some(3),
+                    previous_order: None,
                     grouping: ClozeGrouping::Custom("1".to_string()),
                     is_suspended: None,
                     front_conceal: FrontConceal::OnlyGrouping,
@@ -264,6 +267,7 @@ fn test_get_cards_image_occlusion_2() {
     let cards = cards_res.unwrap();
     let expected = vec![CardData {
         order: Some(1),
+        previous_order: None,
         grouping: ClozeGrouping::Custom("1".to_string()),
         is_suspended: Some(true),
         front_conceal: FrontConceal::OnlyGrouping,
@@ -434,6 +438,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
     let expected = vec![
         CardData {
             order: Some(1),
+            previous_order: None,
             grouping: ClozeGrouping::Custom("1".to_string()),
             is_suspended: None,
             front_conceal: FrontConceal::AllGroupings,
@@ -465,6 +470,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
         },
         CardData {
             order: Some(2),
+            previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::AllGroupings,
@@ -668,6 +674,7 @@ fn test_get_cards_image_occlusion_grouping() {
     let expected = vec![
         CardData {
             order: Some(1),
+                    previous_order: None,
             grouping: ClozeGrouping::Auto(1),
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
@@ -687,6 +694,7 @@ fn test_get_cards_image_occlusion_grouping() {
         },
         CardData {
             order: Some(2),
+                    previous_order: None,
             grouping: ClozeGrouping::Auto(2),
             is_suspended: None,
             front_conceal: FrontConceal::AllGroupings,
@@ -775,6 +783,7 @@ fn test_image_occlusion_parallel_performance() {
     // Create card data
     let card_data = CardData {
         order: Some(1),
+        previous_order: None,
         grouping: ClozeGrouping::Auto(1),
         is_suspended: None,
         front_conceal: FrontConceal::OnlyGrouping,
