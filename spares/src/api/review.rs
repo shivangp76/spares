@@ -24,6 +24,7 @@ use indoc::indoc;
 use itertools::Itertools;
 use serde_json::Value;
 use sqlx::{FromRow, sqlite::SqlitePool};
+use std::collections::HashMap;
 
 async fn unbury_cards(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config()?;
@@ -159,6 +160,36 @@ pub async fn get_review_card(
         query = query.bind(card_due_limit.timestamp());
     }
 
+    // Get count of cards by state with the same filters
+    // These are the remaining cards that are due on `requested_date` grouped by state. Note that
+    // this is _not_ equivalent to the cards by state in `get_statistics()` because that does not
+    // filter by `requested_date`.
+    let count_query_str = format!(
+        indoc! {
+        "SELECT
+            c.state,
+            COUNT(*) as count
+        FROM card c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        WHERE c.special_state IS NULL
+            {}
+        GROUP BY c.state"
+        },
+        restrictions
+    );
+    let mut count_query = sqlx::query_as(&count_query_str);
+    if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
+        count_query = count_query.bind(card_due_limit.timestamp());
+    }
+    let cards_by_state_vec: Vec<(StateId, u32)> = count_query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let cards_left_by_state = cards_by_state_vec
+        .into_iter()
+        .collect::<HashMap<StateId, u32>>();
+
     let review_card_opt: Option<ReviewCard> = query
         .fetch_optional(db)
         .await
@@ -214,6 +245,7 @@ pub async fn get_review_card(
             card_back_rendered_path,
             note_raw_path,
             parser_name,
+            cards_left_by_state,
         };
         return Ok(Some(review_card_response));
     }
