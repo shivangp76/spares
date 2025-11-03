@@ -153,6 +153,17 @@ async fn get_review_card(
             );
             // println!("Note Raw Path: {}", &review_card.note_raw_path.display());
 
+            // Display cards left by state
+            if !review_card.cards_left_by_state.is_empty() {
+                println!("Cards left by state for today:");
+                let mut cards_left_by_state =
+                    review_card.cards_left_by_state.iter().collect::<Vec<_>>();
+                cards_left_by_state.sort_by_key(|(state_id, _)| *state_id);
+                for (state_id, count) in cards_left_by_state {
+                    println!("  State {}: {}", state_id, count);
+                }
+            }
+
             Ok(Some((review_card, child)))
         }
         // No cards left to review
