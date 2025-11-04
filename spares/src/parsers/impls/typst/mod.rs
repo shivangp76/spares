@@ -203,7 +203,7 @@ impl Parseable for TypstParser {
                     custom_data_str,
                     "\n".to_string(),
                     self.construct_comment("spares: note start"),
-                    note_data.to_string(),
+                    note_data.clone(),
                     "\n".to_string(),
                     self.construct_comment("spares: note end"),
                     linked_notes_string,
@@ -225,7 +225,7 @@ impl Parseable for TypstParser {
                                 &ClozeReplacement::parse(side, cloze_replacement, d),
                                 side,
                             ),
-                        NotePart::SurroundingData(d) => d.to_string(),
+                        NotePart::SurroundingData(d) => d.clone(),
                         NotePart::ImageOcclusion { data, .. } => {
                             let image_occlusion = self.construct_image_occlusion(
                                 data,
@@ -254,7 +254,7 @@ impl Parseable for TypstParser {
                     String::new(),
                     "#line(length: 100%)".to_string(),
                     String::new(),
-                    card_data.to_string(),
+                    card_data.clone(),
                 ]);
                 let card_file_data = lines.join("\n");
                 card_file_data

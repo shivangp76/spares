@@ -246,7 +246,7 @@ impl ClozeGrouping {
         match self {
             ClozeGrouping::All => groupings_all.to_string(),
             ClozeGrouping::Auto(_) => String::new(),
-            ClozeGrouping::Custom(group) => group.to_string(),
+            ClozeGrouping::Custom(group) => group.clone(),
         }
     }
 }

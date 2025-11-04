@@ -32,7 +32,7 @@ async fn create_parsers(
     let mut parser_responses = Vec::new();
     for (i, parser_name) in create_note_requests.keys().enumerate() {
         let request = CreateParserRequest {
-            name: parser_name.to_string(),
+            name: parser_name.clone(),
         };
         let parser_response = if run {
             let response = client
@@ -52,7 +52,7 @@ async fn create_parsers(
         } else {
             ParserResponse {
                 id: i64::try_from(i).unwrap_or_default(),
-                name: parser_name.to_string(),
+                name: parser_name.clone(),
             }
         };
         parser_responses.push(parser_response);

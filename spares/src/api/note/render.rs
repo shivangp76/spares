@@ -47,7 +47,7 @@ pub fn match_keyword(
         })
         .map(
             |((note_id, matched_keyword), score)| MatchedKeywordResponse {
-                matched_keyword: matched_keyword.to_string(),
+                matched_keyword: matched_keyword.clone(),
                 note_id: *note_id,
                 score,
             },
@@ -319,7 +319,7 @@ fn render_note_data_to_generate_files_request(
                          matched_keyword,
                          ..
                      }| LinkedNote {
-                        searched_keyword: searched_keyword.to_string(),
+                        searched_keyword: searched_keyword.clone(),
                         linked_note_id: *linked_note_id,
                         matched_keyword: matched_keyword.clone(),
                     },

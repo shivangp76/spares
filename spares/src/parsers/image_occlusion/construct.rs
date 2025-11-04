@@ -360,7 +360,7 @@ pub(crate) fn create_image_occlusion_card(
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: e,
             advice,
-            src: clozes_file_contents.to_string(),
+            src: clozes_file_contents.clone(),
             at: (0..clozes_file_contents.len()).into(),
         })
     })?;

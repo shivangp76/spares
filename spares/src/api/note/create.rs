@@ -151,7 +151,7 @@ pub async fn create_notes(
         // Parse note
         let generate_files_request = GenerateNoteFilesRequest {
             note_id: note.id,
-            note_data: note.data.to_string(),
+            note_data: note.data.clone(),
             keywords: parse_list(note.keywords.as_str()),
             linked_notes: None, // This is expensive so only done in `render_notes()`,
             custom_data: note.custom_data.as_object().unwrap().clone(),
@@ -305,7 +305,7 @@ async fn add_note_tags(
         if should_create_tag {
             // Tag does not exist, so a new one should be created.
             let create_tag_request = CreateTagRequest {
-                name: tag_name.to_string(),
+                name: tag_name.clone(),
                 description: String::new(),
                 parent_id: None,
                 query: None,
@@ -316,7 +316,7 @@ async fn add_note_tags(
 
             // Add to tag_map for following create note requests
             if let &mut Some(ref mut tag_mapping) = tag_map {
-                tag_mapping.insert(tag_name.to_string(), tag_response.id);
+                tag_mapping.insert(tag_name.clone(), tag_response.id);
             }
         }
     }

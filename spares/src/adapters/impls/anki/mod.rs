@@ -114,7 +114,7 @@ impl SrsAdapter for AnkiAdapter {
             .map_err(|e| {
                 Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
                     adapter_name: ANKI_ADAPTER_NAME.to_string(),
-                    error: e.to_string(),
+                    error: e.clone(),
                 }))
             })?;
 
@@ -131,7 +131,7 @@ impl SrsAdapter for AnkiAdapter {
                 .map_err(|e| {
                     Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
                         adapter_name: ANKI_ADAPTER_NAME.to_string(),
-                        error: e.to_string(),
+                        error: e.clone(),
                     }))
                 })?;
             println!("Modifying cards and review log...");
@@ -394,7 +394,7 @@ impl SrsAdapter for AnkiAdapter {
             let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
             for (anki_note_id, spares_note_id, mut custom_data) in relevant_data {
                 custom_data.remove(NOTE_ID_KEY);
-                custom_data.insert(new_key.clone(), Value::String(anki_note_id.to_string()));
+                custom_data.insert(new_key.clone(), Value::String(anki_note_id.clone()));
                 spares_adapter
                     .update_custom_data(spares_note_id, custom_data, run, Utc::now())
                     .await?;
