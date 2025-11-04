@@ -19,7 +19,7 @@ use crate::{
     },
     search::evaluator::Evaluator,
 };
-use chrono::{DateTime, Days, Duration, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
@@ -30,15 +30,22 @@ use std::collections::HashMap;
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config()?;
     let now = Utc::now();
-    // TODO: This is incorrect since someone might do their reviews late at night one day and then early next morning. The second review (early in the morning) will not have its cards unburied even when it should.
-    let unburied_limit =
-        config
-            .last_unburied
-            .checked_add_days(Days::new(1))
-            .ok_or(Error::Library(LibraryError::InvalidConfig(
-                "Failed to add days since `config.last_unburied` is past limit.".to_string(),
-            )))?;
-    if unburied_limit < now {
+    // Compare dates in local timezone to determine if cards should be unburied.
+    // This ensures that cards are unburied when the calendar date changes in the user's timezone,
+    // regardless of when reviews were performed (e.g., late at night vs. early morning).
+    // For example, if a user reviews at 11 PM on day 1 and then at 6 AM on day 2, the cards
+    // will be unburied on day 2 even though less than 24 hours have passed.
+    let now_local_date = now.with_timezone(&Local).date_naive();
+    // Handle the case where last_unburied might be MIN_UTC or out of range for local timezone
+    // If it's MIN_UTC, treat it as never unburied, so we should always unbury
+    let last_unburied_local_date = if config.last_unburied == DateTime::<Utc>::MIN_UTC {
+        // Use a date far in the past that's safe for comparison
+        // This ensures we always unbury on the first run
+        NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+    } else {
+        config.last_unburied.with_timezone(&Local).date_naive()
+    };
+    if now_local_date > last_unburied_local_date {
         // Unbury
         unbury_cards(db, now).await?;
 
