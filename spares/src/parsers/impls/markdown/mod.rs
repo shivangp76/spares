@@ -238,7 +238,7 @@ impl Parseable for MarkdownParser {
                                 &ClozeReplacement::parse(side, cloze_replacement, d),
                                 side,
                             ),
-                        NotePart::SurroundingData(d) => d.to_string(),
+                        NotePart::SurroundingData(d) => d.clone(),
                         NotePart::ImageOcclusion { data, .. } => {
                             let image_occlusion = self.construct_image_occlusion(
                                 data,
@@ -267,7 +267,7 @@ impl Parseable for MarkdownParser {
                     String::new(),
                     "$\\hrulefill$".to_string(),
                     String::new(),
-                    card_data.to_string(),
+                    card_data.clone(),
                 ]);
                 let card_file_data = lines.join("\n");
                 card_file_data

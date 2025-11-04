@@ -266,7 +266,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
                     create_tag(
                         db,
                         CreateTagRequest {
-                            name: (*tag).to_string(),
+                            name: (*tag).clone(),
                             description: String::new(),
                             parent_id: None,
                             query: None,
@@ -443,7 +443,7 @@ pub async fn update_notes(
         // Parse note
         let parse_note_request = GenerateNoteFilesRequest {
             note_id: updated_note.id,
-            note_data: updated_note.data.to_string(),
+            note_data: updated_note.data.clone(),
             keywords: parse_list(updated_note.keywords.as_str()),
             linked_notes: None, // This is expensive so only done in `render_notes()`,
             custom_data: updated_note.custom_data.as_object().unwrap().clone(),

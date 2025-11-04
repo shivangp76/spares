@@ -122,7 +122,7 @@ impl AnkiAdapter {
                 NotePart::SurroundingData(text)
                 | NotePart::ClozeData(text, _)
                 | NotePart::ClozeStart(text)
-                | NotePart::ClozeEnd(text) => text.to_string(),
+                | NotePart::ClozeEnd(text) => text.clone(),
                 NotePart::ImageOcclusion { data, .. } => {
                     parser.construct_image_occlusion(data, ConstructImageOcclusionType::Note)
                 }

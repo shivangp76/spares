@@ -738,8 +738,7 @@ fn evaluate_field_value(
         let rhs_field_name = value_context
             .params
             .first()
-            .ok_or_else(|| miette!("Missing sort field name"))?
-            .to_string();
+            .ok_or_else(|| miette!("Missing sort field name"))?.clone();
         let target_field = Field::from_str(&[&rhs_field_name])?;
         let order_expr = Field::to_order_by_expr(&target_field)?;
         // Merge table requirements for the sort target field

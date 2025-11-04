@@ -913,7 +913,7 @@ pub fn add_order_to_note_data(
                     NotePart::ClozeStart(text)
                     | NotePart::ClozeEnd(text)
                     | NotePart::SurroundingData(text)
-                    | NotePart::ClozeData(text, _) => text.to_string(),
+                    | NotePart::ClozeData(text, _) => text.clone(),
                     NotePart::ImageOcclusion { data, .. } => {
                         parser.construct_image_occlusion(data, ConstructImageOcclusionType::Note)
                     }
