@@ -409,7 +409,7 @@ pub mod review {
         Advance {
             count: u32,
         },
-        /// When you are dealing with a large number of reviews after taking a break from Anki or after rescheduling.
+        /// When you are dealing with a large number of reviews after taking a break from spaced repetition or after rescheduling.
         Postpone {
             count: u32,
         },
