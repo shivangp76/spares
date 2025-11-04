@@ -19,8 +19,9 @@ use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{Display, EnumString};
 use tokio::sync::mpsc;
 use utils::{
-    bury_card, bury_note, close_rendered_file, get_scheduler_ratings, open_rendered_file,
-    print_recall_duration, print_summary, submit_rating, suspend_cards, suspend_note, tag_note,
+    bury_card, bury_note, bury_until_later_today, close_rendered_file, get_scheduler_ratings,
+    open_rendered_file, print_recall_duration, print_summary, submit_rating, suspend_cards,
+    suspend_note, tag_note,
 };
 
 mod utils;
@@ -80,6 +81,8 @@ enum ReviewAction {
     ForgetCard,
     #[strum(serialize = "Set Due Date")]
     SetDueDate,
+    #[strum(serialize = "Bury Until Later Today")]
+    BuryUntilLaterToday,
     #[strum(serialize = "Sync Note")]
     SyncNote,
     // Undo,
@@ -450,7 +453,8 @@ pub async fn review_cards(
             | ReviewAction::SuspendCard
             | ReviewAction::SuspendNote
             | ReviewAction::ForgetCard
-            | ReviewAction::SetDueDate => {
+            | ReviewAction::SetDueDate
+            | ReviewAction::BuryUntilLaterToday => {
                 match chosen_action {
                     ReviewAction::BuryCard => {
                         bury_card(
@@ -487,6 +491,15 @@ pub async fn review_cards(
                             continue;
                         }
                         println!("Due date updated.");
+                    }
+                    ReviewAction::BuryUntilLaterToday => {
+                        bury_until_later_today(
+                            review_card_response.card_id,
+                            base_url,
+                            client,
+                        )
+                        .await?;
+                        println!("Card due date set to end of today.");
                     }
                     _ => unreachable!(),
                 }

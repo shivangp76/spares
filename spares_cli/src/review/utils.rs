@@ -1,5 +1,5 @@
 use super::ReviewAction;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -330,6 +330,50 @@ pub async fn set_due_date_with_prompt(
         return Ok(true);
     }
     Ok(false)
+}
+
+pub async fn bury_until_later_today(
+    card_id: CardId,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    // Get current time in UTC and convert to local timezone to get today's date
+    let now_utc = Utc::now();
+    // Calculate end of today (23:59:59) in local timezone, then convert to UTC
+    let end_of_today_utc = Local
+        .from_local_datetime(
+            &now_utc
+                .with_timezone(&Local)
+                .date_naive()
+                .and_hms_opt(23, 59, 59)
+                .unwrap(),
+        )
+        .unwrap()
+        .to_utc();
+
+    // Send update card request
+    let request = UpdateCardRequest {
+        selector: CardsSelector::Ids(vec![card_id]),
+        desired_retention: None,
+        special_state: None,
+        due: Some(end_of_today_utc),
+    };
+    let url = format!("{}/api/cards", base_url);
+    let response = client
+        .patch(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    if response.status() != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(message.map_or_else(
+            || "Failed to update card due date".to_string(),
+            |m| m.to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn format_duration(duration: chrono::Duration) -> String {
