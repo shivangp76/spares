@@ -79,19 +79,16 @@ pub async fn get_review_card(
 
     // Get cards reviewed on `requested_date`
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let cards_studied_on_requested_date: Vec<(i64, i64, StateId)> = sqlx::query_as(
-        r"SELECT card_id, duration, previous_state FROM review_log WHERE reviewed_at >= ? AND reviewed_at <= ?",
+    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
+        r"SELECT COUNT(DISTINCT card_id) FROM review_log
+      WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
     )
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
-    .fetch_all(db)
+    .bind(NEW_CARD_STATE)
+    .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let new_cards_studied_on_requested_date = cards_studied_on_requested_date
-        .iter()
-        .unique_by(|(card_id, _, _)| card_id)
-        .filter(|(_, _, state)| *state == NEW_CARD_STATE)
-        .count() as u32;
     let config = read_external_config()?;
     let card_due_limit = upper_limit;
     let not_new_card_str = if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
