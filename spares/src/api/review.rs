@@ -22,6 +22,7 @@ use crate::{
 use chrono::{DateTime, Days, Duration, Utc};
 use indoc::indoc;
 use itertools::Itertools;
+use log::info;
 use serde_json::Value;
 use sqlx::{FromRow, sqlite::SqlitePool};
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ use std::collections::HashMap;
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config()?;
     let now = Utc::now();
+    // TODO: This is incorrect since someone might do their reviews late at night one day and then early next morning. The second review (early in the morning) will not have its cards unburied even when it should.
     let unburied_limit =
         config
             .last_unburied
@@ -146,11 +148,15 @@ pub async fn get_review_card(
         },
         restrictions
     );
-    dbg!(&query_str);
+    info!("{}", &query_str);
     let mut query = sqlx::query_as(&query_str);
     if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
         query = query.bind(card_due_limit.timestamp());
     }
+    let review_card_opt: Option<ReviewCard> = query
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
 
     // Get count of cards by state with the same filters
     // These are the remaining cards that are due on `requested_date` grouped by state. Note that
@@ -182,10 +188,6 @@ pub async fn get_review_card(
         .into_iter()
         .collect::<HashMap<StateId, u32>>();
 
-    let review_card_opt: Option<ReviewCard> = query
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
     if let Some(ReviewCard {
         note_id,
         parser_name,
