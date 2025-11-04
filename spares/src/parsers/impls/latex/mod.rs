@@ -482,7 +482,7 @@ fn construct_file_data(
                 custom_data_str,
                 "\\begin{note}".to_string(),
                 "\n".to_string(),
-                note_data.to_string(),
+                note_data.clone(),
                 "\n".to_string(),
                 "\\end{note}".to_string(),
                 linked_notes_str,
@@ -505,7 +505,7 @@ fn construct_file_data(
                             &ClozeReplacement::parse(side, cloze_replacement, d),
                             side,
                         ),
-                    NotePart::SurroundingData(d) => d.to_string(),
+                    NotePart::SurroundingData(d) => d.clone(),
                     NotePart::ImageOcclusion { data, .. } => {
                         let image_occlusion = parser.construct_image_occlusion(
                             data,
@@ -533,7 +533,7 @@ fn construct_file_data(
                 // custom_data_str,
                 "\\begin{mdframed}".to_string(),
                 "\n".to_string(),
-                card_data.to_string(),
+                card_data.clone(),
                 "\n".to_string(),
                 "\\end{mdframed}".to_string(),
                 // linked_notes_str,
