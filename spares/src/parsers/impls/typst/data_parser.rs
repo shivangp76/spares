@@ -5,6 +5,7 @@ use unscanny::Scanner;
 const CLOZE_FUNC_NAME: &str = "cl";
 const LINKED_NOTE_FUNC_NAME: &str = "lin";
 const SETTINGS_FUNC_NAME: &str = "se";
+const KEYWORD_FUNC_NAME: &str = "key";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 enum DataMode {
@@ -26,6 +27,7 @@ enum OutputType {
     Cloze,
     LinkedNote,
     Settings,
+    Keyword,
 }
 
 #[derive(Debug)]
@@ -33,6 +35,7 @@ enum Output {
     Cloze(Vec<ClozeMatch>),
     LinkedNote(Range<usize>),
     Settings(Range<usize>),
+    Keyword(Range<usize>),
 }
 
 #[derive(Debug)]
@@ -77,6 +80,13 @@ impl<'a> TypstDataParser<'a> {
         })
     }
 
+    pub fn next_keyword(&mut self) -> Option<Range<usize>> {
+        self.next_data(&OutputType::Keyword).map(|x| match x {
+            Output::Keyword(res) => res,
+            _ => unreachable!(),
+        })
+    }
+
     #[allow(clippy::too_many_lines, reason = "off by a few")]
     fn next_data(&mut self, output_type: &OutputType) -> Option<Output> {
         let mut cloze_nesting_level = 0;
@@ -85,6 +95,7 @@ impl<'a> TypstDataParser<'a> {
 
         let mut current_linked_notes = Vec::new();
         let mut current_settings = Vec::new();
+        let mut current_keywords = Vec::new();
 
         loop {
             let cursor_start = self.s.cursor();
@@ -134,6 +145,13 @@ impl<'a> TypstDataParser<'a> {
                             cursor_start..self.s.cursor(),
                             self.open_square_bracket_count + 1,
                         ));
+                    } else if func_name == KEYWORD_FUNC_NAME
+                        && matches!(output_type, OutputType::Keyword)
+                    {
+                        current_keywords.push((
+                            cursor_start..self.s.cursor(),
+                            self.open_square_bracket_count + 1,
+                        ));
                     }
                     self.s.uneat();
                     self.modes.push(DataMode::Markup);
@@ -162,6 +180,11 @@ impl<'a> TypstDataParser<'a> {
                                 .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
                         {
                             return Some(Output::LinkedNote(linked_note_start.0.end..cursor_start));
+                        } else if matches!(output_type, OutputType::Keyword)
+                            && let Some(keyword_start) = current_keywords
+                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
+                        {
+                            return Some(Output::Keyword(keyword_start.0.end..cursor_start));
                         } else if matches!(output_type, OutputType::Settings)
                             && let Some(setting_start) = current_settings
                                 .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
@@ -212,7 +235,7 @@ impl<'a> TypstDataParser<'a> {
                     Some(Output::Cloze(all_clozes))
                 }
             }
-            OutputType::LinkedNote | OutputType::Settings => None,
+            OutputType::LinkedNote | OutputType::Keyword | OutputType::Settings => None,
         }
     }
 }
@@ -265,6 +288,17 @@ mod tests {
             all_linked_notes.push(linked_note);
         }
         assert_eq!(all_linked_notes, vec![28..34],);
+    }
+
+    #[test]
+    fn test_basic_keyword() {
+        let input = "Test #key[basic] #test[p]asd";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_keywords = Vec::new();
+        while let Some(linked_note) = parser.next_keyword() {
+            all_keywords.push(linked_note);
+        }
+        assert_eq!(all_keywords, vec![10..15],);
     }
 
     #[test]

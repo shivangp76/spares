@@ -3,6 +3,7 @@ use crate::{
     model::{Card, CardId, Note, NoteId},
     search::{Atom, Op, TokenTree, parser::Parser},
 };
+use log::info;
 use miette::{Error, Report, miette};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
@@ -50,7 +51,7 @@ impl<'de> Evaluator<'de> {
         let query_str = self
             .evaluate_with_parser(EvaluatorReturnItemType::Notes)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        dbg!(&query_str);
+        info!("{}", &query_str);
         let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -66,7 +67,7 @@ impl<'de> Evaluator<'de> {
         let query_str = self
             .evaluate(EvaluatorReturnItemType::NoteIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        dbg!(&query_str);
+        info!("{}", &query_str);
         let note_ids_tups: Vec<(NoteId,)> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -85,7 +86,7 @@ impl<'de> Evaluator<'de> {
         let query_str = self
             .evaluate_with_parser(EvaluatorReturnItemType::Cards)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        dbg!(&query_str);
+        info!("{}", &query_str);
         let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -101,7 +102,7 @@ impl<'de> Evaluator<'de> {
         let query_str = self
             .evaluate(EvaluatorReturnItemType::CardIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        dbg!(&query_str);
+        info!("{}", &query_str);
         let card_ids_tups: Vec<(CardId,)> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -738,7 +739,8 @@ fn evaluate_field_value(
         let rhs_field_name = value_context
             .params
             .first()
-            .ok_or_else(|| miette!("Missing sort field name"))?.clone();
+            .ok_or_else(|| miette!("Missing sort field name"))?
+            .clone();
         let target_field = Field::from_str(&[&rhs_field_name])?;
         let order_expr = Field::to_order_by_expr(&target_field)?;
         // Merge table requirements for the sort target field
