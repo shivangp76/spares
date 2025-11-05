@@ -199,6 +199,20 @@ fn complete_note(
             .extend(ln.into_iter().map(|range| new_data[range].to_string())),
         Err(e) => local_settings.errors_and_warnings.push(e),
     }
+
+    // Get embedded keywords
+    let embedded_keywords = parser.get_embedded_keywords(new_data.as_str());
+    match embedded_keywords {
+        Ok(keywords) => local_settings.keywords.extend(
+            keywords
+                .into_iter()
+                .map(|range| new_data[range].to_string()),
+        ),
+        Err(e) => local_settings.errors_and_warnings.push(e),
+    }
+    local_settings.keywords.sort();
+    local_settings.keywords.dedup();
+
     Ok(new_data)
 }
 
