@@ -56,6 +56,10 @@ impl Parseable for MarkdownParser {
         Ok(linked_notes_data)
     }
 
+    fn get_embedded_keywords(&self, _data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+        Ok(vec![])
+    }
+
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
         // let settings_regex = Regex::new(r"(?m)<!--- # (.*) --->").unwrap();
         let settings_regex = Regex::new(r"(?s)<!--- # ([^\n]*) --->").unwrap();

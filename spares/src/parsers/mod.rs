@@ -67,8 +67,9 @@ pub trait Parseable: Send + Sync {
         Ok(notes_data)
     }
 
-    // Nested clozes make it so "data" can NOT be split into disjoint segment of NotePart::Data and NotePart::Cloze. This is because what a cloze really represents is that you want to see everything else *besides* what is in the cloze.
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
+
+    fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
 
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError>;
 
@@ -87,6 +88,7 @@ pub trait Parseable: Send + Sync {
         Regex::new(&regex_string).unwrap()
     }
 
+    // Nested clozes make it so "data" can NOT be split into disjoint segment of NotePart::Data and NotePart::Cloze. This is because what a cloze really represents is that you want to see everything else *besides* what is in the cloze.
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError>;
 
     fn cloze_settings_keys(&self) -> ClozeSettingsKeys {

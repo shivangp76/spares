@@ -50,6 +50,15 @@ impl Parseable for TypstParser {
         Ok(all_linked_notes.into_iter().collect::<Vec<_>>())
     }
 
+    fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+        let mut all_keywords = Vec::new();
+        let mut parser = TypstDataParser::new(data);
+        while let Some(linked_note) = parser.next_keyword() {
+            all_keywords.push(linked_note);
+        }
+        Ok(all_keywords.into_iter().collect::<Vec<_>>())
+    }
+
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
         let mut all_settings = Vec::new();

@@ -59,6 +59,10 @@ impl Parseable for LatexParserExerciseSolution {
         get_linked_notes(data)
     }
 
+    fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+        get_embedded_keywords(data)
+    }
+
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
         get_settings(data)
     }
@@ -183,6 +187,10 @@ impl Parseable for LatexParserNote {
 
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         get_linked_notes(data)
+    }
+
+    fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+        get_embedded_keywords(data)
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
@@ -353,6 +361,17 @@ fn get_linked_notes(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         .map(|settings_match| settings_match.capture_range)
         .collect::<Vec<_>>();
     Ok(linked_notes)
+}
+
+fn get_embedded_keywords(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+    // TODO: Regex won't work here. Some edge cases: `\% \se{` and `a \% \se{`. We need a full character parser like typst for this to work.
+    let keyword_start_regex = Regex::new(r"\\key{").unwrap();
+    let keywords = get_latex_command(data, &keyword_start_regex)
+        .map_err(LibraryError::Delimiter)?
+        .into_iter()
+        .map(|settings_match| settings_match.capture_range)
+        .collect::<Vec<_>>();
+    Ok(keywords)
 }
 
 fn get_settings(data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
