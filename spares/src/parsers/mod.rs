@@ -49,7 +49,7 @@ pub trait Parseable: Send + Sync {
     /// This is used as a directory name, so only certain characters are valid. The preferred format is lower case with dashes.
     fn get_parser_name(&self) -> &'static str;
 
-    fn get_notes_data(&self, data: &str) -> Result<Vec<NoteRawData>, LibraryError> {
+    fn get_notes_data(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         let start = self.construct_comment("spares: note start");
         let end = self.construct_comment("spares: note end");
         let regex_string = format!(
@@ -62,10 +62,7 @@ pub trait Parseable: Send + Sync {
             .captures_iter(data)
             .map(|c| c.unwrap())
             .filter(|c| c.get(1).is_some())
-            .map(|c| NoteRawData {
-                metadata: None,
-                data: c.get(1).map(|x| x.start()..x.end()).unwrap(),
-            })
+            .map(|c| c.get(1).map(|x| x.start()..x.end()).unwrap())
             .collect::<Vec<_>>();
         Ok(notes_data)
     }
