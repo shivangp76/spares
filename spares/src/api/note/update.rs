@@ -1,4 +1,6 @@
-use super::{AUTOMATIC_REBUILD, create_cards, delete_empty_tags, delete_note_files};
+use super::{
+    AUTOMATIC_REBUILD, create_cards, create_note_keywords, delete_empty_tags, delete_note_files,
+};
 use crate::{
     Error, LibraryError, ParserErrorKind, TagErrorKind,
     api::{
@@ -6,10 +8,10 @@ use crate::{
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
-    helpers::parse_list,
     model::{Card, CardId, Note, NoteId, SpecialState, TagId},
     parsers::{
-        CardData, MatchCardsResult, Parseable, add_order_to_note_data, find_parser,
+        CardData, MatchCardsResult, Parseable, add_order_to_note_data,
+        extract_and_combine_keywords, find_parser,
         generate_files::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
         },
@@ -350,15 +352,26 @@ pub async fn update_notes(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         // Get new values (if empty, use old value)
-        let new_keywords_str = keywords
-            .clone()
-            .map_or_else(|| existing_note.keywords.clone(), |x| x.join(","));
         let submitted_new_data = data.as_ref().unwrap_or(&existing_note.data).clone();
         let new_parser_id = parser_id.unwrap_or(existing_note.parser_id);
         let new_custom_data = custom_data
             .clone()
             .map(Value::Object)
             .unwrap_or(existing_note.custom_data);
+
+        // Get existing extra keywords if not updating
+        let new_extra_keywords: Vec<String> = if let Some(ref ks) = keywords {
+            ks.clone()
+        } else {
+            let keywords_rows: Vec<(String,)> = sqlx::query_as(
+                r"SELECT keyword FROM note_keyword WHERE note_id = ? AND embedded = 0",
+            )
+            .bind(note_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+            keywords_rows.into_iter().map(|(k,)| k).collect()
+        };
 
         // Get parsers and cards
         let parser_rows: Vec<(i64, String)> =
@@ -387,9 +400,8 @@ pub async fn update_notes(
         let (new_data, _) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
         let (created_at,): (i64,) =
-        sqlx::query_as(r"UPDATE note SET data = ?, keywords = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
+        sqlx::query_as(r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
             .bind(&new_data)
-            .bind(&new_keywords_str)
             .bind(new_parser_id)
             .bind(&new_custom_data)
             .bind(at.timestamp())
@@ -397,12 +409,29 @@ pub async fn update_notes(
             .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Update keywords
+        let all_keywords = extract_and_combine_keywords(
+            new_parser.as_ref(),
+            new_data.as_str(),
+            &new_extra_keywords,
+        )
+        .map_err(Error::Library)?;
+        // NOTE: All keywords must be updated. Suppose a note had an extra keyword A and no embedded keywords. Suppose this note is updated with no new extra keywords, but an extra embedded keyword of A. Then, the extra keyword of A should be deleted and converted to an embedded keyword.
+        // Delete all existing keywords
+        sqlx::query(r"DELETE FROM note_keyword WHERE note_id = ?")
+            .bind(note_id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        // Insert new keywords
+        create_note_keywords(db, *note_id, &all_keywords).await?;
+
         let created_at = DateTime::from_timestamp(created_at, 0).unwrap();
         let updated_at = at;
         let updated_note = Note {
             id: *note_id,
             data: new_data.clone(),
-            keywords: new_keywords_str.clone(),
             created_at,
             updated_at,
             parser_id: new_parser_id,
@@ -421,6 +450,10 @@ pub async fn update_notes(
         let tags = tags_tuple.into_iter().map(|t| t.0).collect::<Vec<_>>();
         note_responses.push(NoteResponse::new(
             &updated_note,
+            all_keywords
+                .iter()
+                .map(|(k, _)| k.clone())
+                .collect::<Vec<_>>(),
             tags.clone(),
             None,
             new_cards.len(),
@@ -444,7 +477,11 @@ pub async fn update_notes(
         let parse_note_request = GenerateNoteFilesRequest {
             note_id: updated_note.id,
             note_data: updated_note.data.clone(),
-            keywords: parse_list(updated_note.keywords.as_str()),
+            keywords: all_keywords
+                .into_iter()
+                .filter(|(_, embedded)| !embedded)
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>(),
             linked_notes: None, // This is expensive so only done in `render_notes()`,
             custom_data: updated_note.custom_data.as_object().unwrap().clone(),
             tags,

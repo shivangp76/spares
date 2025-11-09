@@ -71,8 +71,18 @@ pub async fn enrich_note(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
+    // Get keywords
+    let keywords_tuple: Vec<(String,)> =
+        sqlx::query_as(r"SELECT keyword FROM note_keyword WHERE note_id = ? ORDER BY keyword ASC")
+            .bind(note.id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let keywords: Vec<String> = keywords_tuple.into_iter().map(|k| k.0).collect();
+
     Ok(NoteResponse::new(
         note,
+        keywords,
         tags,
         linked_notes_arg,
         card_count as usize,
@@ -280,6 +290,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     struct ListNotesRow {
         #[sqlx(flatten)]
         note: Note,
+        keywords: String,
         tags: String,
         card_count: u32,
     }
@@ -292,6 +303,9 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         r"
             SELECT
                 n.*,
+                (SELECT GROUP_CONCAT(nk.keyword, ',')
+                   FROM note_keyword nk
+                   WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
                 GROUP_CONCAT(DISTINCT t.name) AS tags,
                 (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count
             FROM note n
@@ -312,6 +326,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     let mut responses = Vec::new();
     for ListNotesRow {
         note,
+        keywords,
         tags,
         card_count,
     } in notes_data
@@ -337,6 +352,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         };
         responses.push(NoteResponse::new(
             &note,
+            parse_list(keywords.as_str()),
             tags,
             linked_notes_arg,
             card_count as usize,
@@ -432,7 +448,23 @@ pub(crate) mod tests {
                 let db_note = note_res.unwrap();
                 assert_eq!(db_note.data, data);
                 assert_eq!(db_note.parser_id, parser.id);
-                assert_eq!(db_note.keywords, create_note_request.keywords.join(","));
+
+                // Verify note_keywords in database
+                let note_keywords_res: Result<Vec<(String, bool)>, sqlx::Error> =
+                    sqlx::query_as(r"SELECT keyword, embedded FROM note_keyword WHERE note_id = ? ORDER BY keyword")
+                        .bind(note.id)
+                        .fetch_all(pool)
+                        .await;
+                assert!(note_keywords_res.is_ok());
+                let db_keywords = note_keywords_res.unwrap();
+                assert!(db_keywords.iter().all(|(_, embedded)| !embedded));
+                assert_eq!(
+                    db_keywords
+                        .iter()
+                        .map(|(k, _)| k.clone())
+                        .collect::<Vec<_>>(),
+                    create_note_request.keywords
+                );
 
                 // Verify note_tags in database
                 let note_tag_res: Result<Vec<NoteTag>, sqlx::Error> =
@@ -517,11 +549,25 @@ pub(crate) mod tests {
                     .fetch_one(&pool)
                     .await;
             assert!(note_res.is_ok());
-            if let Ok(note) = note_res {
-                assert_eq!(note.data, created_notes[1].data);
-                assert_eq!(note.parser_id, last_note.parser_id);
-                assert_eq!(note.keywords, last_note.keywords.join(","));
+            if let Ok(db_note) = note_res {
+                assert_eq!(db_note.data, created_notes[1].data);
+                assert_eq!(db_note.parser_id, last_note.parser_id);
             }
+
+            // Verify keywords are unchanged
+            let note_keywords_res: Result<Vec<(String,)>, sqlx::Error> = sqlx::query_as(
+                r"SELECT keyword FROM note_keyword WHERE note_id = ? ORDER BY keyword",
+            )
+            .bind(note.id)
+            .fetch_all(&pool)
+            .await;
+            assert!(note_keywords_res.is_ok());
+            let db_keywords: Vec<String> = note_keywords_res
+                .unwrap()
+                .into_iter()
+                .map(|(k,)| k)
+                .collect();
+            assert_eq!(db_keywords, last_note.keywords);
 
             // let cards_res: Result<Vec<Card>, sqlx::Error> =
             //     sqlx::query_as(r"SELECT * FROM card WHERE note_id = ?")

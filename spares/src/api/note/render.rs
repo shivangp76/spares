@@ -143,7 +143,9 @@ pub async fn render_notes(
         r"SELECT
               n.id as note_id,
               n.data,
-              n.keywords,
+              (SELECT GROUP_CONCAT(nk.keyword, ',')
+               FROM note_keyword nk
+               WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
               n.custom_data,
               p.name as parser_name,
               GROUP_CONCAT(t.name, ',') AS tags_str
@@ -152,11 +154,9 @@ pub async fn render_notes(
             LEFT JOIN
               note_tag nt ON n.id = nt.note_id
             LEFT JOIN
-              tag t ON t.id = nt.tag_id
+              tag t ON t.id = nt.tag_id AND t.query IS NULL
             LEFT JOIN
               parser p ON n.parser_id = p.id
-            WHERE
-              t.query IS NULL
             GROUP BY
               n.id
             ORDER BY

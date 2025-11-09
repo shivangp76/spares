@@ -255,7 +255,9 @@ impl Field {
                         value_str, value_str
                     )
                 }
-                NoteField::Keyword => with_op("n.keywords"),
+                NoteField::Keyword => {
+                    format!("EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword {})", value_str)
+                },
                 NoteField::CustomData(json_path) => {
                     format!("json_extract(n.custom_data, '{}') {}", json_path, value_str)
                 }
