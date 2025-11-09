@@ -9,13 +9,6 @@ use crate::{CardErrorKind, Error, LibraryError, NoteErrorKind};
 use std::ops::Range;
 use std::sync::Arc;
 
-#[derive(Clone, Debug)]
-pub struct NoteRawData {
-    pub metadata: Option<Range<usize>>,
-    /// Note start and end index
-    pub data: Range<usize>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClozeHiddenReplacement {
     ToAnswer { hint: Option<String> },
@@ -97,7 +90,7 @@ pub fn get_notes(
         local_settings.errors_and_warnings.clear();
         let mut note_settings_capture_ranges = Vec::new();
         while let Some(setting_match) = settings_iter.peek() {
-            if setting_match.capture_range.end >= note_c.data.start {
+            if setting_match.capture_range.end >= note_c.start {
                 break;
             }
             note_settings_capture_ranges.push(setting_match.capture_range.clone());
@@ -110,7 +103,7 @@ pub fn get_notes(
             &mut global_settings,
             &mut local_settings,
             adapter,
-            &note_c.data,
+            &note_c,
         );
 
         // Complete note
@@ -135,22 +128,17 @@ fn complete_note(
     parser: &dyn Parseable,
     to_parser_opt: Option<&dyn Parseable>,
     full_data: &str,
-    note_c: &NoteRawData,
+    note_c: &Range<usize>,
     local_settings: &mut NoteSettings,
     move_files: bool,
 ) -> Result<String, LibraryError> {
-    // if note_c.metadata.is_some() && local_settings.keywords.is_empty() {
-    //     local_settings
-    //         .warnings
-    //         .push("Note metadata was provided, but no keyword.".to_string());
-    // }
-    let data = &full_data[note_c.data.clone()];
+    let data = &full_data[note_c.clone()];
     if data.contains("TODO") {
         local_settings.errors_and_warnings.push(LibraryError::Note(
             NoteErrorKind::SettingsWarning {
                 description: "The field `data` contains TODO.".to_string(),
                 src: full_data.to_string(),
-                at: note_c.data.clone().into(),
+                at: note_c.clone().into(),
             },
         ));
     }
