@@ -302,7 +302,8 @@ async fn test_note_generator(pool: SqlitePool) {
 
     // Clean up files. If the test fails, the the file won't be cleaned up, so we can use it for debugging. It can also be added manually as a unit test to prevent bugs in the future.
     for file in created_files {
-        trash::delete(file).unwrap();
+        // The file is deleted directly, rather than moving it to the trash to avoid cluttering the trash.
+        std::fs::remove_file(file).unwrap();
     }
 }
 
