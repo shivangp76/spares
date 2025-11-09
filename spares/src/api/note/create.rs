@@ -6,10 +6,10 @@ use crate::{
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
-    helpers::{intersect, parse_list},
+    helpers::intersect,
     model::{Card, CardId, Note, NoteId, SpecialState, TagId},
     parsers::{
-        Parseable, add_order_to_note_data, find_parser,
+        Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
         generate_files::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
         },
@@ -92,21 +92,19 @@ pub async fn create_notes(
     for create_note_request in &body.requests {
         let CreateNoteRequest {
             data,
-            keywords,
+            keywords: extra_keywords,
             tags,
             is_suspended,
             custom_data,
         } = create_note_request;
         let mut tags = tags.clone();
         tags.sort();
-        let keywords_str = &keywords.join(",");
         let custom_data_str = Value::Object(custom_data.clone());
         let (note_data, card_datas) = add_order_to_note_data(parser.as_ref(), data)?;
         // Create note
         // The RETURNING keyword is used instead of insert_result.last_insert_rowid() to prevent concurrency issues. If another writer writes in between the execution of the insert and the call of last_insert_rowid(), then the wrong id will be returned.
-        let (note_id,): (NoteId,) = sqlx::query_as(r"INSERT INTO note (data, keywords, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")
+        let (note_id,): (NoteId,) = sqlx::query_as(r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id")
             .bind(&note_data)
-            .bind(keywords_str)
             .bind(at.timestamp())
             .bind(at.timestamp())
             .bind(body.parser_id)
@@ -114,6 +112,12 @@ pub async fn create_notes(
             .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Create note keywords
+        let all_keywords = extract_and_combine_keywords(parser.as_ref(), note_data.as_str(), extra_keywords)
+            .map_err(Error::Library)?;
+        create_note_keywords(db, note_id, &all_keywords).await?;
+
         let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
         note_tag_entries.extend(tag_ids.into_iter().map(|tag_id| (note_id, tag_id)));
         card_entries.extend(
@@ -135,7 +139,6 @@ pub async fn create_notes(
         let note = Note {
             id: note_id,
             data: note_data,
-            keywords: keywords_str.clone(),
             created_at: at,
             updated_at: at,
             parser_id: body.parser_id,
@@ -143,6 +146,10 @@ pub async fn create_notes(
         };
         note_responses.push(NoteResponse::new(
             &note,
+            all_keywords
+                .iter()
+                .map(|(k, _)| k.clone())
+                .collect::<Vec<_>>(),
             tags.clone(),
             None,
             card_datas.len(),
@@ -152,7 +159,11 @@ pub async fn create_notes(
         let generate_files_request = GenerateNoteFilesRequest {
             note_id: note.id,
             note_data: note.data.clone(),
-            keywords: parse_list(note.keywords.as_str()),
+            keywords: all_keywords
+                .into_iter()
+                .filter(|(_, embedded)| !embedded)
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>(),
             linked_notes: None, // This is expensive so only done in `render_notes()`,
             custom_data: note.custom_data.as_object().unwrap().clone(),
             tags,
@@ -222,6 +233,30 @@ pub async fn create_notes(
     write_internal_config(&config)?;
 
     Ok(NotesResponse::new(note_responses))
+}
+
+pub async fn create_note_keywords(
+    db: &SqlitePool,
+    note_id: NoteId,
+    keywords: &[(String, bool)],
+) -> Result<(), Error> {
+    if !keywords.is_empty() {
+        let insert_note_keyword_query_str = format!(
+            "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
+            vec!["(?, ?, ?)"; keywords.len()].join(", ")
+        );
+        let mut query = sqlx::query(insert_note_keyword_query_str.as_str());
+        for (keyword, embedded) in keywords {
+            query = query.bind(note_id);
+            query = query.bind(keyword);
+            query = query.bind(i32::from(*embedded));
+        }
+        let _insert_result = query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    Ok(())
 }
 
 pub async fn create_note_tags(

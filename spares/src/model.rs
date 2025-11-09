@@ -23,10 +23,6 @@ pub struct Note {
     pub id: NoteId,
     // Note data is stored directly as it is received from the user and contains cloze delimiters as specified by the parser. Thus, the parser is needed in order for this to make sense.
     pub data: String,
-    /// Comma separated
-    ///
-    /// Referencing other notes: Allowing citing across keywords. Don't add title field since I may want to cite just "Ransford", for example, and all the cards from that textbook should show up. I don't want uniqueness here. Also 1 theorem might be explained in multiple books, so all those books might be keywords. Suppose it is in book A and book B and we are currently taking notes in book B. It would be annoying to be forced to have to check if the theorem is already written in another book and cite that instead. It's more natural to cite an earlier theorem in book B when taking notes in book B.
-    pub keywords: String,
     #[serde(with = "ts_seconds")]
     pub created_at: DateTime<Utc>,
     #[serde(with = "ts_seconds")]
@@ -35,6 +31,26 @@ pub struct Note {
     /// Stored as JSON. Note that this is not guaranteed to be ordered.
     /// This is guaranteed to be of type `Value::Object(Map<String, Value>)`.
     pub custom_data: Value,
+}
+
+/// Used for referencing other notes.
+/// - One note can have multiple keywords. For example, 1 theorem might be explained in multiple books, so all those books might be keywords.
+/// - Multiple notes can share a keywords. For example, all practice problems for "Integration by parts" might have that as a keyword.
+#[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
+pub struct NoteKeyword {
+    pub note_id: NoteId,
+    pub keyword: String,
+    /// Whether the keyword is embedded within the note data. This is preferable to non-embedded
+    /// keywords since grepping for an embedded keyword leads to its exact location within a note.
+    /// For example, imagine a note which contains many related theorems. By adding the names of
+    /// these theorems as embedded keywords instead of non-embedded keywords, you can grep for the
+    /// theorem name and be pointed to the exact location of the theorem within the note.
+    /// Otherwise, you would only know that that note contains the theorem and not exactly where it
+    /// is.
+    ///
+    /// For this reason, embedded keywords must be unique within a note, so their exact location
+    /// can be uniquely determined. Multiple notes may still contain the same embedded keyword.
+    pub embedded: bool,
 }
 
 // Only the specified fields below are recoverable from the note data.

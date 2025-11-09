@@ -91,7 +91,6 @@ pub mod tag {
 pub mod note {
     use super::card::CardResponse;
     use crate::{
-        helpers::parse_list,
         model::{CustomData, Note, NoteId, NoteLink, Score},
         search::QueryReturnItemType,
     };
@@ -230,6 +229,7 @@ pub mod note {
     impl NoteResponse {
         pub fn new(
             note: &Note,
+            keywords: Vec<String>,
             tags: Vec<String>,
             linked_notes: Option<Vec<LinkedNote>>,
             card_count: usize,
@@ -238,7 +238,7 @@ pub mod note {
                 id: note.id.to_owned(),
                 data: note.data.clone(),
                 parser_id: note.parser_id.to_owned(),
-                keywords: parse_list(note.keywords.as_str()),
+                keywords,
                 created_at: note.created_at,
                 updated_at: note.updated_at,
                 tags,
