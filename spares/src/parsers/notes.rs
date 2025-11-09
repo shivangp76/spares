@@ -201,19 +201,64 @@ fn complete_note(
     }
 
     // Get embedded keywords
-    let embedded_keywords = parser.get_embedded_keywords(new_data.as_str());
-    match embedded_keywords {
-        Ok(keywords) => local_settings.keywords.extend(
-            keywords
-                .into_iter()
-                .map(|range| new_data[range].to_string()),
-        ),
+    match extract_and_combine_keywords(parser, new_data.as_str(), &local_settings.keywords) {
+        Ok(k) => {
+            local_settings.keywords = k.into_iter().map(|(r, _embedded)| r).collect::<Vec<_>>();
+        }
         Err(e) => local_settings.errors_and_warnings.push(e),
     }
-    local_settings.keywords.sort();
-    local_settings.keywords.dedup();
 
     Ok(new_data)
+}
+
+/// Extracts embedded keywords from note data and combines them with extra keywords.
+/// Returns a vector of (keyword, `is_embedded`) tuples.
+pub fn extract_and_combine_keywords(
+    parser: &dyn Parseable,
+    note_data: &str,
+    extra_keywords: &[String],
+) -> Result<Vec<(String, bool)>, LibraryError> {
+    let embedded_keywords: Vec<String> = parser
+        .get_embedded_keywords(note_data)?
+        .into_iter()
+        .map(|range| note_data[range].to_string())
+        .collect();
+    combine_keywords_without_duplicates(extra_keywords, &embedded_keywords)
+}
+
+/// Combines extra keywords and embedded keywords, removing duplicates.
+/// If a keyword exists in both, it will only appear as an embedded keyword.
+pub fn combine_keywords_without_duplicates(
+    extra_keywords: &[String],
+    embedded_keywords: &[String],
+) -> Result<Vec<(String, bool)>, LibraryError> {
+    // Check for duplicate embedded keywords
+    let mut seen_keywords = std::collections::HashSet::new();
+    for keyword in embedded_keywords {
+        if !seen_keywords.insert(keyword) {
+            return Err(LibraryError::Note(NoteErrorKind::Other {
+                description: format!(
+                    "Duplicate embedded keyword found: `{}`. Embedded keywords must be unique.",
+                    keyword
+                ),
+            }));
+        }
+    }
+    // Create a set of embedded keyword strings for efficient lookup
+    let embedded_keyword_set: std::collections::HashSet<String> =
+        embedded_keywords.iter().cloned().collect();
+    // Filter out extra_keywords that are already in embedded_keywords
+    let filtered_extra_keywords: Vec<String> = extra_keywords
+        .iter()
+        .filter(|k| !embedded_keyword_set.contains(*k))
+        .cloned()
+        .collect();
+    // Combine filtered extra keywords with embedded keywords
+    Ok(filtered_extra_keywords
+        .into_iter()
+        .map(|k| (k, false))
+        .chain(embedded_keywords.iter().map(|k| (k.clone(), true)))
+        .collect())
 }
 
 #[cfg(test)]

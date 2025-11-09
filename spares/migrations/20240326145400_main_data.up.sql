@@ -1,39 +1,13 @@
 -- sqlx migrate revert && sqlx migrate run
 
----- Create the 'state' table
---CREATE TABLE IF NOT EXISTS state (
---    id INTEGER PRIMARY KEY NOT NULL,
---    name TEXT NOT NULL
---);
---
----- Insert data into the 'state' table
---INSERT INTO state (id, name) VALUES (0, 'New');
---INSERT INTO state (id, name) VALUES (1, 'Learning');
---INSERT INTO state (id, name) VALUES (2, 'Review');
---INSERT INTO state (id, name) VALUES (3, 'Relearning');
---
----- Create the 'rating' table
---CREATE TABLE IF NOT EXISTS rating (
---    id INTEGER PRIMARY KEY NOT NULL,
---    name TEXT NOT NULL
---);
---
----- Insert data into the 'rating' table
---INSERT INTO rating (id, name) VALUES (1, 'Again');
---INSERT INTO rating (id, name) VALUES (2, 'Hard');
---INSERT INTO rating (id, name) VALUES (3, 'Good');
---INSERT INTO rating (id, name) VALUES (4, 'Easy');
-
 -- Ensure all foreign keys are valid
 PRAGMA foreign_keys = ON;
 
--- Create the 'parser' table
 CREATE TABLE IF NOT EXISTS parser (
     id INTEGER PRIMARY KEY NOT NULL,
     name VARCHAR NOT NULL
 );
 
--- Create the 'tag' table
 CREATE TABLE IF NOT EXISTS tag (
     id INTEGER PRIMARY KEY NOT NULL,
     name VARCHAR NOT NULL,
@@ -45,11 +19,9 @@ CREATE TABLE IF NOT EXISTS tag (
     FOREIGN KEY (parent_id) REFERENCES tag(id) ON DELETE SET NULL
 );
 
--- Create the 'note' table
 CREATE TABLE IF NOT EXISTS note (
     id INTEGER PRIMARY KEY NOT NULL,
     data TEXT NOT NULL,
-    keywords TEXT NOT NULL,
     created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
     updated_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
     custom_data TEXT NOT NULL, -- JSON string
@@ -58,7 +30,13 @@ CREATE TABLE IF NOT EXISTS note (
     FOREIGN KEY (parser_id) REFERENCES parser(id) ON DELETE RESTRICT
 );
 
--- Create the 'card' table
+CREATE TABLE IF NOT EXISTS note_keyword (
+    note_id INTEGER NOT NULL,
+    keyword VARCHAR NOT NULL,
+    embedded INTEGER NOT NULL CHECK (embedded IN (0, 1)),
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE -- When note is deleted, delete all corresponding keywords
+);
+
 CREATE TABLE IF NOT EXISTS card (
     id INTEGER PRIMARY KEY NOT NULL,
     note_id INTEGER NOT NULL,
@@ -85,7 +63,6 @@ CREATE TABLE IF NOT EXISTS card (
     --FOREIGN KEY (review_log_id) REFERENCES review_log(id)
 );
 
--- Create the 'note_link' table
 CREATE TABLE IF NOT EXISTS note_link (
     id INTEGER PRIMARY KEY NOT NULL,
     parent_note_id INTEGER NOT NULL,
@@ -99,7 +76,6 @@ CREATE TABLE IF NOT EXISTS note_link (
     -- PRIMARY KEY (parent_note_id, linked_note_id)
 );
 
--- Create the 'note_tag' table
 CREATE TABLE IF NOT EXISTS note_tag (
     id INTEGER PRIMARY KEY NOT NULL,
     note_id INTEGER NOT NULL,
@@ -110,7 +86,6 @@ CREATE TABLE IF NOT EXISTS note_tag (
     -- PRIMARY KEY (note_id, tag_id)
 );
 
--- Create the 'card_tag' table
 CREATE TABLE IF NOT EXISTS card_tag (
     id INTEGER PRIMARY KEY NOT NULL,
     card_id INTEGER NOT NULL,
@@ -121,13 +96,11 @@ CREATE TABLE IF NOT EXISTS card_tag (
     -- PRIMARY KEY (card_id, tag_id)
 );
 
--- Create the 'scheduler' table
 -- CREATE TABLE IF NOT EXISTS scheduler (
 --     id INTEGER PRIMARY KEY NOT NULL,
 --     name VARCHAR NOT NULL
 -- );
 
--- Create the 'review_log' table
 CREATE TABLE IF NOT EXISTS review_log (
     id INTEGER PRIMARY KEY NOT NULL,
     card_id INTEGER,
@@ -137,14 +110,11 @@ CREATE TABLE IF NOT EXISTS review_log (
     scheduler_name TEXT NOT NULL,
     scheduled_time INTEGER NOT NULL,
     duration INTEGER NOT NULL,
-    -- elapsed_time INTEGER NOT NULL,
     previous_state INTEGER NOT NULL,
     custom_data TEXT NOT NULL, -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
     -- Do _NOT_ delete review logs when cards are deleted. We want to know how many cards were reviewed in the past for historical reasons. Instead, set the `card_id` column to null, to signify the row is an orphan.
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE SET NULL
-    -- FOREIGN KEY (scheduler_id) REFERENCES scheduler(id)
-    --FOREIGN KEY (rating_id) REFERENCES rating(id),
-    --FOREIGN KEY (state_id) REFERENCES state(id)
+    --FOREIGN KEY (scheduler_id) REFERENCES scheduler(id)
 );
 
 -- Add indexes to optimize JOIN operations in note rendering queries
@@ -158,6 +128,10 @@ CREATE INDEX IF NOT EXISTS idx_note_tag_tag_id ON note_tag(tag_id);
 
 -- Index on note_link.parent_note_id for faster note link lookups
 CREATE INDEX IF NOT EXISTS idx_note_link_parent_note_id ON note_link(parent_note_id);
+
+-- Indexes on note_keyword for faster keyword lookups
+CREATE INDEX IF NOT EXISTS idx_note_keyword_note_id ON note_keyword(note_id);
+CREATE INDEX IF NOT EXISTS idx_note_keyword_keyword ON note_keyword(keyword);
 
 -- Index on tag.query for faster filtering in WHERE clause
 CREATE INDEX IF NOT EXISTS idx_tag_query ON tag(query);

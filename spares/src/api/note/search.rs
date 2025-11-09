@@ -3,7 +3,6 @@ use crate::{
     Error,
     api::note::match_keyword,
     config::read_internal_config,
-    helpers::parse_list,
     model::{NoteId, NoteLink},
     schema::{
         card::CardResponse,
@@ -17,20 +16,13 @@ use crate::{
 use sqlx::sqlite::SqlitePool;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
-    let keywords_data: Vec<(NoteId, String)> = sqlx::query_as(r"SELECT id, keywords FROM note")
+    let keywords_data: Vec<(NoteId, String)> = sqlx::query_as(r"SELECT note_id, keyword FROM note_keyword")
         .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
-    Ok(keywords_data
-        .into_iter()
-        .flat_map(|(id, keywords)| {
-            parse_list(keywords.as_str())
-                .into_iter()
-                .map(|k| (id, k))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>())
+       
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    
+    Ok(keywords_data)
 }
 
 pub async fn search_notes(
