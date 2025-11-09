@@ -7,9 +7,8 @@ use crate::parsers::image_occlusion::{
 };
 use crate::parsers::{
     ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ClozeSettingsSide, ConstructFileDataType,
-    GenerateNoteFilesRequest, NoteImportAction, NotePart, NoteRawData, NoteSettingsKeys, Parseable,
-    RegexMatch, RenderOutputDirectoryType, RenderOutputType, get_matched_clozes,
-    get_output_raw_dir,
+    GenerateNoteFilesRequest, NoteImportAction, NotePart, NoteSettingsKeys, Parseable, RegexMatch,
+    RenderOutputDirectoryType, RenderOutputType, get_matched_clozes, get_output_raw_dir,
 };
 use crate::schema::note::LinkedNote;
 use crate::{DelimiterErrorKind, Error, LibraryError};
@@ -42,21 +41,16 @@ impl Parseable for LatexParserExerciseSolution {
         "latex-exercise-solution"
     }
 
-    fn get_notes_data(&self, data: &str) -> Result<Vec<NoteRawData>, LibraryError> {
+    fn get_notes_data(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // NOTE: Workaround: Including \end{solution} inside the match is a workaround for the cloze environment currently not being used
-        let notes_regex = Regex::new(
-            r"(?ms)^\\begin\{exercise\}(?:\[([^\n]*?)\])?(?:\[([^\n]*?)\])?\n(.*?\n\\end\{solution})",
-        )
-        .unwrap();
+        let notes_regex =
+            Regex::new(r"(?ms)^\\begin\{exercise\}(?:\[([^\n]*?)\])?\n(.*?\n\\end\{solution})")
+                .unwrap();
         let notes_data = notes_regex
             .captures_iter(data)
             .map(|c| c.unwrap())
-            .filter(|c| c.get(3).is_some())
-            .map(|c| NoteRawData {
-                metadata: c.get(1).map(|x| x.start()..x.end()),
-                // keywords: c.get(2).map(|x| x.as_str()),
-                data: c.get(3).map(|x| x.start()..x.end()).unwrap(),
-            })
+            .filter(|c| c.get(2).is_some())
+            .map(|c| c.get(2).map(|x| x.start()..x.end()).unwrap())
             .collect::<Vec<_>>();
         Ok(notes_data)
     }
@@ -175,20 +169,14 @@ impl Parseable for LatexParserNote {
         "latex-note"
     }
 
-    fn get_notes_data(&self, data: &str) -> Result<Vec<NoteRawData>, LibraryError> {
-        let notes_regex = Regex::new(
-            r"(?ms)^\\begin\{note\}(?:\[([^\n]*?)\])?(?:\[([^\n]*?)\])?\n(.*?)\n\\end\{note}",
-        )
-        .unwrap();
+    fn get_notes_data(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
+        let notes_regex =
+            Regex::new(r"(?ms)^\\begin\{note\}(?:\[([^\n]*?)\])?\n(.*?)\n\\end\{note}").unwrap();
         let notes_data = notes_regex
             .captures_iter(data)
             .map(|c| c.unwrap())
-            .filter(|c| c.get(3).is_some())
-            .map(|c| NoteRawData {
-                metadata: c.get(1).map(|x| x.start()..x.end()),
-                // keywords: c.get(2).map(|x| x.as_str()),
-                data: c.get(3).map(|x| x.start()..x.end()).unwrap(),
-            })
+            .filter(|c| c.get(2).is_some())
+            .map(|c| c.get(2).map(|x| x.start()..x.end()).unwrap())
             .collect::<Vec<_>>();
         Ok(notes_data)
     }
