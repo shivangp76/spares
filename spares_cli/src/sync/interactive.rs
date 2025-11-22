@@ -74,6 +74,10 @@ fn print_import_data(import_data: &SyncImportData, run: bool) -> Result<(), Stri
             }
             let diff_output = Command::new(base_command)
                 .args(&args)
+                // Ignore user's git config. This fixes the issue where the command does not work when the user overrides the `git diff` command.
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
                 .output()
                 .map_err(|e| format!("Failed to diff notes: {}", e))?;
             println!();
