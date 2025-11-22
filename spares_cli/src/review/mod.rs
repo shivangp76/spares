@@ -493,12 +493,8 @@ pub async fn review_cards(
                         println!("Due date updated.");
                     }
                     ReviewAction::BuryUntilLaterToday => {
-                        bury_until_later_today(
-                            review_card_response.card_id,
-                            base_url,
-                            client,
-                        )
-                        .await?;
+                        bury_until_later_today(review_card_response.card_id, base_url, client)
+                            .await?;
                         println!("Card due date set to end of today.");
                     }
                     _ => unreachable!(),
