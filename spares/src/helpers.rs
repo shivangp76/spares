@@ -2,7 +2,21 @@ use crate::{DelimiterErrorKind, parsers::RegexMatch};
 use chrono::{DateTime, Duration, Local, TimeZone, Utc};
 use indexmap::IndexMap;
 use itertools::Itertools;
+use serde_json::Value;
 use std::{collections::HashSet, hash::Hash};
+
+/// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
+/// Returns an empty vector if the value is not an array or if any elements are not strings.
+pub fn value_to_string_vec(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 pub fn change_offset(original: &mut usize, change: i64) {
     let original_int = i64::try_from(*original).unwrap();

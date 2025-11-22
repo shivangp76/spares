@@ -2,7 +2,7 @@ use crate::{
     Error,
     api::parser::get_parser,
     config::{read_internal_config, write_internal_config},
-    helpers::parse_list,
+    helpers::value_to_string_vec,
     model::{Note, NoteId, NoteLink, TagId},
     parsers::{
         Parseable, RenderOutputDirectoryType, find_parser,
@@ -18,6 +18,7 @@ use crate::{
         note::{LinkedNote, NoteResponse},
     },
 };
+use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
 pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, Error> {
@@ -290,8 +291,8 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     struct ListNotesRow {
         #[sqlx(flatten)]
         note: Note,
-        keywords: String,
-        tags: String,
+        keywords_value: Value,
+        tags_value: Value,
         card_count: u32,
     }
     // Single query to fetch notes with their tags, card counts, and note links in one go
@@ -300,20 +301,19 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
 
     // NOTE: Filtered tags (from `card_tags`) are not returned here, since they are specific to cards, not notes.
     let notes_data: Vec<ListNotesRow> = sqlx::query_as(
-        r"
-            SELECT
-                n.*,
-                (SELECT GROUP_CONCAT(nk.keyword, ',')
-                   FROM note_keyword nk
-                   WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
-                GROUP_CONCAT(DISTINCT t.name) AS tags,
-                (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count
-            FROM note n
-            LEFT JOIN note_tag nt ON n.id = nt.note_id
-            LEFT JOIN tag t ON nt.tag_id = t.id
-            GROUP BY n.id
-            ORDER BY n.id
-            LIMIT ? OFFSET ?
+        r"SELECT
+           n.*,
+           COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
+            FROM note_keyword nk
+            WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
+           COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value,
+           (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count
+         FROM note n
+         LEFT JOIN note_tag nt ON n.id = nt.note_id
+         LEFT JOIN tag t ON nt.tag_id = t.id
+         GROUP BY n.id
+         ORDER BY n.id
+         LIMIT ? OFFSET ?
         ",
     )
     .bind(limit as u32)
@@ -326,13 +326,11 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     let mut responses = Vec::new();
     for ListNotesRow {
         note,
-        keywords,
-        tags,
+        keywords_value,
+        tags_value,
         card_count,
     } in notes_data
     {
-        let tags = parse_list(&tags);
-
         // Get linked_notes
         let linked_notes_arg = if config.linked_notes_generated {
             let note_links: Vec<NoteLink> =
@@ -350,9 +348,12 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         } else {
             None
         };
+        let keywords: Vec<String> = value_to_string_vec(&keywords_value);
+        let mut tags: Vec<String> = value_to_string_vec(&tags_value);
+        tags.sort();
         responses.push(NoteResponse::new(
             &note,
-            parse_list(keywords.as_str()),
+            keywords,
             tags,
             linked_notes_arg,
             card_count as usize,
@@ -411,7 +412,7 @@ pub(crate) mod tests {
 
         // Create notes
         let mut all_notes: Vec<NoteResponse> = Vec::new();
-        for (insertion_data, data, tags, keywords, _note_links_count) in notes {
+        for (insertion_data, data, tags, keywords, note_links_count) in notes {
             let tags: Vec<String> = tags.iter().map(|x| (*x).to_string()).collect();
             let create_note_request = CreateNoteRequest {
                 data: insertion_data.to_string(),
@@ -477,15 +478,15 @@ pub(crate) mod tests {
                 assert_eq!(note_tags.len(), create_note_request.tags.len());
 
                 // Verify linked_notes in database
-                // NOTE: Linked notes are only added after calling the render endpoint
-                // let note_link_res: Result<Vec<NoteLink>, sqlx::Error> =
-                //     sqlx::query_as(r#"SELECT * FROM note_link WHERE parent_note_id = ?"#)
-                //         .bind(note.id)
-                //         .fetch_all(pool)
-                //         .await;
-                // assert!(note_link_res.is_ok());
-                // let note_links = note_link_res.unwrap();
-                // assert_eq!(note_links.len(), note_links_count);
+                // NOTE: Linked notes are only matched after calling the render endpoint, but the searched_keyword should be inserted
+                let note_link_res: Result<Vec<NoteLink>, sqlx::Error> =
+                    sqlx::query_as(r#"SELECT * FROM note_link WHERE parent_note_id = ?"#)
+                        .bind(note.id)
+                        .fetch_all(pool)
+                        .await;
+                assert!(note_link_res.is_ok());
+                let note_links = note_link_res.unwrap();
+                assert_eq!(note_links.len(), note_links_count);
 
                 all_notes.push(note);
             }

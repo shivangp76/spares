@@ -2,7 +2,7 @@ use crate::{
     Error,
     api::note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
     config::{read_internal_config, write_internal_config},
-    helpers::parse_list,
+    helpers::value_to_string_vec,
     model::{NoteId, NoteLink},
     parsers::{
         Parseable, find_parser,
@@ -25,10 +25,10 @@ use std::collections::{HashMap, HashSet};
 struct RenderNoteData {
     pub note_id: NoteId,
     pub data: String,
-    pub keywords: String,
+    pub keywords_value: Value,
     pub custom_data: Value,
     pub parser_name: String,
-    pub tags_str: String,
+    pub tags_value: Value,
 }
 
 pub fn match_keyword(
@@ -198,17 +198,16 @@ pub async fn render_notes(
     } else {
         String::new()
     };
-    // TODO: Use JSON_GROUP_OBJECT here instead of GROUP_CONCAT. Also, keywords might contains commas, so then splitting by commas would be inaccurate, so do not use commas.
     let query_str = format!(
         r"SELECT
           n.id as note_id,
           n.data,
-          (SELECT GROUP_CONCAT(nk.keyword, ',')
+          COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
            FROM note_keyword nk
-           WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
+           WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
           n.custom_data,
           p.name as parser_name,
-          GROUP_CONCAT(t.name, ',') AS tags_str
+          COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value
         FROM
           note n
         LEFT JOIN
@@ -312,10 +311,10 @@ fn render_note_data_to_generate_files_request(
     let RenderNoteData {
         note_id,
         data,
-        keywords,
+        keywords_value,
         custom_data,
         parser_name: _,
-        tags_str,
+        tags_value,
     } = render_note_data;
     let linked_notes = linked_notes_map.as_ref().map(|mapping| {
         mapping.get(note_id).map(|note_links| {
@@ -336,8 +335,9 @@ fn render_note_data_to_generate_files_request(
                 .collect::<Vec<_>>()
         })
     });
-    let keywords = parse_list(keywords);
-    let mut tags = parse_list(tags_str);
+    // Parse JSON arrays into Vec<String>
+    let keywords: Vec<String> = value_to_string_vec(keywords_value);
+    let mut tags: Vec<String> = value_to_string_vec(tags_value);
     tags.sort();
     GenerateNoteFilesRequest {
         note_id: *note_id,
@@ -378,6 +378,25 @@ mod tests {
                 .fetch_all(&pool)
                 .await;
         assert!(note_links.is_ok());
-        assert_eq!(note_links.unwrap().len(), 3);
+        let note_links = note_links.unwrap();
+        assert_eq!(note_links.len(), 3);
+        assert_eq!(
+            note_links
+                .iter()
+                .map(|nl| nl.searched_keyword.clone())
+                .collect::<Vec<_>>(),
+            vec!["keyword 1", "keyword 1.5", "keyword 2"]
+        );
+        assert_eq!(
+            note_links
+                .iter()
+                .map(|nl| nl.matched_keyword.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("keyword 1".to_string()),
+                Some("keyword 1".to_string()),
+                Some("keyword 2".to_string())
+            ]
+        );
     }
 }
