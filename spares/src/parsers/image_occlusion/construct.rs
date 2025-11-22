@@ -511,7 +511,7 @@ pub fn combine_image_occlusion_clozes(input: &mut Vec<(ClozeData, ClozeGroupingS
     );
 }
 
-#[allow(clippy::too_many_lines, reason = "off by a few")]
+#[expect(clippy::too_many_lines)]
 pub fn read_image_occlusion_data(
     data: &str,
     setting_capture_range: &[Range<usize>],
