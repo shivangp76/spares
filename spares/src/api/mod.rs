@@ -8,4 +8,6 @@ pub mod tag;
 #[cfg(test)]
 pub(crate) mod tests;
 
-pub use card::{get_card, get_cards, update_card, get_leeches, create_card_tags, delete_card_tags, forget_card};
+pub use card::{
+    create_card_tags, delete_card_tags, forget_card, get_card, get_cards, get_leeches, update_card,
+};
