@@ -122,16 +122,20 @@ pub async fn create_notes(
         note_keyword_entries.push((note_id, all_keywords.clone()));
 
         // Note Links
-        note_link_entries.extend(parser.get_linked_notes(data)?.into_iter().enumerate().map(
-            |(i, linked_note_range)| NoteLink {
-                parent_note_id: note_id,
-                linked_note_id: None,
-                order: i as u32,
-                searched_keyword: note_data[linked_note_range].to_string(),
-                matched_keyword: None,
-                score: None,
-            },
-        ));
+        note_link_entries.extend(
+            parser
+                .get_linked_notes(&note_data)?
+                .into_iter()
+                .enumerate()
+                .map(|(i, linked_note_range)| NoteLink {
+                    parent_note_id: note_id,
+                    linked_note_id: None,
+                    order: i as u32,
+                    searched_keyword: note_data[linked_note_range].to_string(),
+                    matched_keyword: None,
+                    score: None,
+                }),
+        );
 
         // Note Tags
         let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
