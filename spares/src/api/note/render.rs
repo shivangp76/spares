@@ -124,15 +124,10 @@ pub async fn render_notes(
         generate_rendered,
         force_generate_rendered,
     } = body;
-    let mut score_changed_note_ids = HashSet::new();
 
     if include_linked_notes {
         // Match linked notes to keyword
         let updated_note_links = update_existing_note_links(db).await?;
-        score_changed_note_ids = updated_note_links
-            .iter()
-            .map(|nl| nl.parent_note_id)
-            .collect::<HashSet<_>>();
 
         // Update note links with updated score
         if !updated_note_links.is_empty() {
@@ -178,22 +173,17 @@ pub async fn render_notes(
     } else {
         None
     };
-
-    // Get notes data for requested note ids or note ids where the score changed
-    let note_ids_to_fetch: Option<HashSet<NoteId>> =
-        match (&requested_note_ids, score_changed_note_ids.is_empty()) {
-            (Some(req_ids), false) => {
-                Some(req_ids.union(&score_changed_note_ids).copied().collect())
-            }
-            (Some(req_ids), true) => Some(req_ids.clone()),
-            (None, false) => Some(score_changed_note_ids.clone()),
-            (None, true) => None,
-        };
-
-    // Build query to get notes data
-    let placeholders = if let Some(ref note_ids) = note_ids_to_fetch
-        && !note_ids.is_empty()
+    if let Some(ref note_ids) = requested_note_ids
+        && note_ids.is_empty()
     {
+        // No notes should be regenerated, so we are done.
+        return Ok(());
+    }
+
+    // Render requested note ids
+    //
+    // Get notes data. Note that some other notes may have had their linked notes match to another note. However, we do not render them if their note id is not requested. (Unless all notes are requested.)
+    let placeholders = if let Some(ref note_ids) = requested_note_ids {
         format!("WHERE n.id IN ({})", vec!["?"; note_ids.len()].join(", "))
     } else {
         String::new()
@@ -225,9 +215,7 @@ pub async fn render_notes(
     );
     let mut query = sqlx::query_as(&query_str);
 
-    if let Some(ref note_ids) = note_ids_to_fetch
-        && !note_ids.is_empty()
-    {
+    if let Some(ref note_ids) = requested_note_ids {
         for note_id in note_ids {
             query = query.bind(note_id);
         }
@@ -239,7 +227,7 @@ pub async fn render_notes(
 
     // Load all note links for the notes we're rendering (if include_linked_notes)
     let mut linked_notes_map: Option<HashMap<_, _>> = None;
-    if include_linked_notes && !notes_data.is_empty() {
+    if include_linked_notes {
         let note_ids_for_links: Vec<NoteId> = notes_data.iter().map(|n| n.note_id).collect();
         let placeholders = vec!["?"; note_ids_for_links.len()].join(", ");
         // Note that the query sorts by order, so we don't need to do this after
@@ -247,7 +235,7 @@ pub async fn render_notes(
             "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
             placeholders
         );
-        let mut query = sqlx::query_as::<_, NoteLink>(&query_str);
+        let mut query = sqlx::query_as(&query_str);
         for note_id in &note_ids_for_links {
             query = query.bind(note_id);
         }
@@ -273,11 +261,6 @@ pub async fn render_notes(
     // Group notes by parser
     let grouped_parse_note_requests = notes_data
         .iter()
-        .filter(|render_note_data| {
-            requested_note_ids
-                .as_ref()
-                .is_none_or(|note_ids| note_ids.contains(&render_note_data.note_id))
-        })
         .map(|render_note_data| {
             (
                 &render_note_data.parser_name,
