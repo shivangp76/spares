@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    api::note::{get_keywords, keyword_distance::weighted_levenshtein},
+    api::note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
     config::{read_internal_config, write_internal_config},
     helpers::parse_list,
     model::{NoteId, NoteLink},
@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, FromRow)]
 struct RenderNoteData {
@@ -55,67 +55,55 @@ pub fn match_keyword(
         .collect::<Vec<_>>()
 }
 
-async fn match_keyword_to_linked_note(
-    db: &SqlitePool,
-    notes_data_grouped: HashMap<&str, Vec<&RenderNoteData>>,
-    all_parsers: &[fn() -> Box<dyn Parseable>],
-) -> Result<Vec<NoteLink>, Error> {
+/// Updates existing note links by re-matching them against keywords.
+/// Returns the updated note links
+async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Error> {
     // Get all keywords
     let keywords = get_keywords(db).await?;
 
-    // Get all linked notes
-    let linked_notes_ids = notes_data_grouped
-        // .par_iter()
-        // .progress_count(notes_data.len() as u64)
-        .iter()
-        .map(|(parser_name, notes_data)| -> Result<_, Error> {
-            let parser = find_parser(parser_name, all_parsers)?;
-            let data = notes_data
-                .iter()
-                .map(|render_notes_data| {
-                    let RenderNoteData { note_id, data, .. } = render_notes_data;
-                    let note_links = parser
-                        .get_linked_notes(data)?
-                        .into_par_iter()
-                        .enumerate()
-                        .map(|(i, searched_keyword_range)| {
-                            let searched_keyword = &data[searched_keyword_range];
-                            let matched_keyword_data =
-                                match_keyword(searched_keyword, keywords.as_ref())
-                                    .into_iter()
-                                    .min_by(|a, b| {
-                                        a.score
-                                            .partial_cmp(&b.score)
-                                            // ignore NaN and always rank it last (i.e., treat NaN as largest)
-                                            .unwrap_or(std::cmp::Ordering::Greater)
-                                    });
-                            NoteLink {
-                                // id: None,
-                                parent_note_id: *note_id,
-                                linked_note_id: matched_keyword_data.as_ref().map(|x| x.note_id),
-                                order: i as u32,
-                                searched_keyword: searched_keyword.to_owned(),
-                                matched_keyword: matched_keyword_data
-                                    .as_ref()
-                                    .map(|x| x.matched_keyword.clone()),
-                                score: matched_keyword_data.as_ref().map(|x| x.score),
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    Ok(note_links)
-                })
-                .collect::<Result<Vec<_>, Error>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
-            Ok(data)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    // Get all existing note links where score != 0
+    let existing_note_links: Vec<NoteLink> =
+        sqlx::query_as(r"SELECT * FROM note_link WHERE score IS NULL OR score != 0")
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
 
-    Ok(linked_notes_ids)
+    // Re-match existing linked notes against keywords
+    let updated_note_links: Vec<NoteLink> = existing_note_links
+        .par_iter()
+        .filter_map(|existing_link| {
+            let matched_keyword_data =
+                match_keyword(&existing_link.searched_keyword, keywords.as_ref())
+                    .into_iter()
+                    .min_by(|a, b| {
+                        a.score
+                            .partial_cmp(&b.score)
+                            // ignore NaN and always rank it last (i.e., treat NaN as largest)
+                            .unwrap_or(std::cmp::Ordering::Greater)
+                    });
+            if matched_keyword_data.as_ref().map(|x| x.score) == existing_link.score
+                && (matched_keyword_data
+                    .as_ref()
+                    .map(|x| x.matched_keyword.clone())
+                    == existing_link.matched_keyword)
+                && (matched_keyword_data.as_ref().map(|x| x.note_id)
+                    == existing_link.linked_note_id)
+            {
+                return None;
+            }
+            Some(NoteLink {
+                parent_note_id: existing_link.parent_note_id,
+                linked_note_id: matched_keyword_data.as_ref().map(|x| x.note_id),
+                order: existing_link.order,
+                searched_keyword: existing_link.searched_keyword.clone(),
+                matched_keyword: matched_keyword_data
+                    .as_ref()
+                    .map(|x| x.matched_keyword.clone()),
+                score: matched_keyword_data.as_ref().map(|x| x.score),
+            })
+        })
+        .collect();
+    Ok(updated_note_links)
 }
 
 /// - Determines linked notes for _all_ notes. This is not possible for only some notes. See note below.
@@ -136,104 +124,35 @@ pub async fn render_notes(
         generate_rendered,
         force_generate_rendered,
     } = body;
+    let mut score_changed_note_ids = HashSet::new();
 
-    // Assign values for linked notes
-    // This must be done at the very end. This is because imagine a note is created referencing a keyword (linked note) but there is no good note with that keyword yet. That note is created later, but the first note will have no linked notes stored in db.
-    let notes_data: Vec<RenderNoteData> = sqlx::query_as(
-        r"SELECT
-              n.id as note_id,
-              n.data,
-              (SELECT GROUP_CONCAT(nk.keyword, ',')
-               FROM note_keyword nk
-               WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
-              n.custom_data,
-              p.name as parser_name,
-              GROUP_CONCAT(t.name, ',') AS tags_str
-            FROM
-              note n
-            LEFT JOIN
-              note_tag nt ON n.id = nt.note_id
-            LEFT JOIN
-              tag t ON t.id = nt.tag_id AND t.query IS NULL
-            LEFT JOIN
-              parser p ON n.parser_id = p.id
-            GROUP BY
-              n.id
-            ORDER BY
-              n.id",
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-
-    // let mut linked_notes_map: Option<HashMap<&i64, Vec<(String, Option<(i64, String)>)>>> = None;
-    let mut linked_notes_map: Option<HashMap<_, _>> = None;
     if include_linked_notes {
-        let notes_data_grouped = notes_data
+        // Match linked notes to keyword
+        let updated_note_links = update_existing_note_links(db).await?;
+        score_changed_note_ids = updated_note_links
             .iter()
-            .map(|x| (x.parser_name.as_str(), x))
-            .into_group_map();
-        let note_links = match_keyword_to_linked_note(db, notes_data_grouped, all_parsers).await?;
-        // Delete existing note links
-        // let _query_result = if let Some(ref note_ids) = note_ids {
-        //     // See caveat in `RenderNotesRequest` documentation
-        //     let query_str = format!(
-        //         "DELETE FROM note_link WHERE parent_note_id IN ({})",
-        //         vec!["?"; note_ids.len()].join(", ")
-        //     );
-        //     let mut query = sqlx::query(query_str.as_str());
-        //     for note_id in note_ids {
-        //         query = query.bind(note_id);
-        //     }
-        //     query
-        //         .execute(db)
-        //         .await
-        //         .map_err(|e| SparesError::Sqlx { source: e })?;
-        // } else {
-        //     sqlx::query("DELETE FROM note_link")
-        //         .execute(db)
-        //         .await
-        //         .map_err(|e| SparesError::Sqlx { source: e })?;
-        // };
-        let _query_result = sqlx::query("DELETE FROM note_link")
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        // Create note links
-        if !note_links.is_empty() {
-            let query_str = format!(
-                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
-                vec!["(?, ?, ?, ?, ?, ?)"; note_links.len()].join(", ")
+            .map(|nl| nl.parent_note_id)
+            .collect::<HashSet<_>>();
+
+        // Update note links with updated score
+        if !updated_note_links.is_empty() {
+            let delete_query_str = format!(
+                "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
+                vec!["(?, ?)"; updated_note_links.len()].join(", ")
             );
-            let mut query = sqlx::query(query_str.as_str());
-            for NoteLink {
-                // id: _,
-                parent_note_id,
-                linked_note_id,
-                order,
-                searched_keyword,
-                matched_keyword,
-                score,
-            } in &note_links
-            {
-                query = query.bind(parent_note_id);
-                query = query.bind(linked_note_id);
-                query = query.bind(order);
-                query = query.bind(searched_keyword);
-                query = query.bind(matched_keyword);
-                query = query.bind(score);
+            let mut delete_query = sqlx::query(delete_query_str.as_str());
+            for nl in &updated_note_links {
+                delete_query = delete_query.bind(nl.parent_note_id);
+                delete_query = delete_query.bind(nl.order);
             }
-            let _insert_result = query
+            let _delete_result = delete_query
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
+            create_note_links(db, &updated_note_links).await?;
         }
-        linked_notes_map = Some(
-            note_links
-                .into_iter()
-                .map(|note_link| (note_link.parent_note_id, note_link))
-                .into_group_map(),
-        );
+        // Note: We'll load all note links for rendered notes later, after we know which notes we're rendering
+        // The updated note links are already in the database, so we'll get them when we query
     }
 
     // Update config
@@ -241,7 +160,8 @@ pub async fn render_notes(
     config.linked_notes_generated = true;
     write_internal_config(&config)?;
 
-    let note_ids = if let Some(note_ids_search) = generate_files_note_ids {
+    // Get requested note ids
+    let requested_note_ids = if let Some(note_ids_search) = generate_files_note_ids {
         match note_ids_search {
             GenerateFilesNoteIds::Query(query) => {
                 let evaluator = Evaluator::new(&query);
@@ -250,14 +170,103 @@ pub async fn render_notes(
                         .get_note_ids(db)
                         .await?
                         .into_iter()
-                        .collect::<Vec<_>>(),
+                        .collect::<HashSet<_>>(),
                 )
             }
-            GenerateFilesNoteIds::NoteIds(vec) => Some(vec),
+            GenerateFilesNoteIds::NoteIds(vec) => Some(vec.into_iter().collect::<HashSet<_>>()),
         }
     } else {
         None
     };
+
+    // Get notes data for requested note ids or note ids where the score changed
+    let note_ids_to_fetch: Option<HashSet<NoteId>> =
+        match (&requested_note_ids, score_changed_note_ids.is_empty()) {
+            (Some(req_ids), false) => {
+                Some(req_ids.union(&score_changed_note_ids).copied().collect())
+            }
+            (Some(req_ids), true) => Some(req_ids.clone()),
+            (None, false) => Some(score_changed_note_ids.clone()),
+            (None, true) => None,
+        };
+
+    // Build query to get notes data
+    let placeholders = if let Some(ref note_ids) = note_ids_to_fetch
+        && !note_ids.is_empty()
+    {
+        format!("WHERE n.id IN ({})", vec!["?"; note_ids.len()].join(", "))
+    } else {
+        String::new()
+    };
+    // TODO: Use JSON_GROUP_OBJECT here instead of GROUP_CONCAT. Also, keywords might contains commas, so then splitting by commas would be inaccurate, so do not use commas.
+    let query_str = format!(
+        r"SELECT
+          n.id as note_id,
+          n.data,
+          (SELECT GROUP_CONCAT(nk.keyword, ',')
+           FROM note_keyword nk
+           WHERE nk.note_id = n.id AND nk.embedded = 0) as keywords,
+          n.custom_data,
+          p.name as parser_name,
+          GROUP_CONCAT(t.name, ',') AS tags_str
+        FROM
+          note n
+        LEFT JOIN
+          note_tag nt ON n.id = nt.note_id
+        LEFT JOIN
+          tag t ON t.id = nt.tag_id AND t.query IS NULL
+        LEFT JOIN
+          parser p ON n.parser_id = p.id
+        {}
+        GROUP BY
+          n.id
+        ORDER BY
+          n.id",
+        placeholders
+    );
+    let mut query = sqlx::query_as(&query_str);
+
+    if let Some(ref note_ids) = note_ids_to_fetch
+        && !note_ids.is_empty()
+    {
+        for note_id in note_ids {
+            query = query.bind(note_id);
+        }
+    }
+    let notes_data: Vec<RenderNoteData> = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    // Load all note links for the notes we're rendering (if include_linked_notes)
+    let mut linked_notes_map: Option<HashMap<_, _>> = None;
+    if include_linked_notes && !notes_data.is_empty() {
+        let note_ids_for_links: Vec<NoteId> = notes_data.iter().map(|n| n.note_id).collect();
+        let placeholders = vec!["?"; note_ids_for_links.len()].join(", ");
+        // Note that the query sorts by order, so we don't need to do this after
+        let query_str = format!(
+            "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
+            placeholders
+        );
+        let mut query = sqlx::query_as::<_, NoteLink>(&query_str);
+        for note_id in &note_ids_for_links {
+            query = query.bind(note_id);
+        }
+        let all_note_links: Vec<NoteLink> = query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Build linked_notes_map with all note links for rendered notes
+        let mut all_note_links_map: HashMap<NoteId, Vec<NoteLink>> = HashMap::new();
+        for note_link in all_note_links {
+            all_note_links_map
+                .entry(note_link.parent_note_id)
+                .or_default()
+                .push(note_link);
+        }
+        linked_notes_map = Some(all_note_links_map);
+    }
 
     // Generate files for notes and cards
     // This must be done after linking because the links need to be shown in the rendered note.
@@ -266,7 +275,7 @@ pub async fn render_notes(
     let grouped_parse_note_requests = notes_data
         .iter()
         .filter(|render_note_data| {
-            note_ids
+            requested_note_ids
                 .as_ref()
                 .is_none_or(|note_ids| note_ids.contains(&render_note_data.note_id))
         })
