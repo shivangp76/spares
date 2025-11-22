@@ -87,6 +87,7 @@ pub async fn create_notes(
     } else {
         None
     };
+    let mut note_keyword_entries = Vec::new();
     let mut note_tag_entries = Vec::new();
     let mut card_entries = Vec::new();
     for create_note_request in &body.requests {
@@ -114,9 +115,10 @@ pub async fn create_notes(
             .map_err(|e| Error::Sqlx { source: e })?;
 
         // Create note keywords
-        let all_keywords = extract_and_combine_keywords(parser.as_ref(), note_data.as_str(), extra_keywords)
-            .map_err(Error::Library)?;
-        create_note_keywords(db, note_id, &all_keywords).await?;
+        let all_keywords =
+            extract_and_combine_keywords(parser.as_ref(), note_data.as_str(), extra_keywords)
+                .map_err(Error::Library)?;
+        note_keyword_entries.push((note_id, all_keywords.clone()));
 
         let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
         note_tag_entries.extend(tag_ids.into_iter().map(|tag_id| (note_id, tag_id)));
@@ -170,6 +172,9 @@ pub async fn create_notes(
         };
         generate_files_requests.push(generate_files_request);
     }
+
+    // Create all note_keywords at the very end, in bulk
+    create_note_keywords(db, &note_keyword_entries).await?;
 
     // Create all note_tags at the very end, in bulk
     create_note_tags(db, &note_tag_entries).await?;
@@ -237,19 +242,21 @@ pub async fn create_notes(
 
 pub async fn create_note_keywords(
     db: &SqlitePool,
-    note_id: NoteId,
-    keywords: &[(String, bool)],
+    note_id_with_keywords: &[(NoteId, Vec<(String, bool)>)],
 ) -> Result<(), Error> {
-    if !keywords.is_empty() {
+    let count = note_id_with_keywords.iter().map(|(_, ks)| ks.len()).sum();
+    if count != 0 {
         let insert_note_keyword_query_str = format!(
             "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
-            vec!["(?, ?, ?)"; keywords.len()].join(", ")
+            vec!["(?, ?, ?)"; count].join(", ")
         );
         let mut query = sqlx::query(insert_note_keyword_query_str.as_str());
-        for (keyword, embedded) in keywords {
-            query = query.bind(note_id);
-            query = query.bind(keyword);
-            query = query.bind(i32::from(*embedded));
+        for (note_id, ks) in note_id_with_keywords {
+            for (keyword, embedded) in ks {
+                query = query.bind(note_id);
+                query = query.bind(keyword);
+                query = query.bind(i32::from(*embedded));
+            }
         }
         let _insert_result = query
             .execute(db)

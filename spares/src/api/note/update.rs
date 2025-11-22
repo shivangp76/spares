@@ -425,7 +425,7 @@ pub async fn update_notes(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         // Insert new keywords
-        create_note_keywords(db, *note_id, &all_keywords).await?;
+        create_note_keywords(db, &[(*note_id, all_keywords.clone())]).await?;
 
         let created_at = DateTime::from_timestamp(created_at, 0).unwrap();
         let updated_at = at;
