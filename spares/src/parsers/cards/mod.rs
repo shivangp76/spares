@@ -65,7 +65,7 @@ pub fn validate_cards(cards: &[CardData]) -> Result<(), LibraryError> {
 }
 
 #[allow(clippy::type_complexity, reason = "avoid creating extra struct")]
-#[allow(clippy::too_many_lines, reason = "off by a few")]
+#[expect(clippy::too_many_lines, reason = "off by a few")]
 fn group_clozes(
     mut all_clozes: Vec<(ClozeData, Vec<ClozeGroupingSettings>)>,
     data: &str,
@@ -129,8 +129,7 @@ fn group_clozes(
     for clozes in &cards_raw {
         let flattened_matches = clozes
             .iter()
-            .map(|(cloze_data, _)| cloze_data)
-            .flat_map(|cd| {
+            .flat_map(|(cd, _)| {
                 // The end points are not inclusive so they should be removed.
                 [
                     cd.start_delim.start,
@@ -149,7 +148,7 @@ fn group_clozes(
             .find(|(cur, next)| cur > next);
         if let Some((cur, next)) = not_increasing {
             dbg!(&flattened_matches);
-            assert!(!(*cur < 3 || *next + 3 >= data.len()));
+            debug_assert!(!(*cur < 3 || *next + 3 >= data.len()));
             return Err(LibraryError::Card(
                 CardErrorKind::SameGroupingNestedClozes {
                     src: data.to_string(),

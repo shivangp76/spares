@@ -87,7 +87,7 @@ impl<'a> TypstDataParser<'a> {
         })
     }
 
-    #[allow(clippy::too_many_lines, reason = "off by a few")]
+    #[allow(clippy::too_many_lines)]
     fn next_data(&mut self, output_type: &OutputType) -> Option<Output> {
         let mut cloze_nesting_level = 0;
         let mut all_clozes = Vec::new();
