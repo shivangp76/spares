@@ -7,7 +7,7 @@ use crate::{
     },
     config::{read_internal_config, write_internal_config},
     helpers::intersect,
-    model::{Card, CardId, Note, NoteId, SpecialState, TagId},
+    model::{Card, CardId, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
         Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
         generate_files::{
@@ -88,6 +88,7 @@ pub async fn create_notes(
         None
     };
     let mut note_keyword_entries = Vec::new();
+    let mut note_link_entries = Vec::new();
     let mut note_tag_entries = Vec::new();
     let mut card_entries = Vec::new();
     for create_note_request in &body.requests {
@@ -120,8 +121,23 @@ pub async fn create_notes(
                 .map_err(Error::Library)?;
         note_keyword_entries.push((note_id, all_keywords.clone()));
 
+        // Note Links
+        note_link_entries.extend(parser.get_linked_notes(data)?.into_iter().enumerate().map(
+            |(i, linked_note_range)| NoteLink {
+                parent_note_id: note_id,
+                linked_note_id: None,
+                order: i as u32,
+                searched_keyword: note_data[linked_note_range].to_string(),
+                matched_keyword: None,
+                score: None,
+            },
+        ));
+
+        // Note Tags
         let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
         note_tag_entries.extend(tag_ids.into_iter().map(|tag_id| (note_id, tag_id)));
+
+        // Cards
         card_entries.extend(
             card_datas
                 .iter()
@@ -138,6 +154,7 @@ pub async fn create_notes(
                 })
                 .collect::<Vec<_>>(),
         );
+
         let note = Note {
             id: note_id,
             data: note_data,
@@ -175,6 +192,9 @@ pub async fn create_notes(
 
     // Create all note_keywords at the very end, in bulk
     create_note_keywords(db, &note_keyword_entries).await?;
+
+    // Create all note_links at the very end, in bulk
+    create_note_links(db, &note_link_entries).await?;
 
     // Create all note_tags at the very end, in bulk
     create_note_tags(db, &note_tag_entries).await?;
@@ -257,6 +277,40 @@ pub async fn create_note_keywords(
                 query = query.bind(keyword);
                 query = query.bind(i32::from(*embedded));
             }
+        }
+        let _insert_result = query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    Ok(())
+}
+
+pub async fn create_note_links(
+    db: &SqlitePool,
+    note_link_entries: &[NoteLink],
+) -> Result<(), Error> {
+    if !note_link_entries.is_empty() {
+        let insert_query_str = format!(
+            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
+            vec!["(?, ?, ?, ?, ?, ?)"; note_link_entries.len()].join(", ")
+        );
+        let mut query = sqlx::query(insert_query_str.as_str());
+        for NoteLink {
+            parent_note_id,
+            linked_note_id,
+            order,
+            searched_keyword,
+            matched_keyword,
+            score,
+        } in note_link_entries
+        {
+            query = query.bind(parent_note_id);
+            query = query.bind(linked_note_id);
+            query = query.bind(order);
+            query = query.bind(searched_keyword);
+            query = query.bind(matched_keyword);
+            query = query.bind(score);
         }
         let _insert_result = query
             .execute(db)
