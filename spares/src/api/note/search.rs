@@ -16,12 +16,12 @@ use crate::{
 use sqlx::sqlite::SqlitePool;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
-    let keywords_data: Vec<(NoteId, String)> = sqlx::query_as(r"SELECT note_id, keyword FROM note_keyword")
-        .fetch_all(db)
-       
+    let keywords_data: Vec<(NoteId, String)> =
+        sqlx::query_as(r"SELECT note_id, keyword FROM note_keyword")
+            .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    
+
     Ok(keywords_data)
 }
 
@@ -79,6 +79,7 @@ pub async fn search_keyword(
 pub async fn get_unmatched_keywords(
     db: &SqlitePool,
 ) -> Result<Vec<UnmatchedKeywordResponse>, Error> {
+    // TODO: This might be because linked notes were not generated, so either this needs to be documented or the function needs to return an error if the linked notes are not generated.
     let unmatched_keywords: Vec<(NoteId, String)> = sqlx::query_as(
         r"SELECT parent_note_id, searched_keyword
          FROM note_link
