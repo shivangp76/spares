@@ -156,22 +156,19 @@ pub async fn render_notes(
     write_internal_config(&config)?;
 
     // Get requested note ids
-    let requested_note_ids = if let Some(note_ids_search) = generate_files_note_ids {
-        match note_ids_search {
-            GenerateFilesNoteIds::Query(query) => {
-                let evaluator = Evaluator::new(&query);
-                Some(
-                    evaluator
-                        .get_note_ids(db)
-                        .await?
-                        .into_iter()
-                        .collect::<HashSet<_>>(),
-                )
-            }
-            GenerateFilesNoteIds::NoteIds(vec) => Some(vec.into_iter().collect::<HashSet<_>>()),
+    let requested_note_ids = match generate_files_note_ids {
+        GenerateFilesNoteIds::Query(query) => {
+            let evaluator = Evaluator::new(&query);
+            Some(
+                evaluator
+                    .get_note_ids(db)
+                    .await?
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            )
         }
-    } else {
-        None
+        GenerateFilesNoteIds::NoteIds(vec) => Some(vec.into_iter().collect::<HashSet<_>>()),
+        GenerateFilesNoteIds::All => None,
     };
     if let Some(ref note_ids) = requested_note_ids
         && note_ids.is_empty()
@@ -338,7 +335,7 @@ mod tests {
         api::note::{basic::tests::create_note_helper, render_notes},
         model::NoteLink,
         parsers::get_all_parsers,
-        schema::note::RenderNotesRequest,
+        schema::note::{GenerateFilesNoteIds, RenderNotesRequest},
     };
     use sqlx::SqlitePool;
 
@@ -346,7 +343,7 @@ mod tests {
     async fn test_render_note(pool: SqlitePool) -> () {
         let _ = create_note_helper(&pool).await;
         let body = RenderNotesRequest {
-            generate_files_note_ids: None,
+            generate_files_note_ids: GenerateFilesNoteIds::All,
             overridden_output_raw_dir: None,
             include_linked_notes: true,
             include_cards: true,

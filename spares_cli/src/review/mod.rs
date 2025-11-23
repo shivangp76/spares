@@ -222,7 +222,7 @@ async fn sync_note_background(
 
     // Regenerate rendered files for this note
     let request = RenderNotesRequest {
-        generate_files_note_ids: Some(GenerateFilesNoteIds::NoteIds(vec![note_id])),
+        generate_files_note_ids: GenerateFilesNoteIds::NoteIds(vec![note_id]),
         overridden_output_raw_dir: None,
         include_linked_notes: true,
         include_cards: true,
