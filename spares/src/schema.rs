@@ -1,9 +1,18 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct FilterOptions {
     pub page: Option<usize>,
     pub limit: Option<usize>,
+}
+
+#[allow(clippy::option_option)]
+fn some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 pub mod parser {
@@ -39,6 +48,7 @@ pub mod parser {
 
 pub mod tag {
     use crate::model::{Tag, TagId};
+    use crate::schema::some_option;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -52,13 +62,13 @@ pub mod tag {
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UpdateTagRequest {
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, deserialize_with = "some_option")]
         pub parent_id: Option<Option<TagId>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, deserialize_with = "some_option")]
         pub query: Option<Option<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub auto_delete: Option<bool>,
@@ -270,6 +280,7 @@ pub mod note {
 
 pub mod card {
     use crate::model::{Card, CardId, NoteId, SpecialState, StateId};
+    use crate::schema::some_option;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -307,7 +318,7 @@ pub mod card {
         pub selector: CardsSelector,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub desired_retention: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, deserialize_with = "some_option")]
         pub special_state: Option<Option<SpecialStateUpdate>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub due: Option<DateTime<Utc>>,
