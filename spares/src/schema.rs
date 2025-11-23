@@ -102,13 +102,13 @@ pub mod note {
     pub enum GenerateFilesNoteIds {
         Query(String),
         NoteIds(Vec<NoteId>),
+        All,
     }
 
     #[allow(clippy::struct_excessive_bools, reason = "needed to generate files")]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct RenderNotesRequest {
-        /// If `None`, then all notes will have their files generated.
-        pub generate_files_note_ids: Option<GenerateFilesNoteIds>,
+        pub generate_files_note_ids: GenerateFilesNoteIds,
         pub overridden_output_raw_dir: Option<PathBuf>,
         pub include_linked_notes: bool,
         pub include_cards: bool,
