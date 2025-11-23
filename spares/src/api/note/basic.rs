@@ -20,6 +20,7 @@ use crate::{
 };
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
+use std::path::Path;
 
 pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, Error> {
     // Get note
@@ -90,6 +91,18 @@ pub async fn enrich_note(
     ))
 }
 
+fn delete_file(file_path: &Path) -> Result<(), Error> {
+    if cfg!(test) {
+        // Don't clutter the Trash with testing files
+        std::fs::remove_file(file_path).map_err(|e| Error::Io {
+            source: e,
+            description: String::new(),
+        })
+    } else {
+        trash::delete(file_path).map_err(Error::Trash)
+    }
+}
+
 pub fn delete_note_files(
     parser: &dyn Parseable,
     note_id: NoteId,
@@ -110,16 +123,15 @@ pub fn delete_note_files(
         get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
     note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
     note_raw_path.set_extension(parser.file_extension());
-    // std::fs::remove_file(output_text_filepath).map_err(|e| SrsError::Io(e, String::new()))?;
     if note_raw_path.exists() {
-        trash::delete(note_raw_path).map_err(Error::Trash)?;
+        delete_file(&note_raw_path)?;
     }
 
     // Note rendered path
     let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
     note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
     if note_rendered_path.exists() {
-        trash::delete(note_rendered_path).map_err(Error::Trash)?;
+        delete_file(&note_rendered_path)?;
     }
 
     let image_occlusion_clozes = parse_image_occlusion_data(note_data, parser, false, &mut 0)?;
@@ -137,7 +149,7 @@ pub fn delete_note_files(
         ));
         card_front_raw_path.set_extension(parser.file_extension());
         if card_front_raw_path.exists() {
-            trash::delete(card_front_raw_path).map_err(Error::Trash)?;
+            delete_file(&card_front_raw_path)?;
         }
 
         // Card front rendered path
@@ -148,7 +160,7 @@ pub fn delete_note_files(
             note_id,
         ));
         if card_front_rendered_path.exists() {
-            trash::delete(card_front_rendered_path).map_err(Error::Trash)?;
+            delete_file(&card_front_rendered_path)?;
         }
 
         // Card back raw path
@@ -163,7 +175,7 @@ pub fn delete_note_files(
         ));
         card_back_raw_path.set_extension(parser.file_extension());
         if card_back_raw_path.exists() {
-            trash::delete(card_back_raw_path).map_err(Error::Trash)?;
+            delete_file(&card_back_raw_path)?;
         }
 
         // Card back rendered path
@@ -174,7 +186,7 @@ pub fn delete_note_files(
             note_id,
         ));
         if card_back_rendered_path.exists() {
-            trash::delete(card_back_rendered_path).map_err(Error::Trash)?;
+            delete_file(&card_back_rendered_path)?;
         }
 
         // Image occlusion rendered paths
@@ -192,7 +204,7 @@ pub fn delete_note_files(
                     image_occlusion_order_in_card,
                 );
                 if image_occlusion_card_filepath.exists() {
-                    trash::delete(image_occlusion_card_filepath).map_err(Error::Trash)?;
+                    delete_file(&image_occlusion_card_filepath)?;
                 }
             }
         }
