@@ -92,7 +92,7 @@ pub async fn get_review_card(
     let config = read_external_config()?;
     let card_due_limit = upper_limit;
     let not_new_card_str = if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
-        format!("AND c.state != {}", NEW_CARD_STATE)
+        format!("\nAND c.state != {}", NEW_CARD_STATE)
     } else {
         String::new()
     };
@@ -100,7 +100,7 @@ pub async fn get_review_card(
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(ref query)) = filter {
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
-        format!("AND c.id IN ({})", card_ids_str)
+        format!("\nAND c.id IN ({})", card_ids_str)
     } else {
         String::new()
     };
