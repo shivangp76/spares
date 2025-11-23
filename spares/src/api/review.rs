@@ -96,10 +96,11 @@ pub async fn get_review_card(
     } else {
         String::new()
     };
-    let note_id_query_str = if let Some(GetReviewCardFilterRequest::Query(ref query)) = filter {
+    // TODO: Maybe this card id query str can be combined with the `restrictions` variable since both of them filter `c.id`
+    let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(ref query)) = filter {
         let evaluator = Evaluator::new(query);
-        let note_ids_str = evaluator.get_note_ids(db).await?.into_iter().join(", ");
-        format!("AND n.id IN ({})", note_ids_str)
+        let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
+        format!("AND c.id IN ({})", card_ids_str)
     } else {
         String::new()
     };
@@ -132,7 +133,7 @@ pub async fn get_review_card(
             tag_id
         )
     } else {
-        format!("AND c.due <= ? {} {}", not_new_card_str, note_id_query_str)
+        format!("AND c.due <= ? {} {}", not_new_card_str, card_id_query_str)
     };
     // Sort by `n.created_at` after `c.due` so cards from older notes are shown first. This ensures that notes that depend on previous knowledge are shown in the right order.
     let query_str = format!(
