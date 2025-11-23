@@ -228,7 +228,7 @@ enum EditCommands {
         #[arg(short, long)]
         desired_retention: Option<f64>,
         #[arg(short, long)]
-        special_state: Option<Option<SpecialStateLocal>>,
+        special_state: Option<SpecialStateLocal>,
         #[arg(long)]
         due: Option<DateTime<Utc>>,
     },
@@ -236,6 +236,7 @@ enum EditCommands {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
 enum SpecialStateLocal {
+    None,
     Suspended,
     Buried,
     // This is not allowed.
@@ -661,11 +662,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 } else {
                     unreachable!("by clap conflicts_with")
                 };
-                let special_state = special_state_local.map(|x| {
-                    x.map(|y| match y {
-                        SpecialStateLocal::Suspended => SpecialStateUpdate::Suspended,
-                        SpecialStateLocal::Buried => SpecialStateUpdate::Buried,
-                    })
+                let special_state = special_state_local.map(|x| match x {
+                    SpecialStateLocal::Suspended => Some(SpecialStateUpdate::Suspended),
+                    SpecialStateLocal::Buried => Some(SpecialStateUpdate::Buried),
+                    SpecialStateLocal::None => None,
                 });
                 let request = UpdateCardRequest {
                     selector,
