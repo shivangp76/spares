@@ -111,19 +111,20 @@ pub async fn get_review_card(
                 .fetch_optional(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        if let Some((tag_query,)) = tag_query_opt {
-            if tag_query.is_none() {
-                return Err(Error::Library(LibraryError::Tag(
-                    TagErrorKind::InvalidInput(
-                        "Cannot study a tag that does not have a query.".to_string(),
-                    ),
-                )));
-            }
-        } else {
+        if tag_query_opt.is_none() {
             return Ok(None);
             // return Err(Error::Library(LibraryError::Tag(
             //     TagErrorKind::InvalidInput("Tag does not exist.".to_string()),
             // )));
+        }
+        if let Some((tag_query,)) = tag_query_opt
+            && tag_query.is_none()
+        {
+            return Err(Error::Library(LibraryError::Tag(
+                TagErrorKind::InvalidInput(
+                    "Cannot study a tag that does not have a query.".to_string(),
+                ),
+            )));
         }
         // Get all review cards that match the tag, regardless of whether they are due today
         format!(

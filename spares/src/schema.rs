@@ -348,7 +348,6 @@ pub mod review {
 
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct GetReviewCardRequest {
-        // This `Option` is used instead of flattening directly to represent the fact that either both arguments are provided or none are provided. Having only 1 argument provided is invalid. For example, `only_due_today` without providing a query is invalid.
         pub filter: Option<GetReviewCardFilterRequest>,
     }
 
