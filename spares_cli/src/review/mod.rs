@@ -67,24 +67,24 @@ enum ReviewAction {
     },
     #[strum(serialize = "Open Note")]
     OpenNote,
-    #[strum(serialize = "Suspend Card")]
-    SuspendCard,
-    #[strum(serialize = "Suspend Note (card + siblings)")]
-    SuspendNote,
-    #[strum(serialize = "Tag to modify later")]
-    TagNote,
+    #[strum(serialize = "Sync Note")]
+    SyncNote,
     #[strum(serialize = "Bury Card")]
     BuryCard,
     #[strum(serialize = "Bury Note (card + siblings)")]
     BuryNote,
+    #[strum(serialize = "Bury Until Later Today")]
+    BuryUntilLaterToday,
+    #[strum(serialize = "Tag to modify later")]
+    TagNote,
     #[strum(serialize = "Forget Card")]
     ForgetCard,
     #[strum(serialize = "Set Due Date")]
     SetDueDate,
-    #[strum(serialize = "Bury Until Later Today")]
-    BuryUntilLaterToday,
-    #[strum(serialize = "Sync Note")]
-    SyncNote,
+    #[strum(serialize = "Suspend Card")]
+    SuspendCard,
+    #[strum(serialize = "Suspend Note (card + siblings)")]
+    SuspendNote,
     // Undo,
     Exit,
 }
