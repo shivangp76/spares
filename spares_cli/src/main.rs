@@ -930,7 +930,8 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 return Ok(());
             }
             let request = RenderNotesRequest {
-                generate_files_note_ids: query.map(GenerateFilesNoteIds::Query),
+                generate_files_note_ids: query
+                    .map_or(GenerateFilesNoteIds::All, GenerateFilesNoteIds::Query),
                 overridden_output_raw_dir,
                 include_linked_notes,
                 include_cards,
