@@ -204,7 +204,11 @@ pub async fn bury_note(note_id: NoteId, base_url: &str, client: &Client) -> Resu
         return Err(format!("Failed to get cards from note id: {:?}", message));
     }
     let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
-    let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
+    let card_ids = cards
+        .into_iter()
+        .filter(|card| card.special_state.is_none())
+        .map(|card| card.id)
+        .collect::<Vec<_>>();
     bury_cards(&card_ids, base_url, client).await
 }
 
