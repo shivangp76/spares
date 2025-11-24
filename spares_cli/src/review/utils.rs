@@ -122,8 +122,7 @@ pub async fn tag_note(
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to add tag to note".to_string());
+        return Err(format!("Failed to add tag to note: {:?}", message));
     }
     Ok(())
 }
@@ -149,8 +148,7 @@ pub async fn bury_card(
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to bury card".to_string());
+        return Err(format!("Failed to bury card: {:?}", message));
     }
     Ok(())
 }
@@ -177,8 +175,7 @@ pub async fn bury_cards(
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to bury cards".to_string());
+        return Err(format!("Failed to bury cards: {:?}", message));
     }
     Ok(())
 }
@@ -190,8 +187,7 @@ pub async fn suspend_note(note_id: NoteId, base_url: &str, client: &Client) -> R
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to get cards from note id".to_string());
+        return Err(format!("Failed to get cards from note id: {:?}", message));
     }
     let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
     let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
@@ -205,8 +201,7 @@ pub async fn bury_note(note_id: NoteId, base_url: &str, client: &Client) -> Resu
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to get cards from note id".to_string());
+        return Err(format!("Failed to get cards from note id: {:?}", message));
     }
     let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
     let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
@@ -235,8 +230,7 @@ pub async fn suspend_cards(
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to suspend card".to_string());
+        return Err(format!("Failed to suspend card: {:?}", message));
     }
     Ok(())
 }
@@ -271,8 +265,7 @@ pub async fn submit_rating(
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
-        dbg!(&message);
-        return Err("Failed to submit rating".to_string());
+        return Err(format!("Failed to submit rating: {:?}", message));
     }
     Ok(())
 }
