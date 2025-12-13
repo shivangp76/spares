@@ -379,6 +379,7 @@ pub mod review {
         pub note_id: NoteId, // To suspend all cards within the note
         pub card_order: u32,
         pub card_id: CardId,                   // For submitting a rating
+        pub card_state: StateId,               // For showing to the user
         pub card_front_rendered_path: PathBuf, // To show card
         pub card_back_rendered_path: CardBackRenderedPath, // To allow the user to see the answer after rating the card
         pub note_raw_path: PathBuf, // To allow the user to edit the note if they find an error while reviewing the card

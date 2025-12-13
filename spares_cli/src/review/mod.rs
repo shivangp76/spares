@@ -171,7 +171,12 @@ async fn get_review_card(
                     review_card.cards_left_by_state.iter().collect::<Vec<_>>();
                 cards_left_by_state.sort_by_key(|(state_id, _)| *state_id);
                 for (state_id, count) in cards_left_by_state {
-                    println!("  State {}: {}", state_id, count);
+                    let indicator = if *state_id == review_card.card_state {
+                        "--> "
+                    } else {
+                        "    "
+                    };
+                    println!(" {}State {}: {}", indicator, state_id, count);
                 }
             }
 

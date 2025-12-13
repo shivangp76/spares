@@ -71,6 +71,7 @@ pub async fn get_review_card(
         card_order: u32,
         card_back_type: BackType,
         card_id: i64,
+        card_state: StateId,
     }
     let GetReviewCardRequest { filter } = body;
 
@@ -143,7 +144,8 @@ pub async fn get_review_card(
             p.name as parser_name,
             c.\"order\" as card_order,
             c.back_type as card_back_type,
-            c.id as card_id
+            c.id as card_id,
+            c.state as card_state
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
@@ -200,6 +202,7 @@ pub async fn get_review_card(
         card_order,
         card_back_type,
         card_id,
+        card_state,
     }) = review_card_opt
     {
         let parser = find_parser(parser_name.as_str(), all_parsers)?;
@@ -241,6 +244,7 @@ pub async fn get_review_card(
             note_id,
             card_order,
             card_id,
+            card_state,
             card_front_rendered_path,
             card_back_rendered_path,
             note_raw_path,
