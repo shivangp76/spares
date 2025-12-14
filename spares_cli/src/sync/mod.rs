@@ -2,7 +2,7 @@ pub mod interactive;
 pub mod utils;
 
 use crate::import::import_from_files;
-use clap::{Args, Subcommand, ValueEnum, command};
+use clap::{Args, Subcommand, ValueEnum};
 use interactive::sync_notes_interactive;
 use itertools::Itertools;
 use log::info;
