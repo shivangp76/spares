@@ -533,7 +533,6 @@ async fn simulate_filtered_tag_reviews(
 
     let mut reviewed_card_ids = HashSet::new();
     for day_offset in 0..=(num_days_to_simulate - 1) {
-        dbg!(&day_offset);
         let requested_date = start_date + Duration::days(day_offset);
 
         // Submit reviews

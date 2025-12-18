@@ -27,6 +27,8 @@ use serde_json::Value;
 use sqlx::{FromRow, sqlite::SqlitePool};
 use std::collections::HashMap;
 
+const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
+
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config()?;
     let now = Utc::now();
@@ -196,6 +198,36 @@ pub async fn get_review_card(
         .into_iter()
         .collect::<HashMap<StateId, u32>>();
 
+    // Calculate time estimate
+    // The cast is necassary since the SUM function returns a different type depending on whether
+    // the arguments are all null or not.
+    let time_estimate_query_str = format!(
+        indoc! {
+        "SELECT
+            SUM(
+                CAST(COALESCE(
+                    (SELECT AVG(duration) FROM review_log WHERE card_id = c.id),
+                    {}
+                ) AS REAL)
+            ) as total_time
+        FROM card c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        WHERE c.special_state IS NULL
+            {}"
+        },
+        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, restrictions
+    );
+    let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
+    if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
+        time_estimate_query = time_estimate_query.bind(card_due_limit.timestamp());
+    }
+    let total_time_seconds: f64 = time_estimate_query
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let time_estimate = Duration::seconds(total_time_seconds as i64);
+
     if let Some(ReviewCard {
         note_id,
         parser_name,
@@ -250,6 +282,7 @@ pub async fn get_review_card(
             note_raw_path,
             parser_name,
             cards_left_by_state,
+            time_estimate,
         };
         return Ok(Some(review_card_response));
     }
