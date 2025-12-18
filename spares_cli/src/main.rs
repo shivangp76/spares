@@ -1158,7 +1158,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 adapter.as_mut(),
                 parser.as_deref(),
                 to_parser_opt.as_deref(),
-                files,
+                files.as_slice(),
                 run,
                 false,
             )
