@@ -1,4 +1,4 @@
-use crate::import::import_from_file;
+use crate::import::import_from_files;
 use clap::Args;
 use inquire::Select;
 use reqwest::{Client, StatusCode};
@@ -215,11 +215,11 @@ async fn sync_note_background(
         }
     };
 
-    if let Err(e) = import_from_file(
+    if let Err(e) = import_from_files(
         &mut adapter,
         Some(parser.as_ref()),
         None,
-        &note_raw_path,
+        &[&note_raw_path],
         true,
         true, // quiet mode
     )

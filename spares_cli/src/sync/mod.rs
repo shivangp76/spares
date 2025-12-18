@@ -289,14 +289,14 @@ async fn update_changes(
             if run {
                 let filepaths = import_data_filepaths
                     .into_iter()
-                    .map(|(filepath, _, _)| filepath.clone())
+                    .map(|(filepath, _, _)| filepath)
                     .collect::<Vec<_>>();
                 let quiet = false;
                 import_from_files(
                     adapter.as_mut(),
                     Some(parser.as_ref()),
                     None,
-                    filepaths,
+                    filepaths.as_slice(),
                     true,
                     quiet,
                 )

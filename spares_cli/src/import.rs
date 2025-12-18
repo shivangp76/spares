@@ -1,12 +1,13 @@
 use chrono::Utc;
 use clap::Args;
 use colored::Colorize;
-use indicatif::ProgressIterator;
+use indicatif::{ProgressBar, ProgressIterator};
 use spares::adapters::SrsAdapter;
 use spares::parsers::{NoteSettings, Parseable, get_all_parsers, get_notes};
 use spares::{Error, LibraryError, ParserErrorKind};
+use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
 pub struct ImportArgs {
@@ -18,7 +19,7 @@ pub struct ImportArgs {
     #[arg(short, long, required = false)]
     pub parser: Option<String>,
 
-    /// Parser to convert to notes to before importing
+    /// Parser to convert notes to before importing
     #[arg(short, long, required = false)]
     pub to_parser: Option<String>,
 
@@ -99,41 +100,21 @@ fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, run: bool)
     }
 }
 
-pub async fn import_from_files(
-    adapter: &mut dyn SrsAdapter,
-    parser: Option<&dyn Parseable>,
-    to_parser_opt: Option<&dyn Parseable>,
-    files: Vec<PathBuf>,
-    run: bool,
-    quiet: bool,
-) -> Result<(), Error> {
-    let count = files.len();
-    for file in files
-        .into_iter()
-        .progress_count(u64::try_from(count).unwrap())
-    {
-        import_from_file(adapter, parser, to_parser_opt, &file, run, quiet).await?;
-    }
-    Ok(())
-}
-
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
-pub async fn import_from_file(
+pub async fn import_from_files<P>(
     adapter: &mut dyn SrsAdapter,
     parser_opt: Option<&dyn Parseable>,
     to_parser_opt: Option<&dyn Parseable>,
-    file_path: &PathBuf,
+    file_paths: &[P],
     run: bool,
     quiet: bool,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
     if !run {
         println!("{}\n", "DRY RUN".black().on_bright_yellow());
     }
-
-    let file_contents = read_to_string(file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}", &file_path.display()),
-        source: e,
-    })?;
 
     let all_parsers = get_all_parsers()
         .into_iter()
@@ -145,54 +126,75 @@ pub async fn import_from_file(
     } else {
         all_parsers.iter().map(|x| x.as_ref()).collect::<Vec<_>>()
     };
+    let mut parser_to_notes: HashMap<&str, (&dyn Parseable, Vec<_>)> = HashMap::new();
 
-    let mut max_parser: Option<&dyn Parseable> = None;
-    let mut max_parser_all_notes = Vec::new();
-    let mut max_notes_count = 0;
-    for parser in &parsers_to_try {
-        let mut all_notes = Vec::new();
-        let blocks = parser
-            .start_end_regex()
-            .captures_iter(file_contents.as_str())
-            .map(|c| c.unwrap().get(1).unwrap().as_str())
-            .collect::<Vec<_>>();
-        for block in blocks {
-            let notes = get_notes(*parser, to_parser_opt, block, adapter, run)?;
-            all_notes.extend(notes);
+    let count = file_paths.len();
+    let progress_bar = if quiet {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::new(u64::try_from(count).unwrap())
+    };
+    for file_path in file_paths.iter().progress_with(progress_bar) {
+        let file_contents = read_to_string(file_path).map_err(|e| Error::Io {
+            description: format!("Failed to read {}", &file_path.as_ref().display()),
+            source: e,
+        })?;
+
+        let mut max_parser: Option<&dyn Parseable> = None;
+        let mut max_parser_all_notes = Vec::new();
+        let mut max_notes_count = 0;
+        for parser in &parsers_to_try {
+            let mut all_notes = Vec::new();
+            let blocks = parser
+                .start_end_regex()
+                .captures_iter(file_contents.as_str())
+                .map(|c| c.unwrap().get(1).unwrap().as_str())
+                .collect::<Vec<_>>();
+            for block in blocks {
+                let notes = get_notes(*parser, to_parser_opt, block, adapter, run)?;
+                all_notes.extend(notes);
+            }
+            if !all_notes.is_empty() {
+                if max_notes_count > 0 {
+                    return Err(Error::Library(LibraryError::Parser(
+                        ParserErrorKind::FailedToGuess(
+                            "More than one parser parsed some notes from the file.".to_string(),
+                        ),
+                    )));
+                }
+                max_notes_count = all_notes.len();
+                max_parser = Some(*parser);
+                max_parser_all_notes = all_notes;
+            }
         }
-        if !all_notes.is_empty() {
-            if max_notes_count > 0 {
+        if parsers_to_try.len() > 1 && max_notes_count == 0 {
+            return Err(Error::Library(LibraryError::Parser(
+                ParserErrorKind::FailedToGuess("All parsers parsed 0 notes.".to_string()),
+            )));
+        }
+        if let Some(max_parser) = max_parser {
+            let parser_notes_ref = parser_to_notes
+                .entry(max_parser.get_parser_name())
+                .or_insert((max_parser, vec![]));
+            parser_notes_ref.1.extend(max_parser_all_notes);
+        } else {
+            if parser_opt.is_none() {
                 return Err(Error::Library(LibraryError::Parser(
-                    ParserErrorKind::FailedToGuess(
-                        "More than one parser parsed some notes from the file.".to_string(),
-                    ),
+                    ParserErrorKind::FailedToGuess(String::new()),
                 )));
             }
-            max_notes_count = all_notes.len();
-            max_parser = Some(*parser);
-            max_parser_all_notes = all_notes;
+            // No notes to process
+            return Ok(());
         }
     }
-    if parsers_to_try.len() > 1 && max_notes_count == 0 {
-        return Err(Error::Library(LibraryError::Parser(
-            ParserErrorKind::FailedToGuess("All parsers parsed 0 notes.".to_string()),
-        )));
+
+    for (_parser_name, (parser, notes)) in parser_to_notes {
+        print_notes(&notes, quiet, run);
+
+        adapter
+            .process_data(notes, parser, run, quiet, Utc::now())
+            .await?;
     }
-    if max_parser.is_none() && parser_opt.is_none() {
-        return Err(Error::Library(LibraryError::Parser(
-            ParserErrorKind::FailedToGuess(String::new()),
-        )));
-    }
-    let max_parser_final = max_parser.unwrap_or_else(|| parser_opt.unwrap());
-
-    let notes = max_parser_all_notes;
-    let parser = to_parser_opt.unwrap_or(max_parser_final);
-
-    print_notes(&notes, quiet, run);
-
-    adapter
-        .process_data(notes, parser, run, quiet, Utc::now())
-        .await?;
 
     Ok(())
 }
