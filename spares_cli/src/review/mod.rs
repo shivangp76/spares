@@ -25,7 +25,8 @@ use utils::{
 };
 
 mod utils;
-use crate::review::utils::set_due_date_with_prompt;
+use crate::review::utils::{note_id_to_cards, set_due_date_with_prompt};
+use spares::schema::card::CardResponse;
 pub use utils::forget_card;
 
 #[derive(Args, Debug)]
@@ -79,8 +80,10 @@ enum ReviewAction {
     TagNote,
     #[strum(serialize = "Forget Card")]
     ForgetCard,
-    #[strum(serialize = "Set Due Date")]
-    SetDueDate,
+    #[strum(serialize = "Set Card Due Date")]
+    SetCardDueDate,
+    #[strum(serialize = "Set Note Due Date")]
+    SetNoteDueDate,
     #[strum(serialize = "Suspend Card")]
     SuspendCard,
     #[strum(serialize = "Suspend Note (card + siblings)")]
@@ -462,7 +465,8 @@ pub async fn review_cards(
             | ReviewAction::SuspendCard
             | ReviewAction::SuspendNote
             | ReviewAction::ForgetCard
-            | ReviewAction::SetDueDate
+            | ReviewAction::SetCardDueDate
+            | ReviewAction::SetNoteDueDate
             | ReviewAction::BuryUntilLaterToday => {
                 match chosen_action {
                     ReviewAction::BuryCard => {
@@ -489,9 +493,30 @@ pub async fn review_cards(
                         println!("Card forgotten (scheduling reset):");
                         println!("{:#?}", &card_response);
                     }
-                    ReviewAction::SetDueDate => {
+                    ReviewAction::SetCardDueDate => {
                         let completed = set_due_date_with_prompt(
-                            review_card_response.card_id,
+                            |_| vec![review_card_response.card_id],
+                            base_url,
+                            client,
+                        )
+                        .await?;
+                        if !completed {
+                            continue;
+                        }
+                        println!("Due date updated.");
+                    }
+                    ReviewAction::SetNoteDueDate => {
+                        let cards: Vec<CardResponse> =
+                            note_id_to_cards(review_card_response.note_id, base_url, client)
+                                .await?;
+                        let completed = set_due_date_with_prompt(
+                            |dt| {
+                                cards
+                                    .iter()
+                                    .filter(|card| card.due <= dt)
+                                    .map(|card| card.id)
+                                    .collect::<Vec<_>>()
+                            },
                             base_url,
                             client,
                         )

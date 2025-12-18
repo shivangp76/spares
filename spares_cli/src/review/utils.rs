@@ -127,6 +127,23 @@ pub async fn tag_note(
     Ok(())
 }
 
+pub async fn note_id_to_cards(
+    note_id: NoteId,
+    base_url: &str,
+    client: &Client,
+) -> Result<Vec<CardResponse>, String> {
+    let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
+    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(format!("Failed to get cards from note id: {:?}", message));
+    }
+    let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(cards)
+}
+
 pub async fn bury_card(
     scheduler_name: &str,
     card_id: CardId,
@@ -181,29 +198,13 @@ pub async fn bury_cards(
 }
 
 pub async fn suspend_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
-    let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
-    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(format!("Failed to get cards from note id: {:?}", message));
-    }
-    let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
+    let cards: Vec<CardResponse> = note_id_to_cards(note_id, base_url, client).await?;
     let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
     suspend_cards(&card_ids, base_url, client).await
 }
 
 pub async fn bury_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
-    let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
-    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(format!("Failed to get cards from note id: {:?}", message));
-    }
-    let cards: Vec<CardResponse> = response.json().await.map_err(|e| format!("{}", e))?;
+    let cards: Vec<CardResponse> = note_id_to_cards(note_id, base_url, client).await?;
     let card_ids = cards
         .into_iter()
         .filter(|card| card.special_state.is_none())
@@ -295,11 +296,14 @@ pub async fn forget_card(
     Ok(card_response)
 }
 
-pub async fn set_due_date_with_prompt(
-    card_id: CardId,
+pub async fn set_due_date_with_prompt<F>(
+    card_ids: F,
     base_url: &str,
     client: &Client,
-) -> Result<bool, String> {
+) -> Result<bool, String>
+where
+    F: Fn(DateTime<Utc>) -> Vec<CardId>,
+{
     let prompt = DateSelect::new("Select due date:");
     let date_res = prompt.prompt();
     if let Ok(naive_date) = date_res {
@@ -307,7 +311,7 @@ pub async fn set_due_date_with_prompt(
         let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, chrono::Utc);
         // Send update
         let request = UpdateCardRequest {
-            selector: CardsSelector::Ids(vec![card_id]),
+            selector: CardsSelector::Ids(card_ids(dt_utc)),
             desired_retention: None,
             special_state: None,
             due: Some(dt_utc),
