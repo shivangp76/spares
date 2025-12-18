@@ -373,7 +373,7 @@ pub async fn bury_until_later_today(
     Ok(())
 }
 
-fn format_duration(duration: chrono::Duration) -> String {
+pub fn format_duration(duration: chrono::Duration) -> String {
     let total_seconds = duration.num_seconds();
     let days = total_seconds / (24 * 3600);
     let hours = (total_seconds % (24 * 3600)) / 3600;

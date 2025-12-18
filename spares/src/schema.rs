@@ -374,6 +374,7 @@ pub mod review {
         Note(PathBuf),
     }
 
+    #[serde_with::serde_as]
     #[derive(Debug, Deserialize, Serialize)]
     pub struct GetReviewCardResponse {
         pub note_id: NoteId, // To suspend all cards within the note
@@ -385,6 +386,8 @@ pub mod review {
         pub note_raw_path: PathBuf, // To allow the user to edit the note if they find an error while reviewing the card
         pub parser_name: String,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
+        #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+        pub time_estimate: Duration,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

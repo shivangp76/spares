@@ -19,9 +19,9 @@ use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{Display, EnumString};
 use tokio::sync::mpsc;
 use utils::{
-    bury_card, bury_note, bury_until_later_today, close_rendered_file, get_scheduler_ratings,
-    open_rendered_file, print_recall_duration, print_summary, submit_rating, suspend_cards,
-    suspend_note, tag_note,
+    bury_card, bury_note, bury_until_later_today, close_rendered_file, format_duration,
+    get_scheduler_ratings, open_rendered_file, print_recall_duration, print_summary, submit_rating,
+    suspend_cards, suspend_note, tag_note,
 };
 
 mod utils;
@@ -179,6 +179,10 @@ async fn get_review_card(
                     println!(" {}State {}: {}", indicator, state_id, count);
                 }
             }
+            println!(
+                "Estimated Time Remaining: {}",
+                format_duration(review_card.time_estimate)
+            );
 
             Ok(Some((review_card, child)))
         }
