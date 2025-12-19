@@ -8,8 +8,9 @@ use crate::{
         health_check_handler,
         note::{
             create_notes_handler, delete_note_handler, export_notes_handler, generate_note_files_handler,
-            get_note_handler, get_note_links_handler, get_unmatched_keywords_handler,
-            list_notes_handler, search_keyword_handler, search_notes_handler, update_notes_handler,
+            get_duplicate_keywords_handler, get_note_handler, get_note_links_handler,
+            get_unmatched_keywords_handler, list_notes_handler, search_keyword_handler,
+            search_notes_handler, update_notes_handler,
         },
         parser::{
             create_parser_handler, delete_parser_handler, get_parser_handler, list_parsers_handler,
@@ -62,6 +63,10 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route(
             "/api/notes/unmatched-keywords",
             get(get_unmatched_keywords_handler),
+        )
+        .route(
+            "/api/notes/duplicate-keywords",
+            get(get_duplicate_keywords_handler),
         )
         .route("/api/notes/search/note-links", post(get_note_links_handler))
         // Card
