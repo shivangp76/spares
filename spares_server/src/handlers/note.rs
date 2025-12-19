@@ -129,3 +129,12 @@ pub async fn export_notes_handler(
         .map_err(error_to_response)?;
     Ok(result) // Returns String directly
 }
+
+pub async fn get_duplicate_keywords_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let duplicate_keywords = spares::api::note::get_duplicate_keywords(&data.db)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(duplicate_keywords))
+}
