@@ -95,8 +95,9 @@ async fn sync_notes_between_files(
     sync_source_to: SyncSource,
     actions: Vec<SyncImportData>,
     run: bool,
-) -> Result<Vec<NoteId>, String> {
+) -> Result<(Vec<NoteId>, Option<Vec<NoteId>>), String> {
     let mut modified_notes = Vec::new();
+    let mut immutable_note_ids = Vec::new();
     // The inner vector represents all files you want to act on at once. One action will be selected for all of these items.
     let groupings: Vec<Vec<_>> = match sync_mode {
         SyncMode::Bulk => vec![actions],
@@ -126,7 +127,7 @@ async fn sync_notes_between_files(
         let chosen_action_res = select.prompt();
         if chosen_action_res.is_err() {
             // The user exited. (Probably pressed Escape).
-            return Ok(modified_notes);
+            return Ok((modified_notes, None));
         }
         match chosen_action_res.as_ref().unwrap() {
             SyncAction::PullChanges => {
@@ -152,14 +153,27 @@ async fn sync_notes_between_files(
                 modified_notes.extend(new_modified_notes);
                 // Notes and cards files are generated at the very end
             }
-            SyncAction::Next => {}
+            SyncAction::Next => {
+                immutable_note_ids.extend(
+                    group
+                        .iter()
+                        .map(|sync_import_data| sync_import_data.note_id)
+                        .collect::<Vec<_>>(),
+                );
+            }
             SyncAction::Exit => {
-                return Ok(modified_notes);
+                return Ok((
+                    modified_notes,
+                    (!immutable_note_ids.is_empty()).then_some(immutable_note_ids),
+                ));
             }
         }
         println!();
     }
-    Ok(modified_notes)
+    Ok((
+        modified_notes,
+        (!immutable_note_ids.is_empty()).then_some(immutable_note_ids),
+    ))
 }
 
 pub async fn sync_notes_interactive(
@@ -205,7 +219,7 @@ pub async fn sync_notes_interactive(
         return Ok(());
     }
     let sync_mode = chosen_mode_res.unwrap();
-    let modified_notes = sync_notes_between_files(
+    let (modified_notes, immutable_note_ids) = sync_notes_between_files(
         &sync_mode,
         sync_source_from,
         sync_source_to,
@@ -214,7 +228,7 @@ pub async fn sync_notes_interactive(
     )
     .await?;
 
-    regenerate_notes(base_url, client, modified_notes, run).await?;
+    regenerate_notes(base_url, client, modified_notes, immutable_note_ids, run).await?;
 
     println!("Done");
     Ok(())

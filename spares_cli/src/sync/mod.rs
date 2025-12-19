@@ -23,7 +23,7 @@ use spares::{
         generate_files::{GenerateNoteFilesRequests, RenderOutputType, create_note_files_bulk},
         get_all_parsers, get_note_info_from_filepath, get_output_raw_dir,
     },
-    schema::note::{GenerateFilesNoteIds, RenderNotesRequest},
+    schema::note::{NoteIdsSelector, RenderNotesRequest},
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -315,7 +315,8 @@ async fn update_changes(
 async fn regenerate_notes(
     base_url: &str,
     client: &Client,
-    modified_notes: Vec<i64>,
+    modified_notes: Vec<NoteId>,
+    immutable_note_ids: Option<Vec<NoteId>>,
     run: bool,
 ) -> Result<(), String> {
     // Regenerate linked notes and generate files
@@ -326,7 +327,8 @@ async fn regenerate_notes(
             // Note that all notes can not have their files generated since some notes may still not be synced. For example, a couple notes may be skipped over.
             // Instead, all notes will have their linked notes regenerated, but only the specified notes will have their files regenerated.
             // See `render_notes()`.
-            generate_files_note_ids: GenerateFilesNoteIds::NoteIds(modified_notes),
+            generate_files_note_ids: NoteIdsSelector::NoteIds(modified_notes),
+            immutable_note_ids,
             overridden_output_raw_dir: None,
             include_linked_notes: true,
             include_cards: true,
@@ -414,7 +416,8 @@ async fn generate_notes(
                     let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
                         || sync_source_to == SyncSource::SparesLocalFiles;
                     let request = RenderNotesRequest {
-                        generate_files_note_ids: GenerateFilesNoteIds::All,
+                        generate_files_note_ids: NoteIdsSelector::All,
+                        immutable_note_ids: None,
                         overridden_output_raw_dir: Some(output_dir.clone()),
                         include_linked_notes,
                         include_cards: false,
@@ -518,7 +521,8 @@ async fn generate_notes(
             let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
                 || sync_source_to == SyncSource::SparesLocalFiles;
             let request = RenderNotesRequest {
-                generate_files_note_ids: GenerateFilesNoteIds::NoteIds(changed_note_ids),
+                generate_files_note_ids: NoteIdsSelector::NoteIds(changed_note_ids),
+                immutable_note_ids: None,
                 overridden_output_raw_dir: Some({
                     let mut parent = spares_dir.clone();
                     parent.pop(); // Go up from "notes" to "spares"
