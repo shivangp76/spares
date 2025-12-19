@@ -7,7 +7,7 @@ use spares::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
 use spares::config::read_external_config;
 use spares::model::{NoteId, RatingId, TagId};
 use spares::parsers::{find_parser, get_all_parsers};
-use spares::schema::note::{GenerateFilesNoteIds, RenderNotesRequest};
+use spares::schema::note::{NoteIdsSelector, RenderNotesRequest};
 use spares::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
 };
@@ -234,7 +234,8 @@ async fn sync_note_background(
 
     // Regenerate rendered files for this note
     let request = RenderNotesRequest {
-        generate_files_note_ids: GenerateFilesNoteIds::NoteIds(vec![note_id]),
+        generate_files_note_ids: NoteIdsSelector::NoteIds(vec![note_id]),
+        immutable_note_ids: None,
         overridden_output_raw_dir: None,
         include_linked_notes: true,
         include_cards: true,

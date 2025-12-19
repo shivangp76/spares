@@ -30,8 +30,8 @@ use spares::{
             CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
         },
         note::{
-            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, GenerateFilesNoteIds,
-            MatchedKeywordResponse, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
+            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, MatchedKeywordResponse,
+            NoteIdsSelector, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
             RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
@@ -954,8 +954,8 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 return Ok(());
             }
             let request = RenderNotesRequest {
-                generate_files_note_ids: query
-                    .map_or(GenerateFilesNoteIds::All, GenerateFilesNoteIds::Query),
+                generate_files_note_ids: query.map_or(NoteIdsSelector::All, NoteIdsSelector::Query),
+                immutable_note_ids: None,
                 overridden_output_raw_dir,
                 include_linked_notes,
                 include_cards,
