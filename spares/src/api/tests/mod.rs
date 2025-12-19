@@ -13,7 +13,7 @@ use crate::{
     config::read_external_config,
     model::{Card, NEW_CARD_STATE, RatingId, Tag},
     parsers::{
-        ConstructFileDataType, NoteImportAction, TemplateData, find_parser,
+        ConstructFileDataType, NoteImportAction, TemplateType, find_parser,
         generate_files::GenerateNoteFilesRequest, get_all_parsers, get_notes,
     },
     schema::{
@@ -258,11 +258,8 @@ async fn test_note_generator(pool: SqlitePool) {
             .collect::<Vec<_>>();
         let note_file_data =
             parser.construct_full_file_data(&full_requests, &NoteImportAction::Add);
-        let TemplateData {
-            note_template_contents,
-            card_template_contents: _,
-            body_placeholder,
-        } = parser.template_contents().unwrap();
+        let (note_template_contents, body_placeholder) =
+            parser.get_template_data(TemplateType::Note).unwrap();
         let file_contents = note_template_contents
             .as_str()
             .replace(&body_placeholder, &note_file_data);

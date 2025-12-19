@@ -8,15 +8,16 @@ use axum::{
 use chrono::Utc;
 use spares::{
     api::note::{
-        create_notes, delete_note, get_note, get_note_links, get_unmatched_keywords, list_notes,
-        render_notes, search_keyword, search_notes, update_notes,
+        create_notes, delete_note, export::export_notes, get_note, get_note_links,
+        get_unmatched_keywords, list_notes, render_notes, search_keyword, search_notes,
+        update_notes,
     },
     parsers::get_all_parsers,
     schema::{
         FilterOptions,
         note::{
-            CreateNotesRequest, NoteLinksRequest, RenderNotesRequest, SearchKeywordRequest,
-            SearchNotesRequest, UpdateNotesRequest,
+            CreateNotesRequest, ExportNotesRequest, NoteLinksRequest, RenderNotesRequest,
+            SearchKeywordRequest, SearchNotesRequest, UpdateNotesRequest,
         },
     },
 };
@@ -117,4 +118,14 @@ pub async fn get_note_links_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(note_links))
+}
+
+pub async fn export_notes_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<ExportNotesRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let result = export_notes(&data.db, body, &get_all_parsers())
+        .await
+        .map_err(error_to_response)?;
+    Ok(result) // Returns String directly
 }

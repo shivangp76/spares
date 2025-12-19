@@ -109,6 +109,11 @@ pub mod note {
     use std::path::PathBuf;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ExportNotesRequest {
+        pub query: String,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub enum GenerateFilesNoteIds {
         Query(String),
         NoteIds(Vec<NoteId>),
