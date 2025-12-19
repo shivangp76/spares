@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::search::{Token, TokenKind};
 use miette::{Diagnostic, Error, LabeledSpan, SourceSpan};
 use thiserror::Error;
@@ -592,7 +593,6 @@ mod tests {
             .into_iter()
             .map(|t| (t.kind, &input[t.span]))
             .collect::<Vec<_>>();
-        dbg!(&tokens);
         assert_eq!(
             tokens,
             vec![
