@@ -35,7 +35,7 @@ pub struct Note {
 
 /// Used for referencing other notes.
 /// - One note can have multiple keywords. For example, 1 theorem might be explained in multiple books, so all those books might be keywords.
-/// - Multiple notes can share a keywords. For example, all practice problems for "Integration by parts" might have that as a keyword.
+/// - Multiple notes can share a keywords. For example, all practice problems for "Integration by parts" might have that as a keyword. However, if this is the case, then there is no guarantee which note that keyword is linked to. It is advised to instead use the keyword "Integration by parts problems" for those notes and "Integration by parts" for the note explaining the concept.
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct NoteKeyword {
     pub note_id: NoteId,

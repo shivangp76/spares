@@ -14,6 +14,7 @@ use crate::{
     search::evaluator::Evaluator,
 };
 use sqlx::sqlite::SqlitePool;
+use std::collections::HashMap;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
     let keywords_data: Vec<(NoteId, String)> =
@@ -127,4 +128,17 @@ pub async fn get_note_links(
     note_links.truncate(cut);
 
     Ok(note_links)
+}
+
+pub async fn get_duplicate_keywords(db: &SqlitePool) -> Result<Vec<(String, Vec<NoteId>)>, Error> {
+    let keywords = get_keywords(db).await?;
+    let mut keyword_map: HashMap<String, Vec<NoteId>> = HashMap::new();
+    for (note_id, keyword) in keywords {
+        keyword_map.entry(keyword).or_default().push(note_id);
+    }
+    let duplicates: Vec<(String, Vec<NoteId>)> = keyword_map
+        .into_iter()
+        .filter(|(_, note_ids)| note_ids.len() > 1)
+        .collect();
+    Ok(duplicates)
 }

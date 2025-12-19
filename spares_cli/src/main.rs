@@ -30,9 +30,9 @@ use spares::{
             CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
         },
         note::{
-            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
-            NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
-            SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, GenerateFilesNoteIds,
+            MatchedKeywordResponse, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
+            RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
@@ -104,6 +104,8 @@ enum Commands {
     Export(ExportArgs),
     /// Get unmatched keywords
     UnmatchedKeywords,
+    /// Get keywords associated with more than 1 note
+    DuplicateKeywords,
     /// Rebuild a tag's dynamic membership
     RebuildTag {
         #[arg(short, long)]
@@ -1000,6 +1002,14 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
             let response = ensure_ok(response).await?;
             let response: Vec<UnmatchedKeywordResponse> =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            println!("{}", serde_json::to_string_pretty(&response).unwrap());
+        }
+        Commands::DuplicateKeywords => {
+            let url = format!("{}/api/notes/duplicate-keywords", base_url);
+            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+            let response = ensure_ok(response).await?;
+            let response: Vec<(String, Vec<NoteId>)> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&response).unwrap());
         }
