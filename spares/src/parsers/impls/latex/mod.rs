@@ -120,8 +120,15 @@ impl Parseable for LatexParserExerciseSolution {
         output_type: ConstructFileDataType,
         data: &GenerateNoteFilesRequest,
         note_import_action: &NoteImportAction,
+        include_separator: bool,
     ) -> String {
-        construct_file_data(self, output_type, data, note_import_action)
+        construct_file_data(
+            self,
+            output_type,
+            data,
+            note_import_action,
+            include_separator,
+        )
     }
 
     fn file_extension(&self) -> &'static str {
@@ -254,8 +261,15 @@ impl Parseable for LatexParserNote {
         output_type: ConstructFileDataType,
         data: &GenerateNoteFilesRequest,
         note_import_action: &NoteImportAction,
+        include_separator: bool,
     ) -> String {
-        construct_file_data(self, output_type, data, note_import_action)
+        construct_file_data(
+            self,
+            output_type,
+            data,
+            note_import_action,
+            include_separator,
+        )
     }
 
     fn file_extension(&self) -> &'static str {
@@ -409,6 +423,7 @@ fn construct_file_data(
     output_type: ConstructFileDataType,
     request: &GenerateNoteFilesRequest,
     note_import_action: &NoteImportAction,
+    include_separator: bool,
 ) -> String {
     let GenerateNoteFilesRequest {
         note_id,
@@ -478,7 +493,7 @@ fn construct_file_data(
                     action_value.get_write(),
                 ))
             };
-            let lines = [
+            let mut lines = vec![
                 // parser.construct_setting("spares: start"),
                 // "\n".to_string(),
                 "\n".to_string(),
@@ -498,6 +513,9 @@ fn construct_file_data(
                 // "\n".to_string(),
                 // parser.construct_setting("spares: end"),
             ];
+            if include_separator {
+                lines.push(r"\noindent\rule{\textwidth}{0.4pt}".to_string());
+            }
             let note_file_data = lines.into_iter().collect::<String>();
             note_file_data
         }

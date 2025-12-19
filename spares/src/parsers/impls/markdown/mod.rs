@@ -136,6 +136,7 @@ impl Parseable for MarkdownParser {
         output_type: ConstructFileDataType,
         request: &GenerateNoteFilesRequest,
         note_import_action: &NoteImportAction,
+        include_separator: bool,
     ) -> String {
         let GenerateNoteFilesRequest {
             note_id,
@@ -210,7 +211,7 @@ impl Parseable for MarkdownParser {
                 let keywords_string =
                     format!("keywords{} {}", settings_key_value_delim, keywords_str);
                 let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
-                let lines = [
+                let mut lines = vec![
                     // self.construct_comment("spares: start"),
                     // "\n".to_string(),
                     "\n".to_string(),
@@ -228,6 +229,9 @@ impl Parseable for MarkdownParser {
                     // "\n".to_string(),
                     // self.construct_comment("spares: end"),
                 ];
+                if include_separator {
+                    lines.push("---".to_string());
+                }
                 let note_file_data = lines.into_iter().collect::<String>();
                 note_file_data
             }
