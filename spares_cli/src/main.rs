@@ -30,7 +30,7 @@ use spares::{
             CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
         },
         note::{
-            CreateNoteRequest, CreateNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
+            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, GenerateFilesNoteIds, MatchedKeywordResponse,
             NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
             SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
@@ -100,6 +100,8 @@ enum Commands {
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),
+    /// Export notes matching a query
+    Export(ExportArgs),
     /// Get unmatched keywords
     UnmatchedKeywords,
     /// Rebuild a tag's dynamic membership
@@ -367,6 +369,11 @@ struct StatisticsArgs {
     scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
     date: DateTime<Utc>,
+}
+
+#[derive(Args, Debug)]
+struct ExportArgs {
+    query: String,
 }
 
 #[derive(Debug, Parser)]
@@ -792,6 +799,21 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 }
             }
         },
+        Commands::Export(export_args) => {
+            let request = ExportNotesRequest {
+                query: export_args.query,
+            };
+            let url = format!("{}/api/notes/export", base_url);
+            let response = client
+                .post(url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let response = ensure_ok(response).await?;
+            let response_text = response.text().await.map_err(|e| miette!("{}", e))?;
+            println!("{}", response_text);
+        }
         Commands::List(list_args) => match list_args.command {
             ListCommands::Parser { page, limit } => {
                 let parser_responses =

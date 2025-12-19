@@ -36,11 +36,11 @@ pub enum RenderOutputDirectoryType {
     Card,
 }
 
-#[derive(Clone, Debug)]
-pub struct TemplateData {
-    pub note_template_contents: String,
-    pub card_template_contents: String,
-    pub body_placeholder: String,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TemplateType {
+    Note,
+    Card,
+    Export,
 }
 
 // These functions directly parse the data since each parser might have different regex capture groups, so that logic should be in the parser, not abstracted.
@@ -152,6 +152,7 @@ pub trait Parseable: Send + Sync {
         output_type: ConstructFileDataType,
         request: &GenerateNoteFilesRequest,
         note_import_action: &NoteImportAction,
+        include_separator: bool,
     ) -> String;
 
     fn construct_full_file_data(
@@ -178,8 +179,14 @@ pub trait Parseable: Send + Sync {
         match requests.first().unwrap().0 {
             ConstructFileDataType::Note => {
                 let mut result = vec![self.construct_comment("spares: start"), "\n".to_string()];
+                let include_separator = requests.len() > 1;
                 for (data_type, request) in requests {
-                    result.push(self.construct_file_data(*data_type, request, note_import_action));
+                    result.push(self.construct_file_data(
+                        *data_type,
+                        request,
+                        note_import_action,
+                        include_separator,
+                    ));
                 }
                 result.extend(["\n".to_string(), self.construct_comment("spares: end")]);
                 result.into_iter().collect::<String>()
@@ -187,7 +194,7 @@ pub trait Parseable: Send + Sync {
             ConstructFileDataType::Card(..) => requests
                 .iter()
                 .map(|(data_type, request)| {
-                    self.construct_file_data(*data_type, request, note_import_action)
+                    self.construct_file_data(*data_type, request, note_import_action, false)
                 })
                 .collect::<String>(),
         }
@@ -207,40 +214,51 @@ pub trait Parseable: Send + Sync {
 
     fn file_extension(&self) -> &'static str;
 
-    fn template_contents(&self) -> Result<TemplateData, std::io::Error> {
+    fn get_template_data(
+        &self,
+        template_type: TemplateType,
+    ) -> Result<(String, String), std::io::Error> {
         let body_placeholder = self.construct_comment("spares: body");
         if cfg!(feature = "testing") {
             // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             // path.push("src/parsers/impls/templates/template.tex");
-            return Ok(TemplateData {
-                note_template_contents: body_placeholder.clone(),
-                card_template_contents: body_placeholder.clone(),
-                body_placeholder,
-            });
+            return Ok((body_placeholder.clone(), body_placeholder));
         }
-        let mut note_template_path: PathBuf = get_config_dir();
-        let parser_name = self.get_parser_name();
-        note_template_path.push(parser_name);
-        note_template_path.push("templates");
-        let file_extension = self.file_extension();
-        let note_template_filename = format!("note_template.{}", file_extension);
-        note_template_path.push(note_template_filename.as_str());
-        let note_template_contents = read_to_string(&note_template_path)?;
-
-        let mut card_template_path = note_template_path.clone();
-        let card_template_filename = format!("card_template.{}", file_extension);
-        card_template_path.set_file_name(card_template_filename);
-        let card_template_contents = if card_template_path.is_file() {
-            read_to_string(&card_template_path)?
-        } else {
-            note_template_contents.clone()
-        };
-
-        Ok(TemplateData {
-            note_template_contents,
-            card_template_contents,
-            body_placeholder,
-        })
+        match template_type {
+            TemplateType::Note | TemplateType::Card => {
+                let mut note_template_path: PathBuf = get_config_dir();
+                let parser_name = self.get_parser_name();
+                note_template_path.push(parser_name);
+                note_template_path.push("templates");
+                let file_extension = self.file_extension();
+                let note_template_filename = format!("note_template.{}", file_extension);
+                note_template_path.push(note_template_filename.as_str());
+                let note_template_contents = read_to_string(&note_template_path)?;
+                if template_type == TemplateType::Note {
+                    return Ok((note_template_contents, body_placeholder));
+                }
+                let mut card_template_path = note_template_path.clone();
+                let card_template_filename = format!("card_template.{}", file_extension);
+                card_template_path.set_file_name(card_template_filename);
+                let card_template_contents = if card_template_path.is_file() {
+                    read_to_string(&card_template_path)?
+                } else {
+                    note_template_contents.clone()
+                };
+                Ok((card_template_contents, body_placeholder))
+            }
+            TemplateType::Export => {
+                let mut export_template_path: PathBuf = get_config_dir();
+                let parser_name = self.get_parser_name();
+                export_template_path.push(parser_name);
+                export_template_path.push("templates");
+                let file_extension = self.file_extension();
+                let export_template_filename = format!("export_template.{}", file_extension);
+                export_template_path.push(export_template_filename.as_str());
+                let export_template_contents = read_to_string(&export_template_path)?;
+                Ok((export_template_contents, body_placeholder))
+            }
+        }
     }
 
     // This can be overridden for a specific parser, so it is in the trait.

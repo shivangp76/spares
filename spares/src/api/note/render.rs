@@ -22,7 +22,7 @@ use sqlx::sqlite::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, FromRow)]
-struct RenderNoteData {
+pub struct RenderNoteData {
     pub note_id: NoteId,
     pub data: String,
     pub keywords_value: Value,
@@ -53,6 +53,54 @@ pub fn match_keyword(
             },
         )
         .collect::<Vec<_>>()
+}
+
+pub async fn get_render_note_data(
+    db: &SqlitePool,
+    requested_note_ids: Option<Vec<NoteId>>,
+) -> Result<Vec<RenderNoteData>, Error> {
+    let placeholders = if let Some(ref note_ids) = requested_note_ids {
+        format!("WHERE n.id IN ({})", vec!["?"; note_ids.len()].join(", "))
+    } else {
+        String::new()
+    };
+    let query_str = format!(
+        r"SELECT
+          n.id as note_id,
+          n.data,
+          COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
+           FROM note_keyword nk
+           WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
+          n.custom_data,
+          p.name as parser_name,
+          COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value
+        FROM
+          note n
+        LEFT JOIN
+          note_tag nt ON n.id = nt.note_id
+        LEFT JOIN
+          tag t ON t.id = nt.tag_id AND t.query IS NULL
+        LEFT JOIN
+          parser p ON n.parser_id = p.id
+        {}
+        GROUP BY
+          n.id
+        ORDER BY
+          n.id",
+        placeholders
+    );
+    let mut query = sqlx::query_as(&query_str);
+
+    if let Some(ref note_ids) = requested_note_ids {
+        for note_id in note_ids {
+            query = query.bind(note_id);
+        }
+    }
+    let notes_data: Vec<RenderNoteData> = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(notes_data)
 }
 
 /// Updates existing note links by re-matching them against keywords.
@@ -180,47 +228,11 @@ pub async fn render_notes(
     // Render requested note ids
     //
     // Get notes data. Note that some other notes may have had their linked notes match to another note. However, we do not render them if their note id is not requested. (Unless all notes are requested.)
-    let placeholders = if let Some(ref note_ids) = requested_note_ids {
-        format!("WHERE n.id IN ({})", vec!["?"; note_ids.len()].join(", "))
-    } else {
-        String::new()
-    };
-    let query_str = format!(
-        r"SELECT
-          n.id as note_id,
-          n.data,
-          COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
-           FROM note_keyword nk
-           WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
-          n.custom_data,
-          p.name as parser_name,
-          COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value
-        FROM
-          note n
-        LEFT JOIN
-          note_tag nt ON n.id = nt.note_id
-        LEFT JOIN
-          tag t ON t.id = nt.tag_id AND t.query IS NULL
-        LEFT JOIN
-          parser p ON n.parser_id = p.id
-        {}
-        GROUP BY
-          n.id
-        ORDER BY
-          n.id",
-        placeholders
-    );
-    let mut query = sqlx::query_as(&query_str);
-
-    if let Some(ref note_ids) = requested_note_ids {
-        for note_id in note_ids {
-            query = query.bind(note_id);
-        }
-    }
-    let notes_data: Vec<RenderNoteData> = query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    let notes_data = get_render_note_data(
+        db,
+        requested_note_ids.map(|x| x.into_iter().collect::<Vec<_>>()),
+    )
+    .await?;
 
     // Load all note links for the notes we're rendering (if include_linked_notes)
     let mut linked_notes_map: Option<HashMap<_, _>> = None;
@@ -284,9 +296,9 @@ pub async fn render_notes(
     Ok(())
 }
 
-fn render_note_data_to_generate_files_request(
+pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
     render_note_data: &RenderNoteData,
-    linked_notes_map: Option<&HashMap<NoteId, Vec<NoteLink>>>,
+    linked_notes_map: Option<&HashMap<NoteId, Vec<NoteLink>, S>>,
 ) -> GenerateNoteFilesRequest {
     let RenderNoteData {
         note_id,

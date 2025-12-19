@@ -4,7 +4,7 @@ use crate::model::NoteId;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::parsers::{
     BackType, ConstructFileDataType, CustomData, NoteImportAction, Parseable,
-    RenderOutputDirectoryType, TemplateData, get_cards, get_output_raw_dir,
+    RenderOutputDirectoryType, TemplateType, get_cards, get_output_raw_dir,
 };
 use crate::schema::note::LinkedNote;
 use indicatif::{ParallelProgressIterator, ProgressStyle};
@@ -107,17 +107,25 @@ pub fn create_note_files_bulk(
     request: &GenerateNoteFilesRequests,
 ) -> Result<Vec<Result<PathBuf, Error>>, Error> {
     // Get template
-    let TemplateData {
-        note_template_contents,
-        card_template_contents,
-        body_placeholder,
-    } = parser.template_contents().map_err(|e| Error::Io {
+    let (note_template_contents, body_placeholder) = parser
+        .get_template_data(TemplateType::Note)
+        .map_err(|e| Error::Io {
         description: format!(
             "Failed to read template for parser {}",
             &parser.get_parser_name()
         ),
         source: e,
     })?;
+    let (card_template_contents, _) =
+        parser
+            .get_template_data(TemplateType::Card)
+            .map_err(|e| Error::Io {
+                description: format!(
+                    "Failed to read template for parser {}",
+                    &parser.get_parser_name()
+                ),
+                source: e,
+            })?;
 
     // let total_notes = request.requests.len();
     // let counter = Arc::new(AtomicUsize::new(0));
