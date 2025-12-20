@@ -219,7 +219,7 @@ pub trait Parseable: Send + Sync {
         template_type: TemplateType,
     ) -> Result<(String, String), std::io::Error> {
         let body_placeholder = self.construct_comment("spares: body");
-        if cfg!(feature = "testing") {
+        if cfg!(test) {
             // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));

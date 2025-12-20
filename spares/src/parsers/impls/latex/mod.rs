@@ -668,7 +668,7 @@ fn construct_image_occlusion(
 }
 
 fn get_output_rendered_dir(_: &impl Parseable, _output_type: RenderOutputDirectoryType) -> PathBuf {
-    if cfg!(feature = "testing") {
+    if cfg!(test) {
         return get_cache_dir();
     }
     std::env::var("LATEX_OUT_DIR")
