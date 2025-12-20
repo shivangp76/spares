@@ -325,7 +325,7 @@ impl Parseable for MarkdownParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(feature = "testing") {
+        if cfg!(test) {
             return get_cache_dir();
         }
         std::env::var("MARKDOWN_OUT_DIR")

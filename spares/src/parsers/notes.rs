@@ -453,7 +453,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "testing")]
     fn test_get_notes_convert_parser_advanced() {
         // This tests:
         // - Image occlusion

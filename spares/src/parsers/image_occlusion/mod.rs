@@ -35,11 +35,10 @@ pub use construct::{
     combine_image_occlusion_clozes, construct_image_occlusion_from_image,
     create_image_occlusion_cards, update_cloze_settings,
 };
-#[cfg(all(test, feature = "testing"))]
 pub use utils::get_image_occlusion_directory;
 pub use utils::{get_image_occlusion_card_filepath, get_image_occlusion_rendered_directory};
 
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
 mod test;
 
 const CLOZE_SETTINGS_KEY: &str = "data-cloze-settings";

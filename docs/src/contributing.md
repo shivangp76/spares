@@ -27,23 +27,6 @@ Thank you for your interest in contributing to Spares! We welcome all forms of c
 - Rust 1.85 or later
 - Cargo (comes with Rust)
 
-### Building
-```sh
-cargo build
-```
-
-### Testing
-```sh
-# Run all tests
-cargo test --features testing
-
-# Run specific test
-cargo test test_name
-
-# Run tests with logging
-RUST_LOG=debug cargo test
-```
-
 ### Code Coverage
 ```sh
 # Generate and open coverage report
