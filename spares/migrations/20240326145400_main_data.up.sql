@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS note_link (
     matched_keyword VARCHAR,
     score REAL,
     FOREIGN KEY (parent_note_id) REFERENCES note(id) ON DELETE CASCADE, -- When note is deleted, delete all corresponding linked notes
-    FOREIGN KEY (linked_note_id) REFERENCES note(id)
+    FOREIGN KEY (linked_note_id) REFERENCES note(id) ON DELETE SET NULL
     -- PRIMARY KEY (parent_note_id, linked_note_id)
 );
 
