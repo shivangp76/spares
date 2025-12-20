@@ -320,7 +320,7 @@ impl Parseable for TypstParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(feature = "testing") {
+        if cfg!(test) {
             return get_cache_dir();
         }
         std::env::var("TYPST_OUT_DIR")

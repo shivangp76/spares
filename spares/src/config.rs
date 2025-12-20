@@ -13,7 +13,7 @@ use toml_edit::DocumentMut;
 #[allow(clippy::missing_panics_doc)]
 pub fn get_config_dir() -> PathBuf {
     let crate_name = env!("CARGO_PKG_NAME");
-    if cfg!(feature = "testing") {
+    if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(crate_name);
         tmp_dir.push("config");
@@ -34,7 +34,7 @@ pub fn get_config_dir() -> PathBuf {
 #[allow(clippy::missing_panics_doc)]
 pub fn get_cache_dir() -> PathBuf {
     let crate_name = env!("CARGO_PKG_NAME");
-    if cfg!(feature = "testing") {
+    if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(crate_name);
         tmp_dir.push("cache");
@@ -55,7 +55,7 @@ pub fn get_cache_dir() -> PathBuf {
 #[allow(clippy::missing_panics_doc)]
 pub fn get_data_dir() -> PathBuf {
     let crate_name = env!("CARGO_PKG_NAME");
-    if cfg!(feature = "testing") {
+    if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(crate_name);
         tmp_dir.push("data");
