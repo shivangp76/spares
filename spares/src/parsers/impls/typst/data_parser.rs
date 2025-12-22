@@ -11,7 +11,7 @@ const KEYWORD_FUNC_NAME: &str = "key";
 enum DataMode {
     #[default]
     Markup,
-    // Code,
+    Code,
     Math,
 }
 
@@ -123,7 +123,15 @@ impl<'a> TypstDataParser<'a> {
                     let func_name = self
                         .s
                         .eat_while(|c| char::is_alphanumeric(c) || c == '_' || c == '-');
-                    self.s.eat();
+                    let open_delim = if let Some('(') = self.s.peek() {
+                        self.s.eat();
+                        Some('(')
+                    } else if let Some('[') = self.s.peek() {
+                        self.s.eat();
+                        Some('[')
+                    } else {
+                        None
+                    };
                     if func_name == CLOZE_FUNC_NAME && matches!(output_type, OutputType::Cloze) {
                         cloze_nesting_level += 1;
                         current_clozes.push(Cloze {
@@ -154,7 +162,14 @@ impl<'a> TypstDataParser<'a> {
                         ));
                     }
                     self.s.uneat();
-                    self.modes.push(DataMode::Markup);
+                    if open_delim == Some('[') {
+                        self.modes.push(DataMode::Markup);
+                    } else if open_delim == Some('(') {
+                        self.modes.push(DataMode::Code);
+                    }
+                }
+                Some(')') if matches!(self.modes.last(), Some(DataMode::Code)) => {
+                    self.modes.pop();
                 }
                 Some('[') if self.modes.last().is_none_or(|x| *x != DataMode::Math) => {
                     self.open_square_bracket_count += 1;
@@ -474,6 +489,35 @@ mod tests {
                 }],
             ]
         );
+    }
+
+    #[test]
+    fn test_cloze_in_math_with_code() {
+        let input = "#cl[ $ #table() $ ]";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(
+            all_clozes,
+            vec![vec![ClozeMatch {
+                start_match: 0..4,
+                end_match: 18..19,
+                settings_match: Range::default(),
+            }],]
+        );
+    }
+
+    #[test]
+    fn test_cloze_in_math_with_code_2() {
+        let input = "#cl[ $ #let a = b \\ $ ]";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(all_clozes.len(), 1);
     }
 
     #[test]
