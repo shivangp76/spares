@@ -350,10 +350,10 @@ impl Field {
     fn to_order_by_expr(field: &Field) -> Result<String, Error> {
         let field_type = field.get_field_type();
         match field_type {
-            FieldType::Integer | FieldType::Float | FieldType::DateTime => {}
+            FieldType::Integer | FieldType::Float | FieldType::DateTime | FieldType::String => {}
             _ => {
                 return Err(miette!(
-                    "Can only sort by numeric or DateTime fields. Got `{:?}` of type `{:?}`",
+                    "Can only sort by numeric, DateTime, or String fields. Got `{:?}` of type `{:?}`",
                     field,
                     field_type
                 ));
@@ -364,12 +364,18 @@ impl Field {
                 NoteField::Id | NoteField::LinkedTo => Ok("n.id".to_string()),
                 NoteField::CreatedAt => Ok("n.created_at".to_string()),
                 NoteField::UpdatedAt => Ok("n.updated_at".to_string()),
+                NoteField::ParserName => Ok("p.name".to_string()),
+                NoteField::Data => Ok("n.data".to_string()),
+                NoteField::Keyword => Ok(
+                    "(SELECT min(nk.keyword) FROM note_keyword nk WHERE nk.note_id = n.id)"
+                        .to_string(),
+                ),
+                NoteField::Tag => Ok(
+                    "(SELECT min(t.name) FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id)"
+                        .to_string(),
+                ),
                 // Unsupported types
-                NoteField::Data
-                | NoteField::ParserName
-                | NoteField::Tag
-                | NoteField::Keyword
-                | NoteField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
+                NoteField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
             },
             Field::Card(card_field) => match card_field {
                 CardField::Id => Ok("c.id".to_string()),
@@ -390,7 +396,7 @@ impl Field {
                 | CardField::SchedulerBuried
                 | CardField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
             },
-            Field::SortAsc(_) | Field::SortDesc(_) => unreachable!(),
+            Field::SortAsc(_) | Field::SortDesc(_) => Err(miette!("Cannot sort by sort field `{:?}`", field)),
         }
     }
 }
@@ -942,12 +948,11 @@ mod tests {
         ];
 
         for (input, expected_sql) in inputs {
-            dbg!(&input);
             let evaluator = Evaluator::new(input);
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql);
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
         }
     }
 
@@ -979,11 +984,13 @@ mod tests {
             "or tag=math",
         ];
         for input in inputs {
-            dbg!(&input);
             let evaluator = Evaluator::new(input);
             let query_str_res = evaluator.evaluate(EvaluatorReturnItemType::NoteIds);
-            dbg!(&query_str_res);
-            assert!(query_str_res.is_err());
+            assert!(
+                query_str_res.is_err(),
+                "Expected error for input: {}",
+                input
+            );
         }
     }
 
@@ -1071,7 +1078,40 @@ mod tests {
         ];
 
         for (input, expected_sql) in inputs {
-            dbg!(&input);
+            let evaluator = Evaluator::new(input);
+            let query_str = evaluator
+                .evaluate(EvaluatorReturnItemType::NoteIds)
+                .unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_string_sorting() {
+        let inputs = vec![
+            // Sort by parser_name
+            (
+                "sort_by_asc=parser_name",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id ORDER BY p.name ASC",
+            ),
+            // Sort by keyword (subquery min)
+            (
+                "sort_by_desc=keyword",
+                "SELECT DISTINCT n.id FROM note n ORDER BY (SELECT min(nk.keyword) FROM note_keyword nk WHERE nk.note_id = n.id) DESC",
+            ),
+            // Sort by tag (subquery min)
+            (
+                "sort_by_asc=tag",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT min(t.name) FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id) ASC",
+            ),
+            // Sort by data
+            (
+                "sort_by_desc=data",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.data DESC",
+            ),
+        ];
+
+        for (input, expected_sql) in inputs {
             let evaluator = Evaluator::new(input);
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
@@ -1083,11 +1123,6 @@ mod tests {
     #[test]
     fn test_sorting_errors() {
         let inputs = [
-            // Cannot sort by string fields
-            "sort_by_asc=tag",
-            "sort_by_desc=data",
-            "sort_by_asc=parser_name",
-            "sort_by_desc=keyword",
             // Cannot sort by boolean fields
             "sort_by_asc=c.suspended",
             "sort_by_desc=c.user_buried",
@@ -1110,10 +1145,8 @@ mod tests {
             "c.stability>=2 -(a sort_by_asc=linked_to)",
         ];
         for input in inputs {
-            dbg!(&input);
             let evaluator = Evaluator::new(input);
             let query_str_res = evaluator.evaluate(EvaluatorReturnItemType::NoteIds);
-            dbg!(&query_str_res);
             assert!(
                 query_str_res.is_err(),
                 "Expected error for input: {}",
