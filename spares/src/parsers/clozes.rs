@@ -179,8 +179,8 @@ impl BackReveal {
 #[repr(u8)]
 pub enum BackType {
     #[default]
-    FullNote = 1,
-    OnlyAnswered = 2,
+    NoteFilePath = 1,
+    CardFilePath = 2,
 }
 
 impl BackType {
@@ -190,16 +190,16 @@ impl BackType {
         emphasis: bool,
     ) -> Self {
         if emphasis {
-            return BackType::OnlyAnswered;
+            return BackType::CardFilePath;
         }
         match back_reveal {
-            BackReveal::FullNote => BackType::FullNote,
+            BackReveal::FullNote => BackType::NoteFilePath,
             BackReveal::OnlyAnswered => {
                 if groupings_count == 1 {
                     // We can just use the full note as the back to avoid having to generate an extra card back.
-                    BackType::FullNote
+                    BackType::NoteFilePath
                 } else {
-                    BackType::OnlyAnswered
+                    BackType::CardFilePath
                 }
             }
         }

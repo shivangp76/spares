@@ -792,12 +792,12 @@ mod tests {
         // Verify the first card is suspended and has its `back_type` updated
         let card = cards.get(1).unwrap();
         assert_eq!(card.special_state, None);
-        assert_eq!(card.back_type, BackType::OnlyAnswered);
+        assert_eq!(card.back_type, BackType::CardFilePath);
 
         // Verify the second card is suspended and has its `back_type` updated
         let card = cards.get(2).unwrap();
         assert_eq!(card.special_state, Some(SpecialState::Suspended));
-        assert_eq!(card.back_type, BackType::OnlyAnswered);
+        assert_eq!(card.back_type, BackType::CardFilePath);
 
         let mapping = [
             (1, Some(1)),

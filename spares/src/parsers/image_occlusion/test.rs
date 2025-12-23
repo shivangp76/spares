@@ -120,7 +120,7 @@ fn test_get_cards_image_occlusion_1() {
                     front_conceal: FrontConceal::OnlyGrouping,
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
-                    back_type: BackType::FullNote,
+                    back_type: BackType::NoteFilePath,
                     data: vec![
                         NotePart::SurroundingData("a\n".to_string()),
                         NotePart::ImageOcclusion { cloze_indices: vec![(0, ClozeHiddenReplacement::ToAnswer{ hint: None })], data: image_occlusion_1.clone() },
@@ -134,7 +134,7 @@ fn test_get_cards_image_occlusion_1() {
                     front_conceal: FrontConceal::OnlyGrouping,
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
-                    back_type: BackType::FullNote,
+                    back_type: BackType::NoteFilePath,
                     data: vec![
                         NotePart::SurroundingData("a\n".to_string()),
                         NotePart::ImageOcclusion { cloze_indices: vec![(1, ClozeHiddenReplacement::ToAnswer{ hint: None })], data: image_occlusion_1.clone() },
@@ -148,7 +148,7 @@ fn test_get_cards_image_occlusion_1() {
                     front_conceal: FrontConceal::OnlyGrouping,
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
-                    back_type: BackType::FullNote,
+                    back_type: BackType::NoteFilePath,
                     data: vec![
                         NotePart::SurroundingData("a\n<!--- spares: image occlusion start --->\n<!--- original_image_filepath = \"/tmp/spares/data/image_occlusions/test-A-1.svg\" --->\n<!--- clozes_filepath = \"/tmp/spares/data/image_occlusions/test-A-1_clozes.svg\" --->\n<!--- front_conceal = \"only_grouping\" --->\n<!--- back_reveal = \"full_note\" --->\n<!--- back_emphasis = false --->\n![Test A 1](/tmp/spares/data/image_occlusions/test-A-1.svg)\n<!--- spares: image occlusion end --->\nb\n".to_string()),
                         // Both clozes are combined into 1 ImageOcclusionData, since they are in the same group
@@ -269,7 +269,7 @@ fn test_get_cards_image_occlusion_2() {
         front_conceal: FrontConceal::OnlyGrouping,
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
-        back_type: BackType::FullNote,
+        back_type: BackType::NoteFilePath,
         data: vec![
             NotePart::SurroundingData("a".to_string()),
             NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -439,7 +439,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
             front_conceal: FrontConceal::AllGroupings,
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis,
-            back_type: BackType::OnlyAnswered,
+            back_type: BackType::CardFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;o:1;f:all;b:a;be:true]".to_string()),
@@ -470,7 +470,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
             front_conceal: FrontConceal::AllGroupings,
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis,
-            back_type: BackType::OnlyAnswered,
+            back_type: BackType::CardFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;o:1;f:all;b:a;be:true]".to_string()),
@@ -673,7 +673,7 @@ fn test_get_cards_image_occlusion_grouping() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -692,7 +692,7 @@ fn test_get_cards_image_occlusion_grouping() {
             front_conceal: FrontConceal::AllGroupings,
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis: false,
-            back_type: BackType::OnlyAnswered,
+            back_type: BackType::CardFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -780,7 +780,7 @@ fn test_image_occlusion_parallel_performance() {
         front_conceal: FrontConceal::OnlyGrouping,
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
-        back_type: BackType::FullNote,
+        back_type: BackType::NoteFilePath,
         data: image_occlusions
             .iter()
             .map(|(cloze_indices, data)| NotePart::ImageOcclusion {

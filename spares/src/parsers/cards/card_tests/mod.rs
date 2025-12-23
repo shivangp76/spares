@@ -20,7 +20,7 @@ fn test_get_cards_basic_1_markdown() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -44,7 +44,7 @@ fn test_get_cards_basic_1_markdown() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{".to_string()),
@@ -75,7 +75,7 @@ fn test_get_cards_add_order_1() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -124,7 +124,7 @@ fn test_get_cards_order() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -154,7 +154,7 @@ fn test_get_cards_hint() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::ClozeStart("{{[h:this is a hint]".to_string()),
                 NotePart::ClozeData(
@@ -184,7 +184,7 @@ fn test_get_cards_hidden_1() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;hide:]".to_string()),
@@ -227,7 +227,7 @@ fn test_get_cards_hidden_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData("a".to_string(), ClozeHiddenReplacement::NotToAnswer),
@@ -249,7 +249,7 @@ fn test_get_cards_hidden_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData(
@@ -271,7 +271,7 @@ fn test_get_cards_hidden_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;hide:; g:3]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;hide:; g:2]".to_string()),
@@ -331,7 +331,7 @@ fn test_get_cards_reverse_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -350,7 +350,7 @@ fn test_get_cards_reverse_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -384,7 +384,7 @@ fn test_get_cards_reverse_2() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::ClozeData(
                     "a".to_string(),
@@ -430,7 +430,7 @@ fn test_get_cards_nested_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -449,7 +449,7 @@ fn test_get_cards_nested_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -481,7 +481,7 @@ fn test_get_cards_nested_1_reverse() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -500,7 +500,7 @@ fn test_get_cards_nested_1_reverse() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -522,7 +522,7 @@ fn test_get_cards_nested_1_reverse() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1,2;r:]b".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -566,7 +566,7 @@ fn test_get_cards_nested_siblings() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -585,7 +585,7 @@ fn test_get_cards_nested_siblings() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -604,7 +604,7 @@ fn test_get_cards_nested_siblings() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b{{[o:2]c}}d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -640,7 +640,7 @@ fn test_get_cards_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -669,7 +669,7 @@ fn test_get_cards_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -688,7 +688,7 @@ fn test_get_cards_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData(
                         "a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e{{[o:2]f}}g".to_string(),
@@ -726,7 +726,7 @@ fn test_get_cards_grouping_multiple() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -752,7 +752,7 @@ fn test_get_cards_grouping_multiple() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -771,7 +771,7 @@ fn test_get_cards_grouping_multiple() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:2;o:3]".to_string()),
@@ -803,7 +803,7 @@ fn test_get_cards_grouping_all_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -829,7 +829,7 @@ fn test_get_cards_grouping_all_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -871,7 +871,7 @@ fn test_get_cards_grouping_all_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -895,7 +895,7 @@ fn test_get_cards_grouping_all_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -933,7 +933,7 @@ fn test_get_cards_grouping_all_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -959,7 +959,7 @@ fn test_get_cards_grouping_all_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -995,7 +995,7 @@ fn test_get_cards_grouping_all_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1021,7 +1021,7 @@ fn test_get_cards_grouping_all_3() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -1065,7 +1065,7 @@ fn test_get_cards_grouping_all_4() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1087,7 +1087,7 @@ fn test_get_cards_grouping_all_4() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1135,7 +1135,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1;ro:]".to_string()),
                     NotePart::SurroundingData("a".to_string()),
@@ -1153,7 +1153,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1;ro:]a}}b".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -1193,7 +1193,7 @@ fn test_get_cards_circular_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -1217,7 +1217,7 @@ fn test_get_cards_circular_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -1241,7 +1241,7 @@ fn test_get_cards_circular_grouping_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1; g:2;o:2]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;o:3]".to_string()),
@@ -1285,7 +1285,7 @@ fn test_get_cards_order_before_grouping() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1322,7 +1322,7 @@ fn test_get_cards_grouping_multiple_times() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),
@@ -1351,7 +1351,7 @@ fn test_get_cards_grouping_multiple_times() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),
@@ -1385,7 +1385,7 @@ fn test_get_cards_front_conceal_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1406,7 +1406,7 @@ fn test_get_cards_front_conceal_1() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1425,7 +1425,7 @@ fn test_get_cards_front_conceal_1() {
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1469,7 +1469,7 @@ fn test_get_cards_front_conceal_2() {
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1;f:all]".to_string()),
@@ -1495,7 +1495,7 @@ fn test_get_cards_front_conceal_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1514,7 +1514,7 @@ fn test_get_cards_front_conceal_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -1545,7 +1545,7 @@ fn test_get_cards_back_reveal_1() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1;b:a]".to_string()),
@@ -1576,7 +1576,7 @@ fn test_get_cards_back_reveal_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1597,7 +1597,7 @@ fn test_get_cards_back_reveal_2() {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1616,7 +1616,7 @@ fn test_get_cards_back_reveal_2() {
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::OnlyAnswered,
                 back_emphasis: false,
-                back_type: BackType::OnlyAnswered,
+                back_type: BackType::CardFilePath,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1668,7 +1668,7 @@ fn test_get_cards_suspended_only_deserialized() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1699,7 +1699,7 @@ fn test_get_cards_suspended_false() {
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
-            back_type: BackType::FullNote,
+            back_type: BackType::NoteFilePath,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
