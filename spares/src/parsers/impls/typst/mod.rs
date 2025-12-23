@@ -585,6 +585,7 @@ pub mod tests {
                     is_suspended: None,
                     front_conceal: FrontConceal::OnlyGrouping,
                     back_reveal: BackReveal::FullNote,
+                    back_emphasis: false,
                     back_type: BackType::FullNote,
                     data: vec![
                         NotePart::ClozeStart("#cl[".to_string()),
@@ -601,6 +602,7 @@ pub mod tests {
                     is_suspended: None,
                     front_conceal: FrontConceal::OnlyGrouping,
                     back_reveal: BackReveal::FullNote,
+                    back_emphasis: false,
                     back_type: BackType::FullNote,
                     data: vec![
                         NotePart::SurroundingData("#cl[\n- Test ".to_string()),
@@ -633,6 +635,7 @@ pub mod tests {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("[".to_string()),
