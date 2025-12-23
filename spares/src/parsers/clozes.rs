@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::str::FromStr;
 
+pub const DEFAULT_BACK_EMPHASIS: bool = false;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClozeMatch {
     // Both `start_match_range` and `end_match_range` are needed. We can't do just `range: (start_match_range.start..end_match_range.end)`. This is because when parsing cards, we create `NotePart::ClozeStart` and `NotePart::ClozeEnd`.
@@ -110,6 +112,8 @@ pub struct ClozeGroupingSettings {
     pub hidden_no_answer: bool,
     pub front_conceal: FrontConceal,
     pub back_reveal: BackReveal,
+    /// Whether the clozes that should be answered should be emphasized on the back of the card.
+    pub back_emphasis: bool,
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
@@ -128,6 +132,7 @@ pub struct ClozeGroupingSettings {
     Serialize,
     Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum FrontConceal {
     #[default]
     #[strum(serialize = "")]
@@ -155,6 +160,7 @@ impl FrontConceal {
     Serialize,
     Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum BackReveal {
     #[default]
     #[strum(serialize = "n")]
@@ -178,11 +184,19 @@ pub enum BackType {
 }
 
 impl BackType {
-    pub fn from_back_reveal(back_reveal: &BackReveal, groupings_count: usize) -> Self {
+    pub fn from_back_reveal(
+        back_reveal: &BackReveal,
+        groupings_count: usize,
+        emphasis: bool,
+    ) -> Self {
+        if emphasis {
+            return BackType::OnlyAnswered;
+        }
         match back_reveal {
             BackReveal::FullNote => BackType::FullNote,
             BackReveal::OnlyAnswered => {
                 if groupings_count == 1 {
+                    // We can just use the full note as the back to avoid having to generate an extra card back.
                     BackType::FullNote
                 } else {
                     BackType::OnlyAnswered
@@ -265,11 +279,13 @@ impl ClozeGroupingSettings {
             hidden_no_answer: false,
             front_conceal: FrontConceal::default(),
             back_reveal: BackReveal::default(),
+            back_emphasis: DEFAULT_BACK_EMPHASIS,
             skip_serialization: false,
         };
-        if let Some((front_conceal, back_reveal)) = modify_defaults_fn {
+        if let Some((front_conceal, back_reveal, back_emphasis)) = modify_defaults_fn {
             result.front_conceal = front_conceal;
             result.back_reveal = back_reveal;
+            result.back_emphasis = back_emphasis;
         }
         result
     }
@@ -297,6 +313,7 @@ pub struct ClozeSettingsKeys {
     pub hidden_no_answer: &'static str,
     pub front_conceal: &'static str,
     pub back_reveal: &'static str,
+    pub back_emphasis: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -311,6 +328,7 @@ impl Default for ClozeSettingsKeys {
             hidden_no_answer: "hide",
             front_conceal: "f",
             back_reveal: "b",
+            back_emphasis: "be",
         }
     }
 }
@@ -357,6 +375,7 @@ pub fn construct_cloze_string(
             hidden_no_answer,
             front_conceal,
             back_reveal,
+            back_emphasis,
             skip_serialization,
         },
     ) in grouping_settings_with_all.iter().enumerate()
@@ -420,6 +439,12 @@ pub fn construct_cloze_string(
             grouping_parts.push(format!(
                 "{}{}{}",
                 cloze_settings_keys.back_reveal, settings_key_value_delim, back_reveal
+            ));
+        }
+        if *back_emphasis != default.back_emphasis {
+            grouping_parts.push(format!(
+                "{}{}{}",
+                cloze_settings_keys.back_emphasis, settings_key_value_delim, back_emphasis
             ));
         }
 
@@ -490,8 +515,9 @@ fn parse_grouping_settings(
         is_suspended: is_suspended_key,
         hint: hint_key,
         hidden_no_answer: hidden_no_answer_key,
-        front_conceal: front_key,
-        back_reveal: back_key,
+        front_conceal: front_conceal_key,
+        back_reveal: back_reveal_key,
+        back_emphasis: back_emphasis_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -511,7 +537,7 @@ fn parse_grouping_settings(
             settings.hint = Some((**value).to_string());
         } else if key == hidden_no_answer_key {
             current_grouping_settings.hidden_no_answer = true;
-        } else if key == front_key {
+        } else if key == front_conceal_key {
             current_grouping_settings.front_conceal =
                 FrontConceal::from_str(value).map_err(|e| {
                     LibraryError::Card(CardErrorKind::InvalidSettings {
@@ -520,7 +546,7 @@ fn parse_grouping_settings(
                         at: card_settings_indices.clone().into(),
                     })
                 })?;
-        } else if key == back_key {
+        } else if key == back_reveal_key {
             current_grouping_settings.back_reveal = BackReveal::from_str(value).map_err(|e| {
                 LibraryError::Card(CardErrorKind::InvalidSettings {
                     description: format!("The card back `{}` is invalid. Error: {}", value, e),
@@ -528,6 +554,8 @@ fn parse_grouping_settings(
                     at: card_settings_indices.clone().into(),
                 })
             })?;
+        } else if key == back_emphasis_key {
+            current_grouping_settings.back_emphasis = true;
         } else if key == orders_key {
             let orders = value
                 .split(',')
@@ -588,7 +616,7 @@ fn parse_grouping_settings(
 // type ModifyDefaultsFn = Option<fn(&mut ClozeGroupingSettings)>;
 // type ModifyDefaultsFn = Option<impl Fn(&mut ClozeGroupingSettings)>;
 // type ModifyDefaultsFn = Option<Arc<dyn Fn(&mut ClozeGroupingSettings)>>;
-type ModifyDefaultsFn = Option<(FrontConceal, BackReveal)>;
+type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
 
 #[allow(clippy::too_many_lines)]
 pub fn parse_card_settings(
