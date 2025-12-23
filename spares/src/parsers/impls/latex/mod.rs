@@ -766,7 +766,7 @@ mod tests {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}[o:1]".to_string()),
@@ -790,7 +790,7 @@ mod tests {
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
-                back_type: BackType::FullNote,
+                back_type: BackType::NoteFilePath,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}".to_string()),
