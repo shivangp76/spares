@@ -765,6 +765,7 @@ mod tests {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
@@ -788,6 +789,7 @@ mod tests {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),

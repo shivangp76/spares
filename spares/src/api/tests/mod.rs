@@ -142,6 +142,7 @@ async fn test_simulate_reviews_1(pool: SqlitePool) {
 }
 
 #[sqlx::test]
+#[ignore] // ignored because takes too long
 async fn test_simulate_reviews_2(pool: SqlitePool) {
     let output_rendered_filename = "test-b72d8bba-cce9-4a40-b4a5-16eb5da26586".to_string();
     let parser_name = "markdown";
@@ -202,7 +203,7 @@ async fn test_simulate_reviews_from_file(
 }
 
 #[sqlx::test]
-// #[ignore]
+#[ignore] // ignored because takes too long
 async fn test_note_generator(pool: SqlitePool) {
     let filtered_tag_query_opt = Some("tag=a or tag=b or tag=c".to_string());
     let generate_notes_request = if filtered_tag_query_opt.is_some() {

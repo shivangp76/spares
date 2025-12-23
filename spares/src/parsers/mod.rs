@@ -179,13 +179,13 @@ pub trait Parseable: Send + Sync {
         match requests.first().unwrap().0 {
             ConstructFileDataType::Note => {
                 let mut result = vec![self.construct_comment("spares: start"), "\n".to_string()];
-                let include_separator = requests.len() > 1;
-                for (data_type, request) in requests {
+                for (i, (data_type, request)) in requests.iter().enumerate() {
                     result.push(self.construct_file_data(
                         *data_type,
                         request,
                         note_import_action,
-                        include_separator,
+                        // If it's not the last one, then include separator.
+                        i != requests.len() - 1,
                     ));
                 }
                 result.extend(["\n".to_string(), self.construct_comment("spares: end")]);

@@ -20,6 +20,7 @@ use std::sync::Arc;
 mod card_tests;
 mod match_cards;
 pub mod overlapper;
+use crate::parsers::DEFAULT_BACK_EMPHASIS;
 pub use match_cards::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,7 +30,7 @@ pub struct CardData {
     pub is_suspended: Option<bool>,
     pub front_conceal: FrontConceal,
     pub back_reveal: BackReveal,
-    // NOTE: This does not always match `BackReveal`. If there is only 1 grouping and `back_reveal == BackReveal::OnlyGrouping`, then we can just use the full note as the back to avoid having to generate an extra card back.
+    pub back_emphasis: bool,
     pub back_type: BackType,
     pub data: Vec<NotePart>,
 }
@@ -198,17 +199,22 @@ fn boil_up_settings(
         // Get first non-hidden cloze to determine if it is an image occlusion cloze. This
         // determines the default settings.
         let first_cloze = clozes.iter().find(|(_, x)| !x.skip_serialization).unwrap();
-        let modify_defaults = first_cloze
-            .0
-            .image_occlusion
-            .as_ref()
-            .map(|d| (d.data.front_conceal, d.data.back_reveal));
+        let modify_defaults = first_cloze.0.image_occlusion.as_ref().map(|d| {
+            (
+                d.data.front_conceal,
+                d.data.back_reveal,
+                d.data.back_emphasis,
+            )
+        });
         let mut boiled_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
         for (cloze_data, grouping_settings) in &mut *clozes {
-            let modify_defaults = cloze_data
-                .image_occlusion
-                .as_ref()
-                .map(|d| (d.data.front_conceal, d.data.back_reveal));
+            let modify_defaults = cloze_data.image_occlusion.as_ref().map(|d| {
+                (
+                    d.data.front_conceal,
+                    d.data.back_reveal,
+                    d.data.back_emphasis,
+                )
+            });
             let default_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
             // Update `boiled_cloze_settings` with settings that deviated from main and reset settings to default
             let ClozeGroupingSettings {
@@ -219,6 +225,7 @@ fn boil_up_settings(
                 is_suspended,
                 front_conceal,
                 back_reveal,
+                back_emphasis,
                 // Individual cloze settings. Don't boil up
                 hidden_no_answer: _,
                 skip_serialization,
@@ -253,6 +260,12 @@ fn boil_up_settings(
                 boiled_cloze_settings.back_reveal = *back_reveal;
                 grouping_settings.back_reveal = default_cloze_settings.back_reveal;
             }
+            if *back_emphasis != default_cloze_settings.back_emphasis
+                || cloze_data.image_occlusion.is_some()
+            {
+                boiled_cloze_settings.back_emphasis = *back_emphasis;
+                grouping_settings.back_emphasis = default_cloze_settings.back_emphasis;
+            }
         }
 
         // Update first non-hidden cloze with boiled settings
@@ -265,6 +278,7 @@ fn boil_up_settings(
         cloze.1.is_suspended = boiled_cloze_settings.is_suspended;
         cloze.1.front_conceal = boiled_cloze_settings.front_conceal;
         cloze.1.back_reveal = boiled_cloze_settings.back_reveal;
+        cloze.1.back_emphasis = boiled_cloze_settings.back_emphasis;
 
         // Validate settings
         let contains_image_occlusion = clozes
@@ -379,12 +393,13 @@ fn modify_card_settings(
                     .map(|cloze| cloze.1.clone())
                     .collect::<Vec<_>>();
                 let current_cloze = &cards_raw_refcell[card_index][cloze_index];
-                let modify_defaults = current_cloze
-                    .0
-                    .borrow()
-                    .image_occlusion
-                    .as_ref()
-                    .map(|d| (d.data.front_conceal, d.data.back_reveal));
+                let modify_defaults = current_cloze.0.borrow().image_occlusion.as_ref().map(|d| {
+                    (
+                        d.data.front_conceal,
+                        d.data.back_reveal,
+                        d.data.back_emphasis,
+                    )
+                });
                 let cloze_settings_string = construct_cloze_string(
                     &cards_raw_refcell[card_index][cloze_index]
                         .0
@@ -618,7 +633,11 @@ pub fn get_cards(
         data,
         add_order,
         move_files,
-        (FrontConceal::default(), BackReveal::default()),
+        (
+            FrontConceal::default(),
+            BackReveal::default(),
+            DEFAULT_BACK_EMPHASIS,
+        ),
     )
 }
 
@@ -630,7 +649,7 @@ pub fn get_cards_main(
     data: &str,
     add_order: bool,
     move_files: bool,
-    defaults: (FrontConceal, BackReveal),
+    defaults: (FrontConceal, BackReveal, bool),
 ) -> Result<Vec<CardData>, LibraryError> {
     let mut data = data.to_string();
     let cloze_matches = parser.get_clozes(&data)?;
@@ -760,6 +779,7 @@ pub fn get_cards_main(
             hidden_no_answer: _,
             front_conceal,
             back_reveal,
+            back_emphasis,
             skip_serialization: _,
         } = &clozes
             .iter()
@@ -890,7 +910,8 @@ pub fn get_cards_main(
                 data: card_data,
                 front_conceal: *front_conceal,
                 back_reveal: *back_reveal,
-                back_type: BackType::from_back_reveal(back_reveal, groupings_count),
+                back_emphasis: *back_emphasis,
+                back_type: BackType::from_back_reveal(back_reveal, groupings_count, *back_emphasis),
             });
         }
     }

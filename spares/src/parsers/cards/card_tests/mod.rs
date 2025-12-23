@@ -19,6 +19,7 @@ fn test_get_cards_basic_1_markdown() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
@@ -42,6 +43,7 @@ fn test_get_cards_basic_1_markdown() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
@@ -72,6 +74,7 @@ fn test_get_cards_add_order_1() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -120,6 +123,7 @@ fn test_get_cards_order() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -149,6 +153,7 @@ fn test_get_cards_hint() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::ClozeStart("{{[h:this is a hint]".to_string()),
@@ -178,6 +183,7 @@ fn test_get_cards_hidden_1() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -220,6 +226,7 @@ fn test_get_cards_hidden_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
@@ -241,6 +248,7 @@ fn test_get_cards_hidden_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
@@ -262,6 +270,7 @@ fn test_get_cards_hidden_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;hide:; g:3]a}}".to_string()),
@@ -321,6 +330,7 @@ fn test_get_cards_reverse_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -339,6 +349,7 @@ fn test_get_cards_reverse_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeData(
@@ -372,6 +383,7 @@ fn test_get_cards_reverse_2() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::ClozeData(
@@ -417,6 +429,7 @@ fn test_get_cards_nested_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -435,6 +448,7 @@ fn test_get_cards_nested_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
@@ -466,6 +480,7 @@ fn test_get_cards_nested_1_reverse() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -484,6 +499,7 @@ fn test_get_cards_nested_1_reverse() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeData(
@@ -505,6 +521,7 @@ fn test_get_cards_nested_1_reverse() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1,2;r:]b".to_string()),
@@ -548,6 +565,7 @@ fn test_get_cards_nested_siblings() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -566,6 +584,7 @@ fn test_get_cards_nested_siblings() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
@@ -584,6 +603,7 @@ fn test_get_cards_nested_siblings() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b{{[o:2]c}}d".to_string()),
@@ -619,6 +639,7 @@ fn test_get_cards_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeData(
@@ -647,6 +668,7 @@ fn test_get_cards_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e".to_string()),
@@ -665,6 +687,7 @@ fn test_get_cards_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData(
@@ -702,6 +725,7 @@ fn test_get_cards_grouping_multiple() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -727,6 +751,7 @@ fn test_get_cards_grouping_multiple() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
@@ -745,6 +770,7 @@ fn test_get_cards_grouping_multiple() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c{{[o:2]d}}e".to_string()),
@@ -776,6 +802,7 @@ fn test_get_cards_grouping_all_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -801,6 +828,7 @@ fn test_get_cards_grouping_all_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
@@ -842,6 +870,7 @@ fn test_get_cards_grouping_all_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
@@ -865,6 +894,7 @@ fn test_get_cards_grouping_all_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
@@ -902,6 +932,7 @@ fn test_get_cards_grouping_all_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -927,6 +958,7 @@ fn test_get_cards_grouping_all_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
@@ -962,6 +994,7 @@ fn test_get_cards_grouping_all_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -987,6 +1020,7 @@ fn test_get_cards_grouping_all_3() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
@@ -1030,6 +1064,7 @@ fn test_get_cards_grouping_all_4() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1051,6 +1086,7 @@ fn test_get_cards_grouping_all_4() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
@@ -1098,6 +1134,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1;ro:]".to_string()),
@@ -1115,6 +1152,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1;ro:]a}}b".to_string()),
@@ -1154,6 +1192,7 @@ fn test_get_cards_circular_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
@@ -1177,6 +1216,7 @@ fn test_get_cards_circular_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
@@ -1200,6 +1240,7 @@ fn test_get_cards_circular_grouping_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1; g:2;o:2]a}}".to_string()),
@@ -1243,6 +1284,7 @@ fn test_get_cards_order_before_grouping() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -1279,6 +1321,7 @@ fn test_get_cards_grouping_multiple_times() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1307,6 +1350,7 @@ fn test_get_cards_grouping_multiple_times() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1340,6 +1384,7 @@ fn test_get_cards_front_conceal_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1360,6 +1405,7 @@ fn test_get_cards_front_conceal_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
@@ -1378,6 +1424,7 @@ fn test_get_cards_front_conceal_1() {
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1421,6 +1468,7 @@ fn test_get_cards_front_conceal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1446,6 +1494,7 @@ fn test_get_cards_front_conceal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
@@ -1464,6 +1513,7 @@ fn test_get_cards_front_conceal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
@@ -1494,6 +1544,7 @@ fn test_get_cards_back_reveal_1() {
             is_suspended: None,
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -1524,6 +1575,7 @@ fn test_get_cards_back_reveal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1544,6 +1596,7 @@ fn test_get_cards_back_reveal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
+                back_emphasis: false,
                 back_type: BackType::FullNote,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
@@ -1562,6 +1615,7 @@ fn test_get_cards_back_reveal_2() {
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::OnlyAnswered,
+                back_emphasis: false,
                 back_type: BackType::OnlyAnswered,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
@@ -1613,6 +1667,7 @@ fn test_get_cards_suspended_only_deserialized() {
             is_suspended: Some(true),
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
@@ -1643,6 +1698,7 @@ fn test_get_cards_suspended_false() {
             is_suspended: Some(false),
             front_conceal: FrontConceal::OnlyGrouping,
             back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
             back_type: BackType::FullNote,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),

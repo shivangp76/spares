@@ -157,7 +157,11 @@ fn complete_note(
         note_data.as_str(),
         add_order,
         move_files,
-        (local_settings.front_conceal, local_settings.back_reveal),
+        (
+            local_settings.front_conceal,
+            local_settings.back_reveal,
+            local_settings.back_emphasis,
+        ),
     )?;
     // dbg!(&cards);
     validate_cards(&cards)?;
@@ -519,26 +523,24 @@ mod tests {
         <!--- spares: image occlusion start --->
         <!--- original_image_filepath = \"{}\" --->
         <!--- clozes_filepath = \"{}\" --->
-        <!--- front_conceal = \"{:?}\" --->
-        <!--- back_reveal = \"{:?}\" --->
+        <!--- front_conceal = \"all_groupings\" --->
+        <!--- back_reveal = \"only_answered\" --->
+        <!--- back_emphasis = false --->
         <!--- spares: image occlusion end --->
         b
         <!--- spares: image occlusion start --->
         <!--- original_image_filepath = \"{}\" --->
         <!--- clozes_filepath = \"{}\" --->
-        <!--- front_conceal = \"{:?}\" --->
-        <!--- back_reveal = \"{:?}\" --->
+        <!--- front_conceal = \"all_groupings\" --->
+        <!--- back_reveal = \"only_answered\" --->
+        <!--- back_emphasis = false --->
         [Image Occlusion](/some/random/image/path)
         <!--- spares: image occlusion end --->
         c" },
             original_image_filepath_1.display(),
             clozes_filepath_1.display(),
-            FrontConceal::AllGroupings,
-            BackReveal::OnlyAnswered,
             original_image_filepath_2.display(),
             clozes_filepath_2.display(),
-            FrontConceal::AllGroupings,
-            BackReveal::OnlyAnswered,
         );
         let note_data = format!(
             indoc! {"
@@ -566,8 +568,9 @@ mod tests {
                 % spares: image occlusion start
                 % original_image_filepath = "/tmp/spares/data/image_occlusions/test-convert-parser-1.svg"
                 % clozes_filepath = "/tmp/spares/data/image_occlusions/test-convert-parser-1_clozes.svg"
-                % front_conceal = "AllGroupings"
-                % back_reveal = "OnlyAnswered"
+                % front_conceal = "all_groupings"
+                % back_reveal = "only_answered"
+                % back_emphasis = false
                 \begin{figure}
                   \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-1.svg
                 \end{figure}
@@ -576,8 +579,9 @@ mod tests {
                 % spares: image occlusion start
                 % original_image_filepath = "/tmp/spares/data/image_occlusions/test-convert-parser-2.svg"
                 % clozes_filepath = "/tmp/spares/data/image_occlusions/test-convert-parser-2_clozes.svg"
-                % front_conceal = "AllGroupings"
-                % back_reveal = "OnlyAnswered"
+                % front_conceal = "all_groupings"
+                % back_reveal = "only_answered"
+                % back_emphasis = false
                 \begin{figure}
                   \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-2.svg
                 \end{figure}

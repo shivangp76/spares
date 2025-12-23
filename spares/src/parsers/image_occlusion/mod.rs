@@ -49,6 +49,7 @@ const CLOZES_GROUP_ID: &str = "clozes-group";
 pub struct ImageOcclusionConfig {
     pub cloze_to_answer_color: String,
     pub cloze_not_to_answer_color: String,
+    pub cloze_emphasis_fill_opacity: f64,
     pub cloze_hint_font_size: u32,
 }
 
@@ -57,6 +58,7 @@ impl Default for ImageOcclusionConfig {
         Self {
             cloze_to_answer_color: "#FF7E7E".to_string(),
             cloze_not_to_answer_color: "#FFEBA2".to_string(),
+            cloze_emphasis_fill_opacity: 0.3,
             cloze_hint_font_size: 16,
         }
     }
@@ -128,6 +130,13 @@ pub struct ImageOcclusionData {
     /// settings will be modified to match this value, since the setting boiled up.
     #[serde(default = "BackReveal::image_occlusion_default")]
     pub back_reveal: BackReveal,
+    /// Whether the clozes that should be answered should be emphasized on the back of the card.
+    #[serde(default = "back_emphasis_image_occlusion_default")]
+    pub back_emphasis: bool,
+}
+
+fn back_emphasis_image_occlusion_default() -> bool {
+    true
 }
 
 fn deserialize_path_buf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -224,6 +233,7 @@ pub fn parse_image_occlusion_data(
             clozes_file_contents.as_str(),
             image_occlusion_data.front_conceal,
             image_occlusion_data.back_reveal,
+            image_occlusion_data.back_emphasis,
             current_grouping_number,
         )?;
         clozes.push(ParsedImageOcclusionData {

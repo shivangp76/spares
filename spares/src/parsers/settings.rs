@@ -1,7 +1,7 @@
 use super::{BackReveal, FrontConceal};
 use crate::helpers::parse_list;
 use crate::model::{CustomData, NOTE_ID_KEY, NoteId};
-use crate::parsers::Parseable;
+use crate::parsers::{DEFAULT_BACK_EMPHASIS, Parseable};
 use crate::{
     LibraryError, NoteErrorKind,
     adapters::{
@@ -9,7 +9,7 @@ use crate::{
         impls::spares::{SparesAdapter, SparesRequestProcessor},
     },
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::ops::Range;
 use std::str::FromStr;
 
@@ -21,7 +21,7 @@ pub enum NoteImportAction {
     Delete(NoteId),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NoteSettings {
     pub action: NoteImportAction,
     pub tags: Vec<String>,
@@ -32,6 +32,8 @@ pub struct NoteSettings {
     pub front_conceal: FrontConceal,
     /// Shortcut for applying this settings to all of the note's cards
     pub back_reveal: BackReveal,
+    /// Shortcut for applying this settings to all of the note's cards
+    pub back_emphasis: bool,
     pub custom_data: CustomData,
     /// Internal
     pub linked_notes: Vec<String>,
@@ -39,6 +41,24 @@ pub struct NoteSettings {
     pub errors_and_warnings: Vec<LibraryError>,
     /// Internal
     pub cards_count: Option<usize>,
+}
+
+impl Default for NoteSettings {
+    fn default() -> Self {
+        Self {
+            action: NoteImportAction::default(),
+            tags: Vec::default(),
+            keywords: Vec::default(),
+            is_suspended: Default::default(),
+            front_conceal: FrontConceal::default(),
+            back_reveal: BackReveal::default(),
+            back_emphasis: DEFAULT_BACK_EMPHASIS,
+            custom_data: Map::default(),
+            linked_notes: Vec::default(),
+            errors_and_warnings: Vec::default(),
+            cards_count: Option::default(),
+        }
+    }
 }
 
 // Each value can either be read and written with the same string,
@@ -81,6 +101,7 @@ pub struct NoteSettingsKeys {
     pub is_suspended: ReadWriteValue,
     pub front_conceal: ReadWriteValue,
     pub back_reveal: ReadWriteValue,
+    pub back_emphasis: ReadWriteValue,
     pub custom_data: ReadWriteValue,
     pub settings_delim: &'static str,
     pub settings_key_value_delim: &'static str,
@@ -108,6 +129,7 @@ impl Default for NoteSettingsKeys {
             is_suspended: ReadWriteValue::Same("is-suspended"),
             front_conceal: ReadWriteValue::Same("front-conceal"),
             back_reveal: ReadWriteValue::Same("back-reveal"),
+            back_emphasis: ReadWriteValue::Same("back-emphasis"),
             custom_data: ReadWriteValue::Same("custom-data"),
             settings_delim: ";",
             settings_key_value_delim: ":",
@@ -154,6 +176,7 @@ pub fn parse_note_settings(
         is_suspended: is_suspended_key,
         front_conceal: front_conceal_key,
         back_reveal: back_reveal_key,
+        back_emphasis: back_emphasis_key,
         custom_data: custom_data_key,
         global_settings_prefix: global_prefix,
         settings_delim,
@@ -294,6 +317,8 @@ pub fn parse_note_settings(
                         ));
                     }
                 }
+            } else if back_emphasis_key.matches_read(key) {
+                settings.back_emphasis = true;
             } else if custom_data_key.matches_read(key) {
                 let parsed_custom_data: Result<CustomData, _> = serde_json::from_str(value);
                 match parsed_custom_data {

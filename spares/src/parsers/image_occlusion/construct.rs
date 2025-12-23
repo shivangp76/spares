@@ -224,6 +224,7 @@ pub fn modify_clozes_for_card(
     clozes: &mut [&mut Element],
     front_conceal: FrontConceal,
     back_reveal: BackReveal,
+    back_emphasis: bool,
     side: CardSide,
     image_occlusion_config: &ImageOcclusionConfig,
 ) {
@@ -231,6 +232,7 @@ pub fn modify_clozes_for_card(
         cloze_to_answer_color,
         cloze_not_to_answer_color,
         cloze_hint_font_size,
+        cloze_emphasis_fill_opacity,
     } = image_occlusion_config;
     // NOTE: We cannot use the original image in any case since there may be markup present in the clozes file that should be shown.
     for (i, cloze) in &mut clozes.iter_mut().enumerate() {
@@ -241,42 +243,36 @@ pub fn modify_clozes_for_card(
                 if let Some((_, cloze_replacement)) = cloze_replacement_opt {
                     match cloze_replacement {
                         ClozeHiddenReplacement::ToAnswer { hint } => {
-                            cloze
-                                .attributes
-                                .insert("fill".to_string(), cloze_to_answer_color.clone());
+                            set_cloze_color(cloze, cloze_to_answer_color);
                             if let Some(hint) = hint {
                                 modify_hint_cloze(cloze, hint, *cloze_hint_font_size);
                             }
                         }
                         ClozeHiddenReplacement::NotToAnswer => {
-                            modify_not_to_answer_cloze(cloze, cloze_not_to_answer_color);
+                            set_cloze_color(cloze, cloze_not_to_answer_color);
                         }
                     }
                 } else {
                     match front_conceal {
-                        FrontConceal::OnlyGrouping => modify_hide_cloze_mask(cloze),
+                        FrontConceal::OnlyGrouping => hide_cloze_mask(cloze),
                         FrontConceal::AllGroupings => {
-                            modify_not_to_answer_cloze(cloze, cloze_not_to_answer_color);
+                            set_cloze_color(cloze, cloze_not_to_answer_color);
                         }
                     }
                 }
             }
             CardSide::Back => {
-                match back_reveal {
-                    BackReveal::FullNote => {
-                        // Reveal all data by hiding all the cloze masks
-                        modify_hide_cloze_mask(cloze);
+                if let Some((_, r)) = cloze_replacement_opt
+                    && matches!(r, ClozeHiddenReplacement::ToAnswer { .. })
+                {
+                    if back_emphasis {
+                        set_cloze_color(cloze, cloze_to_answer_color);
+                        set_cloze_fill_opacity(cloze, *cloze_emphasis_fill_opacity);
+                    } else {
+                        hide_cloze_mask(cloze);
                     }
-                    BackReveal::OnlyAnswered => {
-                        if let Some((_, r)) = cloze_replacement_opt
-                            && r != &ClozeHiddenReplacement::NotToAnswer
-                        {
-                            // Cloze is a part of the grouping and required an answer, so reveal it by hiding the cloze mask
-                            modify_hide_cloze_mask(cloze);
-                        }
-                        // Otherwise, the cloze is not a part of the grouping or did not require
-                        // and answer, so keep this cloze mask.
-                    }
+                } else if matches!(back_reveal, BackReveal::FullNote) {
+                    hide_cloze_mask(cloze);
                 }
             }
         }
@@ -320,17 +316,24 @@ fn modify_hint_cloze(cloze: &mut Element, hint: &str, cloze_hint_font_size: u32)
     cloze.children.push(xmltree::XMLNode::Element(hint_element));
 }
 
-fn modify_not_to_answer_cloze(cloze: &mut Element, cloze_not_to_answer_color: &str) {
+fn set_cloze_color(cloze: &mut Element, cloze_color: &str) {
     cloze
         .attributes
-        .insert("fill".to_string(), cloze_not_to_answer_color.to_string());
+        .insert("fill".to_string(), cloze_color.to_string());
 }
 
-fn modify_hide_cloze_mask(cloze: &mut Element) {
+fn hide_cloze_mask(cloze: &mut Element) {
     cloze
         .attributes
         .insert("opacity".to_string(), "0".to_string());
     // .insert("visibility".to_string(), "hidden".to_string());
+}
+
+fn set_cloze_fill_opacity(cloze: &mut Element, cloze_emphasis_fill_opacity: f64) {
+    cloze.attributes.insert(
+        "fill-opacity".to_string(),
+        cloze_emphasis_fill_opacity.to_string(),
+    );
 }
 
 pub(crate) fn create_image_occlusion_card(
@@ -345,6 +348,7 @@ pub(crate) fn create_image_occlusion_card(
         clozes_filepath,
         front_conceal,
         back_reveal,
+        back_emphasis,
     } = image_occlusion_data;
     let clozes_file_contents = read_to_string(clozes_filepath).map_err(|_| {
         LibraryError::Note(NoteErrorKind::Other {
@@ -369,6 +373,7 @@ pub(crate) fn create_image_occlusion_card(
         &mut clozes,
         *front_conceal,
         *back_reveal,
+        *back_emphasis,
         side,
         config,
     );
@@ -696,6 +701,7 @@ pub fn get_clozes_from_svg_str(
     data: &str,
     front_conceal: FrontConceal,
     back_reveal: BackReveal,
+    back_emphasis: bool,
     current_grouping_number: &mut u32,
 ) -> Result<Vec<ParsedImageOcclusionCloze>, LibraryError> {
     let mut svg_element = Element::parse(data.as_bytes()).map_err(|e| {
@@ -729,7 +735,7 @@ pub fn get_clozes_from_svg_str(
                 current_grouping_number,
                 &note_settings_keys,
                 &cloze_settings_keys,
-                Some((front_conceal, back_reveal)),
+                Some((front_conceal, back_reveal, back_emphasis)),
             )
         })
         .collect::<Result<Vec<_>, _>>()?
