@@ -247,7 +247,7 @@ fn create_note_files(
                         render,
                     )?;
 
-                    if matches!(card.back_type, BackType::OnlyAnswered) {
+                    if matches!(card.back_type, BackType::CardFilePath) {
                         let card_file_data = parser.construct_full_file_data(
                             &[(
                                 ConstructFileDataType::Card(card_order, card, CardSide::Back),

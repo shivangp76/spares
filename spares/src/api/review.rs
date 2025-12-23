@@ -253,7 +253,7 @@ pub async fn get_review_card(
         note_raw_path.set_extension(parser.file_extension());
 
         let card_back_rendered_path = match card_back_type {
-            BackType::FullNote => {
+            BackType::NoteFilePath => {
                 // Note rendered path
                 let mut note_rendered_path =
                     parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
@@ -261,7 +261,7 @@ pub async fn get_review_card(
                     .push(parser.get_output_filename(RenderOutputType::Note, note_id));
                 CardBackRenderedPath::Note(note_rendered_path)
             }
-            BackType::OnlyAnswered => {
+            BackType::CardFilePath => {
                 // Card back rendered path
                 let mut card_back_rendered_path =
                     parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
