@@ -229,6 +229,8 @@ pub struct SparesExternalConfig {
     pub parser: ParserConfig,
     pub image_occlusion: ImageOcclusionConfig,
     pub overlapper: OverlapperConfig,
+    #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+    pub set_card_due_date_duration: Duration,
 }
 
 impl Default for SparesExternalConfig {
@@ -244,6 +246,7 @@ impl Default for SparesExternalConfig {
             parser: ParserConfig::default(),
             image_occlusion: ImageOcclusionConfig::default(),
             overlapper: OverlapperConfig::default(),
+            set_card_due_date_duration: Duration::weeks(1),
         }
     }
 }
