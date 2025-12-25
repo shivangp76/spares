@@ -309,28 +309,38 @@ where
     if let Ok(naive_date) = date_res {
         let naive_dt = naive_date.and_hms_opt(0, 0, 0).unwrap();
         let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, chrono::Utc);
-        // Send update
-        let request = UpdateCardRequest {
-            selector: CardsSelector::Ids(card_ids(dt_utc)),
-            desired_retention: None,
-            special_state: None,
-            due: Some(dt_utc),
-        };
-        let url = format!("{}/api/cards", base_url);
-        let response = client
-            .patch(url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| format!("{}", e))?;
-        if response.status() != StatusCode::OK {
-            let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-            let message = response_json.get("message");
-            return Err(message.unwrap().to_string());
-        }
+        set_due_date(card_ids(dt_utc), dt_utc, base_url, client).await?;
         return Ok(true);
     }
     Ok(false)
+}
+
+pub async fn set_due_date(
+    card_ids: Vec<CardId>,
+    due_date: DateTime<Utc>,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    // Send update
+    let request = UpdateCardRequest {
+        selector: CardsSelector::Ids(card_ids),
+        desired_retention: None,
+        special_state: None,
+        due: Some(due_date),
+    };
+    let url = format!("{}/api/cards", base_url);
+    let response = client
+        .patch(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    if response.status() != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(message.unwrap().to_string());
+    }
+    Ok(())
 }
 
 pub async fn bury_until_later_today(
