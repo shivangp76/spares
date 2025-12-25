@@ -1,4 +1,5 @@
 use crate::import::import_from_files;
+use chrono::Utc;
 use clap::Args;
 use inquire::Select;
 use reqwest::{Client, StatusCode};
@@ -25,7 +26,7 @@ use utils::{
 };
 
 mod utils;
-use crate::review::utils::{note_id_to_cards, set_due_date_with_prompt};
+use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_prompt};
 use spares::schema::card::CardResponse;
 pub use utils::forget_card;
 
@@ -82,8 +83,12 @@ enum ReviewAction {
     ForgetCard,
     #[strum(serialize = "Set Card Due Date")]
     SetCardDueDate,
+    #[strum(to_string = "Set Card Due Date in {0}")]
+    SetCardDueDateIn(String),
     #[strum(serialize = "Set Note Due Date")]
     SetNoteDueDate,
+    #[strum(to_string = "Set Note Due Date in {0}")]
+    SetNoteDueDateIn(String),
     #[strum(serialize = "Suspend Card")]
     SuspendCard,
     #[strum(serialize = "Suspend Note (card + siblings)")]
@@ -288,10 +293,58 @@ pub async fn review_cards(
     let scheduler_name = &review_args.scheduler_name;
     let tag_id = review_args.filter_args.tag_id;
 
+    let review_card_opt = get_review_card(
+        &review_args.filter_args,
+        open_command,
+        base_url,
+        client,
+        true,
+    )
+    .await?;
+
+    if review_card_opt.is_none() {
+        println!("Done");
+        return Ok(());
+    }
+
+    let (mut review_card_response, mut card_front_rendered_child) = review_card_opt.unwrap();
+    let config = read_external_config().map_err(|e| format!("{}", e))?;
+    let flagged_tag_name = config.flagged_tag_name;
+    let set_card_due_date_duration = config.set_card_due_date_duration;
+    let set_card_due_date_duration_str = format_duration(set_card_due_date_duration);
+
     // Get scheduler ratings
     let mut all_options = ReviewAction::iter()
-        .filter(|x| !matches!(*x, ReviewAction::Rate { .. }))
+        .filter(|x| {
+            !matches!(
+                *x,
+                ReviewAction::Rate { .. }
+                    | ReviewAction::SetCardDueDateIn(_)
+                    | ReviewAction::SetNoteDueDateIn(_)
+            )
+        })
         .collect::<Vec<_>>();
+
+    // Insert dynamic actions after the manual ones
+    if let Some(pos) = all_options
+        .iter()
+        .position(|x| matches!(x, ReviewAction::SetCardDueDate))
+    {
+        all_options.insert(
+            pos + 1,
+            ReviewAction::SetCardDueDateIn(set_card_due_date_duration_str.clone()),
+        );
+    }
+    if let Some(pos) = all_options
+        .iter()
+        .position(|x| matches!(x, ReviewAction::SetNoteDueDate))
+    {
+        all_options.insert(
+            pos + 1,
+            ReviewAction::SetNoteDueDateIn(set_card_due_date_duration_str),
+        );
+    }
+
     // Keep the ratings near the top (after the null action) so they are all visible
     all_options.splice(
         2..2,
@@ -307,24 +360,10 @@ pub async fn review_cards(
     let mut card_flipped = false;
     let mut advance_review_card = false;
 
-    let review_card_opt = get_review_card(
-        &review_args.filter_args,
-        open_command,
-        base_url,
-        client,
-        true,
-    )
-    .await?;
     let mut recall_start = Instant::now();
     // let mut recall_duration = std::time::Duration::MAX;
     let mut recall_duration = None;
-    if review_card_opt.is_none() {
-        println!("Done");
-        return Ok(());
-    }
-    let (mut review_card_response, mut card_front_rendered_child) = review_card_opt.unwrap();
-    let config = read_external_config().map_err(|e| format!("{}", e))?;
-    let flagged_tag_name = config.flagged_tag_name;
+
     // let mut action_history = Vec::new();
     loop {
         if advance_review_card {
@@ -467,7 +506,9 @@ pub async fn review_cards(
             | ReviewAction::SuspendNote
             | ReviewAction::ForgetCard
             | ReviewAction::SetCardDueDate
+            | ReviewAction::SetCardDueDateIn(_)
             | ReviewAction::SetNoteDueDate
+            | ReviewAction::SetNoteDueDateIn(_)
             | ReviewAction::BuryUntilLaterToday => {
                 match chosen_action {
                     ReviewAction::BuryCard => {
@@ -506,6 +547,17 @@ pub async fn review_cards(
                         }
                         println!("Due date updated.");
                     }
+                    ReviewAction::SetCardDueDateIn(_) => {
+                        let due_date = Utc::now() + set_card_due_date_duration;
+                        set_due_date(
+                            vec![review_card_response.card_id],
+                            due_date,
+                            base_url,
+                            client,
+                        )
+                        .await?;
+                        println!("Due date updated.");
+                    }
                     ReviewAction::SetNoteDueDate => {
                         let cards: Vec<CardResponse> =
                             note_id_to_cards(review_card_response.note_id, base_url, client)
@@ -525,6 +577,19 @@ pub async fn review_cards(
                         if !completed {
                             continue;
                         }
+                        println!("Due date updated.");
+                    }
+                    ReviewAction::SetNoteDueDateIn(_) => {
+                        let cards: Vec<CardResponse> =
+                            note_id_to_cards(review_card_response.note_id, base_url, client)
+                                .await?;
+                        let due_date = Utc::now() + set_card_due_date_duration;
+                        let card_ids = cards
+                            .into_iter()
+                            .filter(|card| card.due <= due_date)
+                            .map(|card| card.id)
+                            .collect::<Vec<_>>();
+                        set_due_date(card_ids, due_date, base_url, client).await?;
                         println!("Due date updated.");
                     }
                     ReviewAction::BuryUntilLaterToday => {
