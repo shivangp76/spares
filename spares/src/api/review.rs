@@ -204,15 +204,15 @@ pub async fn get_review_card(
     let time_estimate_query_str = format!(
         indoc! {
         "SELECT
-            SUM(
-                CAST(COALESCE(
-                    (SELECT AVG(duration) FROM review_log WHERE card_id = c.id),
-                    {}
-                ) AS REAL)
-            ) as total_time
+            SUM(COALESCE(avg_duration, {})) as total_time
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
+        LEFT JOIN (
+            SELECT card_id, AVG(duration) as avg_duration
+            FROM review_log
+            GROUP BY card_id
+        ) rl ON rl.card_id = c.id
         WHERE c.special_state IS NULL
             {}"
         },
