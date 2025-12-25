@@ -291,14 +291,13 @@ async fn update_changes(
                     .into_iter()
                     .map(|(filepath, _, _)| filepath)
                     .collect::<Vec<_>>();
-                let quiet = false;
                 import_from_files(
                     adapter.as_mut(),
                     Some(parser.as_ref()),
                     None,
                     filepaths.as_slice(),
                     true,
-                    quiet,
+                    false, // not quiet
                 )
                 .await
                 .map_err(|e| format!("{}", e))?;

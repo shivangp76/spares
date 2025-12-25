@@ -93,16 +93,8 @@ enum ReviewAction {
     SuspendCard,
     #[strum(serialize = "Suspend Note (card + siblings)")]
     SuspendNote,
-    // Undo,
     Exit,
 }
-
-// NoteId is for each action
-// enum UndoReviewAction {
-//     Rate,
-//     Suspend,
-//     TagNote { tag_name: String },
-// }
 
 async fn get_review_card(
     filter_args: &FilterArgs,
@@ -170,7 +162,6 @@ async fn get_review_card(
                     .unwrap()
                     .display()
             );
-            // println!("Note Raw Path: {}", &review_card.note_raw_path.display());
 
             // Display cards left by state
             if !review_card.cards_left_by_state.is_empty() {
@@ -361,10 +352,8 @@ pub async fn review_cards(
     let mut advance_review_card = false;
 
     let mut recall_start = Instant::now();
-    // let mut recall_duration = std::time::Duration::MAX;
     let mut recall_duration = None;
 
-    // let mut action_history = Vec::new();
     loop {
         if advance_review_card {
             println!();
@@ -616,7 +605,6 @@ pub async fn review_cards(
                 advance_review_card = true;
             }
             ReviewAction::TagNote => {
-                // action_history.push()
                 tag_note(
                     review_card_response.note_id,
                     &flagged_tag_name,
@@ -657,9 +645,7 @@ pub async fn review_cards(
             //         // Close card front
             //         close_rendered_file(&mut card_front_rendered_child)?;
             //     }
-            //     // Remove previously submitted rating
-            //
-            //     // Get review card (which should be the same as the previous card)
+            //     // Send server request for undo action
             // }
             ReviewAction::Exit => {
                 close_rendered_file(&mut card_front_rendered_child, close_command, true)?;

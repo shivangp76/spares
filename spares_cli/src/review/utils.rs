@@ -321,7 +321,6 @@ pub async fn set_due_date(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    // Send update
     let request = UpdateCardRequest {
         selector: CardsSelector::Ids(card_ids),
         desired_retention: None,
@@ -408,7 +407,6 @@ pub fn format_duration(duration: chrono::Duration) -> String {
     }
     if minutes > 0 || started {
         result.push(format!("{}m", minutes));
-        // started = true;
     }
     // Always include seconds
     result.push(format!("{}s", seconds));

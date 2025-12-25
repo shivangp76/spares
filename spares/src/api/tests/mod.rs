@@ -81,8 +81,6 @@ async fn read_generated_notes(
     let mut adapter = Box::new(SparesAdapter::new(SparesRequestProcessor::Database {
         pool: pool.clone(),
     }));
-    let run = true;
-    let quiet = true;
     let file_contents = read_to_string(file_path)
         .map_err(|e| Error::Io {
             description: format!("Failed to read {}", &file_path.display()),
@@ -94,12 +92,9 @@ async fn read_generated_notes(
         .start_end_regex()
         .captures_iter(file_contents.as_str())
         .map(|c| c.unwrap().get(1).unwrap().as_str())
-        // .inspect(|block| dbg!(&block))
         .collect::<Vec<_>>();
     for block in blocks {
-        // dbg!(&block);
         let notes = get_notes(parser.as_ref(), None, block, adapter.as_ref(), false).unwrap();
-        // dbg!(&notes);
         all_notes.extend(notes);
     }
     let start_date_value = all_notes
@@ -112,7 +107,7 @@ async fn read_generated_notes(
     let start_date: DateTime<Utc> = serde_json::from_value(start_date_value.clone()).unwrap();
     adapter
         .as_mut()
-        .process_data(all_notes, parser.as_ref(), run, quiet, start_date)
+        .process_data(all_notes, parser.as_ref(), true, true, start_date) // run quietly
         .await
         .unwrap();
     let notes = list_notes(
