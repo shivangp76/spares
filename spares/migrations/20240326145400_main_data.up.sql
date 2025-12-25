@@ -48,19 +48,10 @@ CREATE TABLE IF NOT EXISTS card (
     stability REAL NOT NULL,
     difficulty REAL NOT NULL,
     desired_retention REAL NOT NULL,
-    -- elapsed_days INTEGER NOT NULL,
-    -- scheduled_days INTEGER NOT NULL,
-    -- reps INTEGER NOT NULL,
-    -- lapses INTEGER NOT NULL,
     special_state INTEGER, -- Enum
     state INTEGER NOT NULL, -- Foreign key to 'state' table
-    -- last_review INTEGER NOT NULL, -- Store as Unix Time
-    -- previous_state INTEGER NOT NULL,
-    -- review_log_id INTEGER NOT NULL, -- Foreign key to 'review_log' table
     custom_data TEXT NOT NULL, -- JSON string
     FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE -- When note is deleted, delete all corresponding cards
-    --FOREIGN KEY (state_id) REFERENCES state(id),
-    --FOREIGN KEY (review_log_id) REFERENCES review_log(id)
 );
 
 CREATE TABLE IF NOT EXISTS note_link (
@@ -93,20 +84,13 @@ CREATE TABLE IF NOT EXISTS card_tag (
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE CASCADE, -- When card is deleted, delete its corresponding card_tag entry
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE -- When tag is deleted, delete its corresponding card_tag entry
     UNIQUE (card_id, tag_id)
-    -- PRIMARY KEY (card_id, tag_id)
 );
-
--- CREATE TABLE IF NOT EXISTS scheduler (
---     id INTEGER PRIMARY KEY NOT NULL,
---     name VARCHAR NOT NULL
--- );
 
 CREATE TABLE IF NOT EXISTS review_log (
     id INTEGER PRIMARY KEY NOT NULL,
     card_id INTEGER,
     reviewed_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
     rating INTEGER NOT NULL,
-    -- scheduler_id INTEGER NOT NULL,
     scheduler_name TEXT NOT NULL,
     scheduled_time INTEGER NOT NULL,
     duration INTEGER NOT NULL,
@@ -114,7 +98,6 @@ CREATE TABLE IF NOT EXISTS review_log (
     custom_data TEXT NOT NULL, -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
     -- Do _NOT_ delete review logs when cards are deleted. We want to know how many cards were reviewed in the past for historical reasons. Instead, set the `card_id` column to null, to signify the row is an orphan.
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE SET NULL
-    --FOREIGN KEY (scheduler_id) REFERENCES scheduler(id)
 );
 
 -- Add indexes to optimize JOIN operations in note rendering queries
