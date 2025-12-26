@@ -27,7 +27,7 @@ use spares::{
     },
     schema::{
         card::{
-            CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
+            CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
         },
         note::{
             CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, MatchedKeywordResponse,
@@ -676,7 +676,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     SpecialStateLocal::Buried => Some(SpecialStateUpdate::Buried),
                     SpecialStateLocal::None => None,
                 });
-                let request = UpdateCardRequest {
+                let request = UpdateCardsRequest {
                     selector,
                     desired_retention,
                     special_state,
@@ -954,7 +954,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 return Ok(());
             }
             let request = RenderNotesRequest {
-                generate_files_note_ids: query.map_or(NotesSelector::All, NotesSelector::Query),
+                selector: query.map_or(NotesSelector::All, NotesSelector::Query),
                 immutable_note_ids: None,
                 overridden_output_raw_dir,
                 include_linked_notes,

@@ -4,7 +4,7 @@ use crate::{
     model::{Card, CardId, NEW_CARD_STATE, NoteId, ReviewLog, SpecialState, TagId},
     schedulers::get_scheduler_from_string,
     schema::card::{
-        CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardRequest,
+        CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
     },
     search::evaluator::Evaluator,
 };
@@ -34,7 +34,7 @@ pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardRespo
 
 pub async fn update_card(
     db: &SqlitePool,
-    body: UpdateCardRequest,
+    body: UpdateCardsRequest,
     at: DateTime<Utc>,
 ) -> Result<Vec<CardResponse>, Error> {
     let card_ids = match body.selector {
@@ -259,7 +259,7 @@ mod tests {
         let card_id = cards[0].id;
 
         // Update card
-        let update_card_request = UpdateCardRequest {
+        let update_card_request = UpdateCardsRequest {
             selector: CardsSelector::Ids(vec![card_id]),
             desired_retention: None,
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
