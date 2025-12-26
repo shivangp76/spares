@@ -23,7 +23,7 @@ use crate::{
     config::{SparesExternalConfig, read_external_config},
     helpers::{FractionalDays, get_start_end_local_date},
     model::{Card, RatingId, ReviewLog},
-    schedulers::{SrsScheduler, stepped_range_inclusive},
+    schedulers::{MoveCardsResult, SrsScheduler, stepped_range_inclusive},
     schema::review::{Rating, RatingSubmission},
     search::evaluator::Evaluator,
 };
@@ -47,7 +47,7 @@ use utils::{
     rating_to_number, state_to_number,
 };
 
-pub use rs_fsrs::FSRS;
+pub(crate) use rs_fsrs::FSRS;
 use serde_json::{Map, Number, Value};
 
 // NOTE: Make sure to pass time data as a `Duration` instead of an integer representing days.
@@ -299,7 +299,7 @@ impl SrsScheduler for FSRS {
         count: u32,
         query: Option<String>,
         requested_date: DateTime<Utc>,
-    ) -> Result<String, Error> {
+    ) -> Result<MoveCardsResult, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
@@ -344,7 +344,7 @@ impl SrsScheduler for FSRS {
         count: u32,
         query: Option<String>,
         requested_date: DateTime<Utc>,
-    ) -> Result<String, Error> {
+    ) -> Result<MoveCardsResult, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
