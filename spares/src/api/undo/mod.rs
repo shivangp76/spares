@@ -16,3 +16,5 @@
 //!   - Handled by `version` field
 
 use crate::model::{Event, EventType};
+
+pub(crate) mod payloads;

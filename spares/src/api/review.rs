@@ -569,10 +569,10 @@ pub async fn submit_study_action(
             bury_card(db, scheduler.as_ref(), card_id, at).await?;
         }
         StudyAction::Advance { count, query } => {
-            let _message = scheduler.advance(db, &config, count, query, at).await?;
+            let _move_cards_result = scheduler.advance(db, &config, count, query, at).await?;
         }
         StudyAction::Postpone { count, query } => {
-            let _message = scheduler.postpone(db, &config, count, query, at).await?;
+            let _move_cards_result = scheduler.postpone(db, &config, count, query, at).await?;
         }
         StudyAction::Reschedule => {
             let cards: Vec<Card> =

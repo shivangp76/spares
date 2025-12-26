@@ -1,7 +1,12 @@
 use crate::{
     Error,
+    api::{
+        get_card,
+        undo::payloads::{Transition, UpdateCardPayload},
+    },
     helpers::{FractionalDays, mean},
     model::{Card, ReviewLog},
+    schedulers::MoveCardsResult,
 };
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
@@ -180,7 +185,7 @@ pub async fn move_cards(
     requested_date: DateTime<Utc>,
     minimum_interval: Duration,
     maximum_interval: Duration,
-) -> Result<String, Error> {
+) -> Result<MoveCardsResult, Error> {
     let cards_internal = get_all_cards_internal(db, cards, action, requested_date).await?;
     let (mut safe_cards, not_safe_cards): (Vec<_>, Vec<_>) = cards_internal
         .into_iter()
@@ -199,6 +204,7 @@ pub async fn move_cards(
             .collect::<Vec<_>>()
     };
 
+    let mut card_changes = Vec::new();
     let mut prev_target_retentions = Vec::new();
     let mut new_target_retentions = Vec::new();
     for card_internal in cards_internal.into_iter().take(count as usize) {
@@ -229,9 +235,6 @@ pub async fn move_cards(
                 (requested_date + new_scheduled_time, new_scheduled_time)
             }
         };
-        // dbg!(&action);
-        // dbg!(&requested_date);
-        // dbg!(&new_due);
         let _update_card_result =
             sqlx::query(r"UPDATE card SET due = ?, updated_at = ? WHERE id = ?")
                 .bind(new_due.timestamp())
@@ -240,6 +243,21 @@ pub async fn move_cards(
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
+        card_changes.push(UpdateCardPayload {
+            card_id: card_internal.card.id,
+            order: None,
+            back_type: None,
+            due: Some(Transition {
+                before: card_internal.card.due,
+                after: new_due,
+            }),
+            stability: None,
+            difficulty: None,
+            desired_retention: None,
+            special_state: None,
+            state: None,
+            custom_data: None,
+        });
 
         let prev_target_retention = rs_fsrs::Parameters::forgetting_curve(
             card_internal
@@ -256,7 +274,7 @@ pub async fn move_cards(
         new_target_retentions.push(new_target_retention);
     }
 
-    let result_text = if !prev_target_retentions.is_empty() && !new_target_retentions.is_empty() {
+    let message = if !prev_target_retentions.is_empty() && !new_target_retentions.is_empty() {
         format!(
             "Mean target retention of moved cards: {:?} -> {:?}",
             mean(&prev_target_retentions).unwrap(),
@@ -265,5 +283,8 @@ pub async fn move_cards(
     } else {
         String::new()
     };
-    Ok(result_text)
+    Ok(MoveCardsResult {
+        card_payloads: card_changes,
+        message,
+    })
 }
