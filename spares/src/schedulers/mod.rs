@@ -1,3 +1,4 @@
+use crate::api::undo::payloads::UpdateCardPayload;
 use crate::config::SparesExternalConfig;
 use crate::model::{Card, RatingId, ReviewLog, SpecialState};
 use crate::schema::review::{Rating, RatingSubmission};
@@ -19,6 +20,12 @@ pub fn stepped_range_inclusive(start: Duration, end: Duration, step: Duration) -
         current += step;
     }
     intervals
+}
+
+#[derive(Debug)]
+pub struct MoveCardsResult {
+    pub card_payloads: Vec<UpdateCardPayload>,
+    pub message: String,
 }
 
 #[async_trait]
@@ -86,7 +93,7 @@ pub trait SrsScheduler: Send + Sync {
         count: u32,
         query: Option<String>,
         requested_date: DateTime<Utc>,
-    ) -> Result<String, Error>;
+    ) -> Result<MoveCardsResult, Error>;
 
     async fn postpone(
         &self,
@@ -95,7 +102,7 @@ pub trait SrsScheduler: Send + Sync {
         count: u32,
         query: Option<String>,
         requested_date: DateTime<Utc>,
-    ) -> Result<String, Error>;
+    ) -> Result<MoveCardsResult, Error>;
 
     // - User requests Reschedule -> Compute memory state for each card -> (some combination of applying easy days and dispersing siblings to determine card's new due date) -> Update card (including due date)
     async fn reschedule(
