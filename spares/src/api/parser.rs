@@ -1,11 +1,17 @@
 use crate::{
-    Error,
-    model::Parser,
+    Error, LibraryError,
+    api::undo::{
+        insert_events,
+        payloads::{CreateParserPayload, DeleteParserPayload, Transition, UpdateParserPayload},
+    },
+    model::{EventType, NoteId, Parser},
     schema::{
         FilterOptions,
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
     },
 };
+use chrono::Utc;
+use serde_json::to_value;
 use sqlx::sqlite::SqlitePool;
 
 const PARSERS_DEFAULT_LIMIT: usize = 100;
@@ -13,12 +19,35 @@ const PARSERS_DEFAULT_LIMIT: usize = 100;
 pub async fn create_parser(
     db: &SqlitePool,
     body: CreateParserRequest,
+    log: bool,
 ) -> Result<ParserResponse, Error> {
-    let id: i64 = sqlx::query_scalar(r"INSERT INTO parser (name) VALUES (?) RETURNING id")
-        .bind(body.name)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    let payload = CreateParserPayload {
+        id: None,
+        name: body.name,
+    };
+    create_parser_event(db, payload, log).await
+}
+
+pub async fn create_parser_event(
+    db: &SqlitePool,
+    payload: CreateParserPayload,
+    log: bool,
+) -> Result<ParserResponse, Error> {
+    let id: i64 = if let Some(id) = payload.id {
+        sqlx::query(r"INSERT INTO parser (id, name) VALUES (?, ?)")
+            .bind(id)
+            .bind(&payload.name)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        id
+    } else {
+        sqlx::query_scalar(r"INSERT INTO parser (name) VALUES (?) RETURNING id")
+            .bind(payload.name)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?
+    };
     let parser: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -26,6 +55,22 @@ pub async fn create_parser(
         .map_err(|e| Error::Sqlx { source: e })?;
 
     let parser_response = ParserResponse::new(&parser);
+
+    // Log event
+    if log {
+        let payload = CreateParserPayload {
+            id: Some(parser.id),
+            name: parser.name,
+        };
+        let _event_id = insert_events(
+            db,
+            &[(EventType::CreateParser, to_value(&payload).unwrap())],
+            Utc::now(),
+            None,
+        )
+        .await?;
+    }
+
     Ok(parser_response)
 }
 
@@ -47,10 +92,23 @@ pub(crate) async fn get_parser_name(db: &SqlitePool, id: i64) -> Result<String, 
     Ok(parser_name)
 }
 
+pub async fn update_parser_event(
+    db: &SqlitePool,
+    payload: UpdateParserPayload,
+    id: i64,
+    log: bool,
+) -> Result<ParserResponse, Error> {
+    let body = UpdateParserRequest {
+        name: payload.name.map(|t| t.after),
+    };
+    update_parser(db, body, id, log).await
+}
+
 pub async fn update_parser(
     db: &SqlitePool,
     body: UpdateParserRequest,
     id: i64,
+    log: bool,
 ) -> Result<ParserResponse, Error> {
     let existing_parser: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
         .bind(id)
@@ -75,15 +133,73 @@ pub async fn update_parser(
         .map_err(|e| Error::Sqlx { source: e })?;
 
     let parser_response = ParserResponse::new(&updated_parser);
+
+    // Log event
+    if log {
+        let payload = UpdateParserPayload {
+            id,
+            name: body.name.map(|_| Transition {
+                before: existing_parser.name,
+                after: updated_parser.name,
+            }),
+        };
+        let _event_id = insert_events(
+            db,
+            &[(EventType::UpdateParser, to_value(&payload).unwrap())],
+            Utc::now(),
+            None,
+        )
+        .await?;
+    }
+
     Ok(parser_response)
 }
 
-pub async fn delete_parser(db: &SqlitePool, id: i64) -> Result<(), Error> {
-    let _query_result = sqlx::query(r"DELETE FROM parser WHERE id = ?")
+pub async fn delete_parser(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
+    let parser: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let note_ids: Vec<NoteId> = sqlx::query_scalar(r"SELECT id FROM note WHERE parser_id = ?")
+        .bind(id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let payload = DeleteParserPayload {
+        id: Some(parser.id),
+        name: parser.name,
+        note_ids,
+    };
+    delete_parser_event(db, payload, log).await
+}
+
+pub async fn delete_parser_event(
+    db: &SqlitePool,
+    payload: DeleteParserPayload,
+    log: bool,
+) -> Result<(), Error> {
+    let id = payload.id.ok_or_else(|| {
+        Error::Library(LibraryError::InvalidConfig(
+            "DeleteParserPayload missing id".to_string(),
+        ))
+    })?;
+    sqlx::query(r"DELETE FROM parser WHERE id = ?")
         .bind(id)
         .execute(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+
+    if log {
+        let _event_id = insert_events(
+            db,
+            &[(EventType::DeleteParser, to_value(&payload).unwrap())],
+            Utc::now(),
+            None,
+        )
+        .await?;
+    }
+
     Ok(())
 }
 
@@ -115,7 +231,7 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: parser_name.to_string(),
         };
-        let parser_res = create_parser(pool, request).await;
+        let parser_res = create_parser(pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, parser_name);
@@ -143,7 +259,7 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: "Parser to get".to_string(),
         };
-        let parser_res = create_parser(&pool, request).await;
+        let parser_res = create_parser(&pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "Parser to get");
@@ -162,7 +278,7 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: "To be updated".to_string(),
         };
-        let parser_res = create_parser(&pool, request).await;
+        let parser_res = create_parser(&pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "To be updated");
@@ -172,7 +288,7 @@ pub(crate) mod tests {
             name: Some("Updated name".to_string()),
         };
         let id = parser.id;
-        let parser_res = update_parser(&pool, request, id).await;
+        let parser_res = update_parser(&pool, request, id, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "Updated name");
@@ -190,7 +306,7 @@ pub(crate) mod tests {
         // Update parser
         let request = UpdateParserRequest { name: None };
         let id = parser.id;
-        let parser_res = update_parser(&pool, request, id).await;
+        let parser_res = update_parser(&pool, request, id, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "Updated name");
@@ -202,13 +318,13 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: "To be deleted".to_string(),
         };
-        let parser_res = create_parser(&pool, request).await;
+        let parser_res = create_parser(&pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "To be deleted");
 
         // Delete parser
-        let delete_res = delete_parser(&pool, parser.id).await;
+        let delete_res = delete_parser(&pool, parser.id, true).await;
         assert!(delete_res.is_ok());
 
         // Check database and verify item with id does not exist
@@ -231,7 +347,7 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: "First parser to list".to_string(),
         };
-        let parser_res = create_parser(&pool, request).await;
+        let parser_res = create_parser(&pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "First parser to list");
@@ -239,7 +355,7 @@ pub(crate) mod tests {
         let request = CreateParserRequest {
             name: "Second parser to list".to_string(),
         };
-        let parser_res = create_parser(&pool, request).await;
+        let parser_res = create_parser(&pool, request, true).await;
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, "Second parser to list");
@@ -258,5 +374,103 @@ pub(crate) mod tests {
         assert_eq!(parsers.len(), 2);
         assert_eq!(parsers.first().unwrap().name, "First parser to list");
         assert_eq!(parsers.last().unwrap().name, "Second parser to list");
+    }
+
+    /// Count rows in the event table (for testing that log = true/false is respected).
+    async fn event_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM event")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn parser_create_logs_event_when_log_true(pool: SqlitePool) {
+        let n_before = event_count(&pool).await;
+        let _ = create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "logged".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(event_count(&pool).await, n_before + 1);
+    }
+
+    #[sqlx::test]
+    async fn parser_create_does_not_log_when_log_false(pool: SqlitePool) {
+        let n_before = event_count(&pool).await;
+        let _ = create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "not_logged".to_string(),
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(event_count(&pool).await, n_before);
+    }
+
+    #[sqlx::test]
+    async fn parser_update_logs_event_when_log_true(pool: SqlitePool) {
+        let p = create_parser_helper(&pool, "to_update").await;
+        let n_before = event_count(&pool).await;
+        let _ = update_parser(
+            &pool,
+            UpdateParserRequest {
+                name: Some("updated".to_string()),
+            },
+            p.id,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(event_count(&pool).await, n_before + 1);
+    }
+
+    #[sqlx::test]
+    async fn parser_update_does_not_log_when_log_false(pool: SqlitePool) {
+        let p = create_parser_helper(&pool, "to_update").await;
+        let n_before = event_count(&pool).await;
+        let _ = update_parser(&pool, UpdateParserRequest { name: None }, p.id, false)
+            .await
+            .unwrap();
+        assert_eq!(event_count(&pool).await, n_before);
+    }
+
+    #[sqlx::test]
+    async fn parser_delete_logs_event_when_log_true(pool: SqlitePool) {
+        let p = create_parser_helper(&pool, "to_delete").await;
+        let n_before = event_count(&pool).await;
+        delete_parser(&pool, p.id, true).await.unwrap();
+        assert_eq!(event_count(&pool).await, n_before + 1);
+    }
+
+    #[sqlx::test]
+    async fn parser_delete_does_not_log_when_log_false(pool: SqlitePool) {
+        let p = create_parser_helper(&pool, "to_delete").await;
+        let n_before = event_count(&pool).await;
+        delete_parser(&pool, p.id, false).await.unwrap();
+        assert_eq!(event_count(&pool).await, n_before);
+    }
+
+    #[sqlx::test]
+    async fn delete_parser_event_does_not_log_when_log_false(pool: SqlitePool) {
+        let p = create_parser_helper(&pool, "for_delete_event").await;
+        let n_before = event_count(&pool).await;
+        let payload = DeleteParserPayload {
+            id: Some(p.id),
+            name: p.name.clone(),
+            note_ids: vec![],
+        };
+        delete_parser_event(&pool, payload, false).await.unwrap();
+        assert_eq!(
+            event_count(&pool).await,
+            n_before,
+            "apply_event path must not log"
+        );
     }
 }
