@@ -31,8 +31,8 @@ use spares::{
         },
         note::{
             CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, MatchedKeywordResponse,
-            NoteIdsSelector, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
-            RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+            NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
+            SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
@@ -954,7 +954,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 return Ok(());
             }
             let request = RenderNotesRequest {
-                generate_files_note_ids: query.map_or(NoteIdsSelector::All, NoteIdsSelector::Query),
+                generate_files_note_ids: query.map_or(NotesSelector::All, NotesSelector::Query),
                 immutable_note_ids: None,
                 overridden_output_raw_dir,
                 include_linked_notes,
