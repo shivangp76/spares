@@ -114,16 +114,16 @@ pub mod note {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub enum NoteIdsSelector {
+    pub enum NotesSelector {
+        Ids(Vec<NoteId>),
         Query(String),
-        NoteIds(Vec<NoteId>),
         All,
     }
 
     #[allow(clippy::struct_excessive_bools, reason = "needed to generate files")]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct RenderNotesRequest {
-        pub generate_files_note_ids: NoteIdsSelector,
+        pub generate_files_note_ids: NotesSelector,
         pub immutable_note_ids: Option<Vec<NoteId>>,
         pub overridden_output_raw_dir: Option<PathBuf>,
         pub include_linked_notes: bool,
@@ -181,12 +181,6 @@ pub mod note {
         /// Suspends all of its cards.
         pub is_suspended: bool,
         pub custom_data: CustomData,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub enum NotesSelector {
-        Ids(Vec<NoteId>),
-        Query(String),
     }
 
     #[derive(Debug, Deserialize, Serialize)]
