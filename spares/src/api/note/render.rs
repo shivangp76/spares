@@ -166,7 +166,7 @@ pub async fn render_notes(
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<(), Error> {
     let RenderNotesRequest {
-        generate_files_note_ids,
+        selector: generate_files_note_ids,
         immutable_note_ids,
         overridden_output_raw_dir,
         include_linked_notes,
@@ -371,7 +371,7 @@ mod tests {
     async fn test_render_note(pool: SqlitePool) -> () {
         let _ = create_note_helper(&pool).await;
         let body = RenderNotesRequest {
-            generate_files_note_ids: NotesSelector::All,
+            selector: NotesSelector::All,
             immutable_note_ids: None,
             overridden_output_raw_dir: None,
             include_linked_notes: true,

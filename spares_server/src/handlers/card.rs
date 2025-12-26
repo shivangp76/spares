@@ -3,7 +3,7 @@ use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
 use spares::{
     api::card::{get_card, get_cards, get_leeches, update_card},
-    schema::card::{GetLeechesRequest, UpdateCardRequest},
+    schema::card::{GetLeechesRequest, UpdateCardsRequest},
 };
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ pub async fn get_cards_handler(
 
 pub async fn update_card_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
-    Json(body): Json<UpdateCardRequest>,
+    Json(body): Json<UpdateCardsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let update_card_res = update_card(&data.db, body, Utc::now())
         .await

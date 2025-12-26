@@ -8,7 +8,7 @@ use crate::config::get_data_dir;
 use crate::helpers::parse_list;
 use crate::model::{Card, DEFAULT_DESIRED_RETENTION, NOTE_ID_KEY, NoteId, RatingId};
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
-use crate::schema::card::{CardsSelector, UpdateCardRequest};
+use crate::schema::card::{CardsSelector, UpdateCardsRequest};
 use crate::schema::review::{RatingSubmission, StudyAction, SubmitStudyActionRequest};
 use crate::{AdapterErrorKind, Error, LibraryError};
 use chrono::{DateTime, Duration, Utc};
@@ -207,7 +207,7 @@ pub async fn populate_reviews(
                     .and_then(|val| val.as_f64())
                     .unwrap_or(DEFAULT_DESIRED_RETENTION);
                 if desired_retention != DEFAULT_DESIRED_RETENTION {
-                    let body = UpdateCardRequest {
+                    let body = UpdateCardsRequest {
                         selector: CardsSelector::Ids(vec![card.id]),
                         desired_retention: Some(desired_retention),
                         special_state: None,
