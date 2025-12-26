@@ -23,7 +23,7 @@ use spares::{
         generate_files::{GenerateNoteFilesRequests, RenderOutputType, create_note_files_bulk},
         get_all_parsers, get_note_info_from_filepath, get_output_raw_dir,
     },
-    schema::note::{NoteIdsSelector, RenderNotesRequest},
+    schema::note::{NotesSelector, RenderNotesRequest},
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -326,7 +326,7 @@ async fn regenerate_notes(
             // Note that all notes can not have their files generated since some notes may still not be synced. For example, a couple notes may be skipped over.
             // Instead, all notes will have their linked notes regenerated, but only the specified notes will have their files regenerated.
             // See `render_notes()`.
-            generate_files_note_ids: NoteIdsSelector::NoteIds(modified_notes),
+            generate_files_note_ids: NotesSelector::Ids(modified_notes),
             immutable_note_ids,
             overridden_output_raw_dir: None,
             include_linked_notes: true,
@@ -415,7 +415,7 @@ async fn generate_notes(
                     let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
                         || sync_source_to == SyncSource::SparesLocalFiles;
                     let request = RenderNotesRequest {
-                        generate_files_note_ids: NoteIdsSelector::All,
+                        generate_files_note_ids: NotesSelector::All,
                         immutable_note_ids: None,
                         overridden_output_raw_dir: Some(output_dir.clone()),
                         include_linked_notes,
@@ -520,7 +520,7 @@ async fn generate_notes(
             let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
                 || sync_source_to == SyncSource::SparesLocalFiles;
             let request = RenderNotesRequest {
-                generate_files_note_ids: NoteIdsSelector::NoteIds(changed_note_ids),
+                generate_files_note_ids: NotesSelector::Ids(changed_note_ids),
                 immutable_note_ids: None,
                 overridden_output_raw_dir: Some({
                     let mut parent = spares_dir.clone();

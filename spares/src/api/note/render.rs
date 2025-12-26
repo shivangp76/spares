@@ -10,7 +10,7 @@ use crate::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
         },
     },
-    schema::note::{LinkedNote, MatchedKeywordResponse, NoteIdsSelector, RenderNotesRequest},
+    schema::note::{LinkedNote, MatchedKeywordResponse, NotesSelector, RenderNotesRequest},
     search::evaluator::Evaluator,
 };
 // use indicatif::ParallelProgressIterator;
@@ -212,7 +212,7 @@ pub async fn render_notes(
 
     // Get requested note ids
     let mut requested_note_ids = match generate_files_note_ids {
-        NoteIdsSelector::Query(query) => {
+        NotesSelector::Query(query) => {
             let evaluator = Evaluator::new(&query);
             Some(
                 evaluator
@@ -222,8 +222,8 @@ pub async fn render_notes(
                     .collect::<HashSet<_>>(),
             )
         }
-        NoteIdsSelector::NoteIds(vec) => Some(vec.into_iter().collect::<HashSet<_>>()),
-        NoteIdsSelector::All => None,
+        NotesSelector::Ids(vec) => Some(vec.into_iter().collect::<HashSet<_>>()),
+        NotesSelector::All => None,
     };
     // Extend requested note ids to include notes that had their note links changed and are not immutable
     if let Some(ref mut note_ids) = requested_note_ids
@@ -363,7 +363,7 @@ mod tests {
         api::note::{basic::tests::create_note_helper, render_notes},
         model::NoteLink,
         parsers::get_all_parsers,
-        schema::note::{NoteIdsSelector, RenderNotesRequest},
+        schema::note::{NotesSelector, RenderNotesRequest},
     };
     use sqlx::SqlitePool;
 
@@ -371,7 +371,7 @@ mod tests {
     async fn test_render_note(pool: SqlitePool) -> () {
         let _ = create_note_helper(&pool).await;
         let body = RenderNotesRequest {
-            generate_files_note_ids: NoteIdsSelector::All,
+            generate_files_note_ids: NotesSelector::All,
             immutable_note_ids: None,
             overridden_output_raw_dir: None,
             include_linked_notes: true,
