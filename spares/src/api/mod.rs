@@ -7,6 +7,7 @@ pub mod statistics;
 pub mod tag;
 #[cfg(test)]
 pub(crate) mod tests;
+mod undo;
 
 const MAX_ROWS_IN_QUERY: usize = 200;
 
