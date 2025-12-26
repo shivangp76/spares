@@ -183,7 +183,7 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
     let start = Instant::now();
     let url = format!("{}/api/notes/generate_files", base_url);
     let request = RenderNotesRequest {
-        generate_files_note_ids: NotesSelector::All,
+        selector: NotesSelector::All,
         immutable_note_ids: None,
         overridden_output_raw_dir: None,
         include_linked_notes: true,
