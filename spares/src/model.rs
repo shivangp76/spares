@@ -206,3 +206,39 @@ impl ReviewLog {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, sqlx::Type)]
+#[repr(u8)]
+pub enum EventType {
+    CreateParser,
+    UpdateParser,
+    DeleteParser,
+    CreateTag,
+    UpdateTag,
+    DeleteTag,
+    CreateNotes, // Plural
+    UpdateNotes, // Plural
+    DeleteNotes, // Plural
+    UpdateCards,
+    /// Shares payload schema with `UpdateCards`
+    // Even though it shares a payload with `UpdateCards`, we need to preserve the event type so the user can be given a description of the action they are undoing.
+    ForgetCard,
+    UnburyCards,
+    RateCard,
+    /// Shares payload schema with `UpdateCards`
+    BuryCard,
+    /// Shares payload schema with `UpdateCards`
+    AdvanceCards,
+    /// Shares payload schema with `UpdateCards`
+    PostponeCards,
+}
+
+#[derive(Clone, Debug, Deserialize, FromRow, PartialEq, Serialize)]
+pub struct Event {
+    pub id: i64,
+    pub kind: EventType,
+    pub created_at: DateTime<Utc>,
+    pub version: i64,
+    pub group_id: Option<i64>, // Maybe set this to the id of the first event in the group
+    pub payload: Value,
+}

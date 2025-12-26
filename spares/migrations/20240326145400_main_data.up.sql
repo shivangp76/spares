@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS review_log (
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS event (
+    id INTEGER PRIMARY KEY NOT NULL,
+    kind STRING NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
+    version INTEGER NOT NULL,
+    group_id INTEGER,
+    payload TEXT NOT NULL -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
+);
+
 -- Add indexes to optimize JOIN operations in note rendering queries
 
 -- Index on note.parser_id for faster parser joins
@@ -109,6 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_note_tag_tag_id ON note_tag(tag_id);
 
 -- Index on note_link.parent_note_id for faster note link lookups
 CREATE INDEX IF NOT EXISTS idx_note_link_parent_note_id ON note_link(parent_note_id);
+
+-- Indexes on event table for undo functionality
+CREATE INDEX IF NOT EXISTS idx_event_group_id ON event(group_id);
+CREATE INDEX IF NOT EXISTS idx_event_created_at ON event(created_at);
+CREATE INDEX IF NOT EXISTS idx_event_kind ON event(kind);
 
 -- Indexes on note_keyword for faster keyword lookups
 CREATE INDEX IF NOT EXISTS idx_note_keyword_note_id ON note_keyword(note_id);
