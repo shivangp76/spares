@@ -123,7 +123,7 @@ pub mod note {
     #[allow(clippy::struct_excessive_bools, reason = "needed to generate files")]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct RenderNotesRequest {
-        pub generate_files_note_ids: NotesSelector,
+        pub selector: NotesSelector,
         pub immutable_note_ids: Option<Vec<NoteId>>,
         pub overridden_output_raw_dir: Option<PathBuf>,
         pub include_linked_notes: bool,
@@ -314,7 +314,7 @@ pub mod card {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
-    pub struct UpdateCardRequest {
+    pub struct UpdateCardsRequest {
         pub selector: CardsSelector,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub desired_retention: Option<f64>,

@@ -4,7 +4,7 @@ use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use spares::model::{CardId, NoteId, RatingId, TagId};
-use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest};
+use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest};
 use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
 use spares::schema::review::{
     Rating, RatingSubmission, StatisticsResponse, StudyAction, SubmitStudyActionRequest,
@@ -177,7 +177,7 @@ pub async fn bury_cards(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    let body = UpdateCardRequest {
+    let body = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Buried)),
@@ -220,7 +220,7 @@ pub async fn suspend_cards(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    let body = UpdateCardRequest {
+    let body = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Suspended)),
@@ -323,7 +323,7 @@ pub async fn set_due_date(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    let request = UpdateCardRequest {
+    let request = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids),
         desired_retention: None,
         special_state: None,
@@ -364,7 +364,7 @@ pub async fn bury_until_later_today(
         .to_utc();
 
     // Send update card request
-    let request = UpdateCardRequest {
+    let request = UpdateCardsRequest {
         selector: CardsSelector::Ids(vec![card_id]),
         desired_retention: None,
         special_state: None,
