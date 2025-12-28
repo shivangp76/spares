@@ -11,18 +11,15 @@ pub async fn verify_filtered_tag_query(db: &SqlitePool, query: &str) -> Result<(
     let tag_dependencies = lexer.extract_tag_dependencies().map_err(|e| {
         Error::Library(LibraryError::Tag(TagErrorKind::InvalidInput(e.to_string())))
     })?;
-    let existing_filtered_tags: Vec<(String,)> =
-        sqlx::query_as(r"SELECT name FROM tag WHERE query IS NOT NULL")
+    let existing_filtered_tags: Vec<String> =
+        sqlx::query_scalar(r"SELECT name FROM tag WHERE query IS NOT NULL")
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    let existing_filtered_tags_names = existing_filtered_tags
-        .iter()
-        .map(|(x,)| x.as_str())
-        .collect::<Vec<_>>();
+    let existing_filtered_tags_names = existing_filtered_tags.iter().collect::<Vec<_>>();
     if tag_dependencies
         .iter()
-        .any(|tag_name| existing_filtered_tags_names.contains(&tag_name.as_str()))
+        .any(|tag_name| existing_filtered_tags_names.contains(&tag_name))
     {
         return Err(Error::Library(LibraryError::Tag(
             TagErrorKind::InvalidInput(

@@ -133,11 +133,11 @@ pub mod note {
                     evaluator.get_note_ids(db).await
                 }
                 NotesSelector::All => {
-                    let ids: Vec<(NoteId,)> = sqlx::query_as(r"SELECT id FROM note")
+                    let ids: Vec<NoteId> = sqlx::query_scalar(r"SELECT id FROM note")
                         .fetch_all(db)
                         .await
                         .map_err(|e| Error::Sqlx { source: e })?;
-                    Ok(ids.into_iter().map(|(x,)| x).collect::<Vec<_>>())
+                    Ok(ids)
                 }
             }
         }

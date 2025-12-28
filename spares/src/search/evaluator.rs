@@ -68,11 +68,11 @@ impl<'de> Evaluator<'de> {
             .evaluate(EvaluatorReturnItemType::NoteIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", &query_str);
-        let note_ids_tups: Vec<(NoteId,)> = sqlx::query_as(&query_str)
+        let note_ids: Vec<NoteId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
-        Ok(note_ids_tups.into_iter().map(|(x,)| x).collect::<Vec<_>>())
+        Ok(note_ids)
     }
 
     pub async fn get_cards(self, db: &SqlitePool) -> Result<Vec<(Card, String)>, crate::Error> {
@@ -103,11 +103,11 @@ impl<'de> Evaluator<'de> {
             .evaluate(EvaluatorReturnItemType::CardIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", &query_str);
-        let card_ids_tups: Vec<(CardId,)> = sqlx::query_as(&query_str)
+        let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
-        Ok(card_ids_tups.into_iter().map(|(x,)| x).collect::<Vec<_>>())
+        Ok(card_ids)
     }
 }
 

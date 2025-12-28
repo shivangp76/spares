@@ -80,8 +80,8 @@ pub async fn update_card(
                 }
             }
         }
-        let (updated_at,): (i64,) =
-        sqlx::query_as(r"UPDATE card SET desired_retention = ?, special_state = ?, due = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
+        let updated_at: i64 =
+        sqlx::query_scalar(r"UPDATE card SET desired_retention = ?, special_state = ?, due = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
             .bind(new_desired_retention)
             .bind(new_special_state)
             .bind(new_due.timestamp())

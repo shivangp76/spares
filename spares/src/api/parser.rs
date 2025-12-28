@@ -14,7 +14,7 @@ pub async fn create_parser(
     db: &SqlitePool,
     body: CreateParserRequest,
 ) -> Result<ParserResponse, Error> {
-    let (id,): (i64,) = sqlx::query_as(r"INSERT INTO parser (name) VALUES (?) RETURNING id")
+    let id: i64 = sqlx::query_scalar(r"INSERT INTO parser (name) VALUES (?) RETURNING id")
         .bind(body.name)
         .fetch_one(db)
         .await
@@ -37,7 +37,7 @@ pub async fn get_parser(db: &SqlitePool, id: i64) -> Result<ParserResponse, Erro
 }
 
 pub(crate) async fn get_parser_name(db: &SqlitePool, id: i64) -> Result<String, Error> {
-    let (parser_name,): (String,) = sqlx::query_as(r"SELECT name FROM parser WHERE id = ?")
+    let parser_name: String = sqlx::query_scalar(r"SELECT name FROM parser WHERE id = ?")
         .bind(id)
         .fetch_one(db)
         .await
