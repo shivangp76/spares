@@ -101,11 +101,13 @@ pub mod tag {
 pub mod note {
     use super::card::CardResponse;
     use crate::{
+        Error,
         model::{CustomData, Note, NoteId, NoteLink, Score},
-        search::QueryReturnItemType,
+        search::{QueryReturnItemType, evaluator::Evaluator},
     };
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
+    use sqlx::SqlitePool;
     use std::path::PathBuf;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +120,25 @@ pub mod note {
         Ids(Vec<NoteId>),
         Query(String),
         All,
+    }
+
+    impl NotesSelector {
+        pub async fn to_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, Error> {
+            match self {
+                NotesSelector::Ids(vec) => Ok(vec),
+                NotesSelector::Query(query) => {
+                    let evaluator = Evaluator::new(&query);
+                    evaluator.get_note_ids(db).await
+                }
+                NotesSelector::All => {
+                    let ids: Vec<(NoteId,)> = sqlx::query_as(r"SELECT id FROM note")
+                        .fetch_all(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                    Ok(ids.into_iter().map(|(x,)| x).collect::<Vec<_>>())
+                }
+            }
+        }
     }
 
     #[allow(clippy::struct_excessive_bools, reason = "needed to generate files")]
@@ -195,6 +216,11 @@ pub mod note {
         pub tags: UpdateTags,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub custom_data: Option<CustomData>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct DeleteNotesRequest {
+        pub selector: NotesSelector,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

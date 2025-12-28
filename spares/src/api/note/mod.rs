@@ -22,7 +22,8 @@ pub(crate) mod tests {
     use crate::api::tag::create_tag;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::{
-        CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
+        CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesSelector,
+        UpdateNotesRequest, UpdateTags,
     };
     use crate::schema::tag::CreateTagRequest;
     use chrono::Utc;
@@ -195,8 +196,10 @@ pub(crate) mod tests {
         let create_notes_response = create_notes_res.unwrap();
 
         // Delete note
-        let delete_note_res =
-            delete_note(&pool, create_notes_response.notes[0].id, &get_all_parsers()).await;
+        let request = DeleteNotesRequest {
+            selector: NotesSelector::Ids(vec![create_notes_response.notes[0].id]),
+        };
+        let delete_note_res = delete_notes(&pool, request, &get_all_parsers()).await;
         assert!(delete_note_res.is_ok());
 
         // Verify that tag is deleted
