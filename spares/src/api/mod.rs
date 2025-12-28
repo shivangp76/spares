@@ -16,14 +16,23 @@ pub use card::{
 };
 use sqlx::SqlitePool;
 
-pub(crate) fn get_placeholders(length: usize) -> String {
-    std::iter::repeat_n("?", length)
+pub(crate) fn placeholders(rows: usize) -> String {
+    std::iter::repeat_n("?", rows)
         .collect::<Vec<&str>>()
         .join(", ")
 }
 
+pub(crate) fn placeholders_2d(rows: usize, cols: usize) -> String {
+    let tuple = std::iter::repeat_n("?", cols)
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::iter::repeat_n(format!("({})", tuple), rows)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Chunks the input rows into batches of `MAX_ROWS_IN_QUERY` to avoid "too many SQL variables" errors.
-async fn execute_batched_query<'a, T, R, F, Fut>(
+async fn fetch_batched_query<'a, T, R, F, Fut>(
     db: &'a SqlitePool,
     rows: &'a [T],
     query_fn: F,
@@ -46,7 +55,7 @@ where
 }
 
 /// Chunks the input rows into batches of `MAX_ROWS_IN_QUERY` to avoid "too many SQL variables" errors.
-async fn execute_batched_delete_query<'a, T, F, Fut>(
+async fn execute_batched_query<'a, T, F, Fut>(
     db: &'a SqlitePool,
     rows: &'a [T],
     query_fn: F,
