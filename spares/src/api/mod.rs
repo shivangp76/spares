@@ -8,12 +8,60 @@ pub mod tag;
 #[cfg(test)]
 pub(crate) mod tests;
 
+const MAX_ROWS_IN_QUERY: usize = 200;
+
+use crate::Error;
 pub use card::{
     create_card_tags, delete_card_tags, forget_card, get_card, get_cards, get_leeches, update_card,
 };
+use sqlx::SqlitePool;
 
 pub(crate) fn get_placeholders(length: usize) -> String {
     std::iter::repeat_n("?", length)
         .collect::<Vec<&str>>()
         .join(", ")
+}
+
+/// Chunks the input rows into batches of `MAX_ROWS_IN_QUERY` to avoid "too many SQL variables" errors.
+async fn execute_batched_query<'a, T, R, F, Fut>(
+    db: &'a SqlitePool,
+    rows: &'a [T],
+    query_fn: F,
+) -> Result<Vec<R>, Error>
+where
+    T: Clone,
+    F: Fn(&'a SqlitePool, &'a [T]) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<R>, Error>> + 'a,
+{
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let chunks = rows.chunks(MAX_ROWS_IN_QUERY).collect::<Vec<_>>();
+    let mut all_results = Vec::new();
+    for chunk in chunks {
+        let chunk_results = query_fn(db, chunk).await?;
+        all_results.extend(chunk_results);
+    }
+    Ok(all_results)
+}
+
+/// Chunks the input rows into batches of `MAX_ROWS_IN_QUERY` to avoid "too many SQL variables" errors.
+async fn execute_batched_delete_query<'a, T, F, Fut>(
+    db: &'a SqlitePool,
+    rows: &'a [T],
+    query_fn: F,
+) -> Result<(), Error>
+where
+    T: Clone,
+    F: Fn(&'a SqlitePool, &'a [T]) -> Fut,
+    Fut: std::future::Future<Output = Result<(), Error>> + 'a,
+{
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let chunks = rows.chunks(MAX_ROWS_IN_QUERY).collect::<Vec<_>>();
+    for chunk in chunks {
+        query_fn(db, chunk).await?;
+    }
+    Ok(())
 }
