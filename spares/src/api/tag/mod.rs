@@ -17,7 +17,7 @@ pub const DEFAULT_TAG_AUTO_DELETE: bool = true;
 pub async fn create_tag(db: &SqlitePool, body: CreateTagRequest) -> Result<TagResponse, Error> {
     // First, check if a tag with the same name already exists
     // This is enforced manually instead of setting the primary key of the table to `tag.name` so this restriction can be removed in the future, if desired.
-    let existing_tag: Option<(i64,)> = sqlx::query_as(r"SELECT id FROM tag WHERE name = ?")
+    let existing_tag: Option<i64> = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
         .bind(&body.name)
         .fetch_optional(db)
         .await
@@ -32,7 +32,7 @@ pub async fn create_tag(db: &SqlitePool, body: CreateTagRequest) -> Result<TagRe
         verify_filtered_tag_query(db, query.as_str()).await?;
     }
 
-    let (id,): (i64,) = sqlx::query_as(
+    let id: i64 = sqlx::query_scalar(
         r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, ?, ?, ?) RETURNING id",
     )
     .bind(&body.name)
@@ -110,9 +110,9 @@ pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagRe
         .clone()
         .unwrap_or_else(|| existing_tag.query.clone());
     let new_auto_delete = body.auto_delete.unwrap_or(existing_tag.auto_delete);
-    if body.name.is_some() {
-        let existing_tag: Option<(i64,)> = sqlx::query_as(r"SELECT id FROM tag WHERE name = ?")
-            .bind(body.name.unwrap())
+    if let Some(ref name) = body.name {
+        let existing_tag: Option<i64> = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
+            .bind(name)
             .fetch_optional(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
@@ -123,7 +123,7 @@ pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagRe
         }
     }
 
-    if let Some(query) = body.query.flatten() {
+    if let Some(Some(ref query)) = body.query {
         verify_filtered_tag_query(db, query.as_str()).await?;
 
         // Delete existing card tags with this tag

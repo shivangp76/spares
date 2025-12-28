@@ -29,19 +29,15 @@ use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
 
 pub async fn validate_tags(db: &SqlitePool, tags_by_note: Vec<&Vec<String>>) -> Result<(), Error> {
-    let existing_filtered_tags: Vec<(String,)> =
-        sqlx::query_as(r"SELECT name FROM tag WHERE query IS NOT NULL")
+    let existing_filtered_tags_names: Vec<String> =
+        sqlx::query_scalar(r"SELECT name FROM tag WHERE query IS NOT NULL")
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    let existing_filtered_tags_names = existing_filtered_tags
-        .iter()
-        .map(|(x,)| x.as_str())
-        .collect::<Vec<_>>();
     for tags in tags_by_note {
         if let Some(filtered_tag) = tags
             .iter()
-            .find(|t| existing_filtered_tags_names.contains(&t.as_str()))
+            .find(|t| existing_filtered_tags_names.contains(t))
         {
             return Err(Error::Library(LibraryError::Tag(
                 TagErrorKind::InvalidInput(format!(
@@ -104,7 +100,7 @@ pub async fn create_notes(
         let (note_data, card_datas) = add_order_to_note_data(parser.as_ref(), data)?;
         // Create note
         // The RETURNING keyword is used instead of insert_result.last_insert_rowid() to prevent concurrency issues. If another writer writes in between the execution of the insert and the call of last_insert_rowid(), then the wrong id will be returned.
-        let (note_id,): (NoteId,) = sqlx::query_as(r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id")
+        let note_id: NoteId = sqlx::query_scalar(r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id")
             .bind(&note_data)
             .bind(at.timestamp())
             .bind(at.timestamp())
@@ -215,13 +211,13 @@ pub async fn create_notes(
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         // Get card ids from the note.id here
-        let card_id_tuples: Vec<(CardId,)> =
+        let created_card_ids: Vec<CardId> =
             fetch_batched_query(db, &note_responses, async |db, chunk| {
                 let query_str = format!(
                     "SELECT id FROM cards WHERE note_id IN ({})",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as(&query_str);
+                let mut query = sqlx::query_scalar(&query_str);
                 for note in chunk {
                     query = query.bind(note.id);
                 }
@@ -231,7 +227,6 @@ pub async fn create_notes(
                     .map_err(|e| Error::Sqlx { source: e })
             })
             .await?;
-        let created_card_ids = card_id_tuples.into_iter().map(|(x,)| x).collect::<Vec<_>>();
         let mut card_filtered_tag_entries = Vec::new();
         for (tag_id, query) in existing_filtered_tags {
             // Reexecute query to see if this card matches
@@ -394,13 +389,13 @@ async fn add_note_tags(
             tag_id_res.copied()
         } else {
             // Try to get tag_id
-            let tag_opt: Option<(i64,)> =
-                sqlx::query_as(r"SELECT id FROM tag WHERE name = ? LIMIT 1")
+            let tag_opt: Option<i64> =
+                sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ? LIMIT 1")
                     .bind(tag_name)
                     .fetch_optional(db)
                     .await
                     .map_err(|e| Error::Sqlx { source: e })?;
-            tag_opt.map(|x| x.0)
+            tag_opt
         };
         let should_create_tag = tag_id_opt.is_none();
         if let Some(tag_id) = tag_id_opt {

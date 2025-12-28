@@ -151,15 +151,11 @@ async fn update_cards(
 #[allow(clippy::too_many_lines)]
 async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Result<(), Error> {
     // Validate tags do not contain filtered tags
-    let existing_filtered_tags: Vec<(String,)> =
-        sqlx::query_as(r"SELECT name FROM tag WHERE query IS NOT NULL")
+    let existing_filtered_tags_names: Vec<String> =
+        sqlx::query_scalar(r"SELECT name FROM tag WHERE query IS NOT NULL")
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    let existing_filtered_tags_names = existing_filtered_tags
-        .iter()
-        .map(|(x,)| x.as_str())
-        .collect::<Vec<_>>();
 
     let remove_all_tags = matches!(tags, UpdateTags::SetTags(_));
     let (tags_to_remove, tags_to_add) = match tags {
@@ -174,7 +170,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
     if let Some(tags_to_remove) = tags_to_remove
         && let Some(filtered_tag) = tags_to_remove
             .iter()
-            .find(|t| existing_filtered_tags_names.contains(&t.as_str()))
+            .find(|t| existing_filtered_tags_names.contains(t))
     {
         return Err(Error::Library(LibraryError::Tag(
             TagErrorKind::InvalidInput(format!(
@@ -187,12 +183,11 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
     let mut tags_to_check = Vec::new();
     if remove_all_tags {
         // Get tags for the note that have `auto_delete` enabled
-        let tags_tuple: Vec<(TagId,)> = sqlx::query_as(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
+        let tag_ids: Vec<TagId> = sqlx::query_scalar(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
                 .bind(note_id)
                 .fetch_all(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
         tags_to_check.extend(tag_ids);
 
         // Remove all tags
@@ -205,13 +200,13 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         && !tags_to_remove.is_empty()
     {
         // Get tags for the note that have `auto_delete` enabled
-        let tags_tuple: Vec<(TagId,)> =
+        let tags: Vec<TagId> =
         fetch_batched_query(db, tags_to_remove, async |db, chunk| {
             let query_str = format!(
                 "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_as(&query_str);
+            let mut query = sqlx::query_scalar(&query_str);
             query = query.bind(note_id);
             for tag_name in chunk {
                 query = query.bind(tag_name);
@@ -222,7 +217,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
                 .map_err(|e| Error::Sqlx { source: e })
         })
         .await?;
-        tags_to_check.extend(tags_tuple.into_iter().map(|(x,)| x));
+        tags_to_check.extend(tags);
 
         execute_batched_query(db, tags_to_remove, async |db, chunk| {
             let query_str = format!(
@@ -247,7 +242,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
     if let Some(tags_to_add) = tags_to_add {
         if let Some(filtered_tag) = tags_to_add
             .iter()
-            .find(|t| existing_filtered_tags_names.contains(&t.as_str()))
+            .find(|t| existing_filtered_tags_names.contains(t))
         {
             return Err(Error::Library(LibraryError::Tag(
                 TagErrorKind::InvalidInput(format!(
@@ -465,14 +460,14 @@ pub async fn update_notes(
         let new_extra_keywords: Vec<String> = if let Some(ref ks) = keywords {
             ks.clone()
         } else {
-            let keywords_rows: Vec<(String,)> = sqlx::query_as(
+            let keywords: Vec<String> = sqlx::query_scalar(
                 r"SELECT keyword FROM note_keyword WHERE note_id = ? AND embedded = 0",
             )
             .bind(note_id)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-            keywords_rows.into_iter().map(|(k,)| k).collect()
+            keywords
         };
 
         // Get parsers and cards
@@ -501,8 +496,8 @@ pub async fn update_notes(
         // Update note, adding orders sequentially
         let (new_data, _) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
-        let (created_at,): (i64,) =
-        sqlx::query_as(r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
+        let created_at: i64 =
+        sqlx::query_scalar(r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
             .bind(&new_data)
             .bind(new_parser_id)
             .bind(&new_custom_data)
@@ -546,12 +541,11 @@ pub async fn update_notes(
         // Update note links
         update_note_links(db, *note_id, new_parser.as_ref(), new_data.as_str()).await?;
 
-        let tags_tuple: Vec<(String,)> = sqlx::query_as(r"SELECT name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.query IS NULL ORDER BY name ASC")
+        let tags: Vec<String> = sqlx::query_scalar(r"SELECT name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.query IS NULL ORDER BY name ASC")
             .bind(note_id)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        let tags = tags_tuple.into_iter().map(|t| t.0).collect::<Vec<_>>();
         note_responses.push(NoteResponse::new(
             &updated_note,
             all_keywords
@@ -603,13 +597,13 @@ pub async fn update_notes(
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         // Get card ids from the note.id
-        let created_card_id_tuples: Vec<(CardId,)> =
+        let created_card_ids: Vec<CardId> =
             fetch_batched_query(db, &note_responses, async |db, chunk| {
                 let query_str = format!(
                     "SELECT id FROM cards WHERE note_id IN ({})",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as(query_str.as_str());
+                let mut query = sqlx::query_scalar(query_str.as_str());
                 for note in chunk {
                     query = query.bind(note.id);
                 }
@@ -619,10 +613,6 @@ pub async fn update_notes(
                     .map_err(|e| Error::Sqlx { source: e })
             })
             .await?;
-        let created_card_ids = created_card_id_tuples
-            .into_iter()
-            .map(|(x,)| x)
-            .collect::<Vec<_>>();
         let mut card_filtered_tag_entries = Vec::new();
         let mut delete_card_tag_entries = Vec::new();
         for (tag_id, query) in existing_filtered_tags {

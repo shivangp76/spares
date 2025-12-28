@@ -46,12 +46,11 @@ pub async fn enrich_note(
 ) -> Result<NoteResponse, Error> {
     // Get tags for note
     // NOTE: Filtered tags (from `card_tags`) are not returned here, since they are specific to cards, not notes.
-    let tags_tuple: Vec<(String,)> = sqlx::query_as(r"SELECT t.name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? ORDER BY name ASC")
+    let tags: Vec<String> = sqlx::query_scalar(r"SELECT t.name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? ORDER BY name ASC")
         .bind(note.id)
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    let tags: Vec<String> = tags_tuple.into_iter().map(|t| t.0).collect();
 
     // Get linked notes
     let note_links: Vec<NoteLink> =
@@ -79,13 +78,13 @@ pub async fn enrich_note(
         .map_err(|e| Error::Sqlx { source: e })?;
 
     // Get keywords
-    let keywords_tuple: Vec<(String,)> =
-        sqlx::query_as(r"SELECT keyword FROM note_keyword WHERE note_id = ? ORDER BY keyword ASC")
-            .bind(note.id)
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-    let keywords: Vec<String> = keywords_tuple.into_iter().map(|k| k.0).collect();
+    let keywords: Vec<String> = sqlx::query_scalar(
+        r"SELECT keyword FROM note_keyword WHERE note_id = ? ORDER BY keyword ASC",
+    )
+    .bind(note.id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
 
     Ok(NoteResponse::new(
         note,
@@ -278,7 +277,7 @@ pub async fn delete_notes(
 
     // Get all tags with `auto_delete` enabled for all notes (batched query)
     // NOTE: AUTOMATIC REBUILD: If `Automatic` rebuild is enabled in the future, then a check would be added to ensure `auto_delete` is false. In other words, `auto_delete` as true and rebuild as `Automatic` conflict since once the tag has 0 notes left, it will be deleted so that means notes are not automatically added to it anymore.
-    let tags_rows: Vec<(TagId,)> = fetch_batched_query(db, &note_ids, async |db, chunk| {
+    let tags_rows: Vec<TagId> = fetch_batched_query(db, &note_ids, async |db, chunk| {
         let query_str = format!(
             "SELECT DISTINCT t.id
             FROM tag t
@@ -291,7 +290,7 @@ pub async fn delete_notes(
             placeholders(chunk.len()),
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_scalar(&query_str);
         for note_id in chunk {
             query = query.bind(note_id);
         }
@@ -324,9 +323,12 @@ pub async fn delete_notes(
     .await?;
 
     // Delete tags with no more notes
-    let all_tag_ids: HashSet<TagId> = tags_rows.into_iter().map(|t| t.0).collect();
-    let all_tag_ids_vec: Vec<TagId> = all_tag_ids.into_iter().collect();
-    delete_empty_tags(db, &all_tag_ids_vec).await?;
+    let all_tag_ids = tags_rows
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    delete_empty_tags(db, &all_tag_ids).await?;
 
     // Delete files for all notes
     let grouped_note_data = note_data_rows
@@ -647,18 +649,14 @@ pub(crate) mod tests {
             }
 
             // Verify keywords are unchanged
-            let note_keywords_res: Result<Vec<(String,)>, sqlx::Error> = sqlx::query_as(
+            let note_keywords_res: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(
                 r"SELECT keyword FROM note_keyword WHERE note_id = ? ORDER BY keyword",
             )
             .bind(note.id)
             .fetch_all(&pool)
             .await;
             assert!(note_keywords_res.is_ok());
-            let db_keywords: Vec<String> = note_keywords_res
-                .unwrap()
-                .into_iter()
-                .map(|(k,)| k)
-                .collect();
+            let db_keywords: Vec<String> = note_keywords_res.unwrap();
             assert_eq!(db_keywords, last_note.keywords);
 
             // let cards_res: Result<Vec<Card>, sqlx::Error> =
