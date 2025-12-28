@@ -24,7 +24,9 @@ pub async fn create_parser(
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(ParserResponse::new(&parser))
+
+    let parser_response = ParserResponse::new(&parser);
+    Ok(parser_response)
 }
 
 pub async fn get_parser(db: &SqlitePool, id: i64) -> Result<ParserResponse, Error> {
@@ -56,22 +58,24 @@ pub async fn update_parser(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     // Update (if empty, use old value)
+    let new_name = body
+        .name
+        .clone()
+        .unwrap_or_else(|| existing_parser.name.clone());
     let _update_result = sqlx::query(r"UPDATE parser SET name = ? WHERE id = ?")
-        .bind(
-            body.name
-                .clone()
-                .unwrap_or_else(|| existing_parser.name.clone()),
-        )
+        .bind(&new_name)
         .bind(id)
         .execute(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    let updated_item: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
+    let updated_parser: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
         .bind(id)
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(ParserResponse::new(&updated_item))
+
+    let parser_response = ParserResponse::new(&updated_parser);
+    Ok(parser_response)
 }
 
 pub async fn delete_parser(db: &SqlitePool, id: i64) -> Result<(), Error> {
@@ -129,7 +133,6 @@ pub(crate) mod tests {
                 .bind(parser.id)
                 .fetch_one(&pool)
                 .await;
-        dbg!(&parser_res);
         assert!(parser_res.is_ok());
         assert_eq!(parser_res.unwrap().name, "markdown");
     }
