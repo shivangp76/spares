@@ -148,14 +148,15 @@ pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagRe
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let updated_item = Tag {
+    let updated_tag = Tag {
         id,
         name: new_name,
         description: new_description,
         query: new_query,
         auto_delete: new_auto_delete,
     };
-    Ok(TagResponse::new(&updated_item))
+    let tag_response = TagResponse::new(&updated_tag);
+    Ok(tag_response)
 }
 
 pub async fn delete_tag(db: &SqlitePool, id: i64) -> Result<(), Error> {

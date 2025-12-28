@@ -336,7 +336,7 @@ pub mod card {
         Query(String),
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
     pub enum SpecialStateUpdate {
         Suspended,
         Buried,
