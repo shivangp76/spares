@@ -1,7 +1,7 @@
 //! # Undo Functionality
 //!
 //! ## Outline
-//! - To undo an event, you append a new event to the event log that reverse the previous event. For example, to undo `AddNote`, you append a `DeleteNote` event.
+//! - To undo an event, you append a new event to the event log that reverses the previous event. For example, to undo `AddNote`, you append a `DeleteNote` event.
 //!
 //! ## Problems and Solutions
 //! - Future: Syncing data between devices
@@ -24,6 +24,7 @@ use sqlx::SqlitePool;
 
 pub(crate) mod payloads;
 
+#[expect(clippy::unused_async)]
 pub async fn undo_event(
     db: &SqlitePool,
     body: UndoEventRequest,

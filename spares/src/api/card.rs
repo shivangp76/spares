@@ -91,19 +91,19 @@ pub async fn update_card(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         let updated_at = DateTime::from_timestamp(updated_at, 0).unwrap();
-        let mut updated_item: Card = existing_card.clone();
-        updated_item.desired_retention = new_desired_retention;
-        updated_item.special_state = new_special_state;
-        updated_item.due = new_due;
-        updated_item.updated_at = updated_at;
+        let mut updated_card: Card = existing_card.clone();
+        updated_card.desired_retention = new_desired_retention;
+        updated_card.special_state = new_special_state;
+        updated_card.due = new_due;
+        updated_card.updated_at = updated_at;
         if let Some(new_desired_retention) = body.desired_retention
             && (new_desired_retention - existing_card.desired_retention).abs() > f64::EPSILON
-            && updated_item.state != NEW_CARD_STATE
+            && updated_card.state != NEW_CARD_STATE
         {
             let review_logs: Vec<ReviewLog> = sqlx::query_as(
                 r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC",
             )
-            .bind(updated_item.id)
+            .bind(updated_card.id)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
@@ -115,11 +115,11 @@ pub async fn update_card(
                 let config = read_external_config()?;
                 // Reschedule card
                 scheduler
-                    .reschedule(db, &config, vec![(updated_item.clone(), review_logs)], at)
+                    .reschedule(db, &config, vec![(updated_card.clone(), review_logs)], at)
                     .await?;
             }
         }
-        card_responses.push(CardResponse::new(&updated_item));
+        card_responses.push(CardResponse::new(&updated_card));
     }
     Ok(card_responses)
 }
