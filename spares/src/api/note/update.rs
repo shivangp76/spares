@@ -6,6 +6,7 @@ use crate::{
     Error, LibraryError, ParserErrorKind, TagErrorKind,
     api::{
         card::{create_card_tags, delete_card_tags},
+        get_placeholders,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
@@ -55,7 +56,7 @@ async fn update_cards(
     // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
     let moved_cards_query_str = format!(
         "SELECT * FROM card WHERE note_id = ? AND \"order\" IN ({})",
-        vec!["?"; move_card_indices.len() + same_indices.len()].join(", ")
+        get_placeholders(move_card_indices.len() + same_indices.len())
     );
     let mut query = sqlx::query_as(moved_cards_query_str.as_str());
     query = query.bind(note_id);
@@ -104,7 +105,7 @@ async fn update_cards(
     // Delete cards
     let delete_query_str = format!(
         "DELETE FROM card WHERE note_id = ? AND \"order\" IN ({})",
-        vec!["?"; delete_card_indices.len()].join(", ")
+        get_placeholders(delete_card_indices.len())
     );
     let mut query = sqlx::query(delete_query_str.as_str());
     query = query.bind(note_id);
@@ -194,7 +195,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         // Get tags for the note that have `auto_delete` enabled
         let get_tags_query_str = format!(
             "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
-            vec!["?"; tags_to_remove.len()].join(", ")
+            get_placeholders(tags_to_remove.len())
         );
         let mut query = sqlx::query_as(get_tags_query_str.as_str());
         query = query.bind(note_id);
@@ -210,7 +211,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
 
         let delete_note_tag_query_str = format!(
             "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
-            vec!["?"; tags_to_remove.len()].join(", ")
+            get_placeholders(tags_to_remove.len())
         );
         let mut query = sqlx::query(delete_note_tag_query_str.as_str());
         for tag_name in tags_to_remove {
@@ -243,7 +244,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         // Determine new tags
         let get_tags_str = format!(
             "SELECT id, name FROM tag WHERE name IN ({})",
-            vec!["?"; tags_to_add.len()].join(", ")
+            get_placeholders(tags_to_add.len())
         );
         let mut query = sqlx::query_as(get_tags_str.as_str());
         for tag_name in tags_to_add {
@@ -592,7 +593,7 @@ pub async fn update_notes(
         // Get card ids from the note.id
         let query_str = format!(
             "SELECT id FROM cards WHERE note_id IN ({})",
-            vec!["?"; note_responses.len()].join(", ")
+            get_placeholders(note_responses.len())
         );
         let mut query = sqlx::query_as(query_str.as_str());
         for note in &note_responses {
@@ -619,7 +620,7 @@ pub async fn update_notes(
             // Check for existing card-tag relationships to avoid duplicates
             let query_str = format!(
                 "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
-                vec!["?"; created_card_ids.len()].join(", ")
+                get_placeholders(created_card_ids.len())
             );
             let mut query = sqlx::query_as(query_str.as_str());
             for card_id in &created_card_ids {

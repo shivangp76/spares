@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    api::parser::get_parser,
+    api::{get_placeholders, parser::get_parser},
     config::{read_internal_config, write_internal_config},
     helpers::value_to_string_vec,
     model::{Note, NoteId, NoteLink, TagId},
@@ -285,7 +285,7 @@ pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(),
             SELECT 1 FROM card_tag WHERE card_tag.tag_id = tag.id
         )
         ",
-        vec!["?"; tag_ids.len()].join(", ")
+        get_placeholders(tag_ids.len())
     );
     let mut sql_query = sqlx::query(&delete_tags_query_str);
     for tag_id in tag_ids {

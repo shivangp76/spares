@@ -1,6 +1,9 @@
 use crate::{
     Error,
-    api::note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
+    api::{
+        get_placeholders,
+        note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
+    },
     config::{read_internal_config, write_internal_config},
     helpers::value_to_string_vec,
     model::{NoteId, NoteLink},
@@ -60,7 +63,7 @@ pub async fn get_render_note_data(
     requested_note_ids: Option<Vec<NoteId>>,
 ) -> Result<Vec<RenderNoteData>, Error> {
     let placeholders = if let Some(ref note_ids) = requested_note_ids {
-        format!("WHERE n.id IN ({})", vec!["?"; note_ids.len()].join(", "))
+        format!("WHERE n.id IN ({})", get_placeholders(note_ids.len()))
     } else {
         String::new()
     };
@@ -254,11 +257,10 @@ pub async fn render_notes(
     let mut linked_notes_map: Option<HashMap<_, _>> = None;
     if include_linked_notes {
         let note_ids_for_links: Vec<NoteId> = notes_data.iter().map(|n| n.note_id).collect();
-        let placeholders = vec!["?"; note_ids_for_links.len()].join(", ");
         // Note that the query sorts by order, so we don't need to do this after
         let query_str = format!(
             "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
-            placeholders
+            get_placeholders(note_ids_for_links.len())
         );
         let mut query = sqlx::query_as(&query_str);
         for note_id in &note_ids_for_links {

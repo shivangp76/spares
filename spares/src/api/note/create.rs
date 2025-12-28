@@ -3,6 +3,7 @@ use crate::{
     Error, LibraryError, TagErrorKind,
     api::{
         card::create_card_tags,
+        get_placeholders,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
@@ -218,7 +219,7 @@ pub async fn create_notes(
         // Get card ids from the note.id here
         let query_str = format!(
             "SELECT id FROM cards WHERE note_id IN ({})",
-            vec!["?"; note_responses.len()].join(", ")
+            get_placeholders(note_responses.len())
         );
         let mut query = sqlx::query_as(query_str.as_str());
         for note in &note_responses {
