@@ -4,6 +4,7 @@ mod migrate;
 mod review;
 mod sync;
 mod tree;
+mod utils;
 
 use crate::tree::{build_tree, tree_to_string};
 use chrono::{DateTime, Local, Utc};
@@ -13,9 +14,9 @@ use import::{ImportArgs, import_from_files};
 use inquire::Confirm;
 use miette::{Error, IntoDiagnostic, miette};
 use migrate::{MigrateArgs, migrate_from_adapter};
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use review::{ReviewArgs, forget_card, review_cards};
-use serde_json::{Map, Value};
+use serde_json::Map;
 use spares::{
     adapters::get_adapter_from_string,
     api::tag::DEFAULT_TAG_AUTO_DELETE,
@@ -39,22 +40,14 @@ use spares::{
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse, StudyAction, SubmitStudyActionRequest},
         tag::{CreateTagRequest, TagResponse, TagSelector, UpdateTagRequest},
+        undo::UndoEventRequest,
     },
     search::QueryReturnItemType,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{io, path::PathBuf, str::FromStr};
 use sync::{SyncArgs, sync_notes};
-
-async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Response, Error> {
-    let status = response.status();
-    if status != StatusCode::OK {
-        let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(miette!(message.unwrap().to_string()));
-    }
-    Ok(response)
-}
+use utils::{ensure_ok, undo_event};
 
 /// Spaced Repetition System
 #[derive(Debug, Parser)]
@@ -124,6 +117,8 @@ enum Commands {
     Advance(AdvanceArgs),
     /// Postpone cards (delay reviews)
     Postpone(PostponeArgs),
+    /// Undo an event
+    Undo(UndoArgs),
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
@@ -427,6 +422,16 @@ struct PostponeArgs {
     scheduler_name: String,
     #[arg(short, long)]
     query: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct UndoArgs {
+    /// Event ID to undo. If not provided, undoes the latest event.
+    #[arg(short, long)]
+    event_id: Option<i64>,
+    /// If true, undo all events in the same group as the specified event
+    #[arg(short, long, default_value_t = false)]
+    undo_group: bool,
 }
 
 fn get_current_utc_datetime() -> DateTime<Utc> {
@@ -1338,6 +1343,26 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .map_err(|e| miette!("{}", e))?;
             let _ = ensure_ok(response).await?;
             println!("Postponed {} cards.", count);
+        }
+        Commands::Undo(UndoArgs {
+            event_id,
+            undo_group,
+        }) => {
+            let request = UndoEventRequest {
+                event_id,
+                undo_group,
+            };
+            let undo_response_opt = undo_event(&base_url, &client, request)
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            match undo_response_opt {
+                Some(undo_response) => {
+                    println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                }
+                None => {
+                    println!("No event to undo");
+                }
+            }
         }
     }
     Ok(())

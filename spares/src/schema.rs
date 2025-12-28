@@ -496,3 +496,21 @@ pub mod review {
         pub postpone_safe_count: u32,
     }
 }
+
+pub mod undo {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UndoEventRequest {
+        /// The ID of the event to undo. If `None`, then undoes the latest event.
+        pub event_id: Option<i64>,
+        /// If true, undo all events in the same group as this event
+        pub undo_group: bool,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UndoEventResponse {
+        /// The IDs of all events that were undone (including the original and any in the group)
+        pub undone_event_ids: Vec<i64>,
+    }
+}

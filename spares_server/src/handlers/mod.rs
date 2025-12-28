@@ -8,6 +8,7 @@ pub mod parser;
 pub mod review;
 pub mod scheduler;
 pub mod tag;
+pub mod undo;
 
 #[allow(
     clippy::needless_pass_by_value,

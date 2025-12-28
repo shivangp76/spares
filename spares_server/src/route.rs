@@ -22,6 +22,7 @@ use crate::{
             create_tag_handler, delete_tag_handler, get_tag_by_name_handler, get_tag_handler,
             list_tags_handler, rebuild_tag_handler, update_tag_handler,
         },
+        undo::undo_event_handler,
     },
 };
 use axum::{
@@ -85,5 +86,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
             "/api/scheduler/{name}/ratings",
             get(get_scheduler_ratings_handler),
         )
+        // Undo
+        .route("/api/undo", post(undo_event_handler))
         .with_state(app_state)
 }

@@ -15,6 +15,18 @@
 //! - Schema for payload changes
 //!   - Handled by `version` field
 
-use crate::model::{Event, EventType};
+use crate::{
+    Error,
+    model::{Event, EventType},
+    schema::undo::{UndoEventRequest, UndoEventResponse},
+};
+use sqlx::SqlitePool;
 
 pub(crate) mod payloads;
+
+pub async fn undo_event(
+    db: &SqlitePool,
+    body: UndoEventRequest,
+) -> Result<Option<UndoEventResponse>, Error> {
+    todo!()
+}
