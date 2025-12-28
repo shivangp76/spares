@@ -421,20 +421,7 @@ pub async fn update_notes(
     } = body;
 
     let mut parse_note_requests = Vec::new();
-    let note_ids = match selector {
-        NotesSelector::Ids(vec) => vec,
-        NotesSelector::Query(query) => {
-            let evaluator = Evaluator::new(&query);
-            evaluator.get_note_ids(db).await?
-        }
-        NotesSelector::All => {
-            let ids: Vec<(NoteId,)> = sqlx::query_as(r"SELECT id FROM note")
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            ids.into_iter().map(|(x,)| x).collect::<Vec<_>>()
-        }
-    };
+    let note_ids = selector.to_note_ids(db).await?;
     for note_id in &note_ids {
         let existing_note: Note = sqlx::query_as(r"SELECT * FROM note WHERE id = ?")
             .bind(note_id)

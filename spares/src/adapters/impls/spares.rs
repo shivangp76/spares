@@ -1,7 +1,7 @@
 use crate::adapters::SrsAdapter;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::{
-    note::{create_notes, delete_note, update_notes},
+    note::{create_notes, delete_notes, update_notes},
     parser::list_parsers,
 };
 use crate::config::{Environment, get_env_config};
@@ -9,7 +9,8 @@ use crate::model::CustomData;
 use crate::parsers::{NoteImportAction, NoteSettings, Parseable, get_all_parsers};
 use crate::schema::FilterOptions;
 use crate::schema::note::{
-    CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
+    CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesSelector, UpdateNotesRequest,
+    UpdateTags,
 };
 use crate::schema::parser::ParserResponse;
 use crate::{AdapterErrorKind, Error, LibraryError, ParserErrorKind};
@@ -222,13 +223,23 @@ impl SrsAdapter for SparesAdapter {
                     if run {
                         match &request_processor {
                             SparesRequestProcessorInternal::Server { base_url, client } => {
-                                let url = format!("{}/api/notes/{}", base_url, note_id);
-                                let response =
-                                    client.delete(url).send().await.map_err(Error::ApiRequest)?;
+                                let request = DeleteNotesRequest {
+                                    selector: NotesSelector::Ids(vec![note_id]),
+                                };
+                                let url = format!("{}/api/notes", base_url);
+                                let response = client
+                                    .delete(url)
+                                    .json(&request)
+                                    .send()
+                                    .await
+                                    .map_err(Error::ApiRequest)?;
                                 self.handle_response(response).await?;
                             }
                             SparesRequestProcessorInternal::Database { pool } => {
-                                delete_note(pool, note_id, &get_all_parsers()).await?;
+                                let request = DeleteNotesRequest {
+                                    selector: NotesSelector::Ids(vec![note_id]),
+                                };
+                                delete_notes(pool, request, &get_all_parsers()).await?;
                             }
                         }
                     }

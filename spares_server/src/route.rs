@@ -7,7 +7,7 @@ use crate::{
         },
         health_check_handler,
         note::{
-            create_notes_handler, delete_note_handler, export_notes_handler, generate_note_files_handler,
+            create_notes_handler, delete_notes_handler, export_notes_handler, generate_note_files_handler,
             get_duplicate_keywords_handler, get_note_handler, get_note_links_handler,
             get_unmatched_keywords_handler, list_notes_handler, search_keyword_handler,
             search_notes_handler, update_notes_handler,
@@ -51,7 +51,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/notes", post(create_notes_handler))
         .route("/api/notes/{id}", get(get_note_handler))
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>
-        .route("/api/notes/{id}", delete(delete_note_handler))
+        .route("/api/notes", delete(delete_notes_handler))
         .route("/api/notes", get(list_notes_handler))
         .route(
             "/api/notes/generate_files",

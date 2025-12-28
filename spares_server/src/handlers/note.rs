@@ -8,7 +8,7 @@ use axum::{
 use chrono::Utc;
 use spares::{
     api::note::{
-        create_notes, delete_note, export::export_notes, get_note, get_note_links,
+        create_notes, delete_notes, export::export_notes, get_note, get_note_links,
         get_unmatched_keywords, list_notes, render_notes, search_keyword, search_notes,
         update_notes,
     },
@@ -16,8 +16,8 @@ use spares::{
     schema::{
         FilterOptions,
         note::{
-            CreateNotesRequest, ExportNotesRequest, NoteLinksRequest, RenderNotesRequest,
-            SearchKeywordRequest, SearchNotesRequest, UpdateNotesRequest,
+            CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest, NoteLinksRequest,
+            RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, UpdateNotesRequest,
         },
     },
 };
@@ -51,11 +51,11 @@ pub async fn update_notes_handler(
     Ok(Json(update_notes_res))
 }
 
-pub async fn delete_note_handler(
-    Path(id): Path<i64>,
+pub async fn delete_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_note(&data.db, id, &get_all_parsers())
+    delete_notes(&data.db, body, &get_all_parsers())
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)

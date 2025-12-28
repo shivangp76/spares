@@ -30,9 +30,9 @@ use spares::{
             CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
         },
         note::{
-            CreateNoteRequest, CreateNotesRequest, ExportNotesRequest, MatchedKeywordResponse,
-            NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector, RenderNotesRequest,
-            SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
+            CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest,
+            MatchedKeywordResponse, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
+            RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
@@ -279,9 +279,16 @@ struct CardsSelectorLocal {
 
 #[derive(Debug, Subcommand)]
 enum DeleteCommands {
-    Parser { id: i64 },
-    Tag { id: i64 },
-    Note { id: i64 },
+    Parser {
+        id: i64,
+    },
+    Tag {
+        id: i64,
+    },
+    Note {
+        #[command(flatten)]
+        selector: NotesSelectorLocal,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -423,6 +430,33 @@ struct SearchArgs {
     output_format: OutputFormat,
     // Positional argument
     query: String,
+}
+
+impl NotesSelectorLocal {
+    fn get_notes_selector(self) -> Result<NotesSelector, String> {
+        if let Some(ids) = self.ids {
+            Ok(NotesSelector::Ids(ids))
+        } else if let Some(files) = self.files {
+            let notes_filepath_data_res = files
+                .into_iter()
+                .map(|f| get_note_info_from_filepath(&f))
+                .collect::<Result<Vec<_>, _>>();
+            match notes_filepath_data_res {
+                Ok(note_filepath_data) => {
+                    let file_note_ids = note_filepath_data
+                        .into_iter()
+                        .map(|d| d.note_id)
+                        .collect::<Vec<_>>();
+                    Ok(NotesSelector::Ids(file_note_ids))
+                }
+                Err(e) => Err(format!("Failed to parse files: {}", e)),
+            }
+        } else if let Some(query) = self.query {
+            Ok(NotesSelector::Query(query))
+        } else {
+            Err("should be unreachable by clap conflicts with".to_string())
+        }
+    }
 }
 
 async fn list_parsers(
@@ -604,31 +638,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 tags_to_add,
                 remove_all_tags,
             } => {
-                let selector = if let Some(ids) = selector.ids {
-                    NotesSelector::Ids(ids)
-                } else if let Some(files) = selector.files {
-                    let notes_filepath_data_res = files
-                        .into_iter()
-                        .map(|f| get_note_info_from_filepath(&f))
-                        .collect::<Result<Vec<_>, _>>();
-                    match notes_filepath_data_res {
-                        Ok(note_filepath_data) => {
-                            let file_note_ids = note_filepath_data
-                                .into_iter()
-                                .map(|d| d.note_id)
-                                .collect::<Vec<_>>();
-                            NotesSelector::Ids(file_note_ids)
-                        }
-                        Err(e) => {
-                            println!("Failed to parse files: {}", e);
-                            return Ok(());
-                        }
-                    }
-                } else if let Some(query) = selector.query {
-                    NotesSelector::Query(query)
-                } else {
-                    unreachable!("by clap conflicts with")
-                };
+                let selector = selector
+                    .get_notes_selector()
+                    .map_err(|e| miette!("{}", e))?;
                 let tags = if remove_all_tags {
                     // If `tags_to_add` is empty, this will just set all tags to nothing which will remove all tags. Otherwise, it will remove all tags and then add `tags_to_add`
                     UpdateTags::SetTags(tags_to_add.unwrap_or_default())
@@ -716,10 +728,15 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let _ = ensure_ok(response).await?;
                 println!("Done");
             }
-            DeleteCommands::Note { id } => {
-                let url = format!("{}/api/notes/{}", base_url, id);
+            DeleteCommands::Note { selector } => {
+                let selector = selector
+                    .get_notes_selector()
+                    .map_err(|e| miette!("{}", e))?;
+                let request = DeleteNotesRequest { selector };
+                let url = format!("{}/api/notes", base_url);
                 let response = client
                     .delete(url)
+                    .json(&request)
                     .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;

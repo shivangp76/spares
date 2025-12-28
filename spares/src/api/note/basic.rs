@@ -1,6 +1,8 @@
 use crate::{
     Error,
-    api::{get_placeholders, parser::get_parser},
+    api::{
+        execute_batched_delete_query, execute_batched_query, get_placeholders, parser::get_parser,
+    },
     config::{read_internal_config, write_internal_config},
     helpers::value_to_string_vec,
     model::{Note, NoteId, NoteLink, TagId},
@@ -15,12 +17,17 @@ use crate::{
     },
     schema::{
         FilterOptions,
-        note::{LinkedNote, NoteResponse},
+        note::{DeleteNotesRequest, LinkedNote, NoteResponse, NotesSelector},
     },
+    search::evaluator::Evaluator,
 };
+use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, Error> {
     // Get note
@@ -212,54 +219,128 @@ pub fn delete_note_files(
     Ok(())
 }
 
-pub async fn delete_note(
+#[allow(clippy::too_many_lines)]
+pub async fn delete_notes(
     db: &SqlitePool,
-    id: NoteId,
+    body: DeleteNotesRequest,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<(), Error> {
-    let card_orders_db: Vec<(u32,)> =
-        sqlx::query_as(r#"SELECT "order" FROM card WHERE note_id = ?"#)
-            .bind(id)
+    let DeleteNotesRequest { selector } = body;
+
+    // Resolve selector to get note ids
+    let note_ids = selector.to_note_ids(db).await?;
+    if note_ids.is_empty() {
+        return Ok(());
+    }
+
+    // Get all note data before deletion (batched query)
+    let note_data_rows = execute_batched_query(db, &note_ids, async |db, chunk| {
+        let query_str = format!(
+            r"SELECT id, parser_id, data FROM note WHERE id IN ({})",
+            get_placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as::<_, (NoteId, i64, String)>(&query_str);
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        query
             .fetch_all(db)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-    let card_orders = card_orders_db
-        .into_iter()
-        .map(|(card_order,)| card_order as usize)
-        .collect::<Vec<_>>();
+            .map_err(|e| Error::Sqlx { source: e })
+    })
+    .await?;
 
-    // Get tags for the note that have `auto_delete` enabled
+    // Get all card orders for all notes (batched query)
+    let card_orders_rows = execute_batched_query(db, &note_ids, async |db, chunk| {
+        let query_str = format!(
+            r#"SELECT note_id, "order" FROM card WHERE note_id IN ({})"#,
+            get_placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as::<_, (NoteId, u32)>(&query_str);
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })
+    })
+    .await?;
+
+    // Group card orders by note_id
+    let mut card_orders_map: HashMap<NoteId, Vec<usize>> = HashMap::new();
+    for (note_id, card_order) in card_orders_rows {
+        card_orders_map
+            .entry(note_id)
+            .or_default()
+            .push(card_order as usize);
+    }
+
+    // Get all tags with `auto_delete` enabled for all notes (batched query)
     // NOTE: AUTOMATIC REBUILD: If `Automatic` rebuild is enabled in the future, then a check would be added to ensure `auto_delete` is false. In other words, `auto_delete` as true and rebuild as `Automatic` conflict since once the tag has 0 notes left, it will be deleted so that means notes are not automatically added to it anymore.
-    let tags_tuple: Vec<(TagId,)> = sqlx::query_as(
-        // r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1"
-        "SELECT DISTINCT t.id
-        FROM tag t
-        LEFT JOIN note_tag nt ON t.id = nt.tag_id
-        LEFT JOIN card_tag ct ON t.id = ct.tag_id
-        WHERE
-            (nt.note_id = ? OR ct.card_id = (SELECT id FROM card WHERE note_id = ?))
-            AND t.auto_delete = 1",
-    )
-    .bind(id)
-    .bind(id)
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-    let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
+    let tags_rows = execute_batched_query(db, &note_ids, async |db, chunk| {
+        let query_str = format!(
+            "SELECT DISTINCT t.id
+            FROM tag t
+            LEFT JOIN note_tag nt ON t.id = nt.tag_id
+            LEFT JOIN card_tag ct ON t.id = ct.tag_id
+            LEFT JOIN card c ON ct.card_id = c.id
+            WHERE
+                (nt.note_id IN ({}) OR c.note_id IN ({}))
+                AND t.auto_delete = 1",
+            get_placeholders(chunk.len()),
+            get_placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as::<_, (TagId,)>(&query_str);
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })
+    })
+    .await?;
 
-    let (note_id, parser_id, note_data): (NoteId, i64, String) =
-        sqlx::query_as(r"DELETE FROM note WHERE id = ? RETURNING id, parser_id, data")
-            .bind(id)
-            .fetch_one(db)
+    // Delete all notes in batched queries
+    execute_batched_delete_query(db, &note_ids, async |db, chunk| {
+        let query_str = format!(
+            "DELETE FROM note WHERE id IN ({})",
+            get_placeholders(chunk.len()),
+        );
+        let mut query = sqlx::query(&query_str);
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        query
+            .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await?;
 
     // Delete tags with no more notes
-    delete_empty_tags(db, &tag_ids).await?;
+    let all_tag_ids: HashSet<TagId> = tags_rows.into_iter().map(|t| t.0).collect();
+    let all_tag_ids_vec: Vec<TagId> = all_tag_ids.into_iter().collect();
+    delete_empty_tags(db, &all_tag_ids_vec).await?;
 
-    let parser_response = get_parser(db, parser_id).await?;
-    let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
-    delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
+    // Delete files for all notes
+    let grouped_note_data = note_data_rows
+        .into_iter()
+        .map(|(nid, pid, nd)| (pid, (nid, nd)))
+        .into_group_map();
+    for (parser_id, notes) in grouped_note_data {
+        let parser_response = get_parser(db, parser_id).await?;
+        let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
+        for (note_id, note_data) in notes {
+            let card_orders = card_orders_map.remove(&note_id).unwrap_or_default();
+            delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
+        }
+    }
 
     // Update config
     let mut config = read_internal_config()?;
@@ -270,32 +351,33 @@ pub async fn delete_note(
 }
 
 pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(), Error> {
-    if tag_ids.is_empty() {
-        return Ok(());
-    }
-    let delete_tags_query_str = format!(
-        r"
-        DELETE FROM tag
-        WHERE id IN ({})
-        AND auto_delete = 1
-        AND NOT EXISTS (
-            SELECT 1 FROM note_tag WHERE note_tag.tag_id = tag.id
-        )
-        AND NOT EXISTS (
-            SELECT 1 FROM card_tag WHERE card_tag.tag_id = tag.id
-        )
-        ",
-        get_placeholders(tag_ids.len())
-    );
-    let mut sql_query = sqlx::query(&delete_tags_query_str);
-    for tag_id in tag_ids {
-        sql_query = sql_query.bind(tag_id);
-    }
-    sql_query
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(())
+    // if tag_ids.is_empty() {
+    //     return Ok(());
+    // }
+    execute_batched_delete_query(db, tag_ids, async |db, chunk| {
+        let query_str = format!(
+            r"DELETE FROM tag
+            WHERE id IN ({})
+            AND auto_delete = 1
+            AND NOT EXISTS (
+                SELECT 1 FROM note_tag WHERE note_tag.tag_id = tag.id
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM card_tag WHERE card_tag.tag_id = tag.id
+            )",
+            get_placeholders(chunk.len()),
+        );
+        let mut query = sqlx::query(&query_str);
+        for tag_id in chunk {
+            query = query.bind(tag_id);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<NoteResponse>, Error> {
@@ -603,7 +685,10 @@ pub(crate) mod tests {
         let last_note = created_notes.last().unwrap();
 
         // Delete note
-        let delete_note_res = delete_note(&pool, last_note.id, &get_all_parsers()).await;
+        let request = DeleteNotesRequest {
+            selector: NotesSelector::Ids(vec![last_note.id]),
+        };
+        let delete_note_res = delete_notes(&pool, request, &get_all_parsers()).await;
         assert!(delete_note_res.is_ok());
 
         // Check database and verify item with id does not exist
