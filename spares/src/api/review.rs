@@ -99,7 +99,6 @@ pub async fn get_review_card(
     } else {
         String::new()
     };
-    // TODO: Maybe this card id query str can be combined with the `restrictions` variable since both of them filter `c.id`
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(ref query)) = filter {
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");

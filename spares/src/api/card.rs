@@ -1,5 +1,6 @@
 use crate::{
     Error, LibraryError, SchedulerErrorKind,
+    api::{execute_batched_query, placeholders_2d},
     config::read_external_config,
     model::{Card, CardId, NEW_CARD_STATE, NoteId, ReviewLog, SpecialState, TagId},
     schedulers::get_scheduler_from_string,
@@ -150,7 +151,6 @@ pub async fn forget_card(
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-
     card.stability = 0.0;
     card.difficulty = 0.0;
     card.due = now;
@@ -186,38 +186,46 @@ pub async fn create_card_tags(
     db: &SqlitePool,
     card_tag_entries: &[(CardId, TagId)],
 ) -> Result<(), Error> {
-    if !card_tag_entries.is_empty() {
-        let insert_card_tag_query_str = format!(
+    execute_batched_query(db, card_tag_entries, async |db, chunk| {
+        let query_str = format!(
             "INSERT INTO card_tag (card_id, tag_id) VALUES {}",
-            vec!["(?, ?)"; card_tag_entries.len()].join(", ")
+            placeholders_2d(chunk.len(), 2)
         );
-        let mut query = sqlx::query(insert_card_tag_query_str.as_str());
-        for (card_id, tag_id) in card_tag_entries {
+        let mut query = sqlx::query(query_str.as_str());
+        for (card_id, tag_id) in chunk {
             query = query.bind(card_id);
             query = query.bind(tag_id);
         }
-        let _insert_result = query
+        query
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 pub async fn delete_card_tags(
     db: &SqlitePool,
     delete_card_tag_entries: &[(CardId, TagId)],
 ) -> Result<(), Error> {
-    for (card_id, tag_id) in delete_card_tag_entries {
-        let _delete_card_tag_result =
-            sqlx::query(r"DELETE FROM card_tag WHERE card_id = ? AND tag_id = ?")
-                .bind(card_id)
-                .bind(tag_id)
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+    execute_batched_query(db, delete_card_tag_entries, async |db, chunk| {
+        let query_str = format!(
+            "DELETE FROM card_tag WHERE (card_id, tag_id) IN ({})",
+            placeholders_2d(chunk.len(), 2)
+        );
+        let mut query = sqlx::query(query_str.as_str());
+        for (card_id, tag_id) in chunk {
+            query = query.bind(card_id);
+            query = query.bind(tag_id);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

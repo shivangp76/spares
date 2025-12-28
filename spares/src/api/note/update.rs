@@ -6,7 +6,9 @@ use crate::{
     Error, LibraryError, ParserErrorKind, TagErrorKind,
     api::{
         card::{create_card_tags, delete_card_tags},
-        get_placeholders,
+        execute_batched_query, fetch_batched_query,
+        parser::get_parser_name,
+        placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
@@ -54,22 +56,28 @@ async fn update_cards(
     // TODO: Only cards in `same_indices` which had their `back_type` or `special_state` updated should be updated below. Most of the time these field won't change, so this is wasteful. These field can be known by comparing the output of `get_cards()` for the old and new note data.
 
     // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
-    let moved_cards_query_str = format!(
-        "SELECT * FROM card WHERE note_id = ? AND \"order\" IN ({})",
-        get_placeholders(move_card_indices.len() + same_indices.len())
-    );
-    let mut query = sqlx::query_as(moved_cards_query_str.as_str());
-    query = query.bind(note_id);
-    for (from_card_index, _to_card_index) in &move_card_indices {
-        query = query.bind(*from_card_index as u32);
-    }
-    for same_index in &same_indices {
-        query = query.bind(*same_index as u32);
-    }
-    let mut moved_cards: Vec<Card> = query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    let indices = move_card_indices
+        .iter()
+        .map(|(x, _)| *x)
+        .chain(same_indices.clone())
+        .collect::<Vec<_>>();
+    let mut moved_cards: Vec<Card> = fetch_batched_query(db, &indices, async |db, chunk| {
+        let query_str = format!(
+            "SELECT * FROM card WHERE note_id = ? AND \"order\" IN ({})",
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as(&query_str);
+        query = query.bind(note_id);
+        for index in chunk {
+            query = query.bind(*index as u32);
+        }
+        query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })
+    })
+    .await?;
+
     let move_card_indices_map = move_card_indices
         .into_iter()
         .chain(same_indices.into_iter().map(|i| (i, i)))
@@ -103,19 +111,23 @@ async fn update_cards(
     }
 
     // Delete cards
-    let delete_query_str = format!(
-        "DELETE FROM card WHERE note_id = ? AND \"order\" IN ({})",
-        get_placeholders(delete_card_indices.len())
-    );
-    let mut query = sqlx::query(delete_query_str.as_str());
-    query = query.bind(note_id);
-    for card_index in &delete_card_indices {
-        query = query.bind(*card_index as u32);
-    }
-    let _delete_cards_result = query
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    execute_batched_query(db, &delete_card_indices, async |db, chunk| {
+        let query_str = format!(
+            "DELETE FROM card WHERE note_id = ? AND \"order\" IN ({})",
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query(query_str.as_str());
+        query = query.bind(note_id);
+        for card_index in chunk {
+            query = query.bind(*card_index as u32);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await;
 
     // Create new cards
     let new_cards = create_card_indices
@@ -193,34 +205,41 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         && !tags_to_remove.is_empty()
     {
         // Get tags for the note that have `auto_delete` enabled
-        let get_tags_query_str = format!(
-            "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
-            get_placeholders(tags_to_remove.len())
-        );
-        let mut query = sqlx::query_as(get_tags_query_str.as_str());
-        query = query.bind(note_id);
-        for tag_name in tags_to_remove {
-            query = query.bind(tag_name);
-        }
-        let tags_tuple: Vec<(TagId,)> = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        let tag_ids: Vec<TagId> = tags_tuple.into_iter().map(|t| t.0).collect();
-        tags_to_check.extend(tag_ids);
+        let tags_tuple: Vec<(TagId,)> =
+        fetch_batched_query(db, tags_to_remove, async |db, chunk| {
+            let query_str = format!(
+                "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_as(&query_str);
+            query = query.bind(note_id);
+            for tag_name in chunk {
+                query = query.bind(tag_name);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
+        tags_to_check.extend(tags_tuple.into_iter().map(|(x,)| x));
 
-        let delete_note_tag_query_str = format!(
-            "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
-            get_placeholders(tags_to_remove.len())
-        );
-        let mut query = sqlx::query(delete_note_tag_query_str.as_str());
-        for tag_name in tags_to_remove {
-            query = query.bind(tag_name);
-        }
-        let _delete_tags_res = query
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        execute_batched_query(db, tags_to_remove, async |db, chunk| {
+            let query_str = format!(
+                "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query(query_str.as_str());
+            for tag_name in chunk {
+                query = query.bind(tag_name);
+            }
+            query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        })
+        .await?;
     }
     // Delete tags with no more notes
     delete_empty_tags(db, &tags_to_check).await?;
@@ -239,33 +258,38 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         }
 
         // Add tags
-        let mut new_tag_ids: Vec<i64> = Vec::new();
-
         // Determine new tags
-        let get_tags_str = format!(
-            "SELECT id, name FROM tag WHERE name IN ({})",
-            get_placeholders(tags_to_add.len())
-        );
-        let mut query = sqlx::query_as(get_tags_str.as_str());
-        for tag_name in tags_to_add {
-            query = query.bind(tag_name);
-        }
-        let tags_info: Vec<(i64, String)> = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        new_tag_ids.extend(tags_info.iter().map(|x| x.0).collect::<Vec<_>>());
-        let existing_tag_names = tags_info.iter().map(|x| x.1.clone()).collect::<Vec<_>>();
+        let tags_info: Vec<(TagId, String)> =
+            fetch_batched_query(db, tags_to_add, async |db, chunk| {
+                let query_str = format!(
+                    "SELECT id, name FROM tag WHERE name IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as(query_str.as_str());
+                for tag_name in chunk {
+                    query = query.bind(tag_name);
+                }
+                query
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            })
+            .await?;
+        let mut new_tag_ids: Vec<i64> = tags_info.iter().map(|(x, _)| *x).collect::<Vec<_>>();
+        let existing_tag_names = tags_info
+            .iter()
+            .map(|x| x.1.clone())
+            .collect::<HashSet<_>>();
 
         let new_tags = tags_to_add
             .iter()
-            .filter(|tag_name| !existing_tag_names.contains(tag_name))
+            .filter(|tag_name| !existing_tag_names.contains(tag_name.as_str()))
             .collect::<Vec<_>>();
 
         // Create new tags
         let tag_responses = try_join_all(
             new_tags
-                .iter()
+                .into_iter()
                 .map(|tag| {
                     create_tag(
                         db,
@@ -284,21 +308,23 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
 
         // Add these tags
-        if !new_tag_ids.is_empty() {
-            let insert_note_tag_query_str = format!(
+        execute_batched_query(db, &new_tag_ids, async |db, chunk| {
+            let query_str = format!(
                 "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
-                vec!["(?, ?)"; new_tag_ids.len()].join(", ")
+                placeholders_2d(chunk.len(), 2)
             );
-            let mut query = sqlx::query(insert_note_tag_query_str.as_str());
-            for tag_id in &new_tag_ids {
+            let mut query = sqlx::query(query_str.as_str());
+            for tag_id in chunk {
                 query = query.bind(note_id);
                 query = query.bind(tag_id);
             }
-            let _insert_result = query
+            query
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        }
+            Ok(())
+        })
+        .await?;
     }
     Ok(())
 }
@@ -578,18 +604,22 @@ pub async fn update_notes(
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         // Get card ids from the note.id
-        let query_str = format!(
-            "SELECT id FROM cards WHERE note_id IN ({})",
-            get_placeholders(note_responses.len())
-        );
-        let mut query = sqlx::query_as(query_str.as_str());
-        for note in &note_responses {
-            query = query.bind(note.id);
-        }
-        let created_card_id_tuples: Vec<(CardId,)> = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let created_card_id_tuples: Vec<(CardId,)> =
+            fetch_batched_query(db, &note_responses, async |db, chunk| {
+                let query_str = format!(
+                    "SELECT id FROM cards WHERE note_id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as(query_str.as_str());
+                for note in chunk {
+                    query = query.bind(note.id);
+                }
+                query
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            })
+            .await?;
         let created_card_ids = created_card_id_tuples
             .into_iter()
             .map(|(x,)| x)
@@ -605,20 +635,23 @@ pub async fn update_notes(
                 .map(|card_id| (*card_id, tag_id))
                 .partition(|(card_id, _)| search_card_ids.contains(card_id));
             // Check for existing card-tag relationships to avoid duplicates
-            let query_str = format!(
-                "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
-                get_placeholders(created_card_ids.len())
-            );
-            let mut query = sqlx::query_as(query_str.as_str());
-            for card_id in &created_card_ids {
-                query = query.bind(card_id);
-            }
             let existing_card_tags: Vec<(CardId, TagId)> =
-                query
-                    .bind(tag_id)
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
+                fetch_batched_query(db, &created_card_ids, async |db, chunk| {
+                    let query_str = format!(
+                        "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
+                        placeholders(chunk.len())
+                    );
+                    let mut query = sqlx::query_as(query_str.as_str());
+                    for card_id in chunk {
+                        query = query.bind(card_id);
+                    }
+                    query
+                        .bind(tag_id)
+                        .fetch_all(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })
+                })
+                .await?;
             let existing_card_tags_set: HashSet<(CardId, TagId)> =
                 existing_card_tags.into_iter().collect();
             let card_ids_to_add_tag: Vec<(CardId, TagId)> = card_ids_to_add_tag
@@ -634,11 +667,7 @@ pub async fn update_notes(
 
     // Get parser
     for (parser_id, requests) in parse_note_requests.into_iter().into_group_map() {
-        let (parser_name,): (String,) = sqlx::query_as(r"SELECT name FROM parser WHERE id = ?")
-            .bind(parser_id)
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let parser_name = get_parser_name(db, parser_id).await?;
         let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
         // Update note and card files, without compiling
