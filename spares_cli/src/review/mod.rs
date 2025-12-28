@@ -22,15 +22,15 @@ use strum_macros::{Display, EnumString};
 use tokio::sync::mpsc;
 use utils::{
     bury_card, bury_note, bury_until_later_today, close_rendered_file, format_duration,
-    get_scheduler_ratings, open_rendered_file, print_recall_duration, print_summary, submit_rating,
-    suspend_cards, suspend_note, tag_note,
+    get_scheduler_ratings, open_rendered_file, print_rate_duration, print_recall_duration,
+    print_summary, submit_rating, suspend_cards, suspend_note, tag_note,
 };
 
 mod utils;
-use crate::review::utils::{
-    note_id_to_cards, print_rate_duration, set_due_date, set_due_date_with_prompt,
-};
+use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_prompt};
+use crate::utils::undo_event;
 use spares::schema::card::CardResponse;
+use spares::schema::undo::UndoEventRequest;
 pub use utils::forget_card;
 
 #[derive(Args, Debug)]
@@ -96,6 +96,7 @@ enum ReviewAction {
     SuspendCard,
     #[strum(serialize = "Suspend Note (card + siblings)")]
     SuspendNote,
+    Undo,
     Exit,
 }
 
@@ -693,16 +694,48 @@ pub async fn review_cards(
                     .await;
                 });
             }
-            // ReviewAction::Undo => {
-            //     if card_flipped {
-            //         // Close card back
-            //         close_rendered_file(&mut card_back_rendered_child.take().unwrap())?;
-            //     } else {
-            //         // Close card front
-            //         close_rendered_file(&mut card_front_rendered_child)?;
-            //     }
-            //     // Send server request for undo action
-            // }
+            ReviewAction::Undo => {
+                if card_flipped {
+                    // Close card back
+                    close_rendered_file(
+                        &mut card_back_rendered_child.take().unwrap(),
+                        close_command,
+                        false,
+                    )?;
+
+                    // Reopen card front for the current card
+                    card_front_rendered_child = open_rendered_file(
+                        &review_card_response.card_front_rendered_path,
+                        open_command,
+                        false,
+                    )?;
+                    // TODO: Reset stopwatches
+                } else {
+                    // Close card front
+                    close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
+
+                    // Undo the latest event
+                    // TODO: Keep track of the previous event id manually and submit it here. This
+                    // is so if notes are synced in another window, then the latest event will be
+                    // different.
+                    let request = UndoEventRequest {
+                        event_id: None,
+                        undo_group: false,
+                    };
+                    let undo_response_opt = undo_event(base_url, client, request).await?;
+                    match undo_response_opt {
+                        Some(undo_response) => {
+                            println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                        }
+                        None => {
+                            println!("No event to undo.");
+                        }
+                    }
+
+                    // Advance to next review card which will be the previous card
+                    advance_review_card = true;
+                }
+            }
             ReviewAction::Exit => {
                 close_rendered_file(&mut card_front_rendered_child, close_command, true)?;
                 if let Some(mut child) = card_back_rendered_child {
