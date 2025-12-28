@@ -1,5 +1,4 @@
 const BULK_REQUEST_THRESHOLD: usize = 25;
-const MAX_CARDS_SINGLE_INSERTION: usize = 25;
 const AUTOMATIC_REBUILD: bool = false;
 
 mod basic;

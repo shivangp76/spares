@@ -1,8 +1,9 @@
 use crate::{
     Error,
     api::{
-        get_placeholders,
+        execute_batched_query,
         note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
+        placeholders, placeholders_2d,
     },
     config::{read_internal_config, write_internal_config},
     helpers::value_to_string_vec,
@@ -62,11 +63,6 @@ pub async fn get_render_note_data(
     db: &SqlitePool,
     requested_note_ids: Option<Vec<NoteId>>,
 ) -> Result<Vec<RenderNoteData>, Error> {
-    let placeholders = if let Some(ref note_ids) = requested_note_ids {
-        format!("WHERE n.id IN ({})", get_placeholders(note_ids.len()))
-    } else {
-        String::new()
-    };
     let query_str = format!(
         r"SELECT
           n.id as note_id,
@@ -90,10 +86,15 @@ pub async fn get_render_note_data(
           n.id
         ORDER BY
           n.id",
-        placeholders
+        requested_note_ids
+            .as_ref()
+            .filter(|ids| !ids.is_empty())
+            .map_or(String::new(), |ids| format!(
+                "WHERE n.id IN ({})",
+                placeholders(ids.len())
+            ))
     );
     let mut query = sqlx::query_as(&query_str);
-
     if let Some(ref note_ids) = requested_note_ids {
         for note_id in note_ids {
             query = query.bind(note_id);
@@ -188,22 +189,24 @@ pub async fn render_notes(
             .collect();
 
         // Update note links with updated score
-        if !updated_note_links.is_empty() {
-            let delete_query_str = format!(
+        execute_batched_query(db, &updated_note_links, async |db, chunk| {
+            let query_str = format!(
                 "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
-                vec!["(?, ?)"; updated_note_links.len()].join(", ")
+                placeholders_2d(chunk.len(), 2)
             );
-            let mut delete_query = sqlx::query(delete_query_str.as_str());
-            for nl in &updated_note_links {
+            let mut delete_query = sqlx::query(query_str.as_str());
+            for nl in chunk {
                 delete_query = delete_query.bind(nl.parent_note_id);
                 delete_query = delete_query.bind(nl.order);
             }
-            let _delete_result = delete_query
+            delete_query
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-            create_note_links(db, &updated_note_links).await?;
-        }
+            Ok(())
+        })
+        .await;
+        create_note_links(db, &updated_note_links).await?;
         // Note: We'll load all note links for rendered notes later, after we know which notes we're rendering
         // The updated note links are already in the database, so we'll get them when we query
     }
@@ -260,7 +263,7 @@ pub async fn render_notes(
         // Note that the query sorts by order, so we don't need to do this after
         let query_str = format!(
             "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
-            get_placeholders(note_ids_for_links.len())
+            placeholders(note_ids_for_links.len())
         );
         let mut query = sqlx::query_as(&query_str);
         for note_id in &note_ids_for_links {

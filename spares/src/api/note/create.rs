@@ -1,9 +1,11 @@
-use super::{AUTOMATIC_REBUILD, BULK_REQUEST_THRESHOLD, MAX_CARDS_SINGLE_INSERTION};
+use super::{AUTOMATIC_REBUILD, BULK_REQUEST_THRESHOLD};
 use crate::{
     Error, LibraryError, TagErrorKind,
     api::{
         card::create_card_tags,
-        get_placeholders,
+        execute_batched_query, fetch_batched_query,
+        parser::get_parser_name,
+        placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
     },
     config::{read_internal_config, write_internal_config},
@@ -16,7 +18,7 @@ use crate::{
         },
     },
     schema::{
-        note::{CreateNoteRequest, CreateNotesRequest, NoteResponse, NotesResponse},
+        note::{self, CreateNoteRequest, CreateNotesRequest, NoteResponse, NotesResponse},
         tag::CreateTagRequest,
     },
     search::evaluator::Evaluator,
@@ -60,11 +62,7 @@ pub async fn create_notes(
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<NotesResponse, Error> {
     // Get parser
-    let (parser_name,): (String,) = sqlx::query_as(r"SELECT name FROM parser WHERE id = ?")
-        .bind(body.parser_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    let parser_name = get_parser_name(db, body.parser_id).await?;
     let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
     // Validate tags do not contain filtered tags
@@ -217,18 +215,22 @@ pub async fn create_notes(
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         // Get card ids from the note.id here
-        let query_str = format!(
-            "SELECT id FROM cards WHERE note_id IN ({})",
-            get_placeholders(note_responses.len())
-        );
-        let mut query = sqlx::query_as(query_str.as_str());
-        for note in &note_responses {
-            query = query.bind(note.id);
-        }
-        let card_id_tuples: Vec<(CardId,)> = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let card_id_tuples: Vec<(CardId,)> =
+            fetch_batched_query(db, &note_responses, async |db, chunk| {
+                let query_str = format!(
+                    "SELECT id FROM cards WHERE note_id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as(&query_str);
+                for note in chunk {
+                    query = query.bind(note.id);
+                }
+                query
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            })
+            .await?;
         let created_card_ids = card_id_tuples.into_iter().map(|(x,)| x).collect::<Vec<_>>();
         let mut card_filtered_tag_entries = Vec::new();
         for (tag_id, query) in existing_filtered_tags {
@@ -269,38 +271,40 @@ pub async fn create_note_keywords(
     db: &SqlitePool,
     note_id_with_keywords: &[(NoteId, Vec<(String, bool)>)],
 ) -> Result<(), Error> {
-    let count = note_id_with_keywords.iter().map(|(_, ks)| ks.len()).sum();
-    if count != 0 {
-        let insert_note_keyword_query_str = format!(
+    let rows = note_id_with_keywords
+        .iter()
+        .flat_map(|(note_id, ks)| ks.iter().map(|k| (*note_id, k)))
+        .collect::<Vec<_>>();
+    execute_batched_query(db, &rows, async |db, chunk| {
+        let query_str = format!(
             "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
-            vec!["(?, ?, ?)"; count].join(", ")
+            placeholders_2d(chunk.len(), 3)
         );
-        let mut query = sqlx::query(insert_note_keyword_query_str.as_str());
-        for (note_id, ks) in note_id_with_keywords {
-            for (keyword, embedded) in ks {
-                query = query.bind(note_id);
-                query = query.bind(keyword);
-                query = query.bind(i32::from(*embedded));
-            }
+        let mut query = sqlx::query(&query_str);
+        for (note_id, (keyword, embedded)) in chunk {
+            query = query.bind(note_id);
+            query = query.bind(keyword);
+            query = query.bind(i32::from(*embedded));
         }
-        let _insert_result = query
+        query
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 pub async fn create_note_links(
     db: &SqlitePool,
     note_link_entries: &[NoteLink],
 ) -> Result<(), Error> {
-    if !note_link_entries.is_empty() {
-        let insert_query_str = format!(
+    execute_batched_query(db, note_link_entries, async |db, chunk| {
+        let query_str = format!(
             "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
-            vec!["(?, ?, ?, ?, ?, ?)"; note_link_entries.len()].join(", ")
+            placeholders_2d(chunk.len(), 6)
         );
-        let mut query = sqlx::query(insert_query_str.as_str());
+        let mut query = sqlx::query(&query_str);
         for NoteLink {
             parent_note_id,
             linked_note_id,
@@ -308,7 +312,7 @@ pub async fn create_note_links(
             searched_keyword,
             matched_keyword,
             score,
-        } in note_link_entries
+        } in chunk
         {
             query = query.bind(parent_note_id);
             query = query.bind(linked_note_id);
@@ -317,48 +321,46 @@ pub async fn create_note_links(
             query = query.bind(matched_keyword);
             query = query.bind(score);
         }
-        let _insert_result = query
+        query
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 pub async fn create_note_tags(
     db: &SqlitePool,
     note_tag_entries: &[(NoteId, TagId)],
 ) -> Result<(), Error> {
-    if !note_tag_entries.is_empty() {
-        let insert_note_tag_query_str = format!(
+    execute_batched_query(db, note_tag_entries, async |db, chunk| {
+        let query_str = format!(
             "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
-            vec!["(?, ?)"; note_tag_entries.len()].join(", ")
+            placeholders_2d(chunk.len(), 2)
         );
-        let mut query = sqlx::query(insert_note_tag_query_str.as_str());
-        for (note_id, tag_id) in note_tag_entries {
+        let mut query = sqlx::query(query_str.as_str());
+        for (note_id, tag_id) in chunk {
             query = query.bind(note_id);
             query = query.bind(tag_id);
         }
-        let _insert_result = query
+        query
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 pub async fn create_cards(db: &SqlitePool, card_entries: &[Card]) -> Result<(), Error> {
-    // We chunk up the insertions to avoid "too many SQL variables error" caused by too many bind statements.
-    let card_entries_chunks = card_entries
-        .chunks(MAX_CARDS_SINGLE_INSERTION)
-        .collect::<Vec<_>>();
-    for card_entries_chunk in card_entries_chunks {
-        let create_cards_query_str = format!(
+    execute_batched_query(db, card_entries, async |db, chunk| {
+        let query_str = format!(
             "INSERT INTO card (note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
-            vec!["(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; card_entries_chunk.len()].join(", ")
+            placeholders_2d(chunk.len(), 11)
         );
-        let mut query = sqlx::query(create_cards_query_str.as_str());
-        for card in card_entries_chunk {
+        let mut query = sqlx::query(query_str.as_str());
+        for card in chunk {
             query = query.bind(card.note_id);
             query = query.bind(card.order);
             query = query.bind(card.back_type);
@@ -371,12 +373,13 @@ pub async fn create_cards(db: &SqlitePool, card_entries: &[Card]) -> Result<(), 
             query = query.bind(card.state);
             query = query.bind(&card.custom_data);
         }
-        let _insert_result = query
+        query
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 async fn add_note_tags(

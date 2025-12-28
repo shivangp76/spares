@@ -36,6 +36,15 @@ pub async fn get_parser(db: &SqlitePool, id: i64) -> Result<ParserResponse, Erro
     Ok(ParserResponse::new(&parser))
 }
 
+pub(crate) async fn get_parser_name(db: &SqlitePool, id: i64) -> Result<String, Error> {
+    let (parser_name,): (String,) = sqlx::query_as(r"SELECT name FROM parser WHERE id = ?")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(parser_name)
+}
+
 pub async fn update_parser(
     db: &SqlitePool,
     body: UpdateParserRequest,
