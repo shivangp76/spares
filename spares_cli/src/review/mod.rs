@@ -1,5 +1,5 @@
 use crate::import::import_from_files;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use clap::Args;
 use inquire::Select;
 use reqwest::{Client, StatusCode};
@@ -181,6 +181,12 @@ async fn get_review_card(
             println!(
                 "Estimated Time Remaining: {}",
                 format_duration(review_card.time_estimate)
+            );
+            println!(
+                "Estimated Completion Time: {}",
+                (Utc::now() + review_card.time_estimate)
+                    .with_timezone(&Local)
+                    .format("%H:%M:%S %P (%m-%d-%Y)")
             );
 
             Ok(Some((review_card, child)))
