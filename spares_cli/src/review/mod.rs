@@ -11,7 +11,7 @@ use spares::parsers::{find_parser, get_all_parsers};
 use spares::schema::note::{NoteIdsSelector, RenderNotesRequest};
 use spares::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
-    RatingSubmission,
+    RatingSubmission, StatisticsRequest, StatisticsResponse,
 };
 use spares::schema::tag::TagResponse;
 use std::path::PathBuf;
@@ -353,8 +353,27 @@ pub async fn review_cards(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
+    // Spawn background task to fetch day statistics
+    let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<StatisticsResponse>();
+    let url = format!("{}/api/review/statistics", base_url);
+    let client_clone = client.clone();
+    let scheduler_name_clone = scheduler_name.clone();
+    tokio::spawn(async move {
+        let request = StatisticsRequest {
+            scheduler_name: scheduler_name_clone,
+            date: Utc::now(),
+        };
+        if let Ok(response) = client_clone.post(&url).json(&request).send().await
+            && response.status() == StatusCode::OK
+            && let Ok(stats) = response.json::<StatisticsResponse>().await
+        {
+            let _ = stats_tx.send(stats);
+        }
+    });
+
     let session_start = Instant::now();
-    let mut session_recall = Duration::default();
+    let mut session_recall_duration = Duration::default();
+    let mut session_rate_duration = Duration::default();
     let mut reviewed_cards_count = 0;
     let mut card_back_rendered_child: Option<Child> = None;
     let mut card_flipped = false;
@@ -383,7 +402,14 @@ pub async fn review_cards(
             recall_duration = None;
             if review_card_opt.is_none() {
                 println!("Done");
-                print_summary(session_start, session_recall, reviewed_cards_count);
+                let day_stats = stats_rx.try_recv().ok();
+                print_summary(
+                    session_start,
+                    session_recall_duration,
+                    session_rate_duration,
+                    reviewed_cards_count,
+                    day_stats,
+                );
                 return Ok(());
             }
             (review_card_response, card_front_rendered_child) = review_card_opt.unwrap();
@@ -405,7 +431,14 @@ pub async fn review_cards(
         let chosen_action_res = select.prompt();
         if chosen_action_res.is_err() {
             // The user exited. (Probably pressed Escape).
-            print_summary(session_start, session_recall, reviewed_cards_count);
+            let day_stats = stats_rx.try_recv().ok();
+            print_summary(
+                session_start,
+                session_recall_duration,
+                session_rate_duration,
+                reviewed_cards_count,
+                day_stats,
+            );
             return Ok(());
         }
         let chosen_action = chosen_action_res.as_ref().unwrap();
@@ -438,6 +471,7 @@ pub async fn review_cards(
 
                 // Rate duration
                 let rate_duration_local = rate_duration.unwrap_or(rate_start.elapsed());
+                session_rate_duration += rate_duration_local;
                 print_rate_duration(rate_duration_local);
 
                 reviewed_cards_count += 1;
@@ -477,7 +511,7 @@ pub async fn review_cards(
                 // recorded during `OpenNote`.
                 if recall_duration.is_none() {
                     recall_duration = Some(recall_start.elapsed());
-                    session_recall += recall_duration.unwrap();
+                    session_recall_duration += recall_duration.unwrap();
                     print_recall_duration(recall_duration.unwrap());
                 }
                 let card_back_rendered_path = match &review_card_response.card_back_rendered_path {
@@ -503,7 +537,7 @@ pub async fn review_cards(
                     rate_duration = Some(rate_start.elapsed());
                 } else {
                     recall_duration = Some(recall_start.elapsed());
-                    session_recall += recall_duration.unwrap();
+                    session_recall_duration += recall_duration.unwrap();
                     print_recall_duration(recall_duration.unwrap());
                 }
                 let open_note_res = open::that_detached(&review_card_response.note_raw_path);
@@ -674,7 +708,14 @@ pub async fn review_cards(
                 if let Some(mut child) = card_back_rendered_child {
                     close_rendered_file(&mut child, close_command, true)?;
                 }
-                print_summary(session_start, session_recall, reviewed_cards_count);
+                let day_stats = stats_rx.try_recv().ok();
+                print_summary(
+                    session_start,
+                    session_recall_duration,
+                    session_rate_duration,
+                    reviewed_cards_count,
+                    day_stats,
+                );
                 return Ok(());
             }
         }
