@@ -2,7 +2,7 @@ use crate::{
     Error,
     config::read_external_config,
     helpers::get_start_end_local_date,
-    model::{Card, NEW_CARD_STATE, SpecialState, StateId},
+    model::{Card, CardId, NEW_CARD_STATE, SpecialState, StateId},
     schedulers::get_scheduler_from_string,
     schema::review::{StatisticsRequest, StatisticsResponse},
 };
@@ -25,7 +25,7 @@ pub async fn get_statistics(
 
     // Get cards reviewed on `requested_date`
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let cards_studied_on_requested_date: Vec<(i64, i64, StateId)> = sqlx::query_as(
+    let cards_studied_on_requested_date: Vec<(CardId, i64, StateId)> = sqlx::query_as(
         r"SELECT card_id, duration, previous_state FROM review_log WHERE reviewed_at >= ? AND reviewed_at <= ?",
     )
     .bind(lower_limit.timestamp())

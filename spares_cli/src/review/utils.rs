@@ -6,7 +6,9 @@ use serde_json::Value;
 use spares::model::{CardId, NoteId, RatingId, TagId};
 use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest};
 use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
-use spares::schema::review::{Rating, RatingSubmission, StudyAction, SubmitStudyActionRequest};
+use spares::schema::review::{
+    Rating, RatingSubmission, StatisticsResponse, StudyAction, SubmitStudyActionRequest,
+};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -419,19 +421,36 @@ pub fn print_recall_duration(recall_duration: Duration) {
     println!("Duration: {}", format_duration(duration));
 }
 
-pub fn print_summary(session_start: Instant, session_recall: Duration, reviewed_cards_count: u32) {
-    if reviewed_cards_count > 0 {
+pub fn print_summary(
+    session_start: Instant,
+    session_recall_duration: Duration,
+    cards_studied_count: u32,
+    day_stats: Option<StatisticsResponse>,
+) {
+    if cards_studied_count > 0 {
         let session_duration = chrono::Duration::from_std(session_start.elapsed()).unwrap();
-        let session_recall = chrono::Duration::from_std(session_recall).unwrap();
+        let session_recall_duration = chrono::Duration::from_std(session_recall_duration).unwrap();
         println!();
+        println!("--- Session Statistics ---");
+        println!("Total Cards Reviewed:   {:?}", cards_studied_count);
+        println!(
+            "Total Recall Duration:  {}",
+            format_duration(session_recall_duration)
+        );
         println!(
             "Total Session Duration: {}",
             format_duration(session_duration)
         );
-        println!(
-            "Total Recall Duration:  {}",
-            format_duration(session_recall)
-        );
-        println!("Total Cards Reviewed:   {:?}", reviewed_cards_count);
+        if let Some(stats) = day_stats {
+            let day_cards_studied_count = cards_studied_count + stats.cards_studied_count;
+            let day_recall_duration = session_recall_duration + stats.study_time;
+            println!();
+            println!("--- Day Statistics ---");
+            println!("Total Cards Reviewed Today:  {}", day_cards_studied_count);
+            println!(
+                "Total Recall Duration Today: {}",
+                format_duration(day_recall_duration)
+            );
+        }
     }
 }

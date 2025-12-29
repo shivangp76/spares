@@ -11,6 +11,7 @@ use spares::parsers::{find_parser, get_all_parsers};
 use spares::schema::note::{NoteIdsSelector, RenderNotesRequest};
 use spares::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
+    StatisticsRequest, StatisticsResponse,
 };
 use spares::schema::tag::TagResponse;
 use std::path::PathBuf;
@@ -350,6 +351,24 @@ pub async fn review_cards(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
+    // Spawn background task to fetch day statistics
+    let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<StatisticsResponse>();
+    let url = format!("{}/api/review/statistics", base_url);
+    let client_clone = client.clone();
+    let scheduler_name_clone = scheduler_name.clone();
+    tokio::spawn(async move {
+        let request = StatisticsRequest {
+            scheduler_name: scheduler_name_clone,
+            date: Utc::now(),
+        };
+        if let Ok(response) = client_clone.post(&url).json(&request).send().await
+            && response.status() == StatusCode::OK
+            && let Ok(stats) = response.json::<StatisticsResponse>().await
+        {
+            let _ = stats_tx.send(stats);
+        }
+    });
+
     let session_start = Instant::now();
     let mut session_recall = Duration::default();
     let mut reviewed_cards_count = 0;
@@ -377,7 +396,13 @@ pub async fn review_cards(
             recall_duration = None;
             if review_card_opt.is_none() {
                 println!("Done");
-                print_summary(session_start, session_recall, reviewed_cards_count);
+                let day_stats = stats_rx.try_recv().ok();
+                print_summary(
+                    session_start,
+                    session_recall,
+                    reviewed_cards_count,
+                    day_stats,
+                );
                 return Ok(());
             }
             (review_card_response, card_front_rendered_child) = review_card_opt.unwrap();
@@ -399,7 +424,13 @@ pub async fn review_cards(
         let chosen_action_res = select.prompt();
         if chosen_action_res.is_err() {
             // The user exited. (Probably pressed Escape).
-            print_summary(session_start, session_recall, reviewed_cards_count);
+            let day_stats = stats_rx.try_recv().ok();
+            print_summary(
+                session_start,
+                session_recall,
+                reviewed_cards_count,
+                day_stats,
+            );
             return Ok(());
         }
         let chosen_action = chosen_action_res.as_ref().unwrap();
@@ -658,7 +689,13 @@ pub async fn review_cards(
                 if let Some(mut child) = card_back_rendered_child {
                     close_rendered_file(&mut child, close_command, true)?;
                 }
-                print_summary(session_start, session_recall, reviewed_cards_count);
+                let day_stats = stats_rx.try_recv().ok();
+                print_summary(
+                    session_start,
+                    session_recall,
+                    reviewed_cards_count,
+                    day_stats,
+                );
                 return Ok(());
             }
         }
