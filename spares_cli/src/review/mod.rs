@@ -11,6 +11,7 @@ use spares::parsers::{find_parser, get_all_parsers};
 use spares::schema::note::{NoteIdsSelector, RenderNotesRequest};
 use spares::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
+    RatingSubmission,
 };
 use spares::schema::tag::TagResponse;
 use std::path::PathBuf;
@@ -26,7 +27,9 @@ use utils::{
 };
 
 mod utils;
-use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_prompt};
+use crate::review::utils::{
+    note_id_to_cards, print_rate_duration, set_due_date, set_due_date_with_prompt,
+};
 use spares::schema::card::CardResponse;
 pub use utils::forget_card;
 
@@ -353,9 +356,12 @@ pub async fn review_cards(
 
     let mut recall_start = Instant::now();
     let mut recall_duration = None;
+    let mut rate_start = Instant::now();
+    let mut rate_duration = None;
 
     loop {
         if advance_review_card {
+            println!();
             println!();
             // Opening the card's raw file is not useful since edits must be made to the note, not the
             // card. Opening the note's raw file and the card's rendered file is more useful.
@@ -424,17 +430,20 @@ pub async fn review_cards(
                     false,
                 )?;
 
+                // Rate duration
+                let rate_duration_local = rate_duration.unwrap_or(rate_start.elapsed());
+                print_rate_duration(rate_duration_local);
+
                 reviewed_cards_count += 1;
-                submit_rating(
-                    recall_duration.unwrap(),
-                    scheduler_name,
-                    review_card_response.card_id,
+
+                let rating_submission = RatingSubmission {
+                    card_id: review_card_response.card_id,
+                    rating: *rating_id,
+                    recall_duration: chrono::Duration::from_std(recall_duration.unwrap()).unwrap(),
+                    rate_duration: chrono::Duration::from_std(rate_duration_local).unwrap(),
                     tag_id,
-                    *rating_id,
-                    base_url,
-                    client,
-                )
-                .await?;
+                };
+                submit_rating(scheduler_name, rating_submission, base_url, client).await?;
 
                 // let old_card_rendered_path = review_card_response.card_rendered_path;
 
@@ -474,12 +483,19 @@ pub async fn review_cards(
                     open_command,
                     false,
                 )?);
+                rate_start = Instant::now();
+                rate_duration = None;
             }
             ReviewAction::OpenNote => {
                 // If the note is viewed before the card is flipped, then the answer is revealed.
                 // This means that the user already recalled (or failed to recall) the card at this
                 // point.
-                if !card_flipped {
+                if card_flipped {
+                    // If the card is flipped, then the rate duration is started. We want to stop
+                    // recording now since the user is editting the note. This will take time and
+                    // not be representative of time spent every review.
+                    rate_duration = Some(rate_start.elapsed());
+                } else {
                     recall_duration = Some(recall_start.elapsed());
                     session_recall += recall_duration.unwrap();
                     print_recall_duration(recall_duration.unwrap());

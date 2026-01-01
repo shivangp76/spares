@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS review_log (
     rating INTEGER NOT NULL,
     scheduler_name TEXT NOT NULL,
     scheduled_time INTEGER NOT NULL,
-    duration INTEGER NOT NULL,
+    recall_duration INTEGER NOT NULL,
+    rate_duration INTEGER NOT NULL,
     previous_state INTEGER NOT NULL,
     custom_data TEXT NOT NULL, -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
     -- Do _NOT_ delete review logs when cards are deleted. We want to know how many cards were reviewed in the past for historical reasons. Instead, set the `card_id` column to null, to signify the row is an orphan.

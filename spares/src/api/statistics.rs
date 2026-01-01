@@ -25,25 +25,29 @@ pub async fn get_statistics(
 
     // Get cards reviewed on `requested_date`
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let cards_studied_on_requested_date: Vec<(i64, i64, StateId)> = sqlx::query_as(
-        r"SELECT card_id, duration, previous_state FROM review_log WHERE reviewed_at >= ? AND reviewed_at <= ?",
+    let cards_studied_on_requested_date: Vec<(i64, i64, i64, StateId)> = sqlx::query_as(
+        r"SELECT card_id, recall_duration, rate_duration, previous_state FROM review_log WHERE reviewed_at >= ? AND reviewed_at <= ?",
     )
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let study_time = cards_studied_on_requested_date
+    let recall_duration = cards_studied_on_requested_date
         .iter()
-        .map(|(_, duration, _)| Duration::seconds(*duration))
+        .map(|(_, recall_duration, _, _)| Duration::seconds(*recall_duration))
+        .sum();
+    let rate_duration = cards_studied_on_requested_date
+        .iter()
+        .map(|(_, _, rate_duration, _)| Duration::seconds(*rate_duration))
         .sum();
     let cards_studied_on_requested_date_unique = cards_studied_on_requested_date
         .iter()
-        .unique_by(|(card_id, _, _)| card_id)
+        .unique_by(|(card_id, _, _, _)| card_id)
         .collect::<Vec<_>>();
     let new_cards_studied_on_requested_date = cards_studied_on_requested_date_unique
         .iter()
-        .filter(|(_, _, state)| *state == NEW_CARD_STATE)
+        .filter(|(_, _, _, state)| *state == NEW_CARD_STATE)
         .count();
     let cards_studied_on_requested_date_count = cards_studied_on_requested_date_unique.len() as u32;
 
@@ -129,7 +133,8 @@ pub async fn get_statistics(
         .await?;
     Ok(StatisticsResponse {
         cards_studied_count: cards_studied_on_requested_date_count,
-        study_time,
+        recall_duration,
+        rate_duration,
         card_count_by_state: cards_by_state,
         due_count_by_state: num_cards_due_by_state,
         due_count_by_date: future_due,
