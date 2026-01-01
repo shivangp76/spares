@@ -355,7 +355,7 @@ pub async fn generate_notes(
                 .map(|(review, reviewed_at)| SimulatedReview {
                     rating: review.rating,
                     reviewed_at,
-                    duration: review.duration,
+                    recall_duration: review.recall_duration,
                 })
                 .collect::<Vec<_>>();
             custom_data.insert(
@@ -391,7 +391,8 @@ pub fn generate_review_logs(
                         previous_review_log.cloned(),
                         review.rating,
                         *reviewed_at,
-                        review.duration,
+                        review.recall_duration,
+                        review.rate_duration,
                     )
                     .unwrap();
                 review_logs.push(new_review_log);

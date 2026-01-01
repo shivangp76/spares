@@ -45,7 +45,8 @@ pub trait SrsScheduler: Send + Sync {
         previous_review_log: Option<ReviewLog>,
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
-        duration: Duration,
+        recall_duration: Duration,
+        rate_duration: Duration,
     ) -> Result<(Card, ReviewLog), Error>;
 
     /// Returns `Ok(None)` if the card should no longer be in the filtered deck.
@@ -56,7 +57,7 @@ pub trait SrsScheduler: Send + Sync {
         // previous_review_log: Option<ReviewLog>,
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
-        duration: Duration,
+        recall_duration: Duration,
     ) -> Result<Option<Value>, Error>;
 
     fn bury(&self, card: &Card) -> Result<Card, Error> {
@@ -170,14 +171,16 @@ pub trait SrsScheduler: Send + Sync {
                 .into_iter()
                 .fold((Card::new(first_review), None), |acc, review_log| {
                     let (card, previous_review_log) = acc;
-                    let duration = Duration::new(review_log.duration, 0).unwrap();
+                    let recall_duration = Duration::new(review_log.recall_duration, 0).unwrap();
+                    let rate_duration = Duration::new(review_log.rate_duration, 0).unwrap();
                     let (new_card, new_review_log) = self
                         .schedule(
                             &card,
                             previous_review_log,
                             review_log.rating,
                             review_log.reviewed_at,
-                            duration,
+                            recall_duration,
+                            rate_duration,
                         )
                         .unwrap();
                     (new_card, Some(new_review_log))

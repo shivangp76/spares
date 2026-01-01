@@ -3,7 +3,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::model::{CardId, NoteId, RatingId, TagId};
+use spares::model::{CardId, NoteId};
 use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardRequest};
 use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
 use spares::schema::review::{Rating, RatingSubmission, StudyAction, SubmitStudyActionRequest};
@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub fn open_rendered_file(
+pub(super) fn open_rendered_file(
     file_path: &Path,
     open_command_opt: Option<&str>,
     _first: bool,
@@ -241,23 +241,14 @@ pub async fn suspend_cards(
 }
 
 pub async fn submit_rating(
-    recall_duration: Duration,
     scheduler_name: &str,
-    card_id: CardId,
-    tag_id: Option<TagId>,
-    rating_id: RatingId,
+    rating_submission: RatingSubmission,
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
-    let duration = chrono::Duration::from_std(recall_duration).unwrap();
     let update_review_request = SubmitStudyActionRequest {
         scheduler_name: scheduler_name.to_string(),
-        action: StudyAction::Rate(RatingSubmission {
-            card_id,
-            rating: rating_id,
-            duration,
-            tag_id,
-        }),
+        action: StudyAction::Rate(rating_submission),
     };
     let url = format!("{}/api/review/submit", base_url);
     let response = client
@@ -342,7 +333,7 @@ pub async fn set_due_date(
     Ok(())
 }
 
-pub async fn bury_until_later_today(
+pub(super) async fn bury_until_later_today(
     card_id: CardId,
     base_url: &str,
     client: &Client,
@@ -386,7 +377,7 @@ pub async fn bury_until_later_today(
     Ok(())
 }
 
-pub fn format_duration(duration: chrono::Duration) -> String {
+pub(super) fn format_duration(duration: chrono::Duration) -> String {
     let total_seconds = duration.num_seconds();
     let days = total_seconds / (24 * 3600);
     let hours = (total_seconds % (24 * 3600)) / 3600;
@@ -414,12 +405,21 @@ pub fn format_duration(duration: chrono::Duration) -> String {
     result.join(" ")
 }
 
-pub fn print_recall_duration(recall_duration: Duration) {
+pub(super) fn print_recall_duration(recall_duration: Duration) {
     let duration = chrono::Duration::from_std(recall_duration).unwrap();
-    println!("Duration: {}", format_duration(duration));
+    println!("Recall Duration: {}", format_duration(duration));
 }
 
-pub fn print_summary(session_start: Instant, session_recall: Duration, reviewed_cards_count: u32) {
+pub(super) fn print_rate_duration(rate_duration: Duration) {
+    let duration = chrono::Duration::from_std(rate_duration).unwrap();
+    println!("Rate Duration: {}", format_duration(duration));
+}
+
+pub(super) fn print_summary(
+    session_start: Instant,
+    session_recall: Duration,
+    reviewed_cards_count: u32,
+) {
     if reviewed_cards_count > 0 {
         let session_duration = chrono::Duration::from_std(session_start.elapsed()).unwrap();
         let session_recall = chrono::Duration::from_std(session_recall).unwrap();

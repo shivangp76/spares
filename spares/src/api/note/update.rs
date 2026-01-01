@@ -859,7 +859,8 @@ mod tests {
             action: StudyAction::Rate(RatingSubmission {
                 card_id: card_to_review.id,
                 rating: 4,
-                duration: Duration::seconds(5),
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(5),
                 tag_id: None,
             }),
         };

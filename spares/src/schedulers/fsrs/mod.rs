@@ -130,7 +130,8 @@ impl SrsScheduler for FSRS {
                     .iter()
                     .fold((Card::new(first_review_date), Vec::new()), |acc, rating| {
                         let (card, mut review_logs): (_, Vec<ReviewLog>) = acc;
-                        let duration = Duration::new(rng.random_range(5..=60), 0).unwrap();
+                        let recall_duration = Duration::new(rng.random_range(5..=60), 0).unwrap();
+                        let rate_duration = Duration::new(rng.random_range(5..=60), 0).unwrap();
                         let previous_review_log = review_logs.last();
                         let reviewed_at = previous_review_log.map_or_else(
                             || first_review_date,
@@ -142,7 +143,8 @@ impl SrsScheduler for FSRS {
                             previous_review_log.cloned(),
                             *rating,
                             reviewed_at,
-                            duration,
+                            recall_duration,
+                            rate_duration,
                         )
                         .unwrap();
                         assert_eq!(new_review_log.reviewed_at, reviewed_at);
@@ -156,7 +158,8 @@ impl SrsScheduler for FSRS {
                         RatingSubmission {
                             card_id: i64::from(card_id),
                             rating: review_log.rating,
-                            duration: Duration::seconds(review_log.duration),
+                            recall_duration: Duration::seconds(review_log.recall_duration),
+                            rate_duration: Duration::seconds(review_log.rate_duration),
                             tag_id: None,
                         },
                         review_log.reviewed_at,
@@ -174,7 +177,8 @@ impl SrsScheduler for FSRS {
         previous_review_log: Option<ReviewLog>,
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
-        duration: Duration,
+        recall_duration: Duration,
+        rate_duration: Duration,
     ) -> Result<(Card, ReviewLog), Error> {
         let state = number_to_state(card.state).ok_or(Error::Library(LibraryError::Scheduler(
             SchedulerErrorKind::InvalidState(card.state),
@@ -192,7 +196,8 @@ impl SrsScheduler for FSRS {
             &scheduling_info_fsrs.review_log,
             card,
             self.get_scheduler_name(),
-            &duration,
+            &recall_duration,
+            &rate_duration,
         );
         Ok((new_card, new_review_log))
     }
@@ -203,7 +208,7 @@ impl SrsScheduler for FSRS {
         _card: &Card,
         rating: RatingId,
         _reviewed_at: DateTime<Utc>,
-        _duration: Duration,
+        _recall_duration: Duration,
     ) -> Result<Option<Value>, Error> {
         // NOTE: This might not work because a state of Review takes too long to achieve for a new card
         // Show at least once or until state is Review

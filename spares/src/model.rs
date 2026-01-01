@@ -185,7 +185,10 @@ pub struct ReviewLog {
     /// How long the review took, stored in seconds
     /// It is comparable to Anki's `revlog.time` column.
     // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
-    pub duration: i64,
+    pub recall_duration: i64,
+    /// How long it took the rate the card. Useful to provide time estimates for reviews.
+    // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
+    pub rate_duration: i64,
     // It is comparable to Anki's `revlog.lastIvl` column.
     // pub elapsed_time: i64, // Unix Time. Equivalent to `self.reviewed_at - previous_review.reviewed_at` or 0 if card is new.
     /// To see how many reviews were done for each state on a given day.

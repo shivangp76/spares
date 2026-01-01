@@ -309,7 +309,7 @@ struct SimulatedReview {
     reviewed_at: DateTime<Utc>,
     #[serde(rename = "d")]
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-    duration: Duration,
+    recall_duration: Duration,
 }
 
 async fn simulate_reviews(
@@ -446,14 +446,15 @@ async fn simulate_reviews(
                 let SimulatedReview {
                     rating,
                     reviewed_at: _,
-                    duration,
+                    recall_duration,
                 } = review_opt.unwrap();
                 let request = SubmitStudyActionRequest {
                     scheduler_name: scheduler_name.to_string(),
                     action: StudyAction::Rate(RatingSubmission {
                         card_id: review_card.card_id,
                         rating,
-                        duration,
+                        recall_duration,
+                        rate_duration: Duration::zero(),
                         tag_id: None,
                     }),
                 };
@@ -477,7 +478,7 @@ async fn simulate_reviews(
             assert!(statistics_res.is_ok());
             let statistics = statistics_res.unwrap();
             assert!(statistics.cards_studied_count > 0);
-            assert!(statistics.study_time > Duration::zero());
+            assert!(statistics.recall_duration > Duration::zero());
             assert!(statistics.due_count_by_state.is_empty());
         }
     }
@@ -555,14 +556,15 @@ async fn simulate_filtered_tag_reviews(
                 let SimulatedReview {
                     rating,
                     reviewed_at: _,
-                    duration,
+                    recall_duration,
                 } = review_opt.unwrap();
                 let request = SubmitStudyActionRequest {
                     scheduler_name: scheduler_name.to_string(),
                     action: StudyAction::Rate(RatingSubmission {
                         card_id: review_card.card_id,
                         rating,
-                        duration,
+                        recall_duration,
+                        rate_duration: Duration::zero(),
                         tag_id: Some(filtered_tag_id),
                     }),
                 };
