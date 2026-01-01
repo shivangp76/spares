@@ -444,12 +444,12 @@ pub async fn review_cards(
         let chosen_action = chosen_action_res.as_ref().unwrap();
 
         // Drain any pending messages from background tasks
-        let mut pending_messages = false;
+        // let mut pending_messages = false;
         while let Ok(message) = rx.try_recv() {
-            if !pending_messages {
-                println!();
-                pending_messages = true;
-            }
+            // if !pending_messages {
+            //     println!();
+            //     pending_messages = true;
+            // }
             println!("{}", message);
         }
 
