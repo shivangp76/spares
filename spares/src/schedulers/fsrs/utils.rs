@@ -72,7 +72,8 @@ pub fn fsrs_card_to_card(
     review_log_fsrs: &rs_fsrs::ReviewLog,
     original_card: &Card,
     scheduler_name: &str,
-    duration: &Duration,
+    recall_duration: &Duration,
+    rate_duration: &Duration,
 ) -> (Card, ReviewLog) {
     let rs_fsrs::Card {
         due,
@@ -116,7 +117,8 @@ pub fn fsrs_card_to_card(
         rating: rating_to_number(*fsrs_rating),
         scheduler_name: scheduler_name.to_string(),
         scheduled_time: Duration::days(*fsrs_scheduled_days).num_seconds(),
-        duration: duration.num_seconds(),
+        recall_duration: recall_duration.num_seconds(),
+        rate_duration: rate_duration.num_seconds(),
         previous_state: state_to_number(*fsrs_revlog_state),
         custom_data: serde_json::Value::Object(Map::new()),
     };

@@ -206,7 +206,7 @@ pub async fn get_review_card(
         "SELECT
             SUM(
                 CAST(COALESCE(
-                    (SELECT AVG(duration) FROM review_log WHERE card_id = c.id),
+                    (SELECT AVG(recall_duration + rate_duration) FROM review_log WHERE card_id = c.id),
                     {}
                 ) AS REAL)
             ) as total_time
@@ -295,7 +295,7 @@ pub async fn update_filtered_tag_scheduler_data(
     filtered_tag: Tag,
     updated_card: &mut Card,
     rating: RatingId,
-    duration: Duration,
+    recall_duration: Duration,
     reviewed_at: DateTime<Utc>,
 ) -> Result<(), Error> {
     let scheduler_name = scheduler.get_scheduler_name();
@@ -310,7 +310,7 @@ pub async fn update_filtered_tag_scheduler_data(
         updated_card,
         rating,
         reviewed_at,
-        duration,
+        recall_duration,
     )?;
     let custom_data = updated_card.custom_data.as_object_mut().unwrap();
     if let Some(new_filtered_tag_scheduler_data) = new_filtered_tag_scheduler_data_opt {
@@ -353,13 +353,15 @@ pub async fn update_filtered_tag_scheduler_data(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn rate_card(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
     RatingSubmission {
         card_id,
         rating,
-        duration,
+        recall_duration,
+        rate_duration,
         tag_id,
     }: RatingSubmission,
     reviewed_at: DateTime<Utc>,
@@ -397,8 +399,14 @@ pub async fn rate_card(
 
     // Schedule card
     let latest_review_log = review_logs.last().cloned();
-    let (mut updated_card, new_review_log) =
-        scheduler.schedule(&card, latest_review_log, rating, reviewed_at, duration)?;
+    let (mut updated_card, new_review_log) = scheduler.schedule(
+        &card,
+        latest_review_log,
+        rating,
+        reviewed_at,
+        recall_duration,
+        rate_duration,
+    )?;
     // Validate scheduler's output
     assert!(matches!(updated_card.custom_data, Value::Object(_)));
     assert!(matches!(new_review_log.custom_data, Value::Object(_)));
@@ -440,7 +448,7 @@ pub async fn rate_card(
             filtered_tag,
             &mut updated_card,
             rating,
-            duration,
+            recall_duration,
             reviewed_at,
         )
         .await?;
@@ -448,13 +456,14 @@ pub async fn rate_card(
 
     // Add entry to review_log
     let _insert_result =
-        sqlx::query(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(new_review_log.card_id)
             .bind(new_review_log.reviewed_at.timestamp())
             .bind(new_review_log.rating)
             .bind(new_review_log.scheduler_name)
             .bind(new_review_log.scheduled_time)
-            .bind(new_review_log.duration)
+            .bind(new_review_log.recall_duration)
+            .bind(new_review_log.rate_duration)
             .bind(new_review_log.previous_state)
             .bind(&new_review_log.custom_data)
             .execute(db)
@@ -677,6 +686,7 @@ mod tests {
             date: now,
         };
         let statistics_res = get_statistics(&pool, request).await;
+        dbg!(&statistics_res);
         assert!(statistics_res.is_ok());
         let statistics_response = statistics_res.unwrap();
         assert_eq!(
@@ -700,7 +710,8 @@ mod tests {
             action: StudyAction::Rate(RatingSubmission {
                 card_id: review_card.card_id,
                 rating: 4,
-                duration: Duration::seconds(5),
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(5),
                 tag_id: None,
             }),
         };

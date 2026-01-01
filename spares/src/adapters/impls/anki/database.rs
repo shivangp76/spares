@@ -75,8 +75,9 @@ pub fn parse_anki_revlog_rows(
             Ok(Some((RatingSubmission {
                 card_id,
                 rating: rating.unwrap(),
-                duration: Duration::try_milliseconds(review_log_row.time)
+                recall_duration: Duration::try_milliseconds(review_log_row.time)
                     .unwrap_or(Duration::zero()),
+                rate_duration: Duration::zero(),
                 tag_id: None,
             }, reviewed_at.unwrap())))
             // let previous_state: Option<StateId> = if i > 0 {

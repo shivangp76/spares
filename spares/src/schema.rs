@@ -408,7 +408,9 @@ pub mod review {
         pub card_id: CardId,
         pub rating: RatingId,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-        pub duration: Duration,
+        pub recall_duration: Duration,
+        #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+        pub rate_duration: Duration,
         /// Filtered tag id
         pub tag_id: Option<TagId>,
     }
@@ -459,7 +461,9 @@ pub mod review {
     pub struct StatisticsResponse {
         pub cards_studied_count: u32,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-        pub study_time: Duration,
+        pub recall_duration: Duration,
+        #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+        pub rate_duration: Duration,
         pub card_count_by_state: HashMap<StateId, u32>,
         pub due_count_by_state: HashMap<StateId, u32>,
         pub due_count_by_date: HashMap<NaiveDate, u32>,
