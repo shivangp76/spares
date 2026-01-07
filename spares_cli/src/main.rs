@@ -36,7 +36,7 @@ use spares::{
             UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
-        review::{StatisticsRequest, StatisticsResponse},
+        review::{StatisticsRequest, StatisticsResponse, StudyAction, SubmitStudyActionRequest},
         tag::{CreateTagRequest, TagResponse, UpdateTagRequest},
     },
     search::QueryReturnItemType,
@@ -120,6 +120,10 @@ enum Commands {
     },
     /// Unbury all cards
     Unbury,
+    /// Advance cards (review material ahead of time)
+    Advance(AdvanceArgs),
+    /// Postpone cards (delay reviews)
+    Postpone(PostponeArgs),
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
@@ -391,6 +395,22 @@ struct ForgetCardArgs {
     ids: Option<Vec<i64>>,
     #[arg(short, long)]
     query: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct AdvanceArgs {
+    /// Number of cards to advance
+    count: u32,
+    #[arg(short, long, default_value = "fsrs")]
+    scheduler_name: String,
+}
+
+#[derive(Args, Debug)]
+struct PostponeArgs {
+    /// Number of cards to postpone
+    count: u32,
+    #[arg(short, long, default_value = "fsrs")]
+    scheduler_name: String,
 }
 
 fn get_current_utc_datetime() -> DateTime<Utc> {
@@ -1275,6 +1295,42 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .map_err(|e| miette!("{}", e))?;
             let _ = ensure_ok(response).await?;
             println!("Done");
+        }
+        Commands::Advance(AdvanceArgs {
+            count,
+            scheduler_name,
+        }) => {
+            let request = SubmitStudyActionRequest {
+                scheduler_name,
+                action: StudyAction::Advance { count },
+            };
+            let url = format!("{}/api/review/submit", base_url);
+            let response = client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let _ = ensure_ok(response).await?;
+            println!("Advanced {} cards.", count);
+        }
+        Commands::Postpone(PostponeArgs {
+            count,
+            scheduler_name,
+        }) => {
+            let request = SubmitStudyActionRequest {
+                scheduler_name,
+                action: StudyAction::Postpone { count },
+            };
+            let url = format!("{}/api/review/submit", base_url);
+            let response = client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let _ = ensure_ok(response).await?;
+            println!("Postponed {} cards.", count);
         }
     }
     Ok(())
