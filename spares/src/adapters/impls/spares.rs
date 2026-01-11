@@ -1,5 +1,6 @@
 use crate::adapters::SrsAdapter;
 use crate::adapters::migration::MigrationFunc;
+use crate::api::note::render_notes;
 use crate::api::{
     note::{create_notes, delete_notes, update_notes},
     parser::list_parsers,
@@ -9,8 +10,8 @@ use crate::model::CustomData;
 use crate::parsers::{NoteImportAction, NoteSettings, Parseable, get_all_parsers};
 use crate::schema::FilterOptions;
 use crate::schema::note::{
-    CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesSelector, UpdateNotesRequest,
-    UpdateTags,
+    CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesResponse, NotesSelector,
+    RenderNotesRequest, UpdateNotesRequest, UpdateTags,
 };
 use crate::schema::parser::ParserResponse;
 use crate::{AdapterErrorKind, Error, LibraryError, ParserErrorKind};
@@ -251,8 +252,10 @@ impl SrsAdapter for SparesAdapter {
             parser_id,
             requests: create_note_requests,
         };
+        // Create notes and render created notes
+        // We cannot render updated notes since that might overwrite unsaved changes.
         if run {
-            match &request_processor {
+            let created_note_ids = match &request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
                     let response = client
@@ -261,14 +264,56 @@ impl SrsAdapter for SparesAdapter {
                         .send()
                         .await
                         .map_err(Error::ApiRequest)?;
-                    self.handle_response(response).await?;
+                    let response = self.handle_response(response).await?;
+                    let response: NotesResponse = response.json().await.map_err(|e| {
+                        Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                            adapter_name: self.get_adapter_name().to_string(),
+                            error: e.to_string(),
+                        }))
+                    })?;
+                    response.notes.into_iter().map(|n| n.id).collect::<Vec<_>>()
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
-                    let _notes_res =
+                    let notes_res =
                         create_notes(pool, create_notes_request, at, &get_all_parsers()).await?;
+                    notes_res
+                        .notes
+                        .into_iter()
+                        .map(|n| n.id)
+                        .collect::<Vec<_>>()
+                }
+            };
+            // If testing, then we
+            // - do not want to render notes to save time. We can explicitly call render notes if we need to.
+            // - want to render notes in a different directory, so we don't overwrite user data.
+            if !cfg!(test) {
+                let request = RenderNotesRequest {
+                    selector: NotesSelector::Ids(created_note_ids),
+                    immutable_note_ids: None,
+                    overridden_output_raw_dir: None,
+                    include_linked_notes: true,
+                    include_cards: true,
+                    generate_rendered: true,
+                    force_generate_rendered: false,
+                };
+                match &request_processor {
+                    SparesRequestProcessorInternal::Server { base_url, client } => {
+                        let url = format!("{}/api/notes/generate_files", base_url);
+                        let response = client
+                            .post(url)
+                            .json(&request)
+                            .send()
+                            .await
+                            .map_err(Error::ApiRequest)?;
+                        let _response = self.handle_response(response).await?;
+                    }
+                    SparesRequestProcessorInternal::Database { pool } => {
+                        render_notes(pool, request, &get_all_parsers()).await?;
+                    }
                 }
             }
         }
+
         Ok(())
     }
 }
