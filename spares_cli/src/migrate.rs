@@ -24,8 +24,8 @@ pub struct MigrateArgs {
     pub adapter: String,
     #[arg(short, long, default_value_t = false)]
     pub initial_migration: bool,
-    #[arg(short, long, default_value_t = false)]
-    pub run: bool,
+    #[arg(short, long, default_value_t = true)]
+    pub dry_run: bool,
     #[arg(short, long, help = "Path to JSON file containing tag relations")]
     pub tag_relations_file_path: Option<PathBuf>,
 }

@@ -33,7 +33,7 @@ enum SyncMode {
     Bulk,
 }
 
-fn print_import_data(import_data: &SyncImportData, run: bool) -> Result<(), String> {
+fn print_import_data(import_data: &SyncImportData, dry_run: bool) -> Result<(), String> {
     match import_data.action {
         SyncImportAction::Add { to: ref from } | SyncImportAction::Delete { to: ref from } => {
             let file_contents = fs::read_to_string(from).map_err(|e| format!("{}", e))?;
@@ -68,7 +68,7 @@ fn print_import_data(import_data: &SyncImportData, run: bool) -> Result<(), Stri
                 note_to_filepath.to_str().unwrap(),
                 note_from_filepath.to_str().unwrap(),
             ];
-            if !run {
+            if dry_run {
                 let command_str = format!("{} {}", base_command, args.join(" "));
                 println!("Running command: {}", command_str.purple());
             }
@@ -94,7 +94,7 @@ async fn sync_notes_between_files(
     sync_source_from: SyncSource,
     sync_source_to: SyncSource,
     actions: Vec<SyncImportData>,
-    run: bool,
+    dry_run: bool,
 ) -> Result<(Vec<NoteId>, Option<Vec<NoteId>>), String> {
     let mut modified_notes = Vec::new();
     let mut immutable_note_ids = Vec::new();
@@ -113,7 +113,7 @@ async fn sync_notes_between_files(
                 sync_source_to.to_string().black().on_bright_blue(),
                 &import_data.note_id.to_string().black().on_yellow()
             );
-            print_import_data(import_data, run)?;
+            print_import_data(import_data, dry_run)?;
             println!();
         }
 
@@ -136,7 +136,7 @@ async fn sync_notes_between_files(
                     sync_source_to,
                     &mut group,
                     &UpdateDirection::Pull,
-                    run,
+                    dry_run,
                 )
                 .await?;
                 modified_notes.extend(new_modified_notes);
@@ -147,7 +147,7 @@ async fn sync_notes_between_files(
                     sync_source_to,
                     &mut group,
                     &UpdateDirection::Push,
-                    run,
+                    dry_run,
                 )
                 .await?;
                 modified_notes.extend(new_modified_notes);
@@ -181,14 +181,14 @@ pub async fn sync_notes_interactive(
     client: &Client,
     sync_source_from: SyncSource,
     sync_source_to: SyncSource,
-    run: bool,
+    dry_run: bool,
     sync_all_notes: bool,
 ) -> Result<(), String> {
     let sync_source_hub = SyncSource::default();
     if sync_source_from != sync_source_hub && sync_source_to != sync_source_hub {
         return Err(hub_spoke_error(sync_source_from, sync_source_to));
     }
-    if !run {
+    if dry_run {
         println!("{}\n", "DRY RUN".black().on_bright_yellow());
     }
     println!("Syncing from {} to {}.", sync_source_from, sync_source_to);
@@ -203,7 +203,7 @@ pub async fn sync_notes_interactive(
         &from_output_dir.display(),
         &to_output_dir.display()
     );
-    let import_data = get_import_data(&from_output_dir, &to_output_dir, run, sync_all_notes)?;
+    let import_data = get_import_data(&from_output_dir, &to_output_dir, dry_run, sync_all_notes)?;
     println!();
     if import_data.is_empty() {
         println!("All notes are up to date.");
@@ -224,11 +224,11 @@ pub async fn sync_notes_interactive(
         sync_source_from,
         sync_source_to,
         import_data,
-        run,
+        dry_run,
     )
     .await?;
 
-    regenerate_notes(base_url, client, modified_notes, immutable_note_ids, run).await?;
+    regenerate_notes(base_url, client, modified_notes, immutable_note_ids, dry_run).await?;
 
     println!("Done");
     Ok(())

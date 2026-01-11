@@ -62,13 +62,13 @@ impl SrsAdapter for AnkiAdapter {
         spares_pool: &SqlitePool,
         migration_function: Option<MigrationFunc>,
         initial_migration: bool,
-        run: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         let client = Client::new();
 
         // Update Anki model's fields, if needed
         if initial_migration {
-            if run {
+            if !dry_run {
                 self.verify_anki_is_open()?;
             }
             let params = ApiRequestParams::GetModelFieldNames(GetModelFieldNamesApiRequestData {
@@ -109,7 +109,7 @@ impl SrsAdapter for AnkiAdapter {
             AnkiAdapter::database_to_requests(anki_db_path.as_path(), migration_function).await?;
         let row_count = parse_note_requests.len();
         println!("Row count: {}", row_count);
-        let notes_responses = create_notes(&client, base_url, parse_note_requests, run)
+        let notes_responses = create_notes(&client, base_url, parse_note_requests, dry_run)
             .await
             .map_err(|e| {
                 Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
@@ -136,7 +136,7 @@ impl SrsAdapter for AnkiAdapter {
                 })?;
             println!("Modifying cards and review log...");
             let start = Instant::now();
-            populate_reviews(run, spares_and_anki_note_ids, spares_pool, &anki_db_path).await?;
+            populate_reviews(dry_run, spares_and_anki_note_ids, spares_pool, &anki_db_path).await?;
             let duration = start.elapsed();
             println!("Add Anki's review log duration: {:?}", duration);
         }
@@ -149,7 +149,7 @@ impl SrsAdapter for AnkiAdapter {
             let start = Instant::now();
             let mut adapter = AnkiAdapter::default();
             adapter
-                .add_spares_id(&notes_responses, &client, run)
+                .add_spares_id(&notes_responses, &client, dry_run)
                 .await?;
             let duration = start.elapsed();
             println!("Add SparesId to Anki duration: {:?}", duration);
@@ -163,11 +163,11 @@ impl SrsAdapter for AnkiAdapter {
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,
         parser: &dyn Parseable,
-        run: bool,
+        dry_run: bool,
         quiet: bool,
         _at: DateTime<Utc>,
     ) -> Result<(), Error> {
-        if run {
+        if !dry_run {
             self.verify_anki_is_open()?;
         }
         let mut requests: Vec<ApiRequest> = Vec::new();
@@ -362,7 +362,7 @@ impl SrsAdapter for AnkiAdapter {
             }
         }
 
-        let anki_results = execute_requests(&requests, run, quiet, &client).await?;
+        let anki_results = execute_requests(&requests, dry_run, quiet, &client).await?;
 
         // Update Spares with Anki note id if it was:
         // 1. Already added to Spares
@@ -389,14 +389,14 @@ impl SrsAdapter for AnkiAdapter {
                 }
             })
             .collect::<Vec<_>>();
-        if run {
+        if !dry_run {
             let spares_adapter = SparesAdapter::new(SparesRequestProcessor::Server);
             let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
             for (anki_note_id, spares_note_id, mut custom_data) in relevant_data {
                 custom_data.remove(NOTE_ID_KEY);
                 custom_data.insert(new_key.clone(), Value::String(anki_note_id.clone()));
                 spares_adapter
-                    .update_custom_data(spares_note_id, custom_data, run, Utc::now())
+                    .update_custom_data(spares_note_id, custom_data, dry_run, Utc::now())
                     .await?;
             }
         }

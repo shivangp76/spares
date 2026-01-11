@@ -69,7 +69,7 @@ pub enum SyncMainAction {
         #[arg(short, long, default_value = "spares")]
         to: SyncSource,
         #[arg(short, long, default_value_t = false)]
-        run: bool,
+        dry_run: bool,
         /// Sync all files
         #[arg(long, default_value_t = false)]
         all: bool,
@@ -178,7 +178,7 @@ async fn update_changes(
     original_sync_source_to: SyncSource,
     import_datas: &mut [SyncImportData],
     direction: &UpdateDirection,
-    run: bool,
+    dry_run: bool,
 ) -> Result<Vec<NoteId>, String> {
     let (sync_source_from, sync_source_to) = match direction {
         UpdateDirection::Push => (original_sync_source_from, original_sync_source_to),
@@ -216,7 +216,7 @@ async fn update_changes(
             for import_data in &mut *import_datas {
                 match import_data.action {
                     SyncImportAction::Add { .. } | SyncImportAction::Update { .. } => {
-                        if !run {
+                        if dry_run {
                             println!("This will be handled when render notes is called.");
                         }
                         // fs::copy(note_from_filepath, note_to_filepath).map_err(|e| format!("{}", e))?;
@@ -286,7 +286,11 @@ async fn update_changes(
 
         // Import
         if let Some(ref mut adapter) = adapter_opt {
-            if run {
+            if dry_run {
+                for (note_from_filepath, _, _) in import_data_filepaths {
+                    println!("{} will be imported", note_from_filepath.display());
+                }
+            } else {
                 let filepaths = import_data_filepaths
                     .into_iter()
                     .map(|(filepath, _, _)| filepath)
@@ -296,15 +300,11 @@ async fn update_changes(
                     Some(parser.as_ref()),
                     None,
                     filepaths.as_slice(),
-                    true,
+                    false,
                     false, // not quiet
                 )
                 .await
                 .map_err(|e| format!("{}", e))?;
-            } else {
-                for (note_from_filepath, _, _) in import_data_filepaths {
-                    println!("{} will be imported", note_from_filepath.display());
-                }
             }
         }
     }
@@ -316,7 +316,7 @@ async fn regenerate_notes(
     client: &Client,
     modified_notes: Vec<NoteId>,
     immutable_note_ids: Option<Vec<NoteId>>,
-    run: bool,
+    dry_run: bool,
 ) -> Result<(), String> {
     // Regenerate linked notes and generate files
     // This will also ensure that updated notes will have their clozes renumbered sequentially so the note is ready to be edited again.
@@ -334,7 +334,7 @@ async fn regenerate_notes(
             generate_rendered: true,
             force_generate_rendered: false,
         };
-        if run {
+        if !dry_run {
             let url = format!("{}/api/notes/generate_files", base_url);
             let response = client
                 .post(url)
@@ -669,7 +669,7 @@ pub async fn sync_notes(
         SyncMainAction::Interactive {
             from: sync_source_from,
             to: sync_source_to,
-            run,
+            dry_run,
             all: sync_all_notes,
         } => {
             sync_notes_interactive(
@@ -677,7 +677,7 @@ pub async fn sync_notes(
                 client,
                 sync_source_from,
                 sync_source_to,
-                run,
+                dry_run,
                 sync_all_notes,
             )
             .await
@@ -742,12 +742,12 @@ fn files_are_identical(path1: &Path, path2: &Path) -> Result<bool, String> {
 fn get_import_data(
     from_output_dir: &Path,
     to_output_dir: &Path,
-    run: bool,
+    dry_run: bool,
     sync_all_notes: bool,
 ) -> Result<Vec<SyncImportData>, String> {
     let from_output_base_dir = &from_output_dir.parent().unwrap();
 
-    if !run {
+    if dry_run {
         println!(
             "Comparing directories: {} vs {}",
             to_output_dir.display(),

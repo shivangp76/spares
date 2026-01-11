@@ -68,7 +68,7 @@ impl SparesAdapter {
         &self,
         note_id: i64,
         custom_data: CustomData,
-        run: bool,
+        dry_run: bool,
         at: DateTime<Utc>,
     ) -> Result<(), Error> {
         let request_processor = match self.request_processor {
@@ -92,7 +92,7 @@ impl SparesAdapter {
             keywords: None,
             tags: UpdateTags::None,
         };
-        if run {
+        if !dry_run {
             match &request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
@@ -126,7 +126,7 @@ impl SrsAdapter for SparesAdapter {
         _spares_pool: &SqlitePool,
         _migration_function: Option<MigrationFunc>,
         _initial_migration: bool,
-        _run: bool,
+        _dry_run: bool,
     ) -> Result<(), Error> {
         unreachable!("The default adapter has no migrations.");
     }
@@ -136,7 +136,7 @@ impl SrsAdapter for SparesAdapter {
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,
         parser: &dyn Parseable,
-        run: bool,
+        dry_run: bool,
         _quiet: bool,
         at: DateTime<Utc>,
     ) -> Result<(), Error> {
@@ -200,7 +200,7 @@ impl SrsAdapter for SparesAdapter {
                         tags: UpdateTags::SetTags(local_settings.tags),
                         custom_data: Some(local_settings.custom_data),
                     };
-                    if run {
+                    if !dry_run {
                         match &request_processor {
                             SparesRequestProcessorInternal::Server { base_url, client } => {
                                 let url = format!("{}/api/notes", base_url);
@@ -221,7 +221,7 @@ impl SrsAdapter for SparesAdapter {
                     }
                 }
                 NoteImportAction::Delete(note_id) => {
-                    if run {
+                    if !dry_run {
                         match &request_processor {
                             SparesRequestProcessorInternal::Server { base_url, client } => {
                                 let request = DeleteNotesRequest {
@@ -254,7 +254,7 @@ impl SrsAdapter for SparesAdapter {
         };
         // Create notes and render created notes
         // We cannot render updated notes since that might overwrite unsaved changes.
-        if run {
+        if !dry_run {
             let created_note_ids = match &request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
