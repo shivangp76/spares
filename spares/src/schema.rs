@@ -145,6 +145,7 @@ pub mod note {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct RenderNotesRequest {
         pub selector: NotesSelector,
+        /// If `None`, then all other notes are considered to be immutable.
         pub immutable_note_ids: Option<Vec<NoteId>>,
         pub overridden_output_raw_dir: Option<PathBuf>,
         pub include_linked_notes: bool,
