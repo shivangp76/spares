@@ -355,7 +355,10 @@ fn test_get_cards_image_occlusion_2() {
                   <rect fill="#FF7E7E" height="75" width="123.21429" stroke="#2D2D2D" y="65.17857" id="svg_1" x="53.67857" data-cloze-settings="h:Hi there;g:1" />
                   <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="115.28571500000001" y="110.67857">Hi there</text>
                 </g>
-                <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" data-cloze-settings="g:1;hide:" />
+                <g>
+                  <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" data-cloze-settings="g:1;hide:" />
+                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.52633" y="78.94737">(no answer)</text>
+                </g>
               </g>
             </svg>"##
     };
@@ -548,7 +551,10 @@ fn test_get_cards_image_occlusion_front_conceal() {
                   <rect fill="#FF7E7E" height="75" id="svg_2" stroke="#2D2D2D" width="123.21" x="193.68" y="236.18" data-cloze-settings="h:Hi;g:1" />
                   <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="255.285" y="281.68">Hi</text>
                 </g>
-                <ellipse cx="346.53" cy="78.95" fill="#FFEBA2" id="svg_3" rx="46.32" ry="46.32" stroke="#2D2D2D" stroke-dasharray="null" stroke-linecap="null" stroke-linejoin="null" data-cloze-settings="o:2" />
+                <g>
+                  <ellipse cx="346.53" cy="78.95" fill="#FFEBA2" id="svg_3" rx="46.32" ry="46.32" stroke="#2D2D2D" stroke-dasharray="null" stroke-linecap="null" stroke-linejoin="null" data-cloze-settings="o:2" />
+                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.53" y="78.95">(no answer)</text>
+                </g>
               </g>
             </svg>"##
     };
