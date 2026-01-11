@@ -34,7 +34,7 @@ serde_json = { version = "1.0.145", features = ["preserve_order"] }
 serde_with = { version = "3.14.1", features = ["chrono_0_4"] }
 sha256 = "1.6.0"
 shellexpand = "3.1.1"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
 thiserror = "2.0.16"

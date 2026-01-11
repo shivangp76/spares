@@ -105,6 +105,13 @@ impl Iterator for Lexer<'_> {
                 }),
                 Err(e) => return Some(Err(e)),
             },
+            Some('r') if self.s.eat_if("e:\"") => {
+                self.parse_string(false).ok()?;
+                Ok(Token {
+                    kind: TokenKind::Regex,
+                    span: cursor_start + 4..self.s.cursor() - 1,
+                })
+            }
             Some(c) if char::is_ascii_digit(&c) || c == '-' => match self.parse_date_or_number(c) {
                 Ok(kind) => Ok(Token {
                     kind,
@@ -115,6 +122,7 @@ impl Iterator for Lexer<'_> {
             Some(ch) if char::is_alphanumeric(ch) || ch == '.' || ch == '_' => {
                 self.s
                     .eat_while(|c| char::is_alphanumeric(c) || c == '.' || c == '_' || c == '-');
+
                 let token_kind = match self.s.peek() {
                     Some('=' | '>' | '<' | '~' | ':') => TokenKind::Field,
                     _ => TokenKind::String,
@@ -150,7 +158,7 @@ impl Iterator for Lexer<'_> {
 impl Lexer<'_> {
     fn normalize(&mut self, current_token: &mut Token) {
         if self.normalize {
-            if matches!(current_token.kind, TokenKind::String) {
+            if matches!(current_token.kind, TokenKind::String | TokenKind::Regex) {
                 let add_implied_field = self.prev.as_ref().is_none_or(|prev| {
                     !matches!(
                         prev.kind,

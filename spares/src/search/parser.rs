@@ -78,6 +78,10 @@ impl<'de> Parser<'de> {
                 span,
                 ..
             } => TokenTree::Atom(Atom::DateTime(parse_date(&self.whole[span])?)),
+            Token {
+                kind: TokenKind::Regex,
+                span,
+            } => TokenTree::Atom(Atom::Regex(Token::unescape(&self.whole[span]))),
 
             // groups
             Token {
