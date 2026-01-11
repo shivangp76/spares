@@ -8,9 +8,9 @@ use spares::config::{Environment, get_data_dir, get_env_config};
 use sqlx::{
     Sqlite,
     migrate::{MigrateDatabase, Migrator},
-    sqlite::{SqlitePool, SqlitePoolOptions},
+    sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions},
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -39,11 +39,13 @@ async fn start_server(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
+        .map_err(|e| format!("{:?}", e))?
+        .with_regexp();
     let pool = SqlitePoolOptions::new()
-        // .max_connections(10)
         .max_lifetime(None)
         .idle_timeout(None)
-        .connect(&env_config.database_url)
+        .connect_with(connect_options)
         .await
         .map_err(|e| format!("Failed to connect to the database: {:?}", e))?;
     println!("Connection to the database is successful.");

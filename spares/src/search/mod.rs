@@ -38,6 +38,7 @@ pub enum TokenKind {
     True,
     False,
     Date,
+    Regex,
     // Operators
     And,
     Or,
@@ -107,6 +108,7 @@ pub enum Atom<'de> {
     Float(f64),
     Boolean(bool),
     DateTime(DateTime<Utc>),
+    Regex(Cow<'de, str>),
     Nil,
 }
 
@@ -119,6 +121,7 @@ impl fmt::Display for Atom<'_> {
             Atom::Float(n) => write!(f, "{n}"),
             Atom::Boolean(b) => write!(f, "{b:?}"),
             Atom::DateTime(d) => write!(f, "{d:?}"),
+            Atom::Regex(s) => write!(f, "re:\"{s}\""),
             Atom::Nil => write!(f, "nil"),
         }
     }

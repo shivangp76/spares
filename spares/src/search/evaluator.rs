@@ -166,6 +166,7 @@ enum FieldType {
     DateTime,
     Json,
     Boolean,
+    Regex,
 }
 
 impl Field {
@@ -707,6 +708,7 @@ fn evaluate_colon(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn evaluate_field_value(
     trees: &[TokenTree],
     context: &mut EvaluationContext,
@@ -768,6 +770,13 @@ fn evaluate_field_value(
     }
     match op {
         Op::Equal | Op::GreaterThan | Op::GreaterThanEqual | Op::LessThan | Op::LessThanEqual => {
+            if matches!(value_type, FieldType::Regex) {
+                return Err(miette!(
+                    "A regex string cannot be used with operator `{}`. Try changing the operator to `{}` or changing the regex string to a string.",
+                    op,
+                    Op::Tilde
+                ));
+            }
             if let Some(mut value_param) = value_context.params.pop() {
                 if matches!(op, Op::Equal) && matches!(field_type, FieldType::String) {
                     value_param = format!("\"{}\"", value_param);
@@ -777,9 +786,15 @@ fn evaluate_field_value(
         }
         Op::Tilde => {
             if let Some(value_param) = value_context.params.pop() {
-                value_context
-                    .params
-                    .push(format!("LIKE '%{}%'", value_param));
+                if matches!(value_type, FieldType::Regex) {
+                    value_context
+                        .params
+                        .push(format!("REGEXP '{}'", value_param));
+                } else {
+                    value_context
+                        .params
+                        .push(format!("LIKE '%{}%'", value_param));
+                }
             }
         }
         Op::Group | Op::And | Op::Or | Op::Minus | Op::Colon => unreachable!(),
@@ -792,7 +807,8 @@ fn evaluate_field_value(
         | (FieldType::Float, FieldType::Float | FieldType::Integer)
         | (FieldType::String | FieldType::Json, _)
         | (FieldType::DateTime, FieldType::DateTime)
-        | (FieldType::Boolean, FieldType::Boolean) => {}
+        | (FieldType::Boolean, FieldType::Boolean)
+        | (FieldType::String, FieldType::Regex) => {}
         _ => {
             return Err(miette!(
                 "The field `{:?}` has a type of `{:?}`. The provided value of `{}` has a type of `{:?}` which does not match the field's type.",
@@ -861,6 +877,11 @@ impl Evaluate for Atom<'_> {
             Atom::DateTime(d) => {
                 context.value_type = Some(FieldType::DateTime);
                 context.params.push(d.timestamp().to_string());
+                Ok(())
+            }
+            Atom::Regex(r) => {
+                context.value_type = Some(FieldType::Regex);
+                context.params.push(r.to_string());
                 Ok(())
             }
             Atom::Nil => Ok(()),
@@ -945,6 +966,19 @@ mod tests {
                 "custom_data:\"$.x.y[1]\">=123",
                 "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.x.y[1]') >= 123",
             ),
+            // Regex search
+            (
+                "re:\"\\d{3}\"",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}'",
+            ),
+            (
+                "data~re:\"\\d{3}\"",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}'",
+            ),
+            (
+                "tag~re:\"^math\"",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name REGEXP '^math' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name REGEXP '^math')",
+            ),
         ];
 
         for (input, expected_sql) in inputs {
@@ -982,6 +1016,8 @@ mod tests {
             // Dangling operator
             "tag=math and",
             "or tag=math",
+            // Invalid regex usage
+            "data=re:\"math\"",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);

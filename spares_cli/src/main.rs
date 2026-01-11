@@ -41,8 +41,8 @@ use spares::{
     },
     search::QueryReturnItemType,
 };
-use sqlx::sqlite::SqlitePoolOptions;
-use std::{io, path::PathBuf};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::{io, path::PathBuf, str::FromStr};
 use sync::{SyncArgs, sync_notes};
 use tree::{build_tree, print_tree};
 
@@ -1190,11 +1190,13 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         }) => {
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
+            let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
+                .map_err(|e| miette!("{:?}", e))?
+                .with_regexp();
             let pool = SqlitePoolOptions::new()
-                // .max_connections(10)
                 .max_lifetime(None)
                 .idle_timeout(None)
-                .connect(&env_config.database_url)
+                .connect_with(connect_options)
                 .await
                 .map_err(|e| miette!("Failed to connect to the database: {:?}", e))?;
             migrate_from_adapter(
