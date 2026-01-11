@@ -25,7 +25,7 @@ async fn create_parsers(
     client: &Client,
     base_url: &str,
     create_note_requests: &HashMap<String, Vec<CreateNoteRequest>>,
-    run: bool,
+    dry_run: bool,
 ) -> Result<Vec<ParserResponse>, String> {
     println!("Creating parsers...");
     let url = format!("{}/api/parsers", base_url);
@@ -34,7 +34,12 @@ async fn create_parsers(
         let request = CreateParserRequest {
             name: parser_name.clone(),
         };
-        let parser_response = if run {
+        let parser_response = if dry_run {
+            ParserResponse {
+                id: i64::try_from(i).unwrap_or_default(),
+                name: parser_name.clone(),
+            }
+        } else {
             let response = client
                 .post(&url)
                 .json(&request)
@@ -49,11 +54,6 @@ async fn create_parsers(
             let parser_response: ParserResponse =
                 response.json().await.map_err(|e| format!("{}", e))?;
             parser_response
-        } else {
-            ParserResponse {
-                id: i64::try_from(i).unwrap_or_default(),
-                name: parser_name.clone(),
-            }
         };
         parser_responses.push(parser_response);
     }
@@ -64,7 +64,7 @@ pub async fn create_notes(
     client: &Client,
     base_url: &str,
     parse_note_requests: Vec<(String, GenerateNoteFilesRequest)>,
-    run: bool,
+    dry_run: bool,
 ) -> Result<Vec<NotesResponse>, String> {
     println!("Getting notes...");
     let start = Instant::now();
@@ -97,7 +97,7 @@ pub async fn create_notes(
         .into_group_map();
 
     // Create parsers
-    let parser_responses = create_parsers(client, base_url, &create_note_requests, run).await?;
+    let parser_responses = create_parsers(client, base_url, &create_note_requests, dry_run).await?;
 
     println!("Creating notes...");
     let mut all_notes_responses = Vec::new();
@@ -112,20 +112,7 @@ pub async fn create_notes(
             requests,
         };
         let url = format!("{}/api/notes", base_url);
-        let notes_response: NotesResponse = if run {
-            let response = client
-                .post(url)
-                .json(&create_notes_request)
-                .send()
-                .await
-                .map_err(|e| format!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                return Err(body.to_string());
-            }
-            response.json().await.map_err(|e| format!("{}", e))?
-        } else {
+        let notes_response: NotesResponse = if dry_run {
             let notes = create_notes_request
                 .requests
                 .into_iter()
@@ -145,6 +132,19 @@ pub async fn create_notes(
                 })
                 .collect::<Vec<_>>();
             NotesResponse { notes }
+        } else {
+            let response = client
+                .post(url)
+                .json(&create_notes_request)
+                .send()
+                .await
+                .map_err(|e| format!("{}", e))?;
+            let status = response.status();
+            if status != StatusCode::OK {
+                let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
+                return Err(body.to_string());
+            }
+            response.json().await.map_err(|e| format!("{}", e))?
         };
         all_notes_responses.push(notes_response);
     }

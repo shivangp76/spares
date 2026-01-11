@@ -76,7 +76,7 @@ Available sources:
 
 ### Option 1: Interactive Mode
 ```sh
-spares_cli sync interactive --from {source1} --to {source2} --run
+spares_cli sync interactive --from {source1} --to {source2} --dry-run
 ```
 where `{source1}` and `{source2}` are from the list above.
 
@@ -113,7 +113,7 @@ Thus, the final workflow to sync from spares-local-files to spares looks like:
 1. Run `cd $(spares_cli sync render-diffs --from spares --to spares-local-files) | diff-selector-widget`
 1. Press `Ctrl+D`
 1. Select the notes you would like to sync
-1. Run `spares_cli import --adapter spares-local-files --run {FILES}` where `{FILES}` is the selected notes
+1. Run `spares_cli import --adapter spares-local-files --dry-run {FILES}` where `{FILES}` is the selected notes
 
 ## Latex
 

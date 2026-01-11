@@ -136,7 +136,7 @@ pub fn parse_anki_revlog_rows(
 }
 
 pub async fn populate_reviews(
-    run: bool,
+    dry_run: bool,
     spares_and_anki_note_ids: Vec<(NoteId, i64)>,
     spares_pool: &SqlitePool,
     anki_db_path: &Path,
@@ -145,7 +145,7 @@ pub async fn populate_reviews(
     let anki_pool = read_database_file(anki_db_path).await?;
 
     // Modify cards
-    if run {
+    if !dry_run {
         let total = spares_and_anki_note_ids.len();
         for (note_id, anki_note_id) in spares_and_anki_note_ids
             .into_iter()

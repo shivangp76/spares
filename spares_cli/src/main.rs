@@ -1185,7 +1185,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Migrate(MigrateArgs {
             adapter: adapter_string,
             initial_migration,
-            run,
+            dry_run,
             tag_relations_file_path,
         }) => {
             let mut adapter =
@@ -1205,7 +1205,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 &client,
                 adapter.as_mut(),
                 initial_migration,
-                run,
+                dry_run,
                 tag_relations_file_path.as_deref(),
             )
             .await
@@ -1216,7 +1216,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             parser: parser_string_opt,
             to_parser: to_parser_string_opt,
             files,
-            run,
+            dry_run,
         }) => {
             let parser = parser_string_opt
                 .map(|parser_string| find_parser(parser_string.as_str(), &get_all_parsers()))
@@ -1234,7 +1234,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 parser.as_deref(),
                 to_parser_opt.as_deref(),
                 files.as_slice(),
-                run,
+                dry_run,
                 false,
             )
             .await
