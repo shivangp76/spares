@@ -64,13 +64,13 @@ pub async fn execute_request(request: &ApiRequest, client: &Client) -> Result<Va
 
 pub async fn execute_requests(
     requests: &[ApiRequest],
-    run: bool,
+    dry_run: bool,
     quiet: bool,
     client: &Client,
 ) -> Result<Vec<Value>, Error> {
     let mut results = Vec::new();
     for (i, request) in requests.iter().enumerate().progress() {
-        if run {
+        if !dry_run {
             let result = execute_request(request, client).await?;
             if !quiet {
                 println!("{}: {}", i, result);

@@ -74,7 +74,7 @@ impl AnkiAdapter {
         &mut self,
         notes_responses: &[NotesResponse],
         client: &Client,
-        run: bool,
+        dry_run: bool,
     ) -> Result<(), Error> {
         let mut requests = Vec::new();
         for note_response in notes_responses {
@@ -109,10 +109,10 @@ impl AnkiAdapter {
                 requests.push(api_request);
             }
         }
-        if run && !requests.is_empty() {
+        if !dry_run && !requests.is_empty() {
             self.verify_anki_is_open()?;
         }
-        execute_requests(&requests, run, true, client).await?;
+        execute_requests(&requests, dry_run, true, client).await?;
         Ok(())
     }
 

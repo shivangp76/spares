@@ -24,14 +24,14 @@ pub struct ImportArgs {
     pub to_parser: Option<String>,
 
     #[arg(short, long, default_value_t = false)]
-    pub run: bool,
+    pub dry_run: bool,
 
     /// Input file(s)
     #[arg(required = true, value_delimiter = ' ', num_args = 1..)]
     pub files: Vec<PathBuf>,
 }
 
-fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, run: bool) {
+fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: bool) {
     let warnings = notes
         .iter()
         .enumerate()
@@ -79,7 +79,7 @@ fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, run: bool)
 
     if !quiet {
         println!("SUMMARY");
-        if !run {
+        if dry_run {
             println!("{}\n", "DRY RUN".black().on_bright_yellow());
         }
         println!("Note Count: {}", notes_len);
@@ -106,13 +106,13 @@ pub async fn import_from_files<P>(
     parser_opt: Option<&dyn Parseable>,
     to_parser_opt: Option<&dyn Parseable>,
     file_paths: &[P],
-    run: bool,
+    dry_run: bool,
     quiet: bool,
 ) -> Result<(), Error>
 where
     P: AsRef<Path>,
 {
-    if !run {
+    if dry_run {
         println!("{}\n", "DRY RUN".black().on_bright_yellow());
     }
 
@@ -151,7 +151,7 @@ where
                 .map(|c| c.unwrap().get(1).unwrap().as_str())
                 .collect::<Vec<_>>();
             for block in blocks {
-                let notes = get_notes(*parser, to_parser_opt, block, adapter, run)?;
+                let notes = get_notes(*parser, to_parser_opt, block, adapter, !dry_run)?;
                 all_notes.extend(notes);
             }
             if !all_notes.is_empty() {
@@ -189,10 +189,10 @@ where
     }
 
     for (_parser_name, (parser, notes)) in parser_to_notes {
-        print_notes(&notes, quiet, run);
+        print_notes(&notes, quiet, dry_run);
 
         adapter
-            .process_data(notes, parser, run, quiet, Utc::now())
+            .process_data(notes, parser, dry_run, quiet, Utc::now())
             .await?;
     }
 

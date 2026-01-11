@@ -20,7 +20,7 @@ pub trait SrsAdapter: Send + Sync {
         spares_pool: &SqlitePool,
         migration_function: Option<MigrationFunc>,
         initial_migration: bool,
-        run: bool,
+        dry_run: bool,
     ) -> Result<(), Error>;
 
     // NOTE: notes is NOT `Vec<(NoteSettings, Vec<CardData>)>` since spares just take the `note_data: String`. Other adapters can call `parser.get_cards(note_data)` to get `Vec<CardData>`. Note that the cards are already validated, even though they are not passed as a parameter.
@@ -28,7 +28,7 @@ pub trait SrsAdapter: Send + Sync {
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,
         parser: &dyn Parseable,
-        run: bool,
+        dry_run: bool,
         quiet: bool,
         at: DateTime<Utc>,
     ) -> Result<(), Error>;

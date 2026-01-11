@@ -225,7 +225,7 @@ async fn sync_note_background(
         Some(parser.as_ref()),
         None,
         &[&note_raw_path],
-        true,
+        false,
         true, // quiet mode
     )
     .await
