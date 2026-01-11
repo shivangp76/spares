@@ -25,6 +25,7 @@ use crate::{
     model::{Card, RatingId, ReviewLog},
     schedulers::{SrsScheduler, stepped_range_inclusive},
     schema::review::{Rating, RatingSubmission},
+    search::evaluator::Evaluator,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Datelike, Duration, Local, Utc};
@@ -40,7 +41,7 @@ use rand::{
 use reposition::{MoveCardAction, get_safe_cards, move_cards};
 use rs_fsrs::State;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use utils::{
     card_to_fsrs_card, fsrs_card_to_card, get_fuzz_range, number_to_rating, number_to_state,
     rating_to_number, state_to_number,
@@ -296,22 +297,33 @@ impl SrsScheduler for FSRS {
         db: &SqlitePool,
         config: &SparesExternalConfig,
         count: u32,
+        query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<String, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-        let cards: Vec<Card> = sqlx::query_as(
+        let card_id_query_str = if let Some(query_str) = query {
+            let evaluator = Evaluator::new(&query_str);
+            let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
+            format!("\nAND c.id IN ({})", card_ids_str)
+        } else {
+            String::new()
+        };
+        let query_str = format!(
             r"SELECT * FROM card
            WHERE due > ?
              AND state = ?
              AND special_state IS NULL
+             {}
            ORDER BY card.due ASC",
-        )
-        .bind(card_due_limit.timestamp())
-        .bind(state_to_number(State::Review))
-        .bind(count)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+            card_id_query_str
+        );
+        let mut query = sqlx::query_as(&query_str);
+        query = query.bind(card_due_limit.timestamp());
+        query = query.bind(state_to_number(State::Review));
+        let cards: Vec<Card> = query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
 
         move_cards(
             db,
@@ -330,21 +342,33 @@ impl SrsScheduler for FSRS {
         db: &SqlitePool,
         config: &SparesExternalConfig,
         count: u32,
+        query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<String, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-        let cards: Vec<Card> = sqlx::query_as(
+        let card_id_query_str = if let Some(query_str) = query {
+            let evaluator = Evaluator::new(&query_str);
+            let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
+            format!("\nAND c.id IN ({})", card_ids_str)
+        } else {
+            String::new()
+        };
+        let query_str = format!(
             r"SELECT * FROM card
            WHERE due <= ?
              AND state = ?
              AND special_state IS NULL
+             {}
            ORDER BY card.due ASC",
-        )
-        .bind(card_due_limit.timestamp())
-        .bind(state_to_number(State::Review))
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+            card_id_query_str
+        );
+        let mut query = sqlx::query_as(&query_str);
+        query = query.bind(card_due_limit.timestamp());
+        query = query.bind(state_to_number(State::Review));
+        let cards: Vec<Card> = query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
 
         move_cards(
             db,
