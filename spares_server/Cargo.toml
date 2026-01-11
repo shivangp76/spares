@@ -18,7 +18,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 env_logger = "0.11.8"
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 spares = { path = "../spares" }
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
 tokio = { version = "1.47.1", features = ["full"] }
 tower-http = { version = "0.6.6", features = ["cors"] }
 

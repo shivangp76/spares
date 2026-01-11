@@ -38,9 +38,18 @@
 - Quotes can be escaped with a backslash.
 - Alternatively, use `#"` and `"#` to delimit strings, where double quotes inside do not require escaping.
 
+**Regex String:**
+- Strings delimited by `re:"` and `"`
+
 #### Tilde Operator (`~`)
-- `field~"value"`: Searches if `field` contains `value`.
+
+**With a normal String**:
+- `field~"value"`: Searches if `field` contains `value` (case insensitive).
   - Example: `tag~"math test"` finds notes with tags containing `math test`.
+
+**With a Regex String**:
+- `field~re:"value"`: Searches if `field` matches the regex `value` (case sensitive).j
+- This uses the (`regex`)[https://docs.rs/regex/latest/regex/] crate.
 
 #### Exact Match (`=`)
 - `field="value"`: Searches for notes where `field` matches `value` exactly and `value` appears in the note's body.
