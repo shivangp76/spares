@@ -25,6 +25,8 @@ use strum::IntoEnumIterator;
 use toml_edit::DocumentMut;
 use xmltree::{Element, EmitterConfig};
 
+const CLOZE_NOT_TO_ANSWER_TEXT: &str = "(no answer)";
+
 pub fn construct_image_occlusion_from_image(
     parser: &impl Parseable,
     construct_image_fn: fn(file_path: &Path, caption: &str) -> String,
@@ -245,11 +247,16 @@ pub fn modify_clozes_for_card(
                         ClozeHiddenReplacement::ToAnswer { hint } => {
                             set_cloze_color(cloze, cloze_to_answer_color);
                             if let Some(hint) = hint {
-                                modify_hint_cloze(cloze, hint, *cloze_hint_font_size);
+                                add_text_to_cloze(cloze, hint, *cloze_hint_font_size);
                             }
                         }
                         ClozeHiddenReplacement::NotToAnswer => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
+                            add_text_to_cloze(
+                                cloze,
+                                CLOZE_NOT_TO_ANSWER_TEXT,
+                                *cloze_hint_font_size,
+                            );
                         }
                     }
                 } else {
@@ -257,6 +264,11 @@ pub fn modify_clozes_for_card(
                         FrontConceal::OnlyGrouping => hide_cloze_mask(cloze),
                         FrontConceal::AllGroupings => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
+                            add_text_to_cloze(
+                                cloze,
+                                CLOZE_NOT_TO_ANSWER_TEXT,
+                                *cloze_hint_font_size,
+                            );
                         }
                     }
                 }
@@ -279,7 +291,7 @@ pub fn modify_clozes_for_card(
     }
 }
 
-fn modify_hint_cloze(cloze: &mut Element, hint: &str, cloze_hint_font_size: u32) {
+fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
     let cloze_type_opt: Option<SvgClozeType> = cloze.name.as_str().parse().ok();
     let (center_x, center_y) = cloze_type_opt.map_or((0., 0.), |cloze_type| {
         get_center_of_shape(cloze_type, cloze)
@@ -297,7 +309,7 @@ fn modify_hint_cloze(cloze: &mut Element, hint: &str, cloze_hint_font_size: u32)
     hint_element.attributes.clear();
     hint_element
         .attributes
-        .insert("font-size".to_string(), cloze_hint_font_size.to_string());
+        .insert("font-size".to_string(), text_font_size.to_string());
     hint_element
         .attributes
         .insert("text-anchor".to_string(), "middle".to_string());
@@ -312,7 +324,7 @@ fn modify_hint_cloze(cloze: &mut Element, hint: &str, cloze_hint_font_size: u32)
         .insert("y".to_string(), center_y.to_string());
     hint_element
         .children
-        .push(xmltree::XMLNode::Text(hint.to_string()));
+        .push(xmltree::XMLNode::Text(text.to_string()));
     cloze.children.push(xmltree::XMLNode::Element(hint_element));
 }
 
