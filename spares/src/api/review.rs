@@ -568,11 +568,11 @@ pub async fn submit_study_action(
         StudyAction::Bury { card_id } => {
             bury_card(db, scheduler.as_ref(), card_id, at).await?;
         }
-        StudyAction::Advance { count } => {
-            let _message = scheduler.advance(db, &config, count, at).await?;
+        StudyAction::Advance { count, query } => {
+            let _message = scheduler.advance(db, &config, count, query, at).await?;
         }
-        StudyAction::Postpone { count } => {
-            let _message = scheduler.postpone(db, &config, count, at).await?;
+        StudyAction::Postpone { count, query } => {
+            let _message = scheduler.postpone(db, &config, count, query, at).await?;
         }
         StudyAction::Reschedule => {
             let cards: Vec<Card> =

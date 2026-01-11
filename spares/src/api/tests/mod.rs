@@ -373,6 +373,7 @@ async fn simulate_reviews(
                 scheduler_name: scheduler_name.to_string(),
                 action: StudyAction::Advance {
                     count: statistics.advance_safe_count,
+                    query: None,
                 },
             };
             let advance_res = submit_study_action(&pool, request, requested_date).await;
@@ -400,6 +401,7 @@ async fn simulate_reviews(
                 scheduler_name: scheduler_name.to_string(),
                 action: StudyAction::Postpone {
                     count: statistics.postpone_safe_count,
+                    query: None,
                 },
             };
             let postpone_res = submit_study_action(&pool, request, requested_date).await;
