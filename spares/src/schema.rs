@@ -450,10 +450,12 @@ pub mod review {
         /// When you want to review your material ahead of time. For example, before a test.
         Advance {
             count: u32,
+            query: Option<String>,
         },
         /// When you are dealing with a large number of reviews after taking a break from spaced repetition or after rescheduling.
         Postpone {
             count: u32,
+            query: Option<String>,
         },
         /// When you either:
         /// 1. Update easy days

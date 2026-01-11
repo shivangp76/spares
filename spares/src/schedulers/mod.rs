@@ -84,6 +84,7 @@ pub trait SrsScheduler: Send + Sync {
         db: &SqlitePool,
         config: &SparesExternalConfig,
         count: u32,
+        query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<String, Error>;
 
@@ -92,6 +93,7 @@ pub trait SrsScheduler: Send + Sync {
         db: &SqlitePool,
         config: &SparesExternalConfig,
         count: u32,
+        query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<String, Error>;
 

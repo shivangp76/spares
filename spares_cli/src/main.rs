@@ -403,6 +403,8 @@ struct AdvanceArgs {
     count: u32,
     #[arg(short, long, default_value = "fsrs")]
     scheduler_name: String,
+    #[arg(short, long)]
+    query: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -411,6 +413,8 @@ struct PostponeArgs {
     count: u32,
     #[arg(short, long, default_value = "fsrs")]
     scheduler_name: String,
+    #[arg(short, long)]
+    query: Option<String>,
 }
 
 fn get_current_utc_datetime() -> DateTime<Utc> {
@@ -1299,10 +1303,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Advance(AdvanceArgs {
             count,
             scheduler_name,
+            query,
         }) => {
             let request = SubmitStudyActionRequest {
                 scheduler_name,
-                action: StudyAction::Advance { count },
+                action: StudyAction::Advance { count, query },
             };
             let url = format!("{}/api/review/submit", base_url);
             let response = client
@@ -1317,10 +1322,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Postpone(PostponeArgs {
             count,
             scheduler_name,
+            query,
         }) => {
             let request = SubmitStudyActionRequest {
                 scheduler_name,
-                action: StudyAction::Postpone { count },
+                action: StudyAction::Postpone { count, query },
             };
             let url = format!("{}/api/review/submit", base_url);
             let response = client
