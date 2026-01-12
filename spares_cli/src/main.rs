@@ -5,6 +5,7 @@ mod review;
 mod sync;
 mod tree;
 
+use crate::tree::{build_tree, tree_to_string};
 use chrono::{DateTime, Local, Utc};
 use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use graph::chart;
@@ -44,7 +45,6 @@ use spares::{
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{io, path::PathBuf, str::FromStr};
 use sync::{SyncArgs, sync_notes};
-use tree::{build_tree, print_tree};
 
 async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Response, Error> {
     let status = response.status();
@@ -172,8 +172,6 @@ enum AddCommands {
         name: String,
         #[arg(short, long, default_value = "")]
         description: String,
-        #[arg(short, long, default_value = None)]
-        parent_id: Option<i64>,
         #[arg(short, long)]
         query: Option<String>,
         #[arg(short, long, default_value_t = DEFAULT_TAG_AUTO_DELETE)]
@@ -202,9 +200,16 @@ enum EditCommands {
         name: Option<String>,
     },
     Tag {
-        id: i64,
-        #[arg(short, long)]
-        parent_id: Option<Option<i64>>,
+        /// ID of the tag to modify
+        #[arg(
+            long,
+            required_unless_present = "tag_name",
+            conflicts_with = "tag_name"
+        )]
+        id: Option<i64>,
+        /// Name of the tag to modify
+        #[arg(long, required_unless_present = "id", conflicts_with = "id")]
+        tag_name: Option<String>,
         #[arg(short, long)]
         name: Option<String>,
         #[arg(short, long)]
@@ -323,7 +328,7 @@ enum GetCommands {
 #[derive(Debug, Copy, Clone, Default, PartialEq, ValueEnum)]
 enum ListTagOutput {
     #[default]
-    Full,
+    Long,
     Short,
     Tree,
 }
@@ -341,8 +346,15 @@ enum ListCommands {
         page: Option<usize>,
         #[arg(short, long)]
         limit: Option<usize>,
-        #[arg(short, long, default_value = "full")]
-        output: ListTagOutput,
+        /// Display results in long format
+        #[arg(long, default_value_t = true, overrides_with_all = ["short", "tree"])]
+        long: bool,
+        /// Display results in short format
+        #[arg(long, overrides_with_all = ["long", "tree"])]
+        short: bool,
+        /// Display results as a tree
+        #[arg(long, overrides_with_all = ["long", "short"])]
+        tree: bool,
     },
     Note {
         #[arg(short, long)]
@@ -559,14 +571,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             AddCommands::Tag {
                 name,
                 description,
-                parent_id,
                 query,
                 auto_delete,
             } => {
                 let request = CreateTagRequest {
                     name,
                     description,
-                    parent_id,
                     query,
                     auto_delete,
                 };
@@ -628,16 +638,22 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
             EditCommands::Tag {
-                id,
-                parent_id: parent_id_opt,
+                id: tag_id_opt,
+                tag_name: tag_name_opt,
                 name,
                 description,
                 query,
                 auto_delete,
             } => {
+                let tag_to_modify = if let Some(tag_id) = tag_id_opt {
+                    TagSelector::Id(tag_id)
+                } else if let Some(tag_name) = tag_name_opt {
+                    TagSelector::Name(tag_name)
+                } else {
+                    unreachable!("required by clap");
+                };
                 let request = UpdateTagRequest {
-                    tag_to_modify: TagSelector::Id(id),
-                    parent: parent_id_opt.map(|x| x.map(TagSelector::Id)),
+                    tag_to_modify,
                     name,
                     description,
                     query,
@@ -870,7 +886,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             ListCommands::Tag {
                 page,
                 limit,
-                output,
+                long,
+                short,
+                tree,
             } => {
                 let url = format!("{}/api/tags", base_url);
                 let mut queries: Vec<(&str, String)> = Vec::new();
@@ -895,43 +913,25 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let tag_responses: Vec<TagResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                match output {
-                    ListTagOutput::Full => {
-                        println!("{}", serde_json::to_string_pretty(&tag_responses).unwrap());
-                    }
-                    ListTagOutput::Short => {
-                        let tag_names = tag_responses
-                            .into_iter()
-                            .map(|x| x.name)
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        println!("{}", &tag_names);
-                    }
-                    ListTagOutput::Tree => {
-                        let tag_relations = tag_responses
-                            .iter()
-                            .map(|tag_response| {
-                                let parent_name = if let Some(parent_id) = tag_response.parent_id {
-                                    tag_responses
-                                        .iter()
-                                        .find(|r| r.id == parent_id)
-                                        .unwrap()
-                                        .name
-                                        .clone()
-                                } else {
-                                    String::new()
-                                };
-                                (parent_name, tag_response.name.clone())
-                            })
-                            .collect::<Vec<_>>();
-                        let tree = build_tree(&tag_relations);
-                        for root in tree
-                            .keys()
-                            .filter(|&tag| tag_relations.iter().all(|(_, child)| child != tag))
-                        {
-                            print_tree(&tree, root, 0);
-                        }
-                    }
+                if short {
+                    let tag_names = tag_responses
+                        .into_iter()
+                        .map(|x| x.name)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    println!("{}", &tag_names);
+                } else if tree {
+                    let tag_names = tag_responses
+                        .into_iter()
+                        .map(|r| r.name)
+                        .collect::<Vec<_>>();
+                    let tree = build_tree(tag_names);
+                    let output = tree_to_string(&tree, 0);
+                    println!("{}", &output);
+                } else if long {
+                    println!("{}", serde_json::to_string_pretty(&tag_responses).unwrap());
+                } else {
+                    unreachable!("by clap");
                 }
             }
             ListCommands::Note { page, limit, graph } => {
@@ -1187,7 +1187,6 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             adapter: adapter_string,
             initial_migration,
             dry_run,
-            tag_relations_file_path,
         }) => {
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
@@ -1207,7 +1206,6 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 adapter.as_mut(),
                 initial_migration,
                 dry_run,
-                tag_relations_file_path.as_deref(),
             )
             .await
             .map_err(|e| miette!("{}", e))?;

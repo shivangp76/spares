@@ -252,7 +252,7 @@ impl Field {
                     //     value_str
                     // )
                     format!(
-                        "c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name {} UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name {})",
+                        "c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE {} UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE {})",
                         value_str, value_str
                     )
                 }
@@ -778,10 +778,16 @@ fn evaluate_field_value(
                 ));
             }
             if let Some(mut value_param) = value_context.params.pop() {
-                if matches!(op, Op::Equal) && matches!(field_type, FieldType::String) {
-                    value_param = format!("\"{}\"", value_param);
+                if matches!(field, Field::Note(NoteField::Tag)) && matches!(op, Op::Equal) {
+                    value_context
+                        .params
+                        .push(format!("':' || t.name || ':' LIKE '%:{}:%'", value_param));
+                } else {
+                    if matches!(op, Op::Equal) && matches!(field_type, FieldType::String) {
+                        value_param = format!("\"{}\"", value_param);
+                    }
+                    value_context.params.push(format!("{} {}", op, value_param));
                 }
-                value_context.params.push(format!("{} {}", op, value_param));
             }
         }
         Op::Tilde => {
@@ -798,6 +804,12 @@ fn evaluate_field_value(
             }
         }
         Op::Group | Op::And | Op::Or | Op::Minus | Op::Colon => unreachable!(),
+    }
+    if matches!(field, Field::Note(NoteField::Tag))
+        && !matches!(op, Op::Equal)
+        && let Some(last) = value_context.params.pop()
+    {
+        value_context.params.push(format!("t.name {}", last));
     }
     let value_str = value_context.params.join(" ");
 
@@ -918,18 +930,19 @@ mod tests {
                 "dog c.count>=2",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data LIKE '%dog%' AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2)",
             ),
-            // Tag search - needs tag joins
+            // Tag search - needs tag joins and special field matching syntax
             (
                 "tag=math",
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN note_tag nt ON n.id = nt.note_id LEFT JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\""),
-                // "SELECT DISTINCT n.id FROM note n WHERE n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')",
+            ),
+            (
+                r#"tag="math:measure-theory:homework""#,
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:measure-theory:homework:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:measure-theory:homework:%')",
             ),
             // Exclude tag
             (
                 "-tag=math",
-                // "SELECT DISTINCT n.id FROM note n WHERE NOT (n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\"))",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\"))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%'))",
             ),
             // Exclude linked to
             (
@@ -939,9 +952,7 @@ mod tests {
             // Convert types
             (
                 "tag=2 or tag=true",
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN note_tag nt ON n.id = nt.note_id LEFT JOIN tag t ON nt.tag_id = t.id WHERE (t.name = \"2\" OR t.name = \"true\")"),
-                // "SELECT DISTINCT n.id FROM note n WHERE (n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"2\") OR n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"true\"))",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"2\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"2\") OR c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"true\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"true\"))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:2:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:2:%') OR c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:true:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:true:%'))",
             ),
             // Card search - needs card join
             (
@@ -951,15 +962,11 @@ mod tests {
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_tag nt ON n.id = nt.note_id LEFT JOIN tag t ON nt.tag_id = t.id WHERE ((n.data LIKE '%dog%' AND t.name = \"math\") AND NOT (c.special_state = 1))"),
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")) AND NOT (c.special_state = 1))",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")) AND NOT (c.special_state = 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')) AND NOT (c.special_state = 1))",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_tag nt ON n.id = nt.note_id LEFT JOIN tag t ON nt.tag_id = t.id WHERE ((n.data LIKE '%dog%' AND t.name = \"math\") AND NOT (c.special_state = 1))"),
-                // "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")) AND (c.special_state IS NULL OR c.special_state != 1))",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\")) AND (c.special_state IS NULL OR c.special_state != 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')) AND (c.special_state IS NULL OR c.special_state != 1))",
             ),
             // Custom data - no joins needed
             (
@@ -1090,7 +1097,7 @@ mod tests {
             // Sort combined with WHERE clause
             (
                 "tag=math sort_by_asc=created_at",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") ORDER BY n.created_at ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') ORDER BY n.created_at ASC",
             ),
             (
                 "c.stability>=2 sort_by_desc=c.due",
@@ -1104,12 +1111,12 @@ mod tests {
             // Sort with parenthesis
             (
                 "(tag=math and c.stability>=2) sort_by_asc=linked_to)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") AND c.stability >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
             ),
             // The following should be equivalent to the one above.
             (
                 "tag=math and (c.stability>=2 sort_by_asc=linked_to)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name = \"math\" UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name = \"math\") AND c.stability >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
             ),
         ];
 

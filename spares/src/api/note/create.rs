@@ -411,7 +411,6 @@ async fn add_note_tags(
             let create_tag_request = CreateTagRequest {
                 name: tag_name.clone(),
                 description: String::new(),
-                parent_id: None,
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
             };
