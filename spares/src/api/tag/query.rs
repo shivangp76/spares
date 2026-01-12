@@ -249,7 +249,7 @@ mod tests {
             tag_to_modify: TagSelector::Id(filtered_tag_id),
             name: None,
             description: None,
-            parent_id: None,
+            parent: None,
             query: Some(Some("-tag=math".to_string())),
             auto_delete: None,
         };
