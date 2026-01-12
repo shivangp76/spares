@@ -131,7 +131,6 @@ mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -161,7 +160,6 @@ mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -172,7 +170,6 @@ mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag 2".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("ball tag=\"test filtered tag\"".to_string()),
             auto_delete: false,
         };
@@ -221,7 +218,6 @@ mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -249,7 +245,6 @@ mod tests {
             tag_to_modify: TagSelector::Id(filtered_tag_id),
             name: None,
             description: None,
-            parent: None,
             query: Some(Some("-tag=math".to_string())),
             auto_delete: None,
         };
@@ -306,7 +301,6 @@ mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };

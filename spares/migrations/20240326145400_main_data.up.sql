@@ -12,11 +12,8 @@ CREATE TABLE IF NOT EXISTS tag (
     id INTEGER PRIMARY KEY NOT NULL,
     name VARCHAR NOT NULL,
     description TEXT NOT NULL,
-    parent_id INTEGER, -- ID of parent tag
     query TEXT,
-    auto_delete INTEGER NOT NULL CHECK (auto_delete IN (0, 1)),
-    -- To prevent cascades wiping large tag trees, but still keep all references valid.
-    FOREIGN KEY (parent_id) REFERENCES tag(id) ON DELETE SET NULL
+    auto_delete INTEGER NOT NULL CHECK (auto_delete IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS note (

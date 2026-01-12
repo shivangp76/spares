@@ -38,7 +38,6 @@ pub(crate) mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -89,7 +88,6 @@ pub(crate) mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -138,7 +136,6 @@ pub(crate) mod tests {
         let request = CreateTagRequest {
             name: "test filtered tag".to_string(),
             description: String::new(),
-            parent_id: None,
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
@@ -168,7 +165,6 @@ pub(crate) mod tests {
         let request = CreateTagRequest {
             name: "math".to_string(),
             description: String::new(),
-            parent_id: None,
             query: None,
             auto_delete: true,
         };
@@ -215,7 +211,6 @@ pub(crate) mod tests {
         let request = CreateTagRequest {
             name: "math".to_string(),
             description: String::new(),
-            parent_id: None,
             query: None,
             auto_delete: true,
         };

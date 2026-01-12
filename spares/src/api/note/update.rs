@@ -296,7 +296,6 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
                         CreateTagRequest {
                             name: (*tag).clone(),
                             description: String::new(),
-                            parent_id: None,
                             query: None,
                             auto_delete: DEFAULT_TAG_AUTO_DELETE,
                         },

@@ -130,11 +130,10 @@ pub struct NoteLink {
     pub score: Option<Score>,
 }
 
-// Tree-like structure
+/// Tree-like structure using colons, like <https://hledger.org/account-names.html>
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct Tag {
     pub id: TagId,
-    pub parent_id: Option<TagId>,
     pub name: String,
     pub description: String,
     pub query: Option<String>,
