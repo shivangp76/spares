@@ -8,7 +8,7 @@ use spares::{
     parsers::{NotePart, find_parser, get_all_parsers, get_cards},
     schema::{
         note::{NotesSelector, RenderNotesRequest},
-        tag::{TagResponse, UpdateTagRequest},
+        tag::{TagResponse, TagSelector, UpdateTagRequest},
     },
 };
 use sqlx::SqlitePool;
@@ -144,8 +144,9 @@ async fn create_tag_relations(
         .collect::<Vec<_>>();
     for (parent_tag, child_tag) in tag_relations_with_responses {
         // Edit parent of child tag to be parent tag
-        let url = format!("{}/api/tags/{}", base_url, child_tag.id,);
+        let url = format!("{}/api/tags", base_url);
         let request = UpdateTagRequest {
+            tag_to_modify: TagSelector::Id(child_tag.id),
             parent_id: Some(Some(parent_tag.id)),
             name: None,
             description: None,

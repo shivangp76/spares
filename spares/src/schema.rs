@@ -60,8 +60,15 @@ pub mod tag {
         pub auto_delete: bool,
     }
 
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub enum TagSelector {
+        Id(TagId),
+        Name(String),
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UpdateTagRequest {
+        pub tag_to_modify: TagSelector,
         #[serde(default, deserialize_with = "some_option")]
         pub parent_id: Option<Option<TagId>>,
         #[serde(skip_serializing_if = "Option::is_none")]
