@@ -147,7 +147,7 @@ async fn create_tag_relations(
         let url = format!("{}/api/tags", base_url);
         let request = UpdateTagRequest {
             tag_to_modify: TagSelector::Id(child_tag.id),
-            parent_id: Some(Some(parent_tag.id)),
+            parent: Some(Some(TagSelector::Id(parent_tag.id))),
             name: None,
             description: None,
             query: None,

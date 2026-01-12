@@ -629,7 +629,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             }
             EditCommands::Tag {
                 id,
-                parent_id,
+                parent_id: parent_id_opt,
                 name,
                 description,
                 query,
@@ -637,7 +637,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             } => {
                 let request = UpdateTagRequest {
                     tag_to_modify: TagSelector::Id(id),
-                    parent_id,
+                    parent: parent_id_opt.map(|x| x.map(TagSelector::Id)),
                     name,
                     description,
                     query,

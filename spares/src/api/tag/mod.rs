@@ -85,18 +85,22 @@ pub async fn get_tag_by_name(db: &SqlitePool, name: &str) -> Result<TagResponse,
     Ok(TagResponse::new(&tag))
 }
 
-pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagResponse, Error> {
-    let id = match body.tag_to_modify {
-        TagSelector::Id(id) => id,
+async fn tag_selector_to_id(db: &SqlitePool, tag_selector: TagSelector) -> Result<TagId, Error> {
+    match tag_selector {
+        TagSelector::Id(id) => Ok(id),
         TagSelector::Name(name) => {
             let tag_id: TagId = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
                 .bind(name)
                 .fetch_one(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-            tag_id
+            Ok(tag_id)
         }
-    };
+    }
+}
+
+pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagResponse, Error> {
+    let id = tag_selector_to_id(db, body.tag_to_modify).await?;
     let existing_tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -111,7 +115,13 @@ pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest) -> Result<TagRe
         .description
         .clone()
         .unwrap_or_else(|| existing_tag.description.clone());
-    let new_parent_id = body.parent_id.unwrap_or(existing_tag.parent_id);
+    let new_parent_id = match body.parent {
+        Some(tag_selector_opt) => match tag_selector_opt {
+            Some(ts) => Some(tag_selector_to_id(db, ts).await?),
+            None => None,
+        },
+        None => existing_tag.parent_id,
+    };
     let new_query = body
         .query
         .clone()
@@ -317,7 +327,7 @@ mod tests {
             tag_to_modify: TagSelector::Id(tag.id),
             name: Some("Updated name".to_string()),
             description: None,
-            parent_id: Some(None),
+            parent: Some(None),
             query: None,
             auto_delete: None,
         };
@@ -346,7 +356,7 @@ mod tests {
             tag_to_modify: TagSelector::Id(tag.id),
             name: Some("Parent tag name".to_string()),
             description: None,
-            parent_id: None,
+            parent: None,
             query: None,
             auto_delete: None,
         };

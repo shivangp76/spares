@@ -70,7 +70,7 @@ pub mod tag {
     pub struct UpdateTagRequest {
         pub tag_to_modify: TagSelector,
         #[serde(default, deserialize_with = "some_option")]
-        pub parent_id: Option<Option<TagId>>,
+        pub parent: Option<Option<TagSelector>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
