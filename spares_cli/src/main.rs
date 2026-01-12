@@ -37,7 +37,7 @@ use spares::{
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse, StudyAction, SubmitStudyActionRequest},
-        tag::{CreateTagRequest, TagResponse, UpdateTagRequest},
+        tag::{CreateTagRequest, TagResponse, TagSelector, UpdateTagRequest},
     },
     search::QueryReturnItemType,
 };
@@ -636,13 +636,14 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 auto_delete,
             } => {
                 let request = UpdateTagRequest {
+                    tag_to_modify: TagSelector::Id(id),
                     parent_id,
                     name,
                     description,
                     query,
                     auto_delete,
                 };
-                let url = format!("{}/api/tags/{}", base_url, id);
+                let url = format!("{}/api/tags", base_url);
                 let response = client
                     .patch(url)
                     .json(&request)

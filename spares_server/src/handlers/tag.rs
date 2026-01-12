@@ -45,11 +45,10 @@ pub async fn get_tag_by_name_handler(
 }
 
 pub async fn update_tag_handler(
-    Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_tag_res = update_tag(&data.db, body, id)
+    let update_tag_res = update_tag(&data.db, body)
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_tag_res))

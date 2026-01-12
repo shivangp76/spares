@@ -92,7 +92,7 @@ mod tests {
         parsers::get_all_parsers,
         schema::{
             note::{CreateNoteRequest, CreateNotesRequest},
-            tag::{CreateTagRequest, UpdateTagRequest},
+            tag::{CreateTagRequest, TagSelector, UpdateTagRequest},
         },
     };
     use chrono::Utc;
@@ -246,13 +246,14 @@ mod tests {
 
         // Update filtered tag
         let request = UpdateTagRequest {
+            tag_to_modify: TagSelector::Id(filtered_tag_id),
             name: None,
             description: None,
             parent_id: None,
             query: Some(Some("-tag=math".to_string())),
             auto_delete: None,
         };
-        let tag_res = update_tag(&pool, request, filtered_tag_id).await;
+        let tag_res = update_tag(&pool, request).await;
         assert!(tag_res.is_ok());
 
         // Verify a different note is tagged with a filtered tag
