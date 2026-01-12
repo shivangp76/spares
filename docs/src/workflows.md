@@ -11,6 +11,13 @@ For example,
 spares_cli import --to-parser="markdown" 0001.tex 0002.tex
 ```
 
+## Unbury cards matching query
+
+```sh
+spares_cli edit card -q 'QUERY and c.user_buried' --special-state none
+```
+where QUERY is replaced with your query
+
 ## Bulk note actions
 
 spares ships with fzf support which can be used to perform bulk note actions, such as tagging. This selector can also be used to find all notes with a certain tag by typing `tag: .*tag1`. For more than 1 tag, see `spares_query` for advanced querying.
