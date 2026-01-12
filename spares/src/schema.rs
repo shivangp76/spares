@@ -55,7 +55,6 @@ pub mod tag {
     pub struct CreateTagRequest {
         pub name: String,
         pub description: String,
-        pub parent_id: Option<TagId>,
         pub query: Option<String>,
         pub auto_delete: bool,
     }
@@ -69,8 +68,6 @@ pub mod tag {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UpdateTagRequest {
         pub tag_to_modify: TagSelector,
-        #[serde(default, deserialize_with = "some_option")]
-        pub parent: Option<Option<TagSelector>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,7 +81,6 @@ pub mod tag {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct TagResponse {
         pub id: TagId,
-        pub parent_id: Option<TagId>,
         pub name: String,
         pub description: String,
         pub query: Option<String>,
@@ -95,7 +91,6 @@ pub mod tag {
         pub fn new(tag: &Tag) -> Self {
             Self {
                 id: tag.id.to_owned(),
-                parent_id: tag.parent_id,
                 name: tag.name.clone(),
                 description: tag.description.clone(),
                 query: tag.query.clone(),

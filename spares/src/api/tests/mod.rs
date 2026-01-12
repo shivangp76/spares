@@ -514,7 +514,6 @@ async fn simulate_filtered_tag_reviews(
     let request = CreateTagRequest {
         name: "test-filtered-tag".to_string(),
         description: String::new(),
-        parent_id: None,
         query: Some(filtered_tag_query.to_string()),
         auto_delete: true,
     };

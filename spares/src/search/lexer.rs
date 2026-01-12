@@ -642,6 +642,27 @@ mod tests {
     }
 
     #[test]
+    fn test_string_with_colon() {
+        let input = r#"tag="math:measure-theory:homework""#;
+        let lexer = Lexer::new(input);
+        let tokens = lexer
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.kind, &input[t.span]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tokens,
+            vec![
+                (TokenKind::Field, "tag"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "math:measure-theory:homework"),
+            ]
+        );
+    }
+
+    #[test]
     fn test_normalize() {
         let input = "hello world tag=test";
         let lexer = Lexer::new(input);

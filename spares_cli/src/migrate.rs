@@ -1,22 +1,13 @@
 use clap::Args;
-use log::info;
 use reqwest::{Client, StatusCode};
-use serde::Deserialize;
 use serde_json::Value;
 use spares::{
     adapters::{SrsAdapter, impls::anki::AnkiAdapter, migration::MigrationData},
     parsers::{NotePart, find_parser, get_all_parsers, get_cards},
-    schema::{
-        note::{NotesSelector, RenderNotesRequest},
-        tag::{TagResponse, TagSelector, UpdateTagRequest},
-    },
+    schema::note::{NotesSelector, RenderNotesRequest},
 };
 use sqlx::SqlitePool;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::time::Instant;
 
 #[derive(Args, Debug)]
 pub struct MigrateArgs {
@@ -26,8 +17,6 @@ pub struct MigrateArgs {
     pub initial_migration: bool,
     #[arg(short, long, default_value_t = true)]
     pub dry_run: bool,
-    #[arg(short, long, help = "Path to JSON file containing tag relations")]
-    pub tag_relations_file_path: Option<PathBuf>,
 }
 
 fn migration_func(
@@ -86,99 +75,6 @@ fn migration_func(
     (new_front, new_back)
 }
 
-#[derive(Debug, Deserialize)]
-struct TagRelation {
-    parent_tag: String,
-    child_tag: String,
-}
-
-#[allow(clippy::too_many_lines)]
-async fn create_tag_relations(
-    client: &Client,
-    base_url: &str,
-    run: bool,
-    tag_relations_file_path: &Path,
-) -> Result<(), String> {
-    println!("Creating tag relations...");
-    let start = Instant::now();
-    let content =
-        fs::read_to_string(tag_relations_file_path).expect("Failed to read tag relations file");
-    let relations: Vec<TagRelation> =
-        serde_json::from_str(&content).expect("Failed to parse tag relations JSON");
-    let tag_relations = relations
-        .into_iter()
-        .map(|r| (r.parent_tag, r.child_tag))
-        .collect::<Vec<_>>();
-    if !run {
-        return Ok(());
-    }
-    let url = format!("{}/api/tags?limit=999", base_url);
-    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        dbg!(&body);
-        return Err("Failed to get all tags.".to_string());
-    }
-    let tag_responses: Vec<TagResponse> = response.json().await.map_err(|e| format!("{}", e))?;
-    let tag_relations_with_responses = tag_relations
-        .into_iter()
-        .filter_map(|(parent_tag_name, child_tag_name)| {
-            // Try to get parent and child tag.
-            let parent_tag = tag_responses
-                .iter()
-                .find(|tag_response| tag_response.name == parent_tag_name);
-            let child_tag = tag_responses
-                .iter()
-                .find(|tag_response| tag_response.name == child_tag_name);
-            if parent_tag.is_none() {
-                info!("Could not find parent tag named {}", parent_tag_name);
-                return None;
-            }
-            if child_tag.is_none() {
-                info!("Could not find child tag named {}", child_tag_name);
-                return None;
-            }
-            Some((parent_tag.unwrap(), child_tag.unwrap()))
-        })
-        .collect::<Vec<_>>();
-    for (parent_tag, child_tag) in tag_relations_with_responses {
-        // Edit parent of child tag to be parent tag
-        let url = format!("{}/api/tags", base_url);
-        let request = UpdateTagRequest {
-            tag_to_modify: TagSelector::Id(child_tag.id),
-            parent: Some(Some(TagSelector::Id(parent_tag.id))),
-            name: None,
-            description: None,
-            query: None,
-            auto_delete: None,
-        };
-        if run {
-            let response = client
-                .patch(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| format!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                dbg!(&body);
-                return Err(format!(
-                    "Failed to set the parent id of tag {} to {}.",
-                    child_tag.id, parent_tag.id
-                ));
-            }
-            let _tag_response: TagResponse = response.json().await.map_err(|e| format!("{}", e))?;
-        } else {
-            dbg!(&request);
-        }
-    }
-    let duration = start.elapsed();
-    println!("Tag relations duration: {:?}", duration);
-    Ok(())
-}
-
 async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result<(), String> {
     println!("Rendering notes...");
     let start = Instant::now();
@@ -220,7 +116,6 @@ pub async fn migrate_from_adapter(
     adapter: &mut dyn SrsAdapter,
     initial_migration: bool,
     run: bool,
-    tag_relations_file_path: Option<&Path>,
 ) -> Result<(), String> {
     let start = Instant::now();
     adapter
@@ -233,10 +128,6 @@ pub async fn migrate_from_adapter(
         )
         .await
         .map_err(|e| format!("{}", e))?;
-
-    if let Some(tag_relations_file_path) = tag_relations_file_path {
-        create_tag_relations(client, base_url, run, tag_relations_file_path).await?;
-    }
 
     // Render notes after adding spares id, so in case the migration is aborted, the data can still be recovered.
     call_render_notes(client, base_url, run).await?;
