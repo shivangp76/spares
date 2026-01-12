@@ -23,9 +23,10 @@ Thank you for your interest in contributing to Spares! We welcome all forms of c
 
 ## Development Environment
 
-### Prerequisites
-- Rust 1.85 or later
-- Cargo (comes with Rust)
+### Create database
+```sh
+mkdir -p ~/.local/share/spares && export DATABASE_URL="sqlite://$XDG_DATA_HOME/spares/spares-main.sqlite" && cd ~/spares/spares && sqlx database create && sqlx migrate run && cd ~/spares
+```
 
 ### Code Coverage
 ```sh
@@ -104,3 +105,20 @@ Feel free to:
 - Contact the maintainers directly
 
 Thank you for contributing to Spares!
+
+## Design Inspiration
+
+These are some websites that were used for inspiration, listed in no particular order.
+
+- <https://github.com/arctic-hen7/forne>
+- <https://github.com/alfredholmes/TeXNotes>
+- <https://zettelkasten.de/overview/>
+- <https://natemeyvis.com/on-ankis-database/>
+- <https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS>
+- <https://github.com/open-spaced-repetition/fsrs4anki/wiki/Spaced-Repetition-Algorithm:-A-Three%E2%80%90Day-Journey-from-Novice-to-Expert>
+- <https://github.com/open-spaced-repetition/fsrs4anki-helper/wiki>
+- [Anki SRS Algorithm Explained with code](https://juliensobczak.com/inspect/2022/05/30/anki-srs/)
+- [Nielsen srs mathematics](https://cognitivemedium.com/srs-mathematics)
+- [Anki CLI](https://github.com/lervag/apy) (not too relevant)
+- [Rust CRUD API tutorial](https://medium.com/@raditzlawliet/build-crud-rest-api-with-rust-and-mysql-using-axum-sqlx-d7e50b3cd130)
+- <https://github.com/ankidroid/Anki-Android/wiki/Database-Structure>
