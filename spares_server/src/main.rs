@@ -4,6 +4,7 @@ mod route;
 use crate::route::create_router;
 use axum::http::{Method, header::CONTENT_TYPE};
 use clap::Parser;
+use log::{info, warn};
 use spares::config::{Environment, get_data_dir, get_env_config};
 use sqlx::{
     Sqlite,
@@ -30,10 +31,10 @@ async fn start_server(args: Args) -> Result<(), String> {
         .await
         .unwrap_or(false)
     {
-        println!("Database already exists. Skipping creation.");
+        info!("Database already exists. Skipping creation.");
         database_already_exists = true;
     } else {
-        println!("Creating database: {}", env_config.database_url);
+        info!("Creating database: {}", env_config.database_url);
         Sqlite::create_database(env_config.database_url.as_str())
             .await
             .map_err(|e| e.to_string())?;
@@ -48,7 +49,7 @@ async fn start_server(args: Args) -> Result<(), String> {
         .connect_with(connect_options)
         .await
         .map_err(|e| format!("Failed to connect to the database: {:?}", e))?;
-    println!("Connection to the database is successful.");
+    info!("Connected to database successfully.");
 
     // Migrations
     // run_migrations(&pool).await?;
@@ -64,7 +65,7 @@ async fn start_server(args: Args) -> Result<(), String> {
             .run(&pool)
             .await
             .map_err(|e| format!("Failed to migrate the database: {:?}", e))?;
-        println!("Migration successful.");
+        info!("Migration successful.");
     }
 
     let cors = CorsLayer::new()
@@ -72,11 +73,26 @@ async fn start_server(args: Args) -> Result<(), String> {
         .allow_origin(Any)
         .allow_headers([CONTENT_TYPE]);
     let app = create_router(Arc::new(AppState { db: pool.clone() })).layer(cors);
-    let listener = TcpListener::bind(&env_config.socket_address).await.unwrap();
-    println!("Starting server at {:?}", env_config.socket_address);
+    let listener = match TcpListener::bind(&env_config.socket_address).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            warn!(
+                "Server is already running at {:?}. Exiting.",
+                env_config.socket_address
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(format!(
+                "Failed to bind to {}: {}",
+                env_config.socket_address, e
+            ));
+        }
+    };
+    info!("Starting server at {:?}", env_config.socket_address);
     axum::serve(listener, app.into_make_service())
         .await
-        .unwrap();
+        .map_err(|e| format!("Server error: {}", e))?;
     Ok(())
 }
 

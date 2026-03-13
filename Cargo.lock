@@ -3470,6 +3470,7 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
+ "log",
  "serde_json",
  "spares",
  "sqlx",
