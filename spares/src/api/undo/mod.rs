@@ -20,7 +20,10 @@ use crate::{
     Error, LibraryError,
     api::{
         fetch_batched_query, placeholders, placeholders_2d,
-        undo::payloads::{CreateParserPayload, DeleteParserPayload, UpdateParserPayload},
+        undo::payloads::{
+            CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
+            UpdateParserPayload, UpdateTagPayload,
+        },
     },
     model::{Event, EventType},
     schema::undo::{UndoEventRequest, UndoEventResponse},
@@ -97,7 +100,8 @@ pub async fn undo_event(
     Ok(Some(UndoEventResponse { undone_event_ids }))
 }
 
-#[expect(clippy::single_match_else)]
+// TODO: Is this function really needed? Maybe this validation is already in the respective methods
+// for these events?
 async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     match event.kind {
         EventType::DeleteParser => {
@@ -117,7 +121,28 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
                 ))));
             }
         }
-        // TODO: For DeleteTag, check if any notes or cards depend on this tag and error if they do.
+        EventType::DeleteTag => {
+            // Check if any notes or cards depend on this tag
+            let payload: DeleteTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let note_tag_count: i64 =
+                sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE tag_id = ?")
+                    .bind(payload.id)
+                    .fetch_one(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            let card_tag_count: i64 =
+                sqlx::query_scalar(r"SELECT COUNT(*) FROM card_tag WHERE tag_id = ?")
+                    .bind(payload.id)
+                    .fetch_one(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            if note_tag_count > 0 || card_tag_count > 0 {
+                return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                    "Cannot undo DeleteTag: {} note tags and {} card tags still reference tag '{}'",
+                    note_tag_count, card_tag_count, payload.name
+                ))));
+            }
+        }
         _ => {
             // No dependency validation needed for other event types
         }
@@ -128,6 +153,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
 #[allow(clippy::too_many_lines)]
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     use crate::api::parser::{create_parser_event, delete_parser_event, update_parser_event};
+    use crate::api::tag::{create_tag_event, delete_tag_event, update_tag_event};
 
     match event.kind {
         EventType::CreateParser => {
@@ -146,6 +172,20 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let id = payload.id;
             // Undo payload already has .after = value to restore (create_undo_event swapped it)
             update_parser_event(db, payload, id, false).await?;
+        }
+        EventType::CreateTag => {
+            let payload: CreateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            create_tag_event(db, payload, false).await?;
+        }
+        EventType::DeleteTag => {
+            let payload: DeleteTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            delete_tag_event(db, payload, false).await?;
+        }
+        EventType::UpdateTag => {
+            let payload: UpdateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let id = payload.id;
+            // Undo payload already has .after = value to restore (create_undo_event swapped it)
+            update_tag_event(db, payload, id, false).await?;
         }
         _ => {
             todo!()

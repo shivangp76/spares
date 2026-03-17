@@ -294,6 +294,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
                             query: None,
                             auto_delete: DEFAULT_TAG_AUTO_DELETE,
                         },
+                        true,
                     )
                 })
                 .collect::<Vec<_>>(),

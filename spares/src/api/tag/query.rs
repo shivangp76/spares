@@ -131,7 +131,7 @@ mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Verify note's cards are tagged with a filtered tag
@@ -160,7 +160,7 @@ mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Create a filtered tag that depends on the previous filtered tag
@@ -170,7 +170,7 @@ mod tests {
             query: Some("ball tag=\"test filtered tag\"".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_err());
 
         // Verify note is tagged with a filtered tag
@@ -218,7 +218,7 @@ mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
         let filtered_tag_id = tag_res.unwrap().id;
 
@@ -245,7 +245,7 @@ mod tests {
             query: Some(Some("-tag=math".to_string())),
             auto_delete: None,
         };
-        let tag_res = update_tag(&pool, request).await;
+        let tag_res = update_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Verify a different note is tagged with a filtered tag
@@ -301,7 +301,7 @@ mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
         let filtered_tag_id = tag_res.unwrap().id;
 

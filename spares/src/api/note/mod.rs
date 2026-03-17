@@ -41,7 +41,7 @@ pub(crate) mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Create parser
@@ -91,7 +91,7 @@ pub(crate) mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Update note
@@ -139,7 +139,7 @@ pub(crate) mod tests {
             query: Some("tag=math".to_string()),
             auto_delete: false,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Update note
@@ -168,7 +168,7 @@ pub(crate) mod tests {
             query: None,
             auto_delete: true,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Create parser
@@ -214,7 +214,7 @@ pub(crate) mod tests {
             query: None,
             auto_delete: true,
         };
-        let tag_res = create_tag(&pool, request).await;
+        let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
 
         // Create parser
