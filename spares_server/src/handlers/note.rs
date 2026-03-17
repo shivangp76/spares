@@ -127,7 +127,7 @@ pub async fn export_notes_handler(
     let result = export_notes(&data.db, body, &get_all_parsers())
         .await
         .map_err(error_to_response)?;
-    Ok(result) // Returns String directly
+    Ok(Json(result))
 }
 
 pub async fn get_duplicate_keywords_handler(
