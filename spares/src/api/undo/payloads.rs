@@ -85,6 +85,89 @@ pub struct DeleteParserPayload {
     pub note_ids: Vec<NoteId>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CardSnapshot {
+    pub id: CardId,
+    pub order: u32,
+    pub back_type: BackType,
+    pub due: DateTime<Utc>,
+    pub stability: f64,
+    pub difficulty: f64,
+    pub desired_retention: f64,
+    pub special_state: Option<SpecialState>,
+    pub state: StateId,
+    pub custom_data: Value,
+}
+
+impl CardSnapshot {
+    pub fn from_card(card: &Card) -> Self {
+        Self {
+            id: card.id,
+            order: card.order,
+            back_type: card.back_type,
+            due: card.due,
+            stability: card.stability,
+            difficulty: card.difficulty,
+            desired_retention: card.desired_retention,
+            special_state: card.special_state,
+            state: card.state,
+            custom_data: card.custom_data.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoteSnapshot {
+    pub id: NoteId,
+    pub data: String,
+    pub created_at: DateTime<Utc>,
+    pub parser_id: i64,
+    pub custom_data: Value,
+    /// Non-embedded keyword strings
+    pub keywords: Vec<String>,
+    /// Non-filtered tag names
+    pub tags: Vec<String>,
+    pub cards: Vec<CardSnapshot>,
+}
+
+/// Payload for `CreateNotes` event.
+/// Contains full snapshots — used both for normal create logging and for undoing a `DeleteNotes`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CreateNotesPayload {
+    pub notes: Vec<NoteSnapshot>,
+}
+
+/// Payload for `DeleteNotes` event.
+/// Contains full snapshots — so notes can be recreated when undoing a delete.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeleteNotesPayload {
+    pub notes: Vec<NoteSnapshot>,
+}
+
+/// Per-note transition payload for `UpdateNotes`
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UpdateNotePayload {
+    pub id: NoteId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Transition<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parser_id: Option<Transition<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<Transition<Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Transition<Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_data: Option<Transition<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cards: Option<Transition<Vec<CardSnapshot>>>,
+}
+
+/// Payload for `UpdateNotes` event
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UpdateNotesPayload {
+    pub notes: Vec<UpdateNotePayload>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdateCardPayload {
     // This can't be a Vec<CardId> since each card will have a different old copy of the data.

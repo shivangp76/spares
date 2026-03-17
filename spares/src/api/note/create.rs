@@ -4,13 +4,18 @@ use crate::{
     api::{
         card::create_card_tags,
         execute_batched_query, fetch_batched_query,
+        note::basic::fetch_note_snapshot,
         parser::get_parser_name,
         placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
+        undo::{
+            insert_events,
+            payloads::{CreateNotesPayload, NoteSnapshot},
+        },
     },
     config::{read_internal_config, write_internal_config},
     helpers::intersect,
-    model::{Card, CardId, Note, NoteId, NoteLink, SpecialState, TagId},
+    model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
         Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
         generate_files::{
@@ -56,6 +61,7 @@ pub async fn create_notes(
     body: CreateNotesRequest,
     at: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
+    log: bool,
 ) -> Result<NotesResponse, Error> {
     // Get parser
     let parser_name = get_parser_name(db, body.parser_id).await?;
@@ -259,7 +265,164 @@ pub async fn create_notes(
     config.linked_notes_generated = false;
     write_internal_config(&config)?;
 
+    // Log event
+    if log {
+        let mut snapshots = Vec::with_capacity(note_responses.len());
+        for note_response in &note_responses {
+            let snapshot = fetch_note_snapshot(
+                db,
+                note_response.id,
+                &note_response.data,
+                note_response.created_at,
+                note_response.parser_id,
+                &Value::Object(note_response.custom_data.clone()),
+            )
+            .await?;
+            snapshots.push(snapshot);
+        }
+        let payload = CreateNotesPayload { notes: snapshots };
+        insert_events(
+            db,
+            &[(
+                EventType::CreateNotes,
+                serde_json::to_value(&payload).unwrap(),
+            )],
+            at,
+            None,
+        )
+        .await?;
+    }
+
     Ok(NotesResponse::new(note_responses))
+}
+
+/// Create notes from snapshots (used when applying the undo of a `DeleteNotes` event).
+/// Inserts notes with their specific IDs, keywords, tags, and cards.
+/// No file generation is performed.
+pub(crate) async fn create_notes_event(
+    db: &SqlitePool,
+    payload: CreateNotesPayload,
+    log: bool,
+) -> Result<(), Error> {
+    for snapshot in &payload.notes {
+        let NoteSnapshot {
+            id,
+            data,
+            created_at,
+            parser_id,
+            custom_data,
+            keywords,
+            tags,
+            cards,
+        } = snapshot;
+
+        // Insert note with specific ID
+        sqlx::query(
+            r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(data)
+        .bind(created_at.timestamp())
+        .bind(created_at.timestamp())
+        .bind(parser_id)
+        .bind(custom_data)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Insert keywords (non-embedded only in snapshot; treat all as non-embedded)
+        if !keywords.is_empty() {
+            create_note_keywords(
+                db,
+                &[(*id, keywords.iter().map(|k| (k.clone(), false)).collect())],
+            )
+            .await?;
+        }
+
+        // Insert tags — create tags if they don't exist (do NOT log tag creation)
+        let mut tag_ids: Vec<i64> = Vec::new();
+        for tag_name in tags {
+            let existing_tag_id: Option<i64> =
+                sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ? LIMIT 1")
+                    .bind(tag_name)
+                    .fetch_optional(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            let tag_id = if let Some(tag_id) = existing_tag_id {
+                tag_id
+            } else {
+                let tag_response = create_tag(
+                    db,
+                    CreateTagRequest {
+                        name: tag_name.clone(),
+                        description: String::new(),
+                        query: None,
+                        auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                    },
+                    false,
+                )
+                .await?;
+                tag_response.id
+            };
+            tag_ids.push(tag_id);
+        }
+        if !tag_ids.is_empty() {
+            create_note_tags(
+                db,
+                &tag_ids
+                    .into_iter()
+                    .map(|tid| (*id, tid))
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        }
+
+        // Insert cards with specific IDs
+        if !cards.is_empty() {
+            execute_batched_query(db, cards, async |db, chunk| {
+                let query_str = format!(
+                    "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
+                    placeholders_2d(chunk.len(), 12)
+                );
+                let mut query = sqlx::query(&query_str);
+                for card in chunk {
+                    query = query.bind(card.id);
+                    query = query.bind(id);
+                    query = query.bind(card.order);
+                    query = query.bind(card.back_type);
+                    query = query.bind(card.due.timestamp());
+                    query = query.bind(card.due.timestamp());
+                    query = query.bind(card.stability);
+                    query = query.bind(card.difficulty);
+                    query = query.bind(card.desired_retention);
+                    query = query.bind(card.special_state);
+                    query = query.bind(card.state);
+                    query = query.bind(&card.custom_data);
+                }
+                query
+                    .execute(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+                Ok(())
+            })
+            .await?;
+        }
+    }
+
+    if log {
+        insert_events(
+            db,
+            &[(
+                crate::model::EventType::CreateNotes,
+                serde_json::to_value(&payload).unwrap(),
+            )],
+            chrono::Utc::now(),
+            None,
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 pub async fn create_note_keywords(
