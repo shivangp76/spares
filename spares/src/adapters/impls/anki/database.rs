@@ -2,7 +2,7 @@ use crate::adapters::impls::anki::types::{DbCardRow, DbNoteRow, DbRevLogRow};
 use crate::adapters::impls::anki::utils::format_side;
 use crate::adapters::impls::anki::{ANKI_ADAPTER_NAME, AnkiAdapter};
 use crate::adapters::migration::{MigrationData, MigrationFunc};
-use crate::api::card::update_card;
+use crate::api::card::update_cards;
 use crate::api::review::submit_study_action;
 use crate::config::get_data_dir;
 use crate::helpers::parse_list;
@@ -213,7 +213,7 @@ pub async fn populate_reviews(
                         special_state: None,
                         due: None,
                     };
-                    update_card(spares_pool, body, card.created_at, false).await?;
+                    update_cards(spares_pool, body, card.created_at, false).await?;
                 }
 
                 // Add review logs

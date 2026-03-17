@@ -384,6 +384,8 @@ pub async fn review_cards(
     let mut recall_duration = None;
     let mut rate_start = Instant::now();
     let mut rate_duration = None;
+    let mut last_action_event_id: Option<i64> = None;
+    let mut last_action_was_rating = false;
 
     loop {
         if advance_review_card {
@@ -484,7 +486,9 @@ pub async fn review_cards(
                     rate_duration: chrono::Duration::from_std(rate_duration_local).unwrap(),
                     tag_id,
                 };
-                submit_rating(scheduler_name, rating_submission, base_url, client).await?;
+                last_action_event_id =
+                    submit_rating(scheduler_name, rating_submission, base_url, client).await?;
+                last_action_was_rating = true;
 
                 // let old_card_rendered_path = review_card_response.card_rendered_path;
 
@@ -556,9 +560,10 @@ pub async fn review_cards(
             | ReviewAction::SetNoteDueDate
             | ReviewAction::SetNoteDueDateIn(_)
             | ReviewAction::BuryUntilLaterToday => {
+                last_action_was_rating = false;
                 match chosen_action {
                     ReviewAction::BuryCard => {
-                        bury_card(
+                        last_action_event_id = bury_card(
                             scheduler_name,
                             review_card_response.card_id,
                             base_url,
@@ -567,35 +572,43 @@ pub async fn review_cards(
                         .await?;
                     }
                     ReviewAction::BuryNote => {
-                        bury_note(review_card_response.note_id, base_url, client).await?;
+                        last_action_event_id =
+                            bury_note(review_card_response.note_id, base_url, client).await?;
                     }
                     ReviewAction::SuspendCard => {
-                        suspend_cards(&[review_card_response.card_id], base_url, client).await?;
+                        last_action_event_id =
+                            suspend_cards(&[review_card_response.card_id], base_url, client)
+                                .await?;
                     }
                     ReviewAction::SuspendNote => {
-                        suspend_note(review_card_response.note_id, base_url, client).await?;
+                        last_action_event_id =
+                            suspend_note(review_card_response.note_id, base_url, client).await?;
                     }
                     ReviewAction::ForgetCard => {
-                        let card_response =
+                        let forget_response =
                             forget_card(review_card_response.card_id, base_url, client).await?;
+                        last_action_event_id = forget_response.event_id;
                         println!("Card forgotten (scheduling reset):");
-                        println!("{:#?}", &card_response);
+                        println!("{:#?}", &forget_response.card);
                     }
                     ReviewAction::SetCardDueDate => {
-                        let completed = set_due_date_with_prompt(
+                        let result = set_due_date_with_prompt(
                             |_| vec![review_card_response.card_id],
                             base_url,
                             client,
                         )
                         .await?;
-                        if !completed {
-                            continue;
+                        match result {
+                            None => continue,
+                            Some(event_id) => {
+                                last_action_event_id = event_id;
+                                println!("Due date updated.");
+                            }
                         }
-                        println!("Due date updated.");
                     }
                     ReviewAction::SetCardDueDateIn(_) => {
                         let due_date = Utc::now() + set_card_due_date_duration;
-                        set_due_date(
+                        last_action_event_id = set_due_date(
                             vec![review_card_response.card_id],
                             due_date,
                             base_url,
@@ -608,7 +621,7 @@ pub async fn review_cards(
                         let cards: Vec<CardResponse> =
                             note_id_to_cards(review_card_response.note_id, base_url, client)
                                 .await?;
-                        let completed = set_due_date_with_prompt(
+                        let result = set_due_date_with_prompt(
                             |dt| {
                                 cards
                                     .iter()
@@ -620,10 +633,13 @@ pub async fn review_cards(
                             client,
                         )
                         .await?;
-                        if !completed {
-                            continue;
+                        match result {
+                            None => continue,
+                            Some(event_id) => {
+                                last_action_event_id = event_id;
+                                println!("Due date updated.");
+                            }
                         }
-                        println!("Due date updated.");
                     }
                     ReviewAction::SetNoteDueDateIn(_) => {
                         let cards: Vec<CardResponse> =
@@ -635,12 +651,14 @@ pub async fn review_cards(
                             .filter(|card| card.due <= due_date)
                             .map(|card| card.id)
                             .collect::<Vec<_>>();
-                        set_due_date(card_ids, due_date, base_url, client).await?;
+                        last_action_event_id =
+                            set_due_date(card_ids, due_date, base_url, client).await?;
                         println!("Due date updated.");
                     }
                     ReviewAction::BuryUntilLaterToday => {
-                        bury_until_later_today(review_card_response.card_id, base_url, client)
-                            .await?;
+                        last_action_event_id =
+                            bury_until_later_today(review_card_response.card_id, base_url, client)
+                                .await?;
                         println!("Card due date set to end of today.");
                     }
                     _ => unreachable!(),
@@ -662,13 +680,14 @@ pub async fn review_cards(
                 advance_review_card = true;
             }
             ReviewAction::TagNote => {
-                tag_note(
+                last_action_event_id = tag_note(
                     review_card_response.note_id,
                     &flagged_tag_name,
                     base_url,
                     client,
                 )
                 .await?;
+                last_action_was_rating = false;
             }
             ReviewAction::SyncNote => {
                 println!("Syncing note in background...");
@@ -709,18 +728,25 @@ pub async fn review_cards(
                         open_command,
                         false,
                     )?;
-                    // TODO: Reset stopwatches
+
+                    card_flipped = false;
+
+                    // Reset stopwatches: undo the flip by removing the recorded recall duration
+                    // and restarting the recall timer from now.
+                    if let Some(d) = recall_duration.take() {
+                        session_recall_duration = session_recall_duration.saturating_sub(d);
+                    }
+                    recall_start = Instant::now();
+                    rate_duration = None;
                 } else {
                     // Close card front
                     close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
 
-                    // Undo the latest event
-                    // TODO: Keep track of the previous event id manually and submit it here. This
-                    // is so if notes are synced in another window, then the latest event will be
-                    // different.
+                    // Undo the latest review action, using the tracked event id so that
+                    // background syncs in another window don't cause the wrong event to be undone.
                     let request = UndoEventRequest {
-                        event_id: None,
-                        undo_group: false,
+                        event_id: last_action_event_id.take(),
+                        undo_group: true,
                     };
                     let undo_response_opt = undo_event(base_url, client, request).await?;
                     match undo_response_opt {
@@ -731,6 +757,11 @@ pub async fn review_cards(
                             println!("No event to undo.");
                         }
                     }
+
+                    if last_action_was_rating && reviewed_cards_count > 0 {
+                        reviewed_cards_count -= 1;
+                    }
+                    last_action_was_rating = false;
 
                     // Advance to next review card which will be the previous card
                     advance_review_card = true;

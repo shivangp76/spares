@@ -305,6 +305,12 @@ pub mod note {
             }
         }
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UpdateNotesResponse {
+        pub notes: Vec<NoteResponse>,
+        pub event_id: Option<i64>,
+    }
 }
 
 pub mod card {
@@ -375,6 +381,18 @@ pub mod card {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct GetLeechesRequest {
         pub scheduler_name: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UpdateCardsResponse {
+        pub cards: Vec<CardResponse>,
+        pub event_id: Option<i64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ForgetCardResponse {
+        pub card: CardResponse,
+        pub event_id: Option<i64>,
     }
 }
 
@@ -473,6 +491,11 @@ pub mod review {
     pub struct SubmitStudyActionRequest {
         pub scheduler_name: String,
         pub action: StudyAction,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct SubmitStudyActionResponse {
+        pub event_id: Option<i64>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
