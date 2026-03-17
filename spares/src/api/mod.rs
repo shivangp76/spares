@@ -13,7 +13,7 @@ const MAX_ROWS_IN_QUERY: usize = 200;
 
 use crate::Error;
 pub use card::{
-    create_card_tags, delete_card_tags, forget_card, get_card, get_cards, get_leeches, update_card,
+    create_card_tags, delete_card_tags, forget_card, get_card, get_cards, get_leeches, update_cards,
 };
 use sqlx::SqlitePool;
 

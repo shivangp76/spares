@@ -235,7 +235,7 @@ pub(crate) mod tests {
     use crate::api::note::{create_notes, delete_notes, update_notes};
     use crate::api::parser::tests::create_parser_helper;
     use crate::parsers::get_all_parsers;
-    use crate::schema::note::{NotesSelector, UpdateTags};
+    use crate::schema::note::{NotesSelector, UpdateNotesResponse, UpdateTags};
     use crate::{
         model::NoteTag,
         schema::note::{CreateNoteRequest, CreateNotesRequest, UpdateNotesRequest},
@@ -402,7 +402,7 @@ pub(crate) mod tests {
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
-        if let Ok(notes) = notes_res {
+        if let Ok(UpdateNotesResponse { notes, .. }) = notes_res {
             assert_eq!(notes.len(), 1);
             let note = notes.first().unwrap();
             assert_eq!(note.data, created_notes[1].data);

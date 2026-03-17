@@ -21,10 +21,10 @@ pub async fn submit_study_action_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SubmitStudyActionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    submit_study_action(&data.db, body, Utc::now())
+    let submit_study_action_response = submit_study_action(&data.db, body, Utc::now())
         .await
         .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    Ok(Json(submit_study_action_response))
 }
 
 pub async fn get_statistics_handler(
