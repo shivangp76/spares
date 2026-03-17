@@ -9,8 +9,8 @@ use crate::{
         placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
         undo::{
-            insert_events,
-            payloads::{CreateNotesPayload, NoteSnapshot},
+            create_event_group, insert_events,
+            payloads::{CreateNotesPayload, CreateTagPayload, NoteSnapshot},
         },
     },
     config::{read_internal_config, write_internal_config},
@@ -92,6 +92,7 @@ pub async fn create_notes(
     let mut note_link_entries = Vec::new();
     let mut note_tag_entries = Vec::new();
     let mut card_entries = Vec::new();
+    let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     for create_note_request in &body.requests {
         let CreateNoteRequest {
             data,
@@ -139,8 +140,9 @@ pub async fn create_notes(
         );
 
         // Note Tags
-        let tag_ids = add_note_tags(db, &tags, &mut tag_map).await?;
+        let (tag_ids, note_new_tag_payloads) = add_note_tags(db, &tags, &mut tag_map).await?;
         note_tag_entries.extend(tag_ids.into_iter().map(|tag_id| (note_id, tag_id)));
+        new_tag_payloads.extend(note_new_tag_payloads);
 
         // Cards
         card_entries.extend(
@@ -281,16 +283,17 @@ pub async fn create_notes(
             snapshots.push(snapshot);
         }
         let payload = CreateNotesPayload { notes: snapshots };
-        insert_events(
-            db,
-            &[(
-                EventType::CreateNotes,
-                serde_json::to_value(&payload).unwrap(),
-            )],
-            at,
-            None,
-        )
-        .await?;
+        let note_event = (EventType::CreateNotes, serde_json::to_value(&payload).unwrap());
+        if new_tag_payloads.is_empty() {
+            insert_events(db, &[note_event], at, None).await?;
+        } else {
+            let mut events: Vec<(EventType, Value)> = new_tag_payloads
+                .into_iter()
+                .map(|p| (EventType::CreateTag, serde_json::to_value(&p).unwrap()))
+                .collect();
+            events.push(note_event);
+            create_event_group(db, events, at).await?;
+        }
     }
 
     Ok(NotesResponse::new(note_responses))
@@ -544,8 +547,9 @@ async fn add_note_tags(
     db: &SqlitePool,
     tags: &[String],
     tag_map: &mut Option<HashMap<String, i64>>,
-) -> Result<Vec<i64>, Error> {
+) -> Result<(Vec<i64>, Vec<CreateTagPayload>), Error> {
     let mut tag_ids = Vec::new();
+    let mut new_tag_payloads = Vec::new();
     for tag_name in tags {
         let tag_id_opt: Option<i64> = if let &mut Some(ref tag_mapping) = tag_map {
             let tag_id_res = tag_mapping.get(tag_name);
@@ -572,8 +576,15 @@ async fn add_note_tags(
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
             };
-            let tag_response = create_tag(db, create_tag_request, true).await?;
+            let tag_response = create_tag(db, create_tag_request, false).await?;
             tag_ids.push(tag_response.id);
+            new_tag_payloads.push(CreateTagPayload {
+                id: Some(tag_response.id),
+                name: tag_name.clone(),
+                description: String::new(),
+                query: None,
+                auto_delete: DEFAULT_TAG_AUTO_DELETE,
+            });
 
             // Add to tag_map for following create note requests
             if let &mut Some(ref mut tag_mapping) = tag_map {
@@ -581,5 +592,5 @@ async fn add_note_tags(
             }
         }
     }
-    Ok(tag_ids)
+    Ok((tag_ids, new_tag_payloads))
 }
