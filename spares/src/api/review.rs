@@ -1,11 +1,18 @@
 use super::note::delete_empty_tags;
 use crate::{
     Error, LibraryError, SchedulerErrorKind, TagErrorKind,
-    api::card::{delete_card_tags, unbury_cards},
+    api::{
+        card::{delete_card_tags, unbury_cards},
+        undo::{
+            insert_events,
+            payloads::{Transition, UpdateCardPayload},
+        },
+    },
     config::{read_external_config, read_internal_config, write_internal_config},
     helpers::get_start_end_local_date,
     model::{
-        Card, CardId, NEW_CARD_STATE, NoteId, RatingId, ReviewLog, SpecialState, StateId, Tag,
+        Card, CardId, EventType, NEW_CARD_STATE, NoteId, RatingId, ReviewLog, SpecialState,
+        StateId, Tag,
     },
     parsers::{
         BackType, Parseable, RenderOutputDirectoryType, find_parser,
@@ -23,7 +30,7 @@ use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
-use serde_json::Value;
+use serde_json::{Value, to_value};
 use sqlx::{FromRow, sqlite::SqlitePool};
 use std::collections::HashMap;
 
@@ -49,7 +56,7 @@ async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     };
     if now_local_date > last_unburied_local_date {
         // Unbury
-        unbury_cards(db, now).await?;
+        unbury_cards(db, now, false).await?;
 
         // Update config
         config.last_unburied = now;
@@ -364,6 +371,7 @@ pub async fn rate_card(
         tag_id,
     }: RatingSubmission,
     reviewed_at: DateTime<Utc>,
+    log: bool,
 ) -> Result<(), Error> {
     // Validate input
     let filtered_tag_opt = if let Some(tag_id) = tag_id {
@@ -382,11 +390,12 @@ pub async fn rate_card(
         None
     };
 
-    let card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+    let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+    let card = before_card.clone();
 
     // Get review logs for this card
     let mut review_logs: Vec<ReviewLog> =
@@ -478,11 +487,50 @@ pub async fn rate_card(
     .bind(updated_card.difficulty)
     .bind(updated_card.state)
     .bind(updated_card.updated_at.timestamp())
-    .bind(updated_card.custom_data)
+    .bind(updated_card.custom_data.clone())
     .bind(card.id)
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+
+    if log {
+        let payload = vec![UpdateCardPayload {
+            card_id,
+            order: None,
+            back_type: None,
+            due: Some(Transition {
+                before: before_card.due,
+                after: updated_card.due,
+            }),
+            stability: Some(Transition {
+                before: before_card.stability,
+                after: updated_card.stability,
+            }),
+            difficulty: Some(Transition {
+                before: before_card.difficulty,
+                after: updated_card.difficulty,
+            }),
+            desired_retention: None,
+            special_state: None,
+            state: Some(Transition {
+                before: before_card.state,
+                after: updated_card.state,
+            }),
+            custom_data: (updated_card.custom_data != before_card.custom_data).then_some(
+                Transition {
+                    before: before_card.custom_data,
+                    after: updated_card.custom_data,
+                },
+            ),
+        }];
+        insert_events(
+            db,
+            &[(EventType::RateCard, to_value(&payload).unwrap())],
+            reviewed_at,
+            None,
+        )
+        .await?;
+    }
 
     Ok(())
 }
@@ -492,14 +540,15 @@ pub async fn bury_card(
     scheduler: &dyn SrsScheduler,
     card_id: CardId,
     at: DateTime<Utc>,
+    log: bool,
 ) -> Result<(), Error> {
-    let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+    let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    if let Some(special_state) = card.special_state {
+    if let Some(special_state) = before_card.special_state {
         match special_state {
             SpecialState::Suspended => {
                 return Err(Error::Library(LibraryError::Scheduler(
@@ -514,36 +563,59 @@ pub async fn bury_card(
         }
     }
 
-    let Card {
-        id: _,
-        note_id: _,
-        order: _,
-        back_type: _,
-        created_at: _,
-        updated_at: _,
-        due,
-        stability,
-        difficulty,
-        desired_retention: _,
-        special_state,
-        state,
-        custom_data: _,
-    } = scheduler.bury(&card)?;
+    let buried_card = scheduler.bury(&before_card)?;
 
-    // Update card with all new properties from updated_card
+    // Update card with all new properties from buried_card
     let _update_card_result = sqlx::query(
         r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ? WHERE id = ?",
     )
-    .bind(due.timestamp())
-    .bind(stability)
-    .bind(difficulty)
-    .bind(special_state)
-    .bind(state)
+    .bind(buried_card.due.timestamp())
+    .bind(buried_card.stability)
+    .bind(buried_card.difficulty)
+    .bind(buried_card.special_state)
+    .bind(buried_card.state)
     .bind(at.timestamp())
     .bind(card_id)
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+
+    if log {
+        let payload = vec![UpdateCardPayload {
+            card_id,
+            order: None,
+            back_type: None,
+            due: (buried_card.due != before_card.due).then_some(Transition {
+                before: before_card.due,
+                after: buried_card.due,
+            }),
+            stability: (buried_card.stability != before_card.stability).then_some(Transition {
+                before: before_card.stability,
+                after: buried_card.stability,
+            }),
+            difficulty: (buried_card.difficulty != before_card.difficulty).then_some(Transition {
+                before: before_card.difficulty,
+                after: buried_card.difficulty,
+            }),
+            desired_retention: None,
+            special_state: Some(Transition {
+                before: before_card.special_state,
+                after: buried_card.special_state,
+            }),
+            state: (buried_card.state != before_card.state).then_some(Transition {
+                before: before_card.state,
+                after: buried_card.state,
+            }),
+            custom_data: None,
+        }];
+        insert_events(
+            db,
+            &[(EventType::BuryCards, to_value(&payload).unwrap())],
+            at,
+            None,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -563,16 +635,40 @@ pub async fn submit_study_action(
     let config = read_external_config()?;
     match action {
         StudyAction::Rate(rating_submission) => {
-            rate_card(db, scheduler.as_ref(), rating_submission, at).await?;
+            rate_card(db, scheduler.as_ref(), rating_submission, at, true).await?;
         }
         StudyAction::Bury { card_id } => {
-            bury_card(db, scheduler.as_ref(), card_id, at).await?;
+            bury_card(db, scheduler.as_ref(), card_id, at, true).await?;
         }
         StudyAction::Advance { count, query } => {
-            let _move_cards_result = scheduler.advance(db, &config, count, query, at).await?;
+            let move_cards_result = scheduler.advance(db, &config, count, query, at).await?;
+            if !move_cards_result.card_payloads.is_empty() {
+                insert_events(
+                    db,
+                    &[(
+                        EventType::AdvanceCards,
+                        to_value(&move_cards_result.card_payloads).unwrap(),
+                    )],
+                    at,
+                    None,
+                )
+                .await?;
+            }
         }
         StudyAction::Postpone { count, query } => {
-            let _move_cards_result = scheduler.postpone(db, &config, count, query, at).await?;
+            let move_cards_result = scheduler.postpone(db, &config, count, query, at).await?;
+            if !move_cards_result.card_payloads.is_empty() {
+                insert_events(
+                    db,
+                    &[(
+                        EventType::PostponeCards,
+                        to_value(&move_cards_result.card_payloads).unwrap(),
+                    )],
+                    at,
+                    None,
+                )
+                .await?;
+            }
         }
         StudyAction::Reschedule => {
             let cards: Vec<Card> =

@@ -213,7 +213,7 @@ pub async fn populate_reviews(
                         special_state: None,
                         due: None,
                     };
-                    update_card(spares_pool, body, card.created_at).await?;
+                    update_card(spares_pool, body, card.created_at, false).await?;
                 }
 
                 // Add review logs
