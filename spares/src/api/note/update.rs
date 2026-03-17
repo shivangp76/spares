@@ -42,6 +42,7 @@ use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
+#[allow(clippy::too_many_lines)]
 async fn update_cards(
     db: &SqlitePool,
     old_cards: &[CardData],
@@ -61,13 +62,26 @@ async fn update_cards(
         same_indices,
     } = match_cards_result;
 
-    // TODO: Only cards in `same_indices` which had their `back_type` or `special_state` updated should be updated below. Most of the time these field won't change, so this is wasteful. These field can be known by comparing the output of `get_cards()` for the old and new note data.
+    let old_cards_by_order: HashMap<usize, &CardData> = old_cards
+        .iter()
+        .filter_map(|c| c.order.map(|o| (o, c)))
+        .collect();
+    let changed_same_indices: Vec<usize> = same_indices
+        .iter()
+        .copied()
+        .filter(|&i| {
+            let old_card = &old_cards_by_order[&i];
+            let new_card = &new_cards[i - 1];
+            old_card.back_type != new_card.back_type
+                || old_card.is_suspended != new_card.is_suspended
+        })
+        .collect();
 
-    // Update moved cards (or cards with the same index since their `back_type` or `special_state` might have changed)
+    // Update moved cards (or cards with the same index where their `back_type` or `special_state` changed)
     let indices = move_card_indices
         .iter()
         .map(|(x, _)| *x)
-        .chain(same_indices.clone())
+        .chain(changed_same_indices.iter().copied())
         .collect::<Vec<_>>();
     let mut moved_cards: Vec<Card> = fetch_batched_query(db, &indices, async |db, chunk| {
         let query_str = format!(
@@ -88,7 +102,7 @@ async fn update_cards(
 
     let move_card_indices_map = move_card_indices
         .into_iter()
-        .chain(same_indices.into_iter().map(|i| (i, i)))
+        .chain(changed_same_indices.into_iter().map(|i| (i, i)))
         .collect::<HashMap<usize, usize>>();
     for moved_card in &mut moved_cards {
         let to_card_index = move_card_indices_map
@@ -1290,5 +1304,79 @@ mod tests {
         assert!(new_cards[0].difficulty != new_cards[1].difficulty);
         assert_eq!(new_cards[1].stability, Card::new(Utc::now()).stability);
         assert_eq!(new_cards[1].difficulty, Card::new(Utc::now()).difficulty);
+    }
+
+    #[sqlx::test]
+    async fn test_update_note_same_indices_skips_unchanged_cards(pool: SqlitePool) -> () {
+        // Tests that cards in same_indices whose back_type and is_suspended haven't
+        // changed do NOT get their updated_at bumped, while cards that did change do.
+        let at = Utc::now();
+        let original_note_data: &str = indoc! {r"
+        {{[o:1] First cloze }}
+        {{[o:2] Second cloze }}
+        {{[o:3] Third cloze }}"};
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: original_note_data.to_string(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: Map::new(),
+            }],
+        };
+        let created_notes = create_notes(&pool, request, at, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let created_note = created_notes.notes.first().unwrap();
+
+        let old_cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(created_note.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(old_cards.len(), 3);
+
+        // Update: card 1 unchanged, card 2 gets back_type changed (f:all;b:a → CardFilePath),
+        // card 3 gets suspended (s:)
+        let update_at = at + Duration::seconds(1);
+        let new_note_data: &str = indoc! {r"
+        {{[o:1] First cloze }}
+        {{[o:2;f:all;b:a] Second cloze }}
+        {{[o:3;s:] Third cloze }}"};
+        let request = UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![created_note.id]),
+            data: Some(new_note_data.to_string()),
+            parser_id: None,
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: None,
+        };
+        update_notes(&pool, request, update_at, &get_all_parsers(), false)
+            .await
+            .unwrap();
+
+        let new_cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(created_note.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(new_cards.len(), 3);
+
+        // Card 1: unchanged — updated_at must not be bumped
+        assert_eq!(new_cards[0].back_type, BackType::NoteFilePath);
+        assert_eq!(new_cards[0].special_state, None);
+        assert_eq!(new_cards[0].updated_at, old_cards[0].updated_at);
+
+        // Card 2: back_type changed — updated_at must be bumped
+        assert_eq!(new_cards[1].back_type, BackType::CardFilePath);
+        assert_ne!(new_cards[1].updated_at, old_cards[1].updated_at);
+
+        // Card 3: suspended — updated_at must be bumped
+        assert_eq!(new_cards[2].special_state, Some(SpecialState::Suspended));
+        assert_ne!(new_cards[2].updated_at, old_cards[2].updated_at);
     }
 }
