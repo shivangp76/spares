@@ -1,8 +1,9 @@
 use crate::{AppState, handlers::error_to_response};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
-use spares::api::review::{get_review_card, submit_study_action};
+use spares::api::review::{get_review_card, get_review_card_by_id, submit_study_action};
 use spares::api::statistics::get_statistics;
+use spares::model::CardId;
 use spares::parsers::get_all_parsers;
 use spares::schema::review::{GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest};
 use std::sync::Arc;
@@ -25,6 +26,16 @@ pub async fn submit_study_action_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(submit_study_action_response))
+}
+
+pub async fn get_review_card_by_id_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    axum::extract::Path(card_id): axum::extract::Path<CardId>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let response = get_review_card_by_id(&data.db, card_id, &get_all_parsers())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
 }
 
 pub async fn get_statistics_handler(

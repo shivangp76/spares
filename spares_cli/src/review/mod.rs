@@ -200,23 +200,43 @@ async fn get_review_card(
     }
 }
 
+async fn get_review_card_by_id(
+    card_id: spares::model::CardId,
+    base_url: &str,
+    client: &Client,
+) -> Result<Option<GetReviewCardResponse>, String> {
+    let url = format!("{}/api/review/card/{}", base_url, card_id);
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(message.unwrap().to_string());
+    }
+    response.json().await.map_err(|e| format!("{}", e))
+}
+
 async fn sync_note_background(
     note_id: NoteId,
     note_raw_path: PathBuf,
     parser_name: String,
     base_url: String,
     client: Client,
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::UnboundedSender<Result<NoteId, String>>,
 ) {
     // Import note from local file to database
     let mut adapter = SparesAdapter::new(SparesRequestProcessor::Server);
     let parser = match find_parser(&parser_name, &get_all_parsers()) {
         Ok(p) => p,
         Err(e) => {
-            let _ = tx.send(format!(
+            let _ = tx.send(Err(format!(
                 "[Note Id: {}] Failed to sync note: Failed to find parser: {}",
                 note_id, e
-            ));
+            )));
             return;
         }
     };
@@ -231,10 +251,10 @@ async fn sync_note_background(
     )
     .await
     {
-        let _ = tx.send(format!(
+        let _ = tx.send(Err(format!(
             "[Note Id: {}] Failed to sync note: Failed to import note: {}",
             note_id, e
-        ));
+        )));
         return;
     }
 
@@ -252,10 +272,10 @@ async fn sync_note_background(
     let response = match client.post(&url).json(&request).send().await {
         Ok(r) => r,
         Err(e) => {
-            let _ = tx.send(format!(
+            let _ = tx.send(Err(format!(
                 "[Note Id: {}] Failed to sync note: Failed to regenerate files: {}",
                 note_id, e
-            ));
+            )));
             return;
         }
     };
@@ -264,23 +284,23 @@ async fn sync_note_background(
         let response_json: Value = match response.json().await {
             Ok(v) => v,
             Err(e) => {
-                let _ = tx.send(format!(
+                let _ = tx.send(Err(format!(
                     "[Note Id: {}] Failed to sync note: Failed to parse error response: {}",
                     note_id, e
-                ));
+                )));
                 return;
             }
         };
         let message = response_json.get("message");
-        let _ = tx.send(format!(
+        let _ = tx.send(Err(format!(
             "[Note Id: {}] Failed to sync note: {}",
             note_id,
             message.unwrap_or(&Value::String("Unknown error".to_string()))
-        ));
+        )));
         return;
     }
 
-    let _ = tx.send(format!("[Note Id: {}] Note synced successfully.", note_id));
+    let _ = tx.send(Ok(note_id));
 }
 
 #[allow(clippy::too_many_lines)]
@@ -352,7 +372,7 @@ pub async fn review_cards(
         get_scheduler_ratings(scheduler_name, base_url, client).await?,
     );
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Result<NoteId, String>>();
 
     // Spawn background task to fetch day statistics
     let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<StatisticsResponse>();
@@ -386,9 +406,11 @@ pub async fn review_cards(
     let mut rate_duration = None;
     let mut last_action_event_id: Option<i64> = None;
     let mut last_action_was_rating = false;
+    let mut sync_advance_needed = false;
 
     loop {
-        if advance_review_card {
+        if advance_review_card || sync_advance_needed {
+            sync_advance_needed = false;
             println!();
             println!();
             // Opening the card's raw file is not useful since edits must be made to the note, not the
@@ -445,16 +467,6 @@ pub async fn review_cards(
             return Ok(());
         }
         let chosen_action = chosen_action_res.as_ref().unwrap();
-
-        // Drain any pending messages from background tasks
-        // let mut pending_messages = false;
-        while let Ok(message) = rx.try_recv() {
-            // if !pending_messages {
-            //     println!();
-            //     pending_messages = true;
-            // }
-            println!("{}", message);
-        }
 
         advance_review_card = false;
         match chosen_action {
@@ -781,6 +793,81 @@ pub async fn review_cards(
                     day_stats,
                 );
                 return Ok(());
+            }
+        }
+
+        // Drain any pending messages from background sync tasks
+        while let Ok(result) = rx.try_recv() {
+            match result {
+                Ok(synced_note_id) => {
+                    println!("[Note Id: {}] Note synced successfully.", synced_note_id);
+                    // If the synced note is the one being reviewed and we are not already
+                    // advancing, refresh the current card's paths since card ordering may
+                    // have shifted (e.g. a cloze was deleted).
+                    if synced_note_id == review_card_response.note_id && !advance_review_card {
+                        match get_review_card_by_id(
+                            review_card_response.card_id,
+                            base_url,
+                            client,
+                        )
+                        .await
+                        {
+                            Ok(Some(new_response)) => {
+                                println!(
+                                    "Current card refreshed after sync (card order may have changed)."
+                                );
+                                if card_flipped {
+                                    if let Some(mut child) = card_back_rendered_child.take() {
+                                        close_rendered_file(&mut child, close_command, false)?;
+                                    }
+                                    let back_path = match &new_response.card_back_rendered_path {
+                                        CardBackRenderedPath::CardBack(p)
+                                        | CardBackRenderedPath::Note(p) => p.clone(),
+                                    };
+                                    card_back_rendered_child = Some(open_rendered_file(
+                                        &back_path,
+                                        open_command,
+                                        false,
+                                    )?);
+                                } else {
+                                    close_rendered_file(
+                                        &mut card_front_rendered_child,
+                                        close_command,
+                                        false,
+                                    )?;
+                                    card_front_rendered_child = open_rendered_file(
+                                        &new_response.card_front_rendered_path,
+                                        open_command,
+                                        false,
+                                    )?;
+                                }
+                                review_card_response = new_response;
+                            }
+                            Ok(None) => {
+                                println!(
+                                    "Current card was deleted during sync. Advancing to next card."
+                                );
+                                if card_flipped {
+                                    if let Some(mut child) = card_back_rendered_child.take() {
+                                        close_rendered_file(&mut child, close_command, false)?;
+                                    }
+                                } else {
+                                    close_rendered_file(
+                                        &mut card_front_rendered_child,
+                                        close_command,
+                                        false,
+                                    )?;
+                                }
+                                card_flipped = false;
+                                sync_advance_needed = true;
+                            }
+                            Err(e) => {
+                                println!("Failed to refresh card after sync: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(msg) => println!("{}", msg),
             }
         }
     }
