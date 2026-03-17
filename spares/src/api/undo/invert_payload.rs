@@ -1,15 +1,11 @@
 use crate::api::undo::insert_events;
 use crate::{
-    Error, LibraryError,
-    api::{
-        fetch_batched_query, placeholders, placeholders_2d,
-        undo::payloads::{
-            CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
-            UpdateParserPayload, UpdateTagPayload,
-        },
+    Error,
+    api::undo::payloads::{
+        CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
+        UpdateCardPayload, UpdateParserPayload, UpdateTagPayload,
     },
     model::{Event, EventType},
-    schema::undo::{UndoEventRequest, UndoEventResponse},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -31,13 +27,13 @@ pub async fn create_undo_event(
         EventType::CreateNotes => EventType::DeleteNotes,
         EventType::UpdateNotes => EventType::UpdateNotes,
         EventType::DeleteNotes => EventType::CreateNotes,
-        EventType::UnburyCards => EventType::BuryCard,
-        EventType::BuryCard => EventType::UnburyCards,
         EventType::UpdateCards
         | EventType::RateCard
         | EventType::ForgetCard
         | EventType::AdvanceCards
-        | EventType::PostponeCards => EventType::UpdateCards,
+        | EventType::PostponeCards
+        | EventType::BuryCards
+        | EventType::UnburyCards => EventType::UpdateCards,
     };
 
     let undo_payload = create_undo_payload(db, event).await?;
@@ -106,8 +102,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             Ok(serde_json::to_value(create_payload).unwrap())
         }
         EventType::CreateTag => {
-            let payload: CreateTagPayload =
-                serde_json::from_value(event.payload.clone()).unwrap();
+            let payload: CreateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
             // To undo CreateTag, we need DeleteTag with the tag info
             let delete_payload = DeleteTagPayload {
                 id: payload.id,
@@ -119,8 +114,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             Ok(serde_json::to_value(delete_payload).unwrap())
         }
         EventType::UpdateTag => {
-            let payload: UpdateTagPayload =
-                serde_json::from_value(event.payload.clone()).unwrap();
+            let payload: UpdateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
             // Swap old and new for each field
             let undo_payload = UpdateTagPayload {
                 id: payload.id,
@@ -132,8 +126,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
         EventType::DeleteTag => {
-            let payload: DeleteTagPayload =
-                serde_json::from_value(event.payload.clone()).unwrap();
+            let payload: DeleteTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
             // To undo DeleteTag, we create the tag again
             let create_payload = CreateTagPayload {
                 id: payload.id,
@@ -144,10 +137,34 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }
+        EventType::UpdateCards
+        | EventType::RateCard
+        | EventType::ForgetCard
+        | EventType::AdvanceCards
+        | EventType::PostponeCards
+        | EventType::BuryCards
+        | EventType::UnburyCards => {
+            let payloads: Vec<UpdateCardPayload> =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            let undo_payloads: Vec<UpdateCardPayload> = payloads
+                .into_iter()
+                .map(|p| UpdateCardPayload {
+                    card_id: p.card_id,
+                    order: p.order.map(|t| t.swap()),
+                    back_type: p.back_type.map(|t| t.swap()),
+                    due: p.due.map(|t| t.swap()),
+                    stability: p.stability.map(|t| t.swap()),
+                    difficulty: p.difficulty.map(|t| t.swap()),
+                    desired_retention: p.desired_retention.map(|t| t.swap()),
+                    special_state: p.special_state.map(|t| t.swap()),
+                    state: p.state.map(|t| t.swap()),
+                    custom_data: p.custom_data.map(|t| t.swap()),
+                })
+                .collect();
+            Ok(serde_json::to_value(undo_payloads).unwrap())
+        }
         _ => {
             todo!()
-            // let empty_object = serde_json::json!({});
-            // Ok(empty_object)
         }
     }
 }
@@ -385,14 +402,9 @@ mod tests {
             "query": null,
             "auto_delete": false
         });
-        let ids = insert_events(
-            &pool,
-            &[(EventType::DeleteTag, payload)],
-            Utc::now(),
-            None,
-        )
-        .await
-        .unwrap();
+        let ids = insert_events(&pool, &[(EventType::DeleteTag, payload)], Utc::now(), None)
+            .await
+            .unwrap();
         let event: Event = sqlx::query_as("SELECT * FROM event WHERE id = ?")
             .bind(ids[0])
             .fetch_one(&pool)
