@@ -591,6 +591,53 @@ async fn e2e_undo_rate_card_restores_scheduling_state(pool: SqlitePool) {
 }
 
 #[sqlx::test]
+async fn e2e_undo_rate_card_deletes_review_log(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+
+    let log_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 3,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    let log_count_after_rate: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(log_count_after_rate, log_count_before + 1, "rating must create a review log");
+
+    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
+        .await
+        .unwrap();
+
+    let log_count_after_undo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        log_count_after_undo,
+        log_count_before,
+        "undo RateCard must delete the review log"
+    );
+}
+
+#[sqlx::test]
 async fn e2e_undo_bury_card_restores_special_state(pool: SqlitePool) {
     let card_id = create_card_helper(&pool).await;
 
