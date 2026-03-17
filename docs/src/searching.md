@@ -166,6 +166,9 @@ JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The que
 **Search for notes NOT tagged "math"**
 - `-tag=math`
 
+**Search for notes tagged exactly `a`, with no descendants. In other words, notes tagged `a:b` won't match**
+- `spares_cli search 'tag~re:"^a$"'`
+
 **Search for cards with stability ≥ 2**
 - `c.stability>=2`
 
