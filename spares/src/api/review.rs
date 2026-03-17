@@ -76,8 +76,7 @@ fn build_review_card_response(
         BackType::NoteFilePath => {
             let mut note_rendered_path =
                 parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
-            note_rendered_path
-                .push(parser.get_output_filename(RenderOutputType::Note, note_id));
+            note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
             CardBackRenderedPath::Note(note_rendered_path)
         }
         BackType::CardFilePath => {
@@ -127,7 +126,7 @@ async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     };
     if now_local_date > last_unburied_local_date {
         // Unbury
-        unbury_cards(db, now, false).await?;
+        unbury_cards(db, None, now, false).await?;
 
         // Update config
         config.last_unburied = now;
@@ -331,9 +330,7 @@ pub async fn get_review_card_by_id(
     .map_err(|e| Error::Sqlx { source: e })?;
 
     review_card_opt
-        .map(|rc| {
-            build_review_card_response(rc, HashMap::new(), Duration::zero(), all_parsers)
-        })
+        .map(|rc| build_review_card_response(rc, HashMap::new(), Duration::zero(), all_parsers))
         .transpose()
 }
 

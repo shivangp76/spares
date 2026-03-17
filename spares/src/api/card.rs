@@ -357,24 +357,49 @@ pub async fn forget_card(
     })
 }
 
-pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>, log: bool) -> Result<(), Error> {
+pub async fn unbury_cards(
+    db: &SqlitePool,
+    query: Option<&str>,
+    now: DateTime<Utc>,
+    log: bool,
+) -> Result<(), Error> {
+    let card_id_filter = if let Some(q) = query {
+        let evaluator = Evaluator::new(q);
+        let card_ids = evaluator.get_card_ids(db).await?;
+        if card_ids.is_empty() {
+            return Ok(());
+        }
+        let ids_str = card_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(" AND id IN ({})", ids_str)
+    } else {
+        String::new()
+    };
     if log {
-        let cards_to_unbury: Vec<Card> =
-            sqlx::query_as(r"SELECT * FROM card WHERE special_state IN (?, ?)")
-                .bind(SpecialState::UserBuried)
-                .bind(SpecialState::SchedulerBuried)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        sqlx::query(
-            r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
-        )
-        .bind(now.timestamp())
-        .bind(SpecialState::UserBuried)
-        .bind(SpecialState::SchedulerBuried)
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        let select_query = format!(
+            "SELECT * FROM card WHERE special_state IN (?, ?){}",
+            card_id_filter
+        );
+        let cards_to_unbury: Vec<Card> = sqlx::query_as(&select_query)
+            .bind(SpecialState::UserBuried)
+            .bind(SpecialState::SchedulerBuried)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let update_query = format!(
+            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?){}",
+            card_id_filter
+        );
+        sqlx::query(&update_query)
+            .bind(now.timestamp())
+            .bind(SpecialState::UserBuried)
+            .bind(SpecialState::SchedulerBuried)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
         if !cards_to_unbury.is_empty() {
             let payloads: Vec<UpdateCardPayload> = cards_to_unbury
                 .iter()
@@ -403,15 +428,17 @@ pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>, log: bool) -> Res
             .await?;
         }
     } else {
-        sqlx::query(
-            r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
-        )
-        .bind(now.timestamp())
-        .bind(SpecialState::UserBuried)
-        .bind(SpecialState::SchedulerBuried)
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        let update_query = format!(
+            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?){}",
+            card_id_filter
+        );
+        sqlx::query(&update_query)
+            .bind(now.timestamp())
+            .bind(SpecialState::UserBuried)
+            .bind(SpecialState::SchedulerBuried)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
     }
     Ok(())
 }

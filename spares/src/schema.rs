@@ -383,6 +383,11 @@ pub mod card {
         pub scheduler_name: String,
     }
 
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct UnburyRequest {
+        pub query: Option<String>,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UpdateCardsResponse {
         pub cards: Vec<CardResponse>,

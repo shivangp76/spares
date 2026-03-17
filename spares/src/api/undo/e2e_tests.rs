@@ -778,7 +778,7 @@ async fn e2e_undo_unbury_cards_restores_buried_state(pool: SqlitePool) {
         .await
         .unwrap();
 
-    unbury_cards(&pool, Utc::now(), true).await.unwrap();
+    unbury_cards(&pool, None, Utc::now(), true).await.unwrap();
 
     let unburied: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
