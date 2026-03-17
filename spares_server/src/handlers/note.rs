@@ -27,7 +27,7 @@ pub async fn create_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CreateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let result = create_notes(&data.db, body, Utc::now(), &get_all_parsers())
+    let result = create_notes(&data.db, body, Utc::now(), &get_all_parsers(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))
@@ -45,7 +45,7 @@ pub async fn update_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_notes_res = update_notes(&data.db, body, Utc::now(), &get_all_parsers())
+    let update_notes_res = update_notes(&data.db, body, Utc::now(), &get_all_parsers(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_notes_res))
@@ -55,7 +55,7 @@ pub async fn delete_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_notes(&data.db, body, &get_all_parsers())
+    delete_notes(&data.db, body, &get_all_parsers(), true)
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)

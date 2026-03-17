@@ -2,8 +2,9 @@ use crate::api::undo::insert_events;
 use crate::{
     Error,
     api::undo::payloads::{
-        CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
-        UpdateCardPayload, UpdateParserPayload, UpdateTagPayload,
+        CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
+        DeleteParserPayload, DeleteTagPayload, UpdateCardPayload, UpdateNotePayload,
+        UpdateNotesPayload, UpdateParserPayload, UpdateTagPayload,
     },
     model::{Event, EventType},
 };
@@ -137,6 +138,45 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }
+        EventType::CreateNotes => {
+            let payload: CreateNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // To undo CreateNotes, we need DeleteNotes with the same full snapshots
+            let delete_payload = DeleteNotesPayload {
+                notes: payload.notes,
+            };
+            Ok(serde_json::to_value(delete_payload).unwrap())
+        }
+        EventType::UpdateNotes => {
+            let payload: UpdateNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Swap before/after for each field in each note
+            let undo_payload = UpdateNotesPayload {
+                notes: payload
+                    .notes
+                    .into_iter()
+                    .map(|p| UpdateNotePayload {
+                        id: p.id,
+                        data: p.data.map(|t| t.swap()),
+                        parser_id: p.parser_id.map(|t| t.swap()),
+                        keywords: p.keywords.map(|t| t.swap()),
+                        tags: p.tags.map(|t| t.swap()),
+                        custom_data: p.custom_data.map(|t| t.swap()),
+                        cards: p.cards.map(|t| t.swap()),
+                    })
+                    .collect(),
+            };
+            Ok(serde_json::to_value(undo_payload).unwrap())
+        }
+        EventType::DeleteNotes => {
+            let payload: DeleteNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // To undo DeleteNotes, we recreate the notes from the saved snapshots
+            let create_payload = CreateNotesPayload {
+                notes: payload.notes,
+            };
+            Ok(serde_json::to_value(create_payload).unwrap())
+        }
         EventType::UpdateCards
         | EventType::RateCard
         | EventType::ForgetCard
@@ -162,9 +202,6 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 })
                 .collect();
             Ok(serde_json::to_value(undo_payloads).unwrap())
-        }
-        _ => {
-            todo!()
         }
     }
 }

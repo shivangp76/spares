@@ -474,7 +474,7 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 

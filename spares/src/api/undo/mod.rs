@@ -21,8 +21,9 @@ use crate::{
     api::{
         fetch_batched_query, placeholders, placeholders_2d,
         undo::payloads::{
-            CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
-            UpdateCardPayload, UpdateParserPayload, UpdateTagPayload,
+            CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
+            DeleteParserPayload, DeleteTagPayload, UpdateCardPayload, UpdateNotesPayload,
+            UpdateParserPayload, UpdateTagPayload,
         },
     },
     model::{Event, EventType},
@@ -153,6 +154,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
 #[allow(clippy::too_many_lines)]
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     use crate::api::card::update_card_event;
+    use crate::api::note::{create_notes_event, delete_notes_event, update_notes_event};
     use crate::api::parser::{create_parser_event, delete_parser_event, update_parser_event};
     use crate::api::tag::{create_tag_event, delete_tag_event, update_tag_event};
 
@@ -188,6 +190,22 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             // Undo payload already has .after = value to restore (create_undo_event swapped it)
             update_tag_event(db, payload, id, false).await?;
         }
+        EventType::CreateNotes => {
+            let payload: CreateNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            create_notes_event(db, payload, false).await?;
+        }
+        EventType::DeleteNotes => {
+            let payload: DeleteNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            delete_notes_event(db, payload, false).await?;
+        }
+        EventType::UpdateNotes => {
+            let payload: UpdateNotesPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Undo payload already has .after = value to restore (create_undo_event swapped it)
+            update_notes_event(db, payload, false).await?;
+        }
         EventType::UpdateCards
         | EventType::RateCard
         | EventType::ForgetCard
@@ -199,9 +217,6 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             update_card_event(db, payloads, false).await?;
-        }
-        _ => {
-            todo!()
         }
     }
     Ok(())

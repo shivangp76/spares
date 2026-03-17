@@ -35,7 +35,7 @@ async fn create_card_helper(pool: &SqlitePool) -> CardId {
             custom_data: Map::new(),
         }],
     };
-    let result = create_notes(pool, request, Utc::now(), &get_all_parsers())
+    let result = create_notes(pool, request, Utc::now(), &get_all_parsers(), false)
         .await
         .unwrap();
     let note_id = result.notes[0].id;
@@ -852,5 +852,199 @@ async fn e2e_undo_update_card_does_not_log_when_no_change(pool: SqlitePool) {
         event_count_after,
         event_count_before + 1,
         "update_card with log=true must log an event even when fields are unchanged"
+    );
+}
+
+// ── Note undo tests ───────────────────────────────────────────────────────────
+
+#[sqlx::test]
+async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
+    use crate::api::note::{create_notes, delete_notes};
+    use crate::schema::note::{DeleteNotesRequest, NotesSelector};
+
+    let parser = create_parser_helper(&pool, "markdown").await;
+    let request = CreateNotesRequest {
+        parser_id: parser.id,
+        requests: vec![CreateNoteRequest {
+            data: "Undo test {{ cloze }}".to_string(),
+            keywords: vec!["kw1".to_string()],
+            tags: vec!["tag1".to_string()],
+            is_suspended: false,
+            custom_data: Map::new(),
+        }],
+    };
+    let result = create_notes(&pool, request, Utc::now(), &get_all_parsers(), true)
+        .await
+        .unwrap();
+    let note_id = result.notes[0].id;
+
+    // Verify note exists
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "note must exist after creation");
+
+    // Undo CreateNotes
+    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
+        .await
+        .unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "undo CreateNotes must remove the note");
+
+    // Cards must also be gone
+    let card_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(card_count, 0, "undo CreateNotes must remove cards");
+}
+
+#[sqlx::test]
+async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
+    use crate::api::note::{create_notes, delete_notes};
+    use crate::schema::note::{DeleteNotesRequest, NotesSelector};
+
+    let parser = create_parser_helper(&pool, "markdown").await;
+    let request = CreateNotesRequest {
+        parser_id: parser.id,
+        requests: vec![CreateNoteRequest {
+            data: "Delete undo {{ cloze }}".to_string(),
+            keywords: vec!["kw_del".to_string()],
+            tags: vec!["tag_del".to_string()],
+            is_suspended: false,
+            custom_data: Map::new(),
+        }],
+    };
+    let result = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false)
+        .await
+        .unwrap();
+    let note_id = result.notes[0].id;
+
+    // Capture card count before delete
+    let card_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(card_count_before > 0, "note must have cards");
+
+    // Delete note with logging
+    delete_notes(
+        &pool,
+        DeleteNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+        },
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "note must be deleted");
+
+    // Undo DeleteNotes
+    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
+        .await
+        .unwrap();
+
+    // Note must be restored with the same ID
+    let restored_data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        restored_data.contains("Delete undo"),
+        "undo DeleteNotes must restore note data"
+    );
+
+    // Cards must be restored
+    let card_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        card_count_after, card_count_before,
+        "undo DeleteNotes must restore cards"
+    );
+}
+
+#[sqlx::test]
+async fn e2e_undo_update_notes_restores_data(pool: SqlitePool) {
+    use crate::api::note::{create_notes, update_notes};
+    use crate::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
+
+    let parser = create_parser_helper(&pool, "markdown").await;
+    let request = CreateNotesRequest {
+        parser_id: parser.id,
+        requests: vec![CreateNoteRequest {
+            data: "Original {{ data }}".to_string(),
+            keywords: vec![],
+            tags: vec![],
+            is_suspended: false,
+            custom_data: Map::new(),
+        }],
+    };
+    let result = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false)
+        .await
+        .unwrap();
+    let note_id = result.notes[0].id;
+    let original_data = result.notes[0].data.clone();
+
+    // Update note with logging
+    update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+            data: Some("Updated {{ data }}".to_string()),
+            parser_id: None,
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: None,
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+
+    let updated_data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        updated_data.contains("Updated"),
+        "note data must be updated"
+    );
+
+    // Undo UpdateNotes
+    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
+        .await
+        .unwrap();
+
+    let restored_data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        restored_data, original_data,
+        "undo UpdateNotes must restore original data"
     );
 }
