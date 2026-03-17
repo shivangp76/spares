@@ -409,7 +409,7 @@ async fn add_note_tags(
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
             };
-            let tag_response = create_tag(db, create_tag_request).await?;
+            let tag_response = create_tag(db, create_tag_request, true).await?;
             tag_ids.push(tag_response.id);
 
             // Add to tag_map for following create note requests

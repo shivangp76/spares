@@ -517,7 +517,7 @@ async fn simulate_filtered_tag_reviews(
         query: Some(filtered_tag_query.to_string()),
         auto_delete: true,
     };
-    let tag_res = create_tag(&pool, request).await;
+    let tag_res = create_tag(&pool, request, false).await;
     assert!(tag_res.is_ok());
     let filtered_tag_id = tag_res.unwrap().id;
 

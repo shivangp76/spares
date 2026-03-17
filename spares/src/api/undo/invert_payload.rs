@@ -3,7 +3,10 @@ use crate::{
     Error, LibraryError,
     api::{
         fetch_batched_query, placeholders, placeholders_2d,
-        undo::payloads::{CreateParserPayload, DeleteParserPayload, UpdateParserPayload},
+        undo::payloads::{
+            CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
+            UpdateParserPayload, UpdateTagPayload,
+        },
     },
     model::{Event, EventType},
     schema::undo::{UndoEventRequest, UndoEventResponse},
@@ -99,6 +102,45 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let create_payload = CreateParserPayload {
                 id: payload.id,
                 name: payload.name,
+            };
+            Ok(serde_json::to_value(create_payload).unwrap())
+        }
+        EventType::CreateTag => {
+            let payload: CreateTagPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // To undo CreateTag, we need DeleteTag with the tag info
+            let delete_payload = DeleteTagPayload {
+                id: payload.id,
+                name: payload.name,
+                description: payload.description,
+                query: payload.query,
+                auto_delete: payload.auto_delete,
+            };
+            Ok(serde_json::to_value(delete_payload).unwrap())
+        }
+        EventType::UpdateTag => {
+            let payload: UpdateTagPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Swap old and new for each field
+            let undo_payload = UpdateTagPayload {
+                id: payload.id,
+                name: payload.name.map(|t| t.swap()),
+                description: payload.description.map(|t| t.swap()),
+                query: payload.query.map(|t| t.swap()),
+                auto_delete: payload.auto_delete.map(|t| t.swap()),
+            };
+            Ok(serde_json::to_value(undo_payload).unwrap())
+        }
+        EventType::DeleteTag => {
+            let payload: DeleteTagPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // To undo DeleteTag, we create the tag again
+            let create_payload = CreateTagPayload {
+                id: payload.id,
+                name: payload.name,
+                description: payload.description,
+                query: payload.query,
+                auto_delete: payload.auto_delete,
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }
@@ -238,6 +280,134 @@ mod tests {
         assert_eq!(
             undo.payload.get("name").and_then(|v| v.as_str()),
             Some("deleted")
+        );
+    }
+
+    #[sqlx::test]
+    async fn create_undo_event_create_tag_produces_delete_tag(pool: SqlitePool) {
+        use crate::api::tag::create_tag;
+        use crate::schema::tag::CreateTagRequest;
+
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "to_undo".to_string(),
+                description: "desc".to_string(),
+                query: None,
+                auto_delete: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        let at = Utc::now();
+        let payload = json!({"id": tag.id, "name": tag.name, "description": tag.description, "query": null, "auto_delete": false});
+        let ids = insert_events(&pool, &[(EventType::CreateTag, payload)], at, None)
+            .await
+            .unwrap();
+        let event: Event = sqlx::query_as("SELECT * FROM event WHERE id = ?")
+            .bind(ids[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        assert_eq!(undo.kind, EventType::DeleteTag);
+        assert_eq!(
+            undo.payload.get("id").and_then(|v| v.as_i64()),
+            Some(tag.id)
+        );
+        assert_eq!(
+            undo.payload.get("name").and_then(|v| v.as_str()),
+            Some("to_undo")
+        );
+    }
+
+    #[sqlx::test]
+    async fn create_undo_event_update_tag_swaps_before_after(pool: SqlitePool) {
+        use crate::api::tag::create_tag;
+        use crate::schema::tag::CreateTagRequest;
+
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "old_name".to_string(),
+                description: "desc".to_string(),
+                query: None,
+                auto_delete: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        let at = Utc::now();
+        let payload = json!({
+            "id": tag.id,
+            "name": {"b": "old_name", "a": "new_name"}
+        });
+        let ids = insert_events(&pool, &[(EventType::UpdateTag, payload)], at, None)
+            .await
+            .unwrap();
+        let event: Event = sqlx::query_as("SELECT * FROM event WHERE id = ?")
+            .bind(ids[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        assert_eq!(undo.kind, EventType::UpdateTag);
+        let name = undo.payload.get("name").unwrap();
+        assert_eq!(name.get("b").unwrap(), "new_name");
+        assert_eq!(name.get("a").unwrap(), "old_name");
+    }
+
+    #[sqlx::test]
+    async fn create_undo_event_delete_tag_produces_create_tag(pool: SqlitePool) {
+        use crate::api::tag::create_tag;
+        use crate::schema::tag::CreateTagRequest;
+
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "deleted_tag".to_string(),
+                description: "desc".to_string(),
+                query: None,
+                auto_delete: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        let payload = json!({
+            "id": tag.id,
+            "name": tag.name,
+            "description": tag.description,
+            "query": null,
+            "auto_delete": false
+        });
+        let ids = insert_events(
+            &pool,
+            &[(EventType::DeleteTag, payload)],
+            Utc::now(),
+            None,
+        )
+        .await
+        .unwrap();
+        let event: Event = sqlx::query_as("SELECT * FROM event WHERE id = ?")
+            .bind(ids[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let undo = create_undo_event(&pool, &event, Utc::now()).await.unwrap();
+        assert_eq!(undo.kind, EventType::CreateTag);
+        assert_eq!(
+            undo.payload.get("id").and_then(|v| v.as_i64()),
+            Some(tag.id)
+        );
+        assert_eq!(
+            undo.payload.get("name").and_then(|v| v.as_str()),
+            Some("deleted_tag")
         );
     }
 }

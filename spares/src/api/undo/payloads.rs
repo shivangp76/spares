@@ -6,6 +6,37 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CreateTagPayload {
+    pub id: Option<TagId>,
+    pub name: String,
+    pub description: String,
+    pub query: Option<String>,
+    pub auto_delete: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UpdateTagPayload {
+    pub id: TagId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<Transition<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Transition<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<Transition<Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_delete: Option<Transition<bool>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeleteTagPayload {
+    pub id: Option<TagId>,
+    pub name: String,
+    pub description: String,
+    pub query: Option<String>,
+    pub auto_delete: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Transition<T> {
     #[serde(rename = "b")]
