@@ -283,7 +283,10 @@ pub async fn create_notes(
             snapshots.push(snapshot);
         }
         let payload = CreateNotesPayload { notes: snapshots };
-        let note_event = (EventType::CreateNotes, serde_json::to_value(&payload).unwrap());
+        let note_event = (
+            EventType::CreateNotes,
+            serde_json::to_value(&payload).unwrap(),
+        );
         if new_tag_payloads.is_empty() {
             insert_events(db, &[note_event], at, None).await?;
         } else {
@@ -302,6 +305,7 @@ pub async fn create_notes(
 /// Create notes from snapshots (used when applying the undo of a `DeleteNotes` event).
 /// Inserts notes with their specific IDs, keywords, tags, and cards.
 /// No file generation is performed.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn create_notes_event(
     db: &SqlitePool,
     payload: CreateNotesPayload,

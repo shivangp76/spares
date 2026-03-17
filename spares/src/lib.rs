@@ -13,6 +13,8 @@ use miette::{Diagnostic, SourceSpan};
 use model::{RatingId, StateId};
 use thiserror::Error;
 
+pub(crate) const ALLOWED_F64_ERROR: f64 = 0.000_001;
+
 #[derive(Debug, Diagnostic, Error)]
 #[non_exhaustive]
 pub enum Error {

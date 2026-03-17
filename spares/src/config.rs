@@ -1,3 +1,4 @@
+use crate::ALLOWED_F64_ERROR;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
@@ -265,7 +266,7 @@ impl SparesExternalConfig {
             .easy_days
             .days_to_workload_percentage
             .values()
-            .all(|x| x.abs() < f64::EPSILON)
+            .all(|x| x.abs() < ALLOWED_F64_ERROR)
         {
             return Err("Each day cannot have 0 workload.".to_string());
         }

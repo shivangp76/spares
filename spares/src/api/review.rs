@@ -1,6 +1,6 @@
 use super::note::delete_empty_tags;
 use crate::{
-    Error, LibraryError, SchedulerErrorKind, TagErrorKind,
+    ALLOWED_F64_ERROR, Error, LibraryError, SchedulerErrorKind, TagErrorKind,
     api::{
         card::{delete_card_tags, unbury_cards},
         undo::{
@@ -594,14 +594,17 @@ pub async fn bury_card(
                 before: before_card.due,
                 after: buried_card.due,
             }),
-            stability: (buried_card.stability != before_card.stability).then_some(Transition {
-                before: before_card.stability,
-                after: buried_card.stability,
-            }),
-            difficulty: (buried_card.difficulty != before_card.difficulty).then_some(Transition {
-                before: before_card.difficulty,
-                after: buried_card.difficulty,
-            }),
+            stability: ((buried_card.stability - before_card.stability).abs() > ALLOWED_F64_ERROR)
+                .then_some(Transition {
+                    before: before_card.stability,
+                    after: buried_card.stability,
+                }),
+            difficulty: ((buried_card.difficulty - before_card.difficulty).abs()
+                > ALLOWED_F64_ERROR)
+                .then_some(Transition {
+                    before: before_card.difficulty,
+                    after: buried_card.difficulty,
+                }),
             desired_retention: None,
             special_state: Some(Transition {
                 before: before_card.special_state,
