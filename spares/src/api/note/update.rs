@@ -1,15 +1,20 @@
 use super::{
-    AUTOMATIC_REBUILD, create_cards, create_note_keywords, create_note_links, delete_empty_tags,
-    delete_note_files,
+    AUTOMATIC_REBUILD, create_cards, create_note_keywords, create_note_links, create_note_tags,
+    delete_empty_tags, delete_note_files,
 };
 use crate::{
     Error, LibraryError, ParserErrorKind, TagErrorKind,
     api::{
         card::{create_card_tags, delete_card_tags},
         execute_batched_query, fetch_batched_query,
+        note::basic::fetch_note_snapshot,
         parser::get_parser_name,
         placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
+        undo::{
+            insert_events,
+            payloads::{NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
+        },
     },
     config::{read_internal_config, write_internal_config},
     model::{Card, CardId, Note, NoteId, NoteLink, SpecialState, TagId},
@@ -429,6 +434,7 @@ pub async fn update_notes(
     body: UpdateNotesRequest,
     at: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
+    log: bool,
 ) -> Result<Vec<NoteResponse>, Error> {
     let mut note_responses = Vec::new();
     // Destructuring is used so if the struct is ever updated, the compiler will warn us to make the appropriate changes here.
@@ -442,6 +448,7 @@ pub async fn update_notes(
     } = body;
 
     let mut parse_note_requests = Vec::new();
+    let mut update_note_payloads: Vec<UpdateNotePayload> = Vec::new();
     let note_ids = selector.to_note_ids(db).await?;
     for note_id in &note_ids {
         let existing_note: Note = sqlx::query_as(r"SELECT * FROM note WHERE id = ?")
@@ -449,6 +456,22 @@ pub async fn update_notes(
             .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Capture before-snapshot for undo logging
+        let before_snapshot: Option<NoteSnapshot> = if log {
+            let snap = fetch_note_snapshot(
+                db,
+                *note_id,
+                &existing_note.data,
+                existing_note.created_at,
+                existing_note.parser_id,
+                &existing_note.custom_data,
+            )
+            .await?;
+            Some(snap)
+        } else {
+            None
+        };
         // Get new values (if empty, use old value)
         let submitted_new_data = data.as_ref().unwrap_or(&existing_note.data).clone();
         let new_parser_id = parser_id.unwrap_or(existing_note.parser_id);
@@ -479,7 +502,6 @@ pub async fn update_notes(
                 .fetch_all(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        // NOTE: PERF - `get_cards()` is called 3 times here: once in `get_parser_and_cards()` which is called twice and once in `add_order_to_note_data()`.
         let (old_parser, old_cards) = get_parser_and_cards(
             &parser_rows,
             existing_note.parser_id,
@@ -493,7 +515,7 @@ pub async fn update_notes(
             all_parsers,
         )?;
 
-        // TODO: `add_order_to_note_data()` calls `get_cards()` and so does `get_parser_and_cards()`. There should be a way to modify the `get_cards()` function itself to return the old indices while also updating the note data  with the new indices
+        // TODO: PERF: `add_order_to_note_data()` calls `get_cards()` and so does `get_parser_and_cards()`. There should be a way to modify the `get_cards()` function itself to return the old indices while also updating the note data with the new indices
         // Update note, adding orders sequentially
         let (new_data, _) =
             add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
@@ -586,6 +608,79 @@ pub async fn update_notes(
             tags,
         };
         parse_note_requests.push((updated_note.parser_id, parse_note_request));
+
+        // Build UpdateNotePayload for undo logging
+        if log
+            && let Some(before) = before_snapshot {
+                let after_snapshot = fetch_note_snapshot(
+                    db,
+                    *note_id,
+                    &updated_note.data,
+                    updated_note.created_at,
+                    updated_note.parser_id,
+                    &updated_note.custom_data,
+                )
+                .await?;
+
+                let data_transition = if before.data == after_snapshot.data {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.data.clone(),
+                        after: after_snapshot.data.clone(),
+                    })
+                };
+                let parser_id_transition = if before.parser_id == after_snapshot.parser_id {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.parser_id,
+                        after: after_snapshot.parser_id,
+                    })
+                };
+                let keywords_transition = if before.keywords == after_snapshot.keywords {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.keywords.clone(),
+                        after: after_snapshot.keywords.clone(),
+                    })
+                };
+                let tags_transition = if before.tags == after_snapshot.tags {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.tags.clone(),
+                        after: after_snapshot.tags.clone(),
+                    })
+                };
+                let custom_data_transition = if before.custom_data == after_snapshot.custom_data {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.custom_data.clone(),
+                        after: after_snapshot.custom_data.clone(),
+                    })
+                };
+                let cards_transition = if before.cards == after_snapshot.cards {
+                    None
+                } else {
+                    Some(Transition {
+                        before: before.cards.clone(),
+                        after: after_snapshot.cards.clone(),
+                    })
+                };
+
+                update_note_payloads.push(UpdateNotePayload {
+                    id: *note_id,
+                    data: data_transition,
+                    parser_id: parser_id_transition,
+                    keywords: keywords_transition,
+                    tags: tags_transition,
+                    custom_data: custom_data_transition,
+                    cards: cards_transition,
+                });
+            }
     }
 
     if AUTOMATIC_REBUILD {
@@ -679,7 +774,205 @@ pub async fn update_notes(
     config.linked_notes_generated = false;
     write_internal_config(&config)?;
 
+    // Log event
+    if log && !update_note_payloads.is_empty() {
+        let payload = UpdateNotesPayload {
+            notes: update_note_payloads,
+        };
+        insert_events(
+            db,
+            &[(
+                crate::model::EventType::UpdateNotes,
+                serde_json::to_value(&payload).unwrap(),
+            )],
+            at,
+            None,
+        )
+        .await?;
+    }
+
     Ok(note_responses)
+}
+
+/// Apply an `UpdateNotes` event payload (used when undoing `UpdateNotes`).
+/// For each note, applies the `after` field values from each transition.
+pub(crate) async fn update_notes_event(
+    db: &SqlitePool,
+    payload: UpdateNotesPayload,
+    log: bool,
+) -> Result<(), Error> {
+    let at = chrono::Utc::now();
+    for note_payload in &payload.notes {
+        let UpdateNotePayload {
+            id,
+            data,
+            parser_id,
+            keywords,
+            tags,
+            custom_data,
+            cards,
+        } = note_payload;
+
+        // Build UPDATE note SQL for scalar fields if any changed
+        let new_data: Option<&str> = data.as_ref().map(|t| t.after.as_str());
+        let new_parser_id: Option<i64> = parser_id.as_ref().map(|t| t.after);
+        let new_custom_data: Option<&Value> = custom_data.as_ref().map(|t| &t.after);
+
+        if new_data.is_some() || new_parser_id.is_some() || new_custom_data.is_some() {
+            // Fetch existing note to fill in unchanged fields
+            let existing_note: Note = sqlx::query_as(r"SELECT * FROM note WHERE id = ?")
+                .bind(id)
+                .fetch_one(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            let data_to_set = new_data.unwrap_or(existing_note.data.as_str());
+            let parser_id_to_set = new_parser_id.unwrap_or(existing_note.parser_id);
+            let custom_data_to_set = new_custom_data.unwrap_or(&existing_note.custom_data);
+            sqlx::query(
+                r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(data_to_set)
+            .bind(parser_id_to_set)
+            .bind(custom_data_to_set)
+            .bind(at.timestamp())
+            .bind(id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        }
+
+        // Update keywords
+        if let Some(kw_transition) = keywords {
+            sqlx::query(r"DELETE FROM note_keyword WHERE note_id = ?")
+                .bind(id)
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            let kw_entries: Vec<(NoteId, Vec<(String, bool)>)> = vec![(
+                *id,
+                kw_transition
+                    .after
+                    .iter()
+                    .map(|k| (k.clone(), false))
+                    .collect(),
+            )];
+            create_note_keywords(db, &kw_entries).await?;
+        }
+
+        // Update tags
+        if let Some(tags_transition) = tags {
+            // Get tags with auto_delete before removing them
+            let tag_ids_to_check: Vec<TagId> =
+                sqlx::query_scalar(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
+                    .bind(id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+
+            // Remove all note_tags
+            sqlx::query(r"DELETE FROM note_tag WHERE note_id = ?")
+                .bind(id)
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+
+            // Delete empty auto_delete tags
+            delete_empty_tags(db, &tag_ids_to_check).await?;
+
+            // Re-add tags from the `after` list (create if needed, do NOT log)
+            let mut new_tag_ids: Vec<i64> = Vec::new();
+            for tag_name in &tags_transition.after {
+                let existing_tag_id: Option<i64> =
+                    sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ? LIMIT 1")
+                        .bind(tag_name)
+                        .fetch_optional(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                let tag_id = if let Some(tid) = existing_tag_id {
+                    tid
+                } else {
+                    let tag_response = create_tag(
+                        db,
+                        crate::schema::tag::CreateTagRequest {
+                            name: tag_name.clone(),
+                            description: String::new(),
+                            query: None,
+                            auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                        },
+                        false,
+                    )
+                    .await?;
+                    tag_response.id
+                };
+                new_tag_ids.push(tag_id);
+            }
+            create_note_tags(
+                db,
+                &new_tag_ids
+                    .into_iter()
+                    .map(|tid| (*id, tid))
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        }
+
+        // Restore cards
+        if let Some(cards_transition) = cards {
+            // Delete all existing cards
+            sqlx::query(r"DELETE FROM card WHERE note_id = ?")
+                .bind(id)
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+
+            // Re-insert cards from `after` with specific IDs
+            let card_snapshots = &cards_transition.after;
+            if !card_snapshots.is_empty() {
+                execute_batched_query(db, card_snapshots, async |db, chunk| {
+                    let query_str = format!(
+                        "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
+                        crate::api::placeholders_2d(chunk.len(), 12)
+                    );
+                    let mut query = sqlx::query(&query_str);
+                    for card in chunk {
+                        query = query.bind(card.id);
+                        query = query.bind(id);
+                        query = query.bind(card.order);
+                        query = query.bind(card.back_type);
+                        query = query.bind(card.due.timestamp());
+                        query = query.bind(card.due.timestamp());
+                        query = query.bind(card.stability);
+                        query = query.bind(card.difficulty);
+                        query = query.bind(card.desired_retention);
+                        query = query.bind(card.special_state);
+                        query = query.bind(card.state);
+                        query = query.bind(&card.custom_data);
+                    }
+                    query
+                        .execute(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                    Ok(())
+                })
+                .await?;
+            }
+        }
+    }
+
+    if log {
+        insert_events(
+            db,
+            &[(
+                crate::model::EventType::UpdateNotes,
+                serde_json::to_value(&payload).unwrap(),
+            )],
+            at,
+            None,
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -730,7 +1023,7 @@ mod tests {
             requests: vec![create_note_request.clone()],
         };
         let at = Utc::now();
-        let create_notes_res = create_notes(&pool, request, at, &get_all_parsers()).await;
+        let create_notes_res = create_notes(&pool, request, at, &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let created_notes = create_notes_res.unwrap();
         assert_eq!(created_notes.notes.len(), 1);
@@ -779,7 +1072,7 @@ mod tests {
             tags: UpdateTags::None,
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
         let notes = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
@@ -853,7 +1146,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let created_notes = create_notes_res.unwrap();
         assert_eq!(created_notes.notes.len(), 1);
@@ -911,7 +1205,7 @@ mod tests {
             tags: UpdateTags::None,
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
         let notes = notes_res.unwrap();
         assert_eq!(notes.len(), 1);

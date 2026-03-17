@@ -3,6 +3,7 @@ const AUTOMATIC_REBUILD: bool = false;
 
 mod basic;
 mod create;
+mod delete;
 pub mod export;
 mod keyword_distance;
 mod render;
@@ -10,13 +11,14 @@ mod search;
 mod update;
 pub use basic::*;
 pub use create::*;
+pub use delete::*;
 pub use render::*;
 pub use search::*;
 pub use update::*;
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::api::note::{create_notes, update_notes};
+    use crate::api::note::{create_notes, delete_notes, update_notes};
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::tag::create_tag;
     use crate::parsers::get_all_parsers;
@@ -59,7 +61,8 @@ pub(crate) mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_err());
     }
 
@@ -80,7 +83,8 @@ pub(crate) mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -107,7 +111,7 @@ pub(crate) mod tests {
             },
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_err());
     }
 
@@ -128,7 +132,8 @@ pub(crate) mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -155,7 +160,7 @@ pub(crate) mod tests {
             },
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_err());
     }
 
@@ -186,7 +191,8 @@ pub(crate) mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -194,7 +200,7 @@ pub(crate) mod tests {
         let request = DeleteNotesRequest {
             selector: NotesSelector::Ids(vec![create_notes_response.notes[0].id]),
         };
-        let delete_note_res = delete_notes(&pool, request, &get_all_parsers()).await;
+        let delete_note_res = delete_notes(&pool, request, &get_all_parsers(), false).await;
         assert!(delete_note_res.is_ok());
 
         // Verify that tag is deleted
@@ -232,7 +238,8 @@ pub(crate) mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -249,7 +256,7 @@ pub(crate) mod tests {
             },
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers()).await;
+        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
 
         // Verify that tag is deleted
