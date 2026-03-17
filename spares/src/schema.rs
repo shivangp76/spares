@@ -426,6 +426,14 @@ pub mod review {
         Note(PathBuf),
     }
 
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ReviewLinkedNote {
+        pub searched_keyword: String,
+        pub note_id: NoteId,
+        pub matched_keyword: Option<String>,
+        pub note_raw_path: PathBuf,
+    }
+
     #[serde_with::serde_as]
     #[derive(Debug, Deserialize, Serialize)]
     pub struct GetReviewCardResponse {
@@ -440,6 +448,7 @@ pub mod review {
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
+        pub linked_notes: Vec<ReviewLinkedNote>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

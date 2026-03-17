@@ -22,8 +22,8 @@ use crate::{
     schedulers::{SrsScheduler, get_scheduler_from_string},
     schema::review::{
         CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest,
-        GetReviewCardResponse, RatingSubmission, StudyAction, SubmitStudyActionRequest,
-        SubmitStudyActionResponse,
+        GetReviewCardResponse, RatingSubmission, ReviewLinkedNote, StudyAction,
+        SubmitStudyActionRequest, SubmitStudyActionResponse,
     },
     search::evaluator::Evaluator,
 };
@@ -45,6 +45,49 @@ struct ReviewCard {
     card_state: StateId,
 }
 
+#[derive(Clone, Debug, FromRow)]
+struct LinkedNoteRow {
+    searched_keyword: String,
+    linked_note_id: NoteId,
+    matched_keyword: Option<String>,
+    parser_name: String,
+}
+
+async fn get_linked_notes_for_review(
+    db: &SqlitePool,
+    note_id: NoteId,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<Vec<ReviewLinkedNote>, Error> {
+    let rows: Vec<LinkedNoteRow> = sqlx::query_as(
+        r"SELECT nl.searched_keyword, nl.linked_note_id, nl.matched_keyword, p.name as parser_name
+          FROM note_link nl
+          JOIN note n ON nl.linked_note_id = n.id
+          JOIN parser p ON n.parser_id = p.id
+          WHERE nl.parent_note_id = ?
+          AND nl.linked_note_id IS NOT NULL",
+    )
+    .bind(note_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
+    let mut linked_notes = Vec::new();
+    for row in rows {
+        let parser = find_parser(&row.parser_name, all_parsers)?;
+        let mut note_raw_path =
+            get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
+        note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, row.linked_note_id));
+        note_raw_path.set_extension(parser.file_extension());
+        linked_notes.push(ReviewLinkedNote {
+            searched_keyword: row.searched_keyword,
+            note_id: row.linked_note_id,
+            matched_keyword: row.matched_keyword,
+            note_raw_path,
+        });
+    }
+    Ok(linked_notes)
+}
+
 fn build_review_card_response(
     ReviewCard {
         note_id,
@@ -57,6 +100,7 @@ fn build_review_card_response(
     cards_left_by_state: HashMap<StateId, u32>,
     time_estimate: Duration,
     all_parsers: &[fn() -> Box<dyn Parseable>],
+    linked_notes: Vec<ReviewLinkedNote>,
 ) -> Result<GetReviewCardResponse, Error> {
     let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
@@ -101,6 +145,7 @@ fn build_review_card_response(
         parser_name,
         cards_left_by_state,
         time_estimate,
+        linked_notes,
     })
 }
 
@@ -296,11 +341,14 @@ pub async fn get_review_card(
     let time_estimate = Duration::seconds(total_time_seconds as i64);
 
     if let Some(review_card) = review_card_opt {
+        let linked_notes =
+            get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
         return Ok(Some(build_review_card_response(
             review_card,
             cards_left_by_state,
             time_estimate,
             all_parsers,
+            linked_notes,
         )?));
     }
     Ok(None)
@@ -329,9 +377,19 @@ pub async fn get_review_card_by_id(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    review_card_opt
-        .map(|rc| build_review_card_response(rc, HashMap::new(), Duration::zero(), all_parsers))
-        .transpose()
+    match review_card_opt {
+        Some(rc) => {
+            let linked_notes = get_linked_notes_for_review(db, rc.note_id, all_parsers).await?;
+            Ok(Some(build_review_card_response(
+                rc,
+                HashMap::new(),
+                Duration::zero(),
+                all_parsers,
+                linked_notes,
+            )?))
+        }
+        None => Ok(None),
+    }
 }
 
 pub async fn update_filtered_tag_scheduler_data(

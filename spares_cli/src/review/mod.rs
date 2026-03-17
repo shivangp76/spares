@@ -1,7 +1,7 @@
 use crate::import::import_from_files;
 use chrono::{Local, Utc};
 use clap::Args;
-use inquire::Select;
+use inquire::{MultiSelect, Select};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use spares::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
@@ -80,6 +80,8 @@ enum ReviewAction {
     BuryNote,
     #[strum(serialize = "Bury Until Later Today")]
     BuryUntilLaterToday,
+    #[strum(serialize = "Open Linked Notes")]
+    OpenLinkedNotes,
     #[strum(serialize = "Tag to modify later")]
     TagNote,
     #[strum(serialize = "Forget Card")]
@@ -562,6 +564,30 @@ pub async fn review_cards(
                     println!("{}", e);
                 }
             }
+            ReviewAction::OpenLinkedNotes => {
+                if review_card_response.linked_notes.is_empty() {
+                    println!("No linked notes found.");
+                } else {
+                    let options = review_card_response
+                        .linked_notes
+                        .iter()
+                        .map(|ln| format!("{} ({})", ln.searched_keyword, ln.note_id))
+                        .collect::<Vec<_>>();
+                    let mut multi_select =
+                        MultiSelect::new("Select linked notes to open:", options.clone());
+                    multi_select.vim_mode = true;
+                    if let Ok(selected_labels) = multi_select.prompt() {
+                        for label in &selected_labels {
+                            if let Some(idx) = options.iter().position(|o| o == label) {
+                                let path = &review_card_response.linked_notes[idx].note_raw_path;
+                                if let Err(e) = open::that_detached(path) {
+                                    println!("{}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             ReviewAction::BuryCard
             | ReviewAction::BuryNote
             | ReviewAction::SuspendCard
@@ -805,12 +831,8 @@ pub async fn review_cards(
                     // advancing, refresh the current card's paths since card ordering may
                     // have shifted (e.g. a cloze was deleted).
                     if synced_note_id == review_card_response.note_id && !advance_review_card {
-                        match get_review_card_by_id(
-                            review_card_response.card_id,
-                            base_url,
-                            client,
-                        )
-                        .await
+                        match get_review_card_by_id(review_card_response.card_id, base_url, client)
+                            .await
                         {
                             Ok(Some(new_response)) => {
                                 println!(
@@ -824,11 +846,8 @@ pub async fn review_cards(
                                         CardBackRenderedPath::CardBack(p)
                                         | CardBackRenderedPath::Note(p) => p.clone(),
                                     };
-                                    card_back_rendered_child = Some(open_rendered_file(
-                                        &back_path,
-                                        open_command,
-                                        false,
-                                    )?);
+                                    card_back_rendered_child =
+                                        Some(open_rendered_file(&back_path, open_command, false)?);
                                 } else {
                                     close_rendered_file(
                                         &mut card_front_rendered_child,
