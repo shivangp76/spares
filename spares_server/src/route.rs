@@ -16,7 +16,10 @@ use crate::{
             create_parser_handler, delete_parser_handler, get_parser_handler, list_parsers_handler,
             update_parser_handler,
         },
-        review::{get_review_card_handler, get_statistics_handler, submit_study_action_handler},
+        review::{
+            get_review_card_by_id_handler, get_review_card_handler, get_statistics_handler,
+            submit_study_action_handler,
+        },
         scheduler::get_scheduler_ratings_handler,
         tag::{
             create_tag_handler, delete_tag_handler, get_tag_by_name_handler, get_tag_handler,
@@ -79,6 +82,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/cards/unbury", post(unbury_cards_handler))
         // Review
         .route("/api/review", post(get_review_card_handler))
+        .route("/api/review/card/{id}", get(get_review_card_by_id_handler))
         .route("/api/review/submit", post(submit_study_action_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
         // Scheduler
