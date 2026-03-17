@@ -6,7 +6,7 @@ use spares::{
         card::{get_card, get_cards, get_leeches, unbury_cards, update_cards},
         forget_card,
     },
-    schema::card::{GetLeechesRequest, UpdateCardsRequest},
+    schema::card::{GetLeechesRequest, UnburyRequest, UpdateCardsRequest},
 };
 use std::sync::Arc;
 
@@ -62,8 +62,10 @@ pub async fn forget_card_handler(
 
 pub async fn unbury_cards_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    body: Option<Json<UnburyRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    unbury_cards(&data.db, Utc::now(), true)
+    let query = body.as_ref().and_then(|b| b.query.as_deref());
+    unbury_cards(&data.db, query, Utc::now(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(()))
