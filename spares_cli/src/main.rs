@@ -395,6 +395,8 @@ struct StatisticsArgs {
 #[derive(Args, Debug)]
 struct ExportArgs {
     query: String,
+    #[arg(short, long)]
+    output_dir: PathBuf,
 }
 
 #[derive(Debug, Parser)]
@@ -883,8 +885,15 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .await
                 .map_err(|e| miette!("{}", e))?;
             let response = ensure_ok(response).await?;
-            let response_text = response.text().await.map_err(|e| miette!("{}", e))?;
-            println!("{}", response_text);
+            let result: std::collections::HashMap<String, String> =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            std::fs::create_dir_all(&export_args.output_dir).into_diagnostic()?;
+            for (extension, content) in &result {
+                let filename = format!("export.{}", extension);
+                let path = export_args.output_dir.join(&filename);
+                std::fs::write(&path, content).into_diagnostic()?;
+                println!("Wrote {}", filename);
+            }
         }
         Commands::List(list_args) => match list_args.command {
             ListCommands::Parser { page, limit } => {
