@@ -212,6 +212,149 @@ pub(crate) mod tests {
     }
 
     #[sqlx::test]
+    async fn test_create_note_removes_ancestor_tags(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        // Providing `a` and `a:1` — only `a:1` should be stored
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "Test".to_string(),
+                keywords: vec![],
+                tags: vec!["a".to_string(), "a:1".to_string()],
+                is_suspended: false,
+                custom_data: Map::new(),
+            }],
+        };
+        let res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        assert!(res.is_ok());
+        let mut tags = res.unwrap().notes[0].tags.clone();
+        tags.sort();
+        assert_eq!(tags, vec!["a:1"]);
+    }
+
+    #[sqlx::test]
+    async fn test_create_note_removes_ancestor_tags_three_levels(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        // `a`, `a:b`, `a:b:1` — only `a:b:1` should be stored
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "Test".to_string(),
+                keywords: vec![],
+                tags: vec!["a".to_string(), "a:b".to_string(), "a:b:1".to_string()],
+                is_suspended: false,
+                custom_data: Map::new(),
+            }],
+        };
+        let res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        assert!(res.is_ok());
+        let mut tags = res.unwrap().notes[0].tags.clone();
+        tags.sort();
+        assert_eq!(tags, vec!["a:b:1"]);
+    }
+
+    #[sqlx::test]
+    async fn test_update_note_modify_tags_removes_ancestors(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        let create_res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "Test".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await;
+        assert!(create_res.is_ok());
+        let note_id = create_res.unwrap().notes[0].id;
+
+        // Add `a` and `a:1` via ModifyTags — only `a:1` should be stored
+        let update_res = update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                data: None,
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::ModifyTags {
+                    tags_to_remove: None,
+                    tags_to_add: Some(vec!["a".to_string(), "a:1".to_string()]),
+                },
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await;
+        assert!(update_res.is_ok());
+        let mut tags = update_res.unwrap().notes[0].tags.clone();
+        tags.sort();
+        assert_eq!(tags, vec!["a:1"]);
+    }
+
+    #[sqlx::test]
+    async fn test_update_note_set_tags_removes_ancestors(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        let create_res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "Test".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await;
+        assert!(create_res.is_ok());
+        let note_id = create_res.unwrap().notes[0].id;
+
+        // SetTags with `a`, `a:b`, `x` — `a` is ancestor of `a:b`, so only `a:b` and `x` kept
+        let update_res = update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                data: None,
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::SetTags(vec![
+                    "a".to_string(),
+                    "a:b".to_string(),
+                    "x".to_string(),
+                ]),
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await;
+        assert!(update_res.is_ok());
+        let mut tags = update_res.unwrap().notes[0].tags.clone();
+        tags.sort();
+        assert_eq!(tags, vec!["a:b", "x"]);
+    }
+
+    #[sqlx::test]
     async fn test_update_note_unused_tag(pool: SqlitePool) -> () {
         // Create a tag
         let request = CreateTagRequest {

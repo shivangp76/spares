@@ -232,6 +232,18 @@ pub fn mean(vec: &[f64]) -> Option<f64> {
     Some(sum / count)
 }
 
+/// Removes tags that are ancestors of other tags in the set.
+/// A tag `a` is an ancestor of `a:b`, so if both are present only `a:b` is kept.
+pub fn remove_ancestor_tags(tags: Vec<String>) -> Vec<String> {
+    tags.iter()
+        .filter(|tag| {
+            let prefix = format!("{}:", tag);
+            !tags.iter().any(|other| other.starts_with(&prefix))
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn parse_list(data: &str) -> Vec<String> {
     data.split(',')
         .map(|x| x.trim().to_string())
@@ -269,6 +281,68 @@ pub(crate) mod tests {
             input.into_iter().into_group_by_insertion(),
             vec![("a", vec![1, 3]), ("b", vec![2, 5]), ("c", vec![4])]
         );
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_keeps_most_specific() {
+        // `a` is an ancestor of `a:1`, so only `a:1` should remain
+        let mut result = remove_ancestor_tags(vec!["a".to_string(), "a:1".to_string()]);
+        result.sort();
+        assert_eq!(result, vec!["a:1"]);
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_three_levels() {
+        // `a`, `a:b`, and `a:b:1` — only `a:b:1` should remain
+        let mut result = remove_ancestor_tags(vec![
+            "a".to_string(),
+            "a:b".to_string(),
+            "a:b:1".to_string(),
+        ]);
+        result.sort();
+        assert_eq!(result, vec!["a:b:1"]);
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_siblings_kept() {
+        // `a:1` and `a:2` are siblings — neither is an ancestor of the other
+        let mut result =
+            remove_ancestor_tags(vec!["a:1".to_string(), "a:2".to_string()]);
+        result.sort();
+        assert_eq!(result, vec!["a:1", "a:2"]);
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_no_overlap() {
+        // Unrelated tags — nothing is removed
+        let mut result =
+            remove_ancestor_tags(vec!["a".to_string(), "b".to_string(), "c:1".to_string()]);
+        result.sort();
+        assert_eq!(result, vec!["a", "b", "c:1"]);
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_mixed() {
+        // `a` is an ancestor of `a:b`, but `x` has no descendants — keep `a:b` and `x`
+        let mut result = remove_ancestor_tags(vec![
+            "a".to_string(),
+            "a:b".to_string(),
+            "x".to_string(),
+        ]);
+        result.sort();
+        assert_eq!(result, vec!["a:b", "x"]);
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_empty() {
+        let result = remove_ancestor_tags(vec![]);
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_remove_ancestor_tags_single() {
+        let result = remove_ancestor_tags(vec!["a:b".to_string()]);
+        assert_eq!(result, vec!["a:b"]);
     }
 
     #[test]
