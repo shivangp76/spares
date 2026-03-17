@@ -12,12 +12,12 @@ use crate::{
         placeholders, placeholders_2d,
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
         undo::{
-            insert_events,
-            payloads::{NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
+            create_event_group, insert_events,
+            payloads::{CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
         },
     },
     config::{read_internal_config, write_internal_config},
-    model::{Card, CardId, Note, NoteId, NoteLink, SpecialState, TagId},
+    model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
         CardData, MatchCardsResult, Parseable, add_order_to_note_data,
         extract_and_combine_keywords, find_parser,
@@ -154,7 +154,12 @@ async fn update_cards(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Result<(), Error> {
+async fn update_tags(
+    db: &SqlitePool,
+    tags: &UpdateTags,
+    note_id: NoteId,
+) -> Result<Vec<CreateTagPayload>, Error> {
+    let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     // Validate tags do not contain filtered tags
     let existing_filtered_tags_names: Vec<String> =
         sqlx::query_scalar(r"SELECT name FROM tag WHERE query IS NOT NULL")
@@ -287,6 +292,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
             .collect::<Vec<_>>();
 
         // Create new tags
+        let new_tag_names: Vec<String> = new_tags.iter().map(|s| (*s).clone()).collect();
         let tag_responses = try_join_all(
             new_tags
                 .into_iter()
@@ -299,12 +305,23 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
                             query: None,
                             auto_delete: DEFAULT_TAG_AUTO_DELETE,
                         },
-                        true,
+                        false,
                     )
                 })
                 .collect::<Vec<_>>(),
         )
         .await?;
+        new_tag_payloads.extend(
+            new_tag_names.into_iter().zip(tag_responses.iter()).map(|(name, resp)| {
+                CreateTagPayload {
+                    id: Some(resp.id),
+                    name,
+                    description: String::new(),
+                    query: None,
+                    auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                }
+            }),
+        );
         new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
 
         // Add these tags
@@ -326,7 +343,7 @@ async fn update_tags(db: &SqlitePool, tags: &UpdateTags, note_id: NoteId) -> Res
         })
         .await?;
     }
-    Ok(())
+    Ok(new_tag_payloads)
 }
 
 async fn update_note_links(
@@ -449,6 +466,7 @@ pub async fn update_notes(
 
     let mut parse_note_requests = Vec::new();
     let mut update_note_payloads: Vec<UpdateNotePayload> = Vec::new();
+    let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     let note_ids = selector.to_note_ids(db).await?;
     for note_id in &note_ids {
         let existing_note: Note = sqlx::query_as(r"SELECT * FROM note WHERE id = ?")
@@ -559,7 +577,7 @@ pub async fn update_notes(
         };
         update_cards(db, &old_cards, &new_cards, *note_id, at).await?;
 
-        update_tags(db, &tags, *note_id).await?;
+        new_tag_payloads.extend(update_tags(db, &tags, *note_id).await?);
 
         // Update note links
         update_note_links(db, *note_id, new_parser.as_ref(), new_data.as_str()).await?;
@@ -779,16 +797,17 @@ pub async fn update_notes(
         let payload = UpdateNotesPayload {
             notes: update_note_payloads,
         };
-        insert_events(
-            db,
-            &[(
-                crate::model::EventType::UpdateNotes,
-                serde_json::to_value(&payload).unwrap(),
-            )],
-            at,
-            None,
-        )
-        .await?;
+        let note_event = (EventType::UpdateNotes, serde_json::to_value(&payload).unwrap());
+        if new_tag_payloads.is_empty() {
+            insert_events(db, &[note_event], at, None).await?;
+        } else {
+            let mut events: Vec<(EventType, Value)> = new_tag_payloads
+                .into_iter()
+                .map(|p| (EventType::CreateTag, serde_json::to_value(&p).unwrap()))
+                .collect();
+            events.push(note_event);
+            create_event_group(db, events, at).await?;
+        }
     }
 
     Ok(note_responses)
