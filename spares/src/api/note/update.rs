@@ -19,6 +19,7 @@ use crate::{
         },
     },
     config::{read_internal_config, write_internal_config},
+    helpers::remove_ancestor_tags,
     model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
         CardData, MatchCardsResult, Parseable, add_order_to_note_data,
@@ -252,6 +253,7 @@ async fn update_tags(
     delete_empty_tags(db, &tags_to_check).await?;
 
     if let Some(tags_to_add) = tags_to_add {
+        let tags_to_add = &remove_ancestor_tags(tags_to_add.clone());
         if let Some(filtered_tag) = tags_to_add
             .iter()
             .find(|t| existing_filtered_tags_names.contains(t))
