@@ -19,7 +19,7 @@ mod reposition;
 mod utils;
 
 use crate::{
-    Error, LibraryError, SchedulerErrorKind,
+    ALLOWED_F64_ERROR, Error, LibraryError, SchedulerErrorKind,
     config::{SparesExternalConfig, read_external_config},
     helpers::{FractionalDays, get_start_end_local_date},
     model::{Card, RatingId, ReviewLog},
@@ -414,7 +414,7 @@ impl SrsScheduler for FSRS {
                     .easy_days
                     .days_to_workload_percentage
                     .values()
-                    .all(|v| (v - 1. / 7.).abs() < f64::EPSILON));
+                    .all(|v| (v - 1. / 7.).abs() < ALLOWED_F64_ERROR));
         if easy_days_disabled {
             if let Some(cards_and_dues) = dispersed_siblings {
                 let main_card_new_due = cards_and_dues

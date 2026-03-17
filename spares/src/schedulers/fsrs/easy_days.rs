@@ -24,7 +24,7 @@
 //             (sum_f64 + f, sum_i64 + i as f64)
 //         });
 //     // Each day cannot have no workload. If this is the case, reset all to the normal workload.
-//     if workload_percentages_sum.abs() < f64::EPSILON {
+//     if workload_percentages_sum.abs() < ALLOWED_F64_ERROR {
 //         return vec![1.; workload_percentage_and_review_count.len()];
 //     }
 //     workload_percentage_and_review_count
@@ -47,7 +47,7 @@
 //         && easy_days_config
 //             .days_to_workload_percentage
 //             .values()
-//             .all(|v| (v - 1.).abs() < f64::EPSILON)
+//             .all(|v| (v - 1.).abs() < ALLOWED_F64_ERROR)
 //     {
 //         return interval_and_review_count
 //             .iter()

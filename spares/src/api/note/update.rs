@@ -824,6 +824,7 @@ pub async fn update_notes(
 
 /// Apply an `UpdateNotes` event payload (used when undoing `UpdateNotes`).
 /// For each note, applies the `after` field values from each transition.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn update_notes_event(
     db: &SqlitePool,
     payload: UpdateNotesPayload,

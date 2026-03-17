@@ -1,5 +1,5 @@
 use crate::{
-    Error, LibraryError, SchedulerErrorKind,
+    ALLOWED_F64_ERROR, Error, LibraryError, SchedulerErrorKind,
     api::{
         execute_batched_query, placeholders_2d,
         undo::{
@@ -108,7 +108,7 @@ pub async fn update_cards(
         updated_card.due = new_due;
         updated_card.updated_at = updated_at;
         if let Some(new_desired_retention) = body.desired_retention
-            && (new_desired_retention - existing_card.desired_retention).abs() > f64::EPSILON
+            && (new_desired_retention - existing_card.desired_retention).abs() > ALLOWED_F64_ERROR
             && updated_card.state != NEW_CARD_STATE
         {
             let review_logs: Vec<ReviewLog> = sqlx::query_as(
@@ -145,20 +145,22 @@ pub async fn update_cards(
                     before: existing_card.due,
                     after: final_card.due,
                 }),
-                stability: (final_card.stability != existing_card.stability).then_some(
-                    Transition {
+                stability: ((final_card.stability - existing_card.stability).abs()
+                    > ALLOWED_F64_ERROR)
+                    .then_some(Transition {
                         before: existing_card.stability,
                         after: final_card.stability,
-                    },
-                ),
-                difficulty: (final_card.difficulty != existing_card.difficulty).then_some(
-                    Transition {
+                    }),
+                difficulty: ((final_card.difficulty - existing_card.difficulty).abs()
+                    > ALLOWED_F64_ERROR)
+                    .then_some(Transition {
                         before: existing_card.difficulty,
                         after: final_card.difficulty,
-                    },
-                ),
-                desired_retention: (final_card.desired_retention
-                    != existing_card.desired_retention)
+                    }),
+                desired_retention: ((final_card.desired_retention
+                    - existing_card.desired_retention)
+                    .abs()
+                    > ALLOWED_F64_ERROR)
                     .then_some(Transition {
                         before: existing_card.desired_retention,
                         after: final_card.desired_retention,
