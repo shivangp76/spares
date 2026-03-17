@@ -253,7 +253,7 @@ async fn update_tags(
     delete_empty_tags(db, &tags_to_check).await?;
 
     if let Some(tags_to_add) = tags_to_add {
-        let tags_to_add = &remove_ancestor_tags(tags_to_add.clone());
+        let tags_to_add = &remove_ancestor_tags(tags_to_add);
         if let Some(filtered_tag) = tags_to_add
             .iter()
             .find(|t| existing_filtered_tags_names.contains(t))
