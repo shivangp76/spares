@@ -35,6 +35,76 @@ use serde_json::{Value, to_value};
 use sqlx::{FromRow, sqlite::SqlitePool};
 use std::collections::HashMap;
 
+#[derive(Clone, Debug, Default, FromRow)]
+struct ReviewCard {
+    note_id: NoteId,
+    parser_name: String,
+    card_order: u32,
+    card_back_type: BackType,
+    card_id: i64,
+    card_state: StateId,
+}
+
+fn build_review_card_response(
+    ReviewCard {
+        note_id,
+        parser_name,
+        card_order,
+        card_back_type,
+        card_id,
+        card_state,
+    }: ReviewCard,
+    cards_left_by_state: HashMap<StateId, u32>,
+    time_estimate: Duration,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<GetReviewCardResponse, Error> {
+    let parser = find_parser(parser_name.as_str(), all_parsers)?;
+
+    let mut card_front_rendered_path =
+        parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
+    card_front_rendered_path.push(parser.get_output_filename(
+        RenderOutputType::Card(card_order as usize, CardSide::Front),
+        note_id,
+    ));
+
+    let mut note_raw_path =
+        get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
+    note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
+    note_raw_path.set_extension(parser.file_extension());
+
+    let card_back_rendered_path = match card_back_type {
+        BackType::NoteFilePath => {
+            let mut note_rendered_path =
+                parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
+            note_rendered_path
+                .push(parser.get_output_filename(RenderOutputType::Note, note_id));
+            CardBackRenderedPath::Note(note_rendered_path)
+        }
+        BackType::CardFilePath => {
+            let mut card_back_rendered_path =
+                parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
+            card_back_rendered_path.push(parser.get_output_filename(
+                RenderOutputType::Card(card_order as usize, CardSide::Back),
+                note_id,
+            ));
+            CardBackRenderedPath::CardBack(card_back_rendered_path)
+        }
+    };
+
+    Ok(GetReviewCardResponse {
+        note_id,
+        card_order,
+        card_id,
+        card_state,
+        card_front_rendered_path,
+        card_back_rendered_path,
+        note_raw_path,
+        parser_name,
+        cards_left_by_state,
+        time_estimate,
+    })
+}
+
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
@@ -74,15 +144,6 @@ pub async fn get_review_card(
     requested_date: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<Option<GetReviewCardResponse>, Error> {
-    #[derive(Clone, Debug, Default, FromRow)]
-    struct ReviewCard {
-        note_id: NoteId,
-        parser_name: String,
-        card_order: u32,
-        card_back_type: BackType,
-        card_id: i64,
-        card_state: StateId,
-    }
     let GetReviewCardRequest { filter } = body;
 
     // Unbury cards, if needed
@@ -235,65 +296,45 @@ pub async fn get_review_card(
         .map_err(|e| Error::Sqlx { source: e })?;
     let time_estimate = Duration::seconds(total_time_seconds as i64);
 
-    if let Some(ReviewCard {
-        note_id,
-        parser_name,
-        card_order,
-        card_back_type,
-        card_id,
-        card_state,
-    }) = review_card_opt
-    {
-        let parser = find_parser(parser_name.as_str(), all_parsers)?;
-        // Card front rendered path
-        let mut card_front_rendered_path =
-            parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
-        card_front_rendered_path.push(parser.get_output_filename(
-            RenderOutputType::Card(card_order as usize, CardSide::Front),
-            note_id,
-        ));
-
-        // Note raw path
-        let mut note_raw_path =
-            get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
-        note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-        note_raw_path.set_extension(parser.file_extension());
-
-        let card_back_rendered_path = match card_back_type {
-            BackType::NoteFilePath => {
-                // Note rendered path
-                let mut note_rendered_path =
-                    parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
-                note_rendered_path
-                    .push(parser.get_output_filename(RenderOutputType::Note, note_id));
-                CardBackRenderedPath::Note(note_rendered_path)
-            }
-            BackType::CardFilePath => {
-                // Card back rendered path
-                let mut card_back_rendered_path =
-                    parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
-                card_back_rendered_path.push(parser.get_output_filename(
-                    RenderOutputType::Card(card_order as usize, CardSide::Back),
-                    note_id,
-                ));
-                CardBackRenderedPath::CardBack(card_back_rendered_path)
-            }
-        };
-        let review_card_response = GetReviewCardResponse {
-            note_id,
-            card_order,
-            card_id,
-            card_state,
-            card_front_rendered_path,
-            card_back_rendered_path,
-            note_raw_path,
-            parser_name,
+    if let Some(review_card) = review_card_opt {
+        return Ok(Some(build_review_card_response(
+            review_card,
             cards_left_by_state,
             time_estimate,
-        };
-        return Ok(Some(review_card_response));
+            all_parsers,
+        )?));
     }
     Ok(None)
+}
+
+pub async fn get_review_card_by_id(
+    db: &SqlitePool,
+    card_id: CardId,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<Option<GetReviewCardResponse>, Error> {
+    let review_card_opt: Option<ReviewCard> = sqlx::query_as(
+        r#"SELECT
+            n.id as note_id,
+            p.name as parser_name,
+            c."order" as card_order,
+            c.back_type as card_back_type,
+            c.id as card_id,
+            c.state as card_state
+        FROM card c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        WHERE c.id = ?"#,
+    )
+    .bind(card_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
+    review_card_opt
+        .map(|rc| {
+            build_review_card_response(rc, HashMap::new(), Duration::zero(), all_parsers)
+        })
+        .transpose()
 }
 
 pub async fn update_filtered_tag_scheduler_data(
