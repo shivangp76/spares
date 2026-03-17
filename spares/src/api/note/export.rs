@@ -13,11 +13,11 @@ pub async fn export_notes(
     db: &SqlitePool,
     request: ExportNotesRequest,
     all_parsers: &[fn() -> Box<dyn Parseable>],
-) -> Result<String, Error> {
+) -> Result<HashMap<String, String>, Error> {
     let evaluator = Evaluator::new(&request.query);
     let note_ids = evaluator.get_note_ids(db).await?;
     if note_ids.is_empty() {
-        return Ok(String::new());
+        return Ok(HashMap::new());
     }
 
     let notes_data = get_render_note_data(db, Some(note_ids)).await?;
@@ -35,33 +35,32 @@ pub async fn export_notes(
             )
         })
         .into_group_map();
-    if grouped_parse_note_requests.keys().len() > 1 {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "All notes must have the same parser to be exported.".to_string(),
-        })));
+    if grouped_parse_note_requests.is_empty() {
+        return Ok(HashMap::new());
     }
-    if grouped_parse_note_requests.keys().len() == 0 {
-        return Ok(String::new());
-    }
-    let (parser_name, generate_note_files_requests) =
-        grouped_parse_note_requests.into_iter().next().unwrap();
-    let requests_ref: Vec<_> = generate_note_files_requests
-        .iter()
-        .map(|r| (ConstructFileDataType::Note, r))
-        .collect();
-    let parser = find_parser(parser_name, all_parsers)?;
-    let file_data = parser.construct_full_file_data(&requests_ref, &NoteImportAction::Update(0));
 
-    // Get template
-    let (export_template_contents, body_placeholder) = parser
-        .get_template_data(TemplateType::Export)
-        .map_err(|e| Error::Io {
-            description: format!(
-                "Failed to read template for parser {}",
-                &parser.get_parser_name()
-            ),
-            source: e,
-        })?;
-    let result = export_template_contents.replace(&body_placeholder, &file_data);
+    let mut result = HashMap::new();
+    for (parser_name, generate_note_files_requests) in grouped_parse_note_requests {
+        let requests_ref: Vec<_> = generate_note_files_requests
+            .iter()
+            .map(|r| (ConstructFileDataType::Note, r))
+            .collect();
+        let parser = find_parser(parser_name, all_parsers)?;
+        let file_data =
+            parser.construct_full_file_data(&requests_ref, &NoteImportAction::Update(0));
+
+        // Get template
+        let (export_template_contents, body_placeholder) = parser
+            .get_template_data(TemplateType::Export)
+            .map_err(|e| Error::Io {
+                description: format!(
+                    "Failed to read template for parser {}",
+                    &parser.get_parser_name()
+                ),
+                source: e,
+            })?;
+        let rendered = export_template_contents.replace(&body_placeholder, &file_data);
+        result.insert(parser.file_extension().to_string(), rendered);
+    }
     Ok(result)
 }
