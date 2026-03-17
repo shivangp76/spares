@@ -169,6 +169,12 @@ pub struct UpdateNotesPayload {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RateCardPayload {
+    pub review_log_id: i64,
+    pub card: UpdateCardPayload,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdateCardPayload {
     // This can't be a Vec<CardId> since each card will have a different old copy of the data.
     pub card_id: CardId,

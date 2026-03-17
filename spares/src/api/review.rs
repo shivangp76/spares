@@ -5,7 +5,7 @@ use crate::{
         card::{delete_card_tags, unbury_cards},
         undo::{
             insert_events,
-            payloads::{Transition, UpdateCardPayload},
+            payloads::{RateCardPayload, Transition, UpdateCardPayload},
         },
     },
     config::{read_external_config, read_internal_config, write_internal_config},
@@ -463,8 +463,8 @@ pub async fn rate_card(
     }
 
     // Add entry to review_log
-    let _insert_result =
-        sqlx::query(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    let review_log_id: i64 =
+        sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
             .bind(new_review_log.card_id)
             .bind(new_review_log.reviewed_at.timestamp())
             .bind(new_review_log.rating)
@@ -474,7 +474,7 @@ pub async fn rate_card(
             .bind(new_review_log.rate_duration)
             .bind(new_review_log.previous_state)
             .bind(&new_review_log.custom_data)
-            .execute(db)
+            .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -494,35 +494,38 @@ pub async fn rate_card(
     .map_err(|e| Error::Sqlx { source: e })?;
 
     if log {
-        let payload = vec![UpdateCardPayload {
-            card_id,
-            order: None,
-            back_type: None,
-            due: Some(Transition {
-                before: before_card.due,
-                after: updated_card.due,
-            }),
-            stability: Some(Transition {
-                before: before_card.stability,
-                after: updated_card.stability,
-            }),
-            difficulty: Some(Transition {
-                before: before_card.difficulty,
-                after: updated_card.difficulty,
-            }),
-            desired_retention: None,
-            special_state: None,
-            state: Some(Transition {
-                before: before_card.state,
-                after: updated_card.state,
-            }),
-            custom_data: (updated_card.custom_data != before_card.custom_data).then_some(
-                Transition {
-                    before: before_card.custom_data,
-                    after: updated_card.custom_data,
-                },
-            ),
-        }];
+        let payload = RateCardPayload {
+            review_log_id,
+            card: UpdateCardPayload {
+                card_id,
+                order: None,
+                back_type: None,
+                due: Some(Transition {
+                    before: before_card.due,
+                    after: updated_card.due,
+                }),
+                stability: Some(Transition {
+                    before: before_card.stability,
+                    after: updated_card.stability,
+                }),
+                difficulty: Some(Transition {
+                    before: before_card.difficulty,
+                    after: updated_card.difficulty,
+                }),
+                desired_retention: None,
+                special_state: None,
+                state: Some(Transition {
+                    before: before_card.state,
+                    after: updated_card.state,
+                }),
+                custom_data: (updated_card.custom_data != before_card.custom_data).then_some(
+                    Transition {
+                        before: before_card.custom_data,
+                        after: updated_card.custom_data,
+                    },
+                ),
+            },
+        };
         insert_events(
             db,
             &[(EventType::RateCard, to_value(&payload).unwrap())],

@@ -3,7 +3,7 @@ use crate::{
     Error,
     api::undo::payloads::{
         CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
-        DeleteParserPayload, DeleteTagPayload, UpdateCardPayload, UpdateNotePayload,
+        DeleteParserPayload, DeleteTagPayload, RateCardPayload, UpdateCardPayload, UpdateNotePayload,
         UpdateNotesPayload, UpdateParserPayload, UpdateTagPayload,
     },
     model::{Event, EventType},
@@ -177,8 +177,30 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }
+        EventType::RateCard => {
+            let payload: RateCardPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            sqlx::query(r"DELETE FROM review_log WHERE id = ?")
+                .bind(payload.review_log_id)
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            let p = payload.card;
+            let undo_payloads = vec![UpdateCardPayload {
+                card_id: p.card_id,
+                order: p.order.map(|t| t.swap()),
+                back_type: p.back_type.map(|t| t.swap()),
+                due: p.due.map(|t| t.swap()),
+                stability: p.stability.map(|t| t.swap()),
+                difficulty: p.difficulty.map(|t| t.swap()),
+                desired_retention: p.desired_retention.map(|t| t.swap()),
+                special_state: p.special_state.map(|t| t.swap()),
+                state: p.state.map(|t| t.swap()),
+                custom_data: p.custom_data.map(|t| t.swap()),
+            }];
+            Ok(serde_json::to_value(undo_payloads).unwrap())
+        }
         EventType::UpdateCards
-        | EventType::RateCard
         | EventType::ForgetCard
         | EventType::AdvanceCards
         | EventType::PostponeCards
