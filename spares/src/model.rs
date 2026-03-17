@@ -226,7 +226,7 @@ pub enum EventType {
     UnburyCards,
     RateCard,
     /// Shares payload schema with `UpdateCards`
-    BuryCard,
+    BuryCards,
     /// Shares payload schema with `UpdateCards`
     AdvanceCards,
     /// Shares payload schema with `UpdateCards`

@@ -31,7 +31,7 @@ pub async fn update_card_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateCardsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_card_res = update_card(&data.db, body, Utc::now())
+    let update_card_res = update_card(&data.db, body, Utc::now(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_card_res))
@@ -51,7 +51,7 @@ pub async fn forget_card_handler(
     Path(card_id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let card_res = spares::api::card::forget_card(&data.db, card_id, Utc::now())
+    let card_res = spares::api::card::forget_card(&data.db, card_id, Utc::now(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(card_res))
@@ -60,7 +60,7 @@ pub async fn forget_card_handler(
 pub async fn unbury_cards_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    spares::api::card::unbury_cards(&data.db, Utc::now())
+    spares::api::card::unbury_cards(&data.db, Utc::now(), true)
         .await
         .map_err(error_to_response)?;
     Ok(Json(()))

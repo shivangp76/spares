@@ -22,7 +22,7 @@ use crate::{
         fetch_batched_query, placeholders, placeholders_2d,
         undo::payloads::{
             CreateParserPayload, CreateTagPayload, DeleteParserPayload, DeleteTagPayload,
-            UpdateParserPayload, UpdateTagPayload,
+            UpdateCardPayload, UpdateParserPayload, UpdateTagPayload,
         },
     },
     model::{Event, EventType},
@@ -152,6 +152,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
 
 #[allow(clippy::too_many_lines)]
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
+    use crate::api::card::update_card_event;
     use crate::api::parser::{create_parser_event, delete_parser_event, update_parser_event};
     use crate::api::tag::{create_tag_event, delete_tag_event, update_tag_event};
 
@@ -186,6 +187,18 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let id = payload.id;
             // Undo payload already has .after = value to restore (create_undo_event swapped it)
             update_tag_event(db, payload, id, false).await?;
+        }
+        EventType::UpdateCards
+        | EventType::RateCard
+        | EventType::ForgetCard
+        | EventType::AdvanceCards
+        | EventType::PostponeCards
+        | EventType::BuryCards
+        | EventType::UnburyCards => {
+            // Undo payload already has .after = value to restore (create_undo_event swapped it)
+            let payloads: Vec<UpdateCardPayload> =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            update_card_event(db, payloads, false).await?;
         }
         _ => {
             todo!()

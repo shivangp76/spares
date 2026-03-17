@@ -1,8 +1,14 @@
 use crate::{
     Error, LibraryError, SchedulerErrorKind,
-    api::{execute_batched_query, placeholders_2d},
+    api::{
+        execute_batched_query, placeholders_2d,
+        undo::{
+            insert_events,
+            payloads::{Transition, UpdateCardPayload},
+        },
+    },
     config::read_external_config,
-    model::{Card, CardId, NEW_CARD_STATE, NoteId, ReviewLog, SpecialState, TagId},
+    model::{Card, CardId, EventType, NEW_CARD_STATE, NoteId, ReviewLog, SpecialState, TagId},
     schedulers::get_scheduler_from_string,
     schema::card::{
         CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
@@ -10,6 +16,7 @@ use crate::{
     search::evaluator::Evaluator,
 };
 use chrono::{DateTime, Utc};
+use serde_json::to_value;
 use sqlx::sqlite::SqlitePool;
 
 pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error> {
@@ -33,10 +40,12 @@ pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardRespo
         .collect::<Vec<_>>())
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn update_card(
     db: &SqlitePool,
     body: UpdateCardsRequest,
     at: DateTime<Utc>,
+    log: bool,
 ) -> Result<Vec<CardResponse>, Error> {
     let card_ids = match body.selector {
         CardsSelector::Ids(vec) => vec,
@@ -46,6 +55,7 @@ pub async fn update_card(
         }
     };
     let mut card_responses = Vec::new();
+    let mut card_payloads: Vec<UpdateCardPayload> = Vec::new();
     let requested_special_state = body.special_state.map(|x| {
         x.map(|y| match y {
             SpecialStateUpdate::Suspended => SpecialState::Suspended,
@@ -119,9 +129,136 @@ pub async fn update_card(
                     .await?;
             }
         }
-        card_responses.push(CardResponse::new(&updated_card));
+        // Read the final card state from DB (reschedule may have changed due/stability/difficulty)
+        let final_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        if log {
+            card_payloads.push(UpdateCardPayload {
+                card_id,
+                order: None,
+                back_type: None,
+                due: (final_card.due != existing_card.due).then_some(Transition {
+                    before: existing_card.due,
+                    after: final_card.due,
+                }),
+                stability: (final_card.stability != existing_card.stability).then_some(
+                    Transition {
+                        before: existing_card.stability,
+                        after: final_card.stability,
+                    },
+                ),
+                difficulty: (final_card.difficulty != existing_card.difficulty).then_some(
+                    Transition {
+                        before: existing_card.difficulty,
+                        after: final_card.difficulty,
+                    },
+                ),
+                desired_retention: (final_card.desired_retention
+                    != existing_card.desired_retention)
+                    .then_some(Transition {
+                        before: existing_card.desired_retention,
+                        after: final_card.desired_retention,
+                    }),
+                special_state: (final_card.special_state != existing_card.special_state).then_some(
+                    Transition {
+                        before: existing_card.special_state,
+                        after: final_card.special_state,
+                    },
+                ),
+                state: (final_card.state != existing_card.state).then_some(Transition {
+                    before: existing_card.state,
+                    after: final_card.state,
+                }),
+                custom_data: (final_card.custom_data != existing_card.custom_data).then_some(
+                    Transition {
+                        before: existing_card.custom_data,
+                        after: final_card.custom_data.clone(),
+                    },
+                ),
+            });
+        }
+        card_responses.push(CardResponse::new(&final_card));
+    }
+    if log && !card_payloads.is_empty() {
+        insert_events(
+            db,
+            &[(EventType::UpdateCards, to_value(&card_payloads).unwrap())],
+            at,
+            None,
+        )
+        .await?;
     }
     Ok(card_responses)
+}
+
+/// Applies a list of card updates directly, restoring the `.after` value for each field.
+/// Used by the undo system to replay or reverse card state changes.
+pub async fn update_card_event(
+    db: &SqlitePool,
+    payloads: Vec<UpdateCardPayload>,
+    log: bool,
+) -> Result<(), Error> {
+    let at = Utc::now();
+    for payload in &payloads {
+        let existing_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(payload.card_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let new_due = payload.due.as_ref().map_or(existing_card.due, |t| t.after);
+        let new_stability = payload
+            .stability
+            .as_ref()
+            .map_or(existing_card.stability, |t| t.after);
+        let new_difficulty = payload
+            .difficulty
+            .as_ref()
+            .map_or(existing_card.difficulty, |t| t.after);
+        let new_desired_retention = payload
+            .desired_retention
+            .as_ref()
+            .map_or(existing_card.desired_retention, |t| t.after);
+        let new_special_state = payload
+            .special_state
+            .as_ref()
+            .map_or(existing_card.special_state, |t| t.after);
+        let new_state = payload
+            .state
+            .as_ref()
+            .map_or(existing_card.state, |t| t.after);
+        let new_custom_data = payload
+            .custom_data
+            .as_ref()
+            .map_or_else(|| existing_card.custom_data.clone(), |t| t.after.clone());
+        sqlx::query(
+            r"UPDATE card SET due = ?, stability = ?, difficulty = ?, desired_retention = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(new_due.timestamp())
+        .bind(new_stability)
+        .bind(new_difficulty)
+        .bind(new_desired_retention)
+        .bind(new_special_state)
+        .bind(new_state)
+        .bind(&new_custom_data)
+        .bind(at.timestamp())
+        .bind(payload.card_id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    if log && !payloads.is_empty() {
+        insert_events(
+            db,
+            &[(EventType::UpdateCards, to_value(&payloads).unwrap())],
+            at,
+            None,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn get_leeches(
@@ -145,12 +282,14 @@ pub async fn forget_card(
     db: &SqlitePool,
     card_id: CardId,
     now: DateTime<Utc>,
+    log: bool,
 ) -> Result<CardResponse, Error> {
-    let mut card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+    let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+    let mut card = before_card.clone();
     card.stability = 0.0;
     card.difficulty = 0.0;
     card.due = now;
@@ -166,19 +305,98 @@ pub async fn forget_card(
         .execute(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+    if log {
+        let payload = vec![UpdateCardPayload {
+            card_id,
+            order: None,
+            back_type: None,
+            due: Some(Transition {
+                before: before_card.due,
+                after: card.due,
+            }),
+            stability: Some(Transition {
+                before: before_card.stability,
+                after: card.stability,
+            }),
+            difficulty: Some(Transition {
+                before: before_card.difficulty,
+                after: card.difficulty,
+            }),
+            desired_retention: None,
+            special_state: None,
+            state: Some(Transition {
+                before: before_card.state,
+                after: card.state,
+            }),
+            custom_data: None,
+        }];
+        insert_events(
+            db,
+            &[(EventType::ForgetCard, to_value(&payload).unwrap())],
+            now,
+            None,
+        )
+        .await?;
+    }
     Ok(CardResponse::new(&card))
 }
 
-pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>) -> Result<(), Error> {
-    let _unbury_result = sqlx::query(
-        r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
-    )
-    .bind(now.timestamp())
-    .bind(SpecialState::UserBuried)
-    .bind(SpecialState::SchedulerBuried)
-    .execute(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
+pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>, log: bool) -> Result<(), Error> {
+    if log {
+        let cards_to_unbury: Vec<Card> =
+            sqlx::query_as(r"SELECT * FROM card WHERE special_state IN (?, ?)")
+                .bind(SpecialState::UserBuried)
+                .bind(SpecialState::SchedulerBuried)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        sqlx::query(
+            r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
+        )
+        .bind(now.timestamp())
+        .bind(SpecialState::UserBuried)
+        .bind(SpecialState::SchedulerBuried)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        if !cards_to_unbury.is_empty() {
+            let payloads: Vec<UpdateCardPayload> = cards_to_unbury
+                .iter()
+                .map(|card| UpdateCardPayload {
+                    card_id: card.id,
+                    order: None,
+                    back_type: None,
+                    due: None,
+                    stability: None,
+                    difficulty: None,
+                    desired_retention: None,
+                    special_state: Some(Transition {
+                        before: card.special_state,
+                        after: None,
+                    }),
+                    state: None,
+                    custom_data: None,
+                })
+                .collect();
+            insert_events(
+                db,
+                &[(EventType::UnburyCards, to_value(&payloads).unwrap())],
+                now,
+                None,
+            )
+            .await?;
+        }
+    } else {
+        sqlx::query(
+            r"UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?)",
+        )
+        .bind(now.timestamp())
+        .bind(SpecialState::UserBuried)
+        .bind(SpecialState::SchedulerBuried)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
     Ok(())
 }
 
@@ -273,7 +491,7 @@ mod tests {
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
             due: None,
         };
-        let update_card_response = update_card(&pool, update_card_request, Utc::now()).await;
+        let update_card_response = update_card(&pool, update_card_request, Utc::now(), false).await;
         assert!(update_card_response.is_ok());
 
         // Verify card is updated
