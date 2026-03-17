@@ -29,8 +29,8 @@ use spares::{
     },
     schema::{
         card::{
-            CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
-            UpdateCardsResponse,
+            CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UnburyRequest,
+            UpdateCardsRequest, UpdateCardsResponse,
         },
         note::{
             CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest,
@@ -113,7 +113,10 @@ enum Commands {
         scheduler_name: String,
     },
     /// Unbury all cards
-    Unbury,
+    Unbury {
+        #[arg(short, long)]
+        query: Option<String>,
+    },
     /// Advance cards (review material ahead of time)
     Advance(AdvanceArgs),
     /// Postpone cards (delay reviews)
@@ -1312,10 +1315,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
         }
-        Commands::Unbury => {
+        Commands::Unbury { query } => {
             let url = format!("{}/api/cards/unbury", base_url);
+            let req = UnburyRequest { query };
             let response = client
                 .post(&url)
+                .json(&req)
                 .send()
                 .await
                 .map_err(|e| miette!("{}", e))?;
