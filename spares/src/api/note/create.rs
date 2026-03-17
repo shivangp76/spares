@@ -101,7 +101,7 @@ pub async fn create_notes(
             is_suspended,
             custom_data,
         } = create_note_request;
-        let mut tags = remove_ancestor_tags(tags.clone());
+        let mut tags = remove_ancestor_tags(tags);
         tags.sort();
         let custom_data_str = Value::Object(custom_data.clone());
         let (note_data, card_datas) = add_order_to_note_data(parser.as_ref(), data)?;
