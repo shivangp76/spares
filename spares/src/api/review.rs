@@ -23,6 +23,7 @@ use crate::{
     schema::review::{
         CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest,
         GetReviewCardResponse, RatingSubmission, StudyAction, SubmitStudyActionRequest,
+        SubmitStudyActionResponse,
     },
     search::evaluator::Evaluator,
 };
@@ -372,7 +373,7 @@ pub async fn rate_card(
     }: RatingSubmission,
     reviewed_at: DateTime<Utc>,
     log: bool,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
     // Validate input
     let filtered_tag_opt = if let Some(tag_id) = tag_id {
         let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
@@ -526,16 +527,17 @@ pub async fn rate_card(
                 ),
             },
         };
-        insert_events(
+        let event_ids = insert_events(
             db,
             &[(EventType::RateCard, to_value(&payload).unwrap())],
             reviewed_at,
             None,
         )
         .await?;
+        return Ok(Some(*event_ids.first().unwrap()));
     }
 
-    Ok(())
+    Ok(None)
 }
 
 pub async fn bury_card(
@@ -544,7 +546,7 @@ pub async fn bury_card(
     card_id: CardId,
     at: DateTime<Utc>,
     log: bool,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
     let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
@@ -611,15 +613,16 @@ pub async fn bury_card(
             }),
             custom_data: None,
         }];
-        insert_events(
+        let event_ids = insert_events(
             db,
             &[(EventType::BuryCards, to_value(&payload).unwrap())],
             at,
             None,
         )
         .await?;
+        return Ok(Some(*event_ids.first().unwrap()));
     }
-    Ok(())
+    Ok(None)
 }
 
 // Note that `reviewed_at` is not present in the request body since we don't want the user to be able to edit it. However, for testing purposes, we still want to be able to mimic calling this function on different days, so it is included as an argument.
@@ -627,7 +630,7 @@ pub async fn submit_study_action(
     db: &SqlitePool,
     body: SubmitStudyActionRequest,
     at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<SubmitStudyActionResponse, Error> {
     let SubmitStudyActionRequest {
         scheduler_name,
         action,
@@ -638,10 +641,14 @@ pub async fn submit_study_action(
     let config = read_external_config()?;
     match action {
         StudyAction::Rate(rating_submission) => {
-            rate_card(db, scheduler.as_ref(), rating_submission, at, true).await?;
+            return rate_card(db, scheduler.as_ref(), rating_submission, at, true)
+                .await
+                .map(|event_id| SubmitStudyActionResponse { event_id });
         }
         StudyAction::Bury { card_id } => {
-            bury_card(db, scheduler.as_ref(), card_id, at, true).await?;
+            return bury_card(db, scheduler.as_ref(), card_id, at, true)
+                .await
+                .map(|event_id| SubmitStudyActionResponse { event_id });
         }
         StudyAction::Advance { count, query } => {
             let move_cards_result = scheduler.advance(db, &config, count, query, at).await?;
@@ -706,7 +713,7 @@ pub async fn submit_study_action(
                 .await?;
         }
     }
-    Ok(())
+    Ok(SubmitStudyActionResponse { event_id: None })
 }
 
 #[cfg(test)]

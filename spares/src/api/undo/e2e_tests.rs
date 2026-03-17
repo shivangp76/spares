@@ -2,7 +2,7 @@
 //! including dependency error paths. Also covers apply_event for parser events (via undo flow).
 //! Also covers card undo: update, forget, bury, unbury, rate, advance, postpone.
 
-use crate::api::card::{forget_card, unbury_cards, update_card};
+use crate::api::card::{forget_card, unbury_cards, update_cards};
 use crate::api::note::{create_notes, update_notes};
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::parser::{create_parser, create_parser_event, delete_parser, update_parser};
@@ -14,7 +14,9 @@ use crate::api::undo::{create_event_group, insert_events, undo_event};
 use crate::model::{Card, CardId, EventType, SpecialState};
 use crate::parsers::get_all_parsers;
 use crate::schema::card::{CardsSelector, SpecialStateUpdate, UpdateCardsRequest};
-use crate::schema::note::{CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags};
+use crate::schema::note::{
+    CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
+};
 use crate::schema::review::{RatingSubmission, StudyAction, SubmitStudyActionRequest};
 use crate::schema::tag::{TagSelector, UpdateTagRequest};
 use crate::schema::undo::UndoEventRequest;
@@ -49,9 +51,15 @@ async fn create_card_helper(pool: &SqlitePool) -> CardId {
 
 #[sqlx::test]
 async fn e2e_undo_create_parser_restores_state(pool: SqlitePool) {
-    let p = create_parser(&pool, crate::schema::parser::CreateParserRequest { name: "e2e".to_string() }, true)
-        .await
-        .unwrap();
+    let p = create_parser(
+        &pool,
+        crate::schema::parser::CreateParserRequest {
+            name: "e2e".to_string(),
+        },
+        true,
+    )
+    .await
+    .unwrap();
     let id = p.id;
 
     let res = undo_event(
@@ -164,9 +172,18 @@ async fn e2e_undo_group_undoes_all_events_in_group(pool: SqlitePool) {
     .await
     .unwrap();
     let events = vec![
-        (EventType::CreateParser, json!({"id": p1.id, "name": p1.name})),
-        (EventType::CreateParser, json!({"id": p2.id, "name": p2.name})),
-        (EventType::CreateParser, json!({"id": p3.id, "name": p3.name})),
+        (
+            EventType::CreateParser,
+            json!({"id": p1.id, "name": p1.name}),
+        ),
+        (
+            EventType::CreateParser,
+            json!({"id": p2.id, "name": p2.name}),
+        ),
+        (
+            EventType::CreateParser,
+            json!({"id": p3.id, "name": p3.name}),
+        ),
     ];
     let group_id = create_event_group(&pool, events, at).await.unwrap();
 
@@ -187,8 +204,14 @@ async fn e2e_undo_group_undoes_all_events_in_group(pool: SqlitePool) {
     .await
     .unwrap();
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser").fetch_one(&pool).await.unwrap();
-    assert_eq!(count, 0, "undo group of 3 CreateParser must remove all 3 parsers");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "undo group of 3 CreateParser must remove all 3 parsers"
+    );
 }
 
 #[sqlx::test]
@@ -243,7 +266,9 @@ async fn e2e_undo_delete_parser_with_notes_fails_with_dependency_error(pool: Sql
 }
 
 #[sqlx::test]
-async fn e2e_undo_single_event_in_group_undoes_only_that_event_when_undo_group_false(pool: SqlitePool) {
+async fn e2e_undo_single_event_in_group_undoes_only_that_event_when_undo_group_false(
+    pool: SqlitePool,
+) {
     let at = Utc::now();
     let p1 = create_parser_event(
         &pool,
@@ -266,15 +291,22 @@ async fn e2e_undo_single_event_in_group_undoes_only_that_event_when_undo_group_f
     .await
     .unwrap();
     let events = vec![
-        (EventType::CreateParser, json!({"id": p1.id, "name": p1.name})),
-        (EventType::CreateParser, json!({"id": p2.id, "name": p2.name})),
+        (
+            EventType::CreateParser,
+            json!({"id": p1.id, "name": p1.name}),
+        ),
+        (
+            EventType::CreateParser,
+            json!({"id": p2.id, "name": p2.name}),
+        ),
     ];
     let group_id = create_event_group(&pool, events, at).await.unwrap();
-    let second_id: i64 = sqlx::query_scalar("SELECT id FROM event WHERE group_id = ? ORDER BY id LIMIT 1 OFFSET 1")
-        .bind(group_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let second_id: i64 =
+        sqlx::query_scalar("SELECT id FROM event WHERE group_id = ? ORDER BY id LIMIT 1 OFFSET 1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let _ = undo_event(
         &pool,
@@ -286,8 +318,14 @@ async fn e2e_undo_single_event_in_group_undoes_only_that_event_when_undo_group_f
     .await
     .unwrap();
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser").fetch_one(&pool).await.unwrap();
-    assert_eq!(count, 1, "undo single event without group should remove only one parser");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "undo single event without group should remove only one parser"
+    );
 }
 
 #[sqlx::test]
@@ -308,7 +346,10 @@ async fn e2e_undo_create_tag_restores_state(pool: SqlitePool) {
 
     let res = undo_event(
         &pool,
-        UndoEventRequest { event_id: None, undo_group: false },
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
     )
     .await
     .unwrap();
@@ -330,7 +371,10 @@ async fn e2e_undo_delete_tag_restores_tag(pool: SqlitePool) {
 
     let res = undo_event(
         &pool,
-        UndoEventRequest { event_id: None, undo_group: false },
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
     )
     .await
     .unwrap();
@@ -363,7 +407,10 @@ async fn e2e_undo_update_tag_restores_previous_name(pool: SqlitePool) {
 
     undo_event(
         &pool,
-        UndoEventRequest { event_id: None, undo_group: false },
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
     )
     .await
     .unwrap();
@@ -389,7 +436,7 @@ async fn e2e_undo_update_card_restores_special_state(pool: SqlitePool) {
         .unwrap();
     assert_eq!(before.special_state, None);
 
-    update_card(
+    update_cards(
         &pool,
         UpdateCardsRequest {
             selector: CardsSelector::Ids(vec![card_id]),
@@ -410,16 +457,25 @@ async fn e2e_undo_update_card_restores_special_state(pool: SqlitePool) {
         .unwrap();
     assert_eq!(after.special_state, Some(SpecialState::Suspended));
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(restored.special_state, None, "undo UpdateCards must restore special_state to None");
+    assert_eq!(
+        restored.special_state, None,
+        "undo UpdateCards must restore special_state to None"
+    );
 }
 
 #[sqlx::test]
@@ -433,7 +489,7 @@ async fn e2e_undo_update_card_restores_due(pool: SqlitePool) {
     let original_due = before.due;
     let new_due = original_due + chrono::Duration::days(7);
 
-    update_card(
+    update_cards(
         &pool,
         UpdateCardsRequest {
             selector: CardsSelector::Ids(vec![card_id]),
@@ -447,9 +503,15 @@ async fn e2e_undo_update_card_restores_due(pool: SqlitePool) {
     .await
     .unwrap();
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
@@ -501,9 +563,15 @@ async fn e2e_undo_forget_card_restores_state(pool: SqlitePool) {
     assert_eq!(forgotten.stability, 0.0);
     assert_eq!(forgotten.difficulty, 0.0);
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
@@ -560,11 +628,20 @@ async fn e2e_undo_rate_card_restores_scheduling_state(pool: SqlitePool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(after.due > before.due, "rated card must have a future due date");
+    assert!(
+        after.due > before.due,
+        "rated card must have a future due date"
+    );
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
@@ -620,19 +697,28 @@ async fn e2e_undo_rate_card_deletes_review_log(pool: SqlitePool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(log_count_after_rate, log_count_before + 1, "rating must create a review log");
+    assert_eq!(
+        log_count_after_rate,
+        log_count_before + 1,
+        "rating must create a review log"
+    );
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let log_count_after_undo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        log_count_after_undo,
-        log_count_before,
+        log_count_after_undo, log_count_before,
         "undo RateCard must delete the review log"
     );
 }
@@ -659,16 +745,25 @@ async fn e2e_undo_bury_card_restores_special_state(pool: SqlitePool) {
         .unwrap();
     assert_eq!(buried.special_state, Some(SpecialState::UserBuried));
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(restored.special_state, None, "undo BuryCard must clear special_state");
+    assert_eq!(
+        restored.special_state, None,
+        "undo BuryCard must clear special_state"
+    );
 }
 
 #[sqlx::test]
@@ -692,9 +787,15 @@ async fn e2e_undo_unbury_cards_restores_buried_state(pool: SqlitePool) {
         .unwrap();
     assert_eq!(unburied.special_state, None);
 
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
         .bind(card_id)
@@ -742,7 +843,10 @@ async fn e2e_undo_advance_cards_restores_due(pool: SqlitePool) {
         &pool,
         SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
-            action: StudyAction::Advance { count: 1, query: None },
+            action: StudyAction::Advance {
+                count: 1,
+                query: None,
+            },
         },
         now,
     )
@@ -762,18 +866,20 @@ async fn e2e_undo_advance_cards_restores_due(pool: SqlitePool) {
 
     // Undo the most recent event (either RateCard or AdvanceCards)
     // We want to undo just the AdvanceCards event specifically
-    let advance_event_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM event WHERE kind = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(crate::model::EventType::AdvanceCards)
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    let advance_event_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM event WHERE kind = ? ORDER BY id DESC LIMIT 1")
+            .bind(crate::model::EventType::AdvanceCards)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
 
     if let Some(event_id) = advance_event_id {
         undo_event(
             &pool,
-            UndoEventRequest { event_id: Some(event_id), undo_group: false },
+            UndoEventRequest {
+                event_id: Some(event_id),
+                undo_group: false,
+            },
         )
         .await
         .unwrap();
@@ -824,20 +930,22 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
         &pool,
         SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
-            action: StudyAction::Postpone { count: 1, query: None },
+            action: StudyAction::Postpone {
+                count: 1,
+                query: None,
+            },
         },
         now,
     )
     .await
     .unwrap();
 
-    let postpone_event_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM event WHERE kind = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(crate::model::EventType::PostponeCards)
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    let postpone_event_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM event WHERE kind = ? ORDER BY id DESC LIMIT 1")
+            .bind(crate::model::EventType::PostponeCards)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
 
     if let Some(event_id) = postpone_event_id {
         let postponed: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
@@ -852,7 +960,10 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
 
         undo_event(
             &pool,
-            UndoEventRequest { event_id: Some(event_id), undo_group: false },
+            UndoEventRequest {
+                event_id: Some(event_id),
+                undo_group: false,
+            },
         )
         .await
         .unwrap();
@@ -873,11 +984,13 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
 #[sqlx::test]
 async fn e2e_undo_update_card_does_not_log_when_no_change(pool: SqlitePool) {
     let card_id = create_card_helper(&pool).await;
-    let event_count_before: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM event").fetch_one(&pool).await.unwrap();
+    let event_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     // Request with no field changes (all None)
-    update_card(
+    update_cards(
         &pool,
         UpdateCardsRequest {
             selector: CardsSelector::Ids(vec![card_id]),
@@ -891,8 +1004,10 @@ async fn e2e_undo_update_card_does_not_log_when_no_change(pool: SqlitePool) {
     .await
     .unwrap();
 
-    let event_count_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM event").fetch_one(&pool).await.unwrap();
+    let event_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     // An event IS logged (the selector matched 1 card), but the payload has no transitions.
     // The undo of such an event is a no-op but valid.
     assert_eq!(
@@ -934,9 +1049,15 @@ async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
     assert_eq!(count, 1, "note must exist after creation");
 
     // Undo CreateNotes
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note WHERE id = ?")
         .bind(note_id)
@@ -1003,9 +1124,15 @@ async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
     assert_eq!(count, 0, "note must be deleted");
 
     // Undo DeleteNotes
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     // Note must be restored with the same ID
     let restored_data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
@@ -1081,9 +1208,15 @@ async fn e2e_undo_update_notes_restores_data(pool: SqlitePool) {
     );
 
     // Undo UpdateNotes
-    undo_event(&pool, UndoEventRequest { event_id: None, undo_group: false })
-        .await
-        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let restored_data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
         .bind(note_id)
@@ -1100,11 +1233,10 @@ async fn e2e_undo_update_notes_restores_data(pool: SqlitePool) {
 async fn e2e_create_notes_with_new_tag_groups_events(pool: SqlitePool) {
     let parser = create_parser_helper(&pool, "markdown").await;
 
-    let last_event_id_before: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let last_event_id_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     let result = create_notes(
         &pool,
@@ -1132,7 +1264,11 @@ async fn e2e_create_notes_with_new_tag_groups_events(pool: SqlitePool) {
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(group_ids.len(), 2, "must have exactly 2 events (CreateTag + CreateNotes)");
+    assert_eq!(
+        group_ids.len(),
+        2,
+        "must have exactly 2 events (CreateTag + CreateNotes)"
+    );
     assert!(
         group_ids[0].is_some() && group_ids[0] == group_ids[1],
         "CreateTag and CreateNotes must share the same group_id, got {:?}",
@@ -1173,14 +1309,16 @@ async fn e2e_undo_create_notes_with_new_tag_removes_tag_when_undo_group(pool: Sq
     assert_eq!(tag_count_before, 1, "tag must exist after note creation");
 
     // Undo with undo_group: true — must remove both note and tag
-    let latest_event_id: i64 =
-        sqlx::query_scalar("SELECT id FROM event ORDER BY id DESC LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let latest_event_id: i64 = sqlx::query_scalar("SELECT id FROM event ORDER BY id DESC LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     undo_event(
         &pool,
-        UndoEventRequest { event_id: Some(latest_event_id), undo_group: true },
+        UndoEventRequest {
+            event_id: Some(latest_event_id),
+            undo_group: true,
+        },
     )
     .await
     .unwrap();
@@ -1190,7 +1328,10 @@ async fn e2e_undo_create_notes_with_new_tag_removes_tag_when_undo_group(pool: Sq
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(tag_count_after, 0, "undo with undo_group must remove the implicitly-created tag");
+    assert_eq!(
+        tag_count_after, 0,
+        "undo with undo_group must remove the implicitly-created tag"
+    );
 }
 
 #[sqlx::test]
@@ -1199,8 +1340,10 @@ async fn e2e_create_notes_with_existing_tag_does_not_group(pool: SqlitePool) {
     // Pre-create the tag so it already exists
     create_tag_helper(&pool, "existing_tag", "desc").await;
 
-    let event_count_before: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM event").fetch_one(&pool).await.unwrap();
+    let event_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     create_notes(
         &pool,
@@ -1221,8 +1364,10 @@ async fn e2e_create_notes_with_existing_tag_does_not_group(pool: SqlitePool) {
     .await
     .unwrap();
 
-    let event_count_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM event").fetch_one(&pool).await.unwrap();
+    let event_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         event_count_after,
         event_count_before + 1,
@@ -1234,7 +1379,10 @@ async fn e2e_create_notes_with_existing_tag_does_not_group(pool: SqlitePool) {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(group_id.is_none(), "CreateNotes with existing tag must not be grouped");
+    assert!(
+        group_id.is_none(),
+        "CreateNotes with existing tag must not be grouped"
+    );
 }
 
 #[sqlx::test]
@@ -1260,11 +1408,10 @@ async fn e2e_update_notes_with_new_tag_groups_events(pool: SqlitePool) {
     .unwrap();
     let note_id = result.notes[0].id;
 
-    let last_event_id_before: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let last_event_id_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     update_notes(
         &pool,
@@ -1292,7 +1439,11 @@ async fn e2e_update_notes_with_new_tag_groups_events(pool: SqlitePool) {
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(group_ids.len(), 2, "must have CreateTag + UpdateNotes events");
+    assert_eq!(
+        group_ids.len(),
+        2,
+        "must have CreateTag + UpdateNotes events"
+    );
     assert!(
         group_ids[0].is_some() && group_ids[0] == group_ids[1],
         "CreateTag and UpdateNotes must share the same group_id, got {:?}",
@@ -1351,14 +1502,16 @@ async fn e2e_undo_update_notes_with_new_tag_removes_tag_when_undo_group(pool: Sq
     assert_eq!(tag_count_before, 1, "tag must exist after update");
 
     // Undo the UpdateNotes event with undo_group: true
-    let latest_event_id: i64 =
-        sqlx::query_scalar("SELECT id FROM event ORDER BY id DESC LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let latest_event_id: i64 = sqlx::query_scalar("SELECT id FROM event ORDER BY id DESC LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     undo_event(
         &pool,
-        UndoEventRequest { event_id: Some(latest_event_id), undo_group: true },
+        UndoEventRequest {
+            event_id: Some(latest_event_id),
+            undo_group: true,
+        },
     )
     .await
     .unwrap();
@@ -1369,8 +1522,7 @@ async fn e2e_undo_update_notes_with_new_tag_removes_tag_when_undo_group(pool: Sq
             .await
             .unwrap();
     assert_eq!(
-        tag_count_after,
-        0,
+        tag_count_after, 0,
         "undo with undo_group must remove the tag created during note update"
     );
 }

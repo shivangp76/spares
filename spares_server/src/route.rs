@@ -3,7 +3,7 @@ use crate::{
     handlers::{
         card::{
             forget_card_handler, get_card_handler, get_cards_handler, get_leeches_handler,
-            unbury_cards_handler, update_card_handler,
+            unbury_cards_handler, update_cards_handler,
         },
         health_check_handler,
         note::{
@@ -74,7 +74,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/cards/{id}", get(get_card_handler))
         .route("/api/cards/note_id/{id}", get(get_cards_handler))
         .route("/api/cards/leeches", post(get_leeches_handler))
-        .route("/api/cards", patch(update_card_handler))
+        .route("/api/cards", patch(update_cards_handler))
         .route("/api/cards/{id}/forget", post(forget_card_handler))
         .route("/api/cards/unbury", post(unbury_cards_handler))
         // Review

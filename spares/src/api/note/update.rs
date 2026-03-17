@@ -13,7 +13,9 @@ use crate::{
         tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
         undo::{
             create_event_group, insert_events,
-            payloads::{CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
+            payloads::{
+                CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload,
+            },
         },
     },
     config::{read_internal_config, write_internal_config},
@@ -27,7 +29,7 @@ use crate::{
         get_cards, match_cards,
     },
     schema::{
-        note::{NoteResponse, NotesSelector, UpdateNotesRequest, UpdateTags},
+        note::{NoteResponse, NotesSelector, UpdateNotesRequest, UpdateNotesResponse, UpdateTags},
         tag::CreateTagRequest,
     },
     search::evaluator::Evaluator,
@@ -311,17 +313,15 @@ async fn update_tags(
                 .collect::<Vec<_>>(),
         )
         .await?;
-        new_tag_payloads.extend(
-            new_tag_names.into_iter().zip(tag_responses.iter()).map(|(name, resp)| {
-                CreateTagPayload {
-                    id: Some(resp.id),
-                    name,
-                    description: String::new(),
-                    query: None,
-                    auto_delete: DEFAULT_TAG_AUTO_DELETE,
-                }
-            }),
-        );
+        new_tag_payloads.extend(new_tag_names.into_iter().zip(tag_responses.iter()).map(
+            |(name, resp)| CreateTagPayload {
+                id: Some(resp.id),
+                name,
+                description: String::new(),
+                query: None,
+                auto_delete: DEFAULT_TAG_AUTO_DELETE,
+            },
+        ));
         new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
 
         // Add these tags
@@ -452,7 +452,7 @@ pub async fn update_notes(
     at: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
     log: bool,
-) -> Result<Vec<NoteResponse>, Error> {
+) -> Result<UpdateNotesResponse, Error> {
     let mut note_responses = Vec::new();
     // Destructuring is used so if the struct is ever updated, the compiler will warn us to make the appropriate changes here.
     let UpdateNotesRequest {
@@ -628,77 +628,76 @@ pub async fn update_notes(
         parse_note_requests.push((updated_note.parser_id, parse_note_request));
 
         // Build UpdateNotePayload for undo logging
-        if log
-            && let Some(before) = before_snapshot {
-                let after_snapshot = fetch_note_snapshot(
-                    db,
-                    *note_id,
-                    &updated_note.data,
-                    updated_note.created_at,
-                    updated_note.parser_id,
-                    &updated_note.custom_data,
-                )
-                .await?;
+        if log && let Some(before) = before_snapshot {
+            let after_snapshot = fetch_note_snapshot(
+                db,
+                *note_id,
+                &updated_note.data,
+                updated_note.created_at,
+                updated_note.parser_id,
+                &updated_note.custom_data,
+            )
+            .await?;
 
-                let data_transition = if before.data == after_snapshot.data {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.data.clone(),
-                        after: after_snapshot.data.clone(),
-                    })
-                };
-                let parser_id_transition = if before.parser_id == after_snapshot.parser_id {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.parser_id,
-                        after: after_snapshot.parser_id,
-                    })
-                };
-                let keywords_transition = if before.keywords == after_snapshot.keywords {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.keywords.clone(),
-                        after: after_snapshot.keywords.clone(),
-                    })
-                };
-                let tags_transition = if before.tags == after_snapshot.tags {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.tags.clone(),
-                        after: after_snapshot.tags.clone(),
-                    })
-                };
-                let custom_data_transition = if before.custom_data == after_snapshot.custom_data {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.custom_data.clone(),
-                        after: after_snapshot.custom_data.clone(),
-                    })
-                };
-                let cards_transition = if before.cards == after_snapshot.cards {
-                    None
-                } else {
-                    Some(Transition {
-                        before: before.cards.clone(),
-                        after: after_snapshot.cards.clone(),
-                    })
-                };
+            let data_transition = if before.data == after_snapshot.data {
+                None
+            } else {
+                Some(Transition {
+                    before: before.data.clone(),
+                    after: after_snapshot.data.clone(),
+                })
+            };
+            let parser_id_transition = if before.parser_id == after_snapshot.parser_id {
+                None
+            } else {
+                Some(Transition {
+                    before: before.parser_id,
+                    after: after_snapshot.parser_id,
+                })
+            };
+            let keywords_transition = if before.keywords == after_snapshot.keywords {
+                None
+            } else {
+                Some(Transition {
+                    before: before.keywords.clone(),
+                    after: after_snapshot.keywords.clone(),
+                })
+            };
+            let tags_transition = if before.tags == after_snapshot.tags {
+                None
+            } else {
+                Some(Transition {
+                    before: before.tags.clone(),
+                    after: after_snapshot.tags.clone(),
+                })
+            };
+            let custom_data_transition = if before.custom_data == after_snapshot.custom_data {
+                None
+            } else {
+                Some(Transition {
+                    before: before.custom_data.clone(),
+                    after: after_snapshot.custom_data.clone(),
+                })
+            };
+            let cards_transition = if before.cards == after_snapshot.cards {
+                None
+            } else {
+                Some(Transition {
+                    before: before.cards.clone(),
+                    after: after_snapshot.cards.clone(),
+                })
+            };
 
-                update_note_payloads.push(UpdateNotePayload {
-                    id: *note_id,
-                    data: data_transition,
-                    parser_id: parser_id_transition,
-                    keywords: keywords_transition,
-                    tags: tags_transition,
-                    custom_data: custom_data_transition,
-                    cards: cards_transition,
-                });
-            }
+            update_note_payloads.push(UpdateNotePayload {
+                id: *note_id,
+                data: data_transition,
+                parser_id: parser_id_transition,
+                keywords: keywords_transition,
+                tags: tags_transition,
+                custom_data: custom_data_transition,
+                cards: cards_transition,
+            });
+        }
     }
 
     if AUTOMATIC_REBUILD {
@@ -793,24 +792,34 @@ pub async fn update_notes(
     write_internal_config(&config)?;
 
     // Log event
-    if log && !update_note_payloads.is_empty() {
+    let event_id = if log && !update_note_payloads.is_empty() {
         let payload = UpdateNotesPayload {
             notes: update_note_payloads,
         };
-        let note_event = (EventType::UpdateNotes, serde_json::to_value(&payload).unwrap());
+        let note_event = (
+            EventType::UpdateNotes,
+            serde_json::to_value(&payload).unwrap(),
+        );
         if new_tag_payloads.is_empty() {
-            insert_events(db, &[note_event], at, None).await?;
+            let event_ids = insert_events(db, &[note_event], at, None).await?;
+            Some(*event_ids.first().unwrap())
         } else {
             let mut events: Vec<(EventType, Value)> = new_tag_payloads
                 .into_iter()
                 .map(|p| (EventType::CreateTag, serde_json::to_value(&p).unwrap()))
                 .collect();
             events.push(note_event);
-            create_event_group(db, events, at).await?;
+            let group_id = create_event_group(db, events, at).await?;
+            Some(group_id)
         }
-    }
+    } else {
+        None
+    };
 
-    Ok(note_responses)
+    Ok(UpdateNotesResponse {
+        notes: note_responses,
+        event_id,
+    })
 }
 
 /// Apply an `UpdateNotes` event payload (used when undoing `UpdateNotes`).
@@ -1007,7 +1016,7 @@ mod tests {
         schema::{
             note::{
                 CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest,
-                UpdateTags,
+                UpdateNotesResponse, UpdateTags,
             },
             review::{RatingSubmission, StudyAction, SubmitStudyActionRequest},
         },
@@ -1093,7 +1102,7 @@ mod tests {
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
-        let notes = notes_res.unwrap();
+        let UpdateNotesResponse { notes, .. } = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
         let note = notes.first().unwrap();
         let new_note_data_with_order: &str = indoc! {r"
@@ -1226,7 +1235,7 @@ mod tests {
         };
         let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
-        let notes = notes_res.unwrap();
+        let UpdateNotesResponse { notes, .. } = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
         let note = notes.first().unwrap();
 

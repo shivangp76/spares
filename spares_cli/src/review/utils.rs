@@ -6,8 +6,11 @@ use serde_json::Value;
 use spares::model::{CardId, NoteId};
 use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest};
 use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
+use spares::schema::card::{ForgetCardResponse, UpdateCardsResponse};
+use spares::schema::note::UpdateNotesResponse;
 use spares::schema::review::{
     Rating, RatingSubmission, StatisticsResponse, StudyAction, SubmitStudyActionRequest,
+    SubmitStudyActionResponse,
 };
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -101,7 +104,7 @@ pub async fn tag_note(
     tag_name: &str,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let request = UpdateNotesRequest {
         selector: NotesSelector::Ids(vec![note_id]),
         data: None,
@@ -126,7 +129,9 @@ pub async fn tag_note(
         let message = response_json.get("message");
         return Err(format!("Failed to add tag to note: {:?}", message));
     }
-    Ok(())
+    let update_response: UpdateNotesResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(update_response.event_id)
 }
 
 pub async fn note_id_to_cards(
@@ -151,7 +156,7 @@ pub async fn bury_card(
     card_id: CardId,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let submit_review_request = SubmitStudyActionRequest {
         scheduler_name: scheduler_name.to_string(),
         action: StudyAction::Bury { card_id },
@@ -169,14 +174,16 @@ pub async fn bury_card(
         let message = response_json.get("message");
         return Err(format!("Failed to bury card: {:?}", message));
     }
-    Ok(())
+    let submit_response: SubmitStudyActionResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(submit_response.event_id)
 }
 
 pub async fn bury_cards(
     card_ids: &[CardId],
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let body = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
@@ -196,16 +203,26 @@ pub async fn bury_cards(
         let message = response_json.get("message");
         return Err(format!("Failed to bury cards: {:?}", message));
     }
-    Ok(())
+    let update_response: UpdateCardsResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(update_response.event_id)
 }
 
-pub async fn suspend_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
+pub async fn suspend_note(
+    note_id: NoteId,
+    base_url: &str,
+    client: &Client,
+) -> Result<Option<i64>, String> {
     let cards: Vec<CardResponse> = note_id_to_cards(note_id, base_url, client).await?;
     let card_ids = cards.into_iter().map(|card| card.id).collect::<Vec<_>>();
     suspend_cards(&card_ids, base_url, client).await
 }
 
-pub async fn bury_note(note_id: NoteId, base_url: &str, client: &Client) -> Result<(), String> {
+pub async fn bury_note(
+    note_id: NoteId,
+    base_url: &str,
+    client: &Client,
+) -> Result<Option<i64>, String> {
     let cards: Vec<CardResponse> = note_id_to_cards(note_id, base_url, client).await?;
     let card_ids = cards
         .into_iter()
@@ -219,7 +236,7 @@ pub async fn suspend_cards(
     card_ids: &[CardId],
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let body = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids.to_vec()),
         desired_retention: None,
@@ -239,7 +256,9 @@ pub async fn suspend_cards(
         let message = response_json.get("message");
         return Err(format!("Failed to suspend card: {:?}", message));
     }
-    Ok(())
+    let update_response: UpdateCardsResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(update_response.event_id)
 }
 
 pub async fn submit_rating(
@@ -247,7 +266,7 @@ pub async fn submit_rating(
     rating_submission: RatingSubmission,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let update_review_request = SubmitStudyActionRequest {
         scheduler_name: scheduler_name.to_string(),
         action: StudyAction::Rate(rating_submission),
@@ -265,14 +284,16 @@ pub async fn submit_rating(
         let message = response_json.get("message");
         return Err(format!("Failed to submit rating: {:?}", message));
     }
-    Ok(())
+    let submit_response: SubmitStudyActionResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(submit_response.event_id)
 }
 
 pub async fn forget_card(
     card_id: i64,
     base_url: &str,
     client: &Client,
-) -> Result<spares::schema::card::CardResponse, String> {
+) -> Result<ForgetCardResponse, String> {
     let url = format!("{}/api/cards/{}/forget", base_url, card_id);
     let response = client
         .post(&url)
@@ -284,16 +305,16 @@ pub async fn forget_card(
         let message = response_json.get("message");
         return Err(message.unwrap().to_string());
     }
-    let card_response: spares::schema::card::CardResponse =
+    let forget_response: ForgetCardResponse =
         response.json().await.map_err(|e| format!("{}", e))?;
-    Ok(card_response)
+    Ok(forget_response)
 }
 
 pub async fn set_due_date_with_prompt<F>(
     card_ids: F,
     base_url: &str,
     client: &Client,
-) -> Result<bool, String>
+) -> Result<Option<Option<i64>>, String>
 where
     F: Fn(DateTime<Utc>) -> Vec<CardId>,
 {
@@ -302,10 +323,10 @@ where
     if let Ok(naive_date) = date_res {
         let naive_dt = naive_date.and_hms_opt(0, 0, 0).unwrap();
         let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, chrono::Utc);
-        set_due_date(card_ids(dt_utc), dt_utc, base_url, client).await?;
-        return Ok(true);
+        let event_id = set_due_date(card_ids(dt_utc), dt_utc, base_url, client).await?;
+        return Ok(Some(event_id));
     }
-    Ok(false)
+    Ok(None)
 }
 
 pub async fn set_due_date(
@@ -313,7 +334,7 @@ pub async fn set_due_date(
     due_date: DateTime<Utc>,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     let request = UpdateCardsRequest {
         selector: CardsSelector::Ids(card_ids),
         desired_retention: None,
@@ -332,14 +353,16 @@ pub async fn set_due_date(
         let message = response_json.get("message");
         return Err(message.unwrap().to_string());
     }
-    Ok(())
+    let update_response: UpdateCardsResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(update_response.event_id)
 }
 
 pub(super) async fn bury_until_later_today(
     card_id: CardId,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     // Get current time in UTC and convert to local timezone to get today's date
     let now_utc = Utc::now();
     // Calculate end of today (23:59:59) in local timezone, then convert to UTC
@@ -376,7 +399,9 @@ pub(super) async fn bury_until_later_today(
             |m| m.to_string(),
         ));
     }
-    Ok(())
+    let update_response: UpdateCardsResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(update_response.event_id)
 }
 
 pub(super) fn format_duration(duration: chrono::Duration) -> String {

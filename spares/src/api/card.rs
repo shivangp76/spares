@@ -11,7 +11,8 @@ use crate::{
     model::{Card, CardId, EventType, NEW_CARD_STATE, NoteId, ReviewLog, SpecialState, TagId},
     schedulers::get_scheduler_from_string,
     schema::card::{
-        CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
+        CardResponse, CardsSelector, ForgetCardResponse, GetLeechesRequest, SpecialStateUpdate,
+        UpdateCardsRequest, UpdateCardsResponse,
     },
     search::evaluator::Evaluator,
 };
@@ -41,12 +42,12 @@ pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardRespo
 }
 
 #[allow(clippy::too_many_lines)]
-pub async fn update_card(
+pub async fn update_cards(
     db: &SqlitePool,
     body: UpdateCardsRequest,
     at: DateTime<Utc>,
     log: bool,
-) -> Result<Vec<CardResponse>, Error> {
+) -> Result<UpdateCardsResponse, Error> {
     let card_ids = match body.selector {
         CardsSelector::Ids(vec) => vec,
         CardsSelector::Query(query) => {
@@ -182,16 +183,22 @@ pub async fn update_card(
         }
         card_responses.push(CardResponse::new(&final_card));
     }
-    if log && !card_payloads.is_empty() {
-        insert_events(
+    let event_id = if log && !card_payloads.is_empty() {
+        let event_ids = insert_events(
             db,
             &[(EventType::UpdateCards, to_value(&card_payloads).unwrap())],
             at,
             None,
         )
         .await?;
-    }
-    Ok(card_responses)
+        Some(*event_ids.first().unwrap())
+    } else {
+        None
+    };
+    Ok(UpdateCardsResponse {
+        cards: card_responses,
+        event_id,
+    })
 }
 
 /// Applies a list of card updates directly, restoring the `.after` value for each field.
@@ -283,7 +290,7 @@ pub async fn forget_card(
     card_id: CardId,
     now: DateTime<Utc>,
     log: bool,
-) -> Result<CardResponse, Error> {
+) -> Result<ForgetCardResponse, Error> {
     let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
@@ -330,15 +337,22 @@ pub async fn forget_card(
             }),
             custom_data: None,
         }];
-        insert_events(
+        let event_ids = insert_events(
             db,
             &[(EventType::ForgetCard, to_value(&payload).unwrap())],
             now,
             None,
         )
         .await?;
+        return Ok(ForgetCardResponse {
+            card: CardResponse::new(&card),
+            event_id: Some(*event_ids.first().unwrap()),
+        });
     }
-    Ok(CardResponse::new(&card))
+    Ok(ForgetCardResponse {
+        card: CardResponse::new(&card),
+        event_id: None,
+    })
 }
 
 pub async fn unbury_cards(db: &SqlitePool, now: DateTime<Utc>, log: bool) -> Result<(), Error> {
@@ -474,7 +488,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -491,7 +506,8 @@ mod tests {
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
             due: None,
         };
-        let update_card_response = update_card(&pool, update_card_request, Utc::now(), false).await;
+        let update_card_response =
+            update_cards(&pool, update_card_request, Utc::now(), false).await;
         assert!(update_card_response.is_ok());
 
         // Verify card is updated

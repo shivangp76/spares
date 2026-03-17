@@ -30,12 +30,13 @@ use spares::{
     schema::{
         card::{
             CardResponse, CardsSelector, GetLeechesRequest, SpecialStateUpdate, UpdateCardsRequest,
+            UpdateCardsResponse,
         },
         note::{
             CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest,
             MatchedKeywordResponse, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
             RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
-            UnmatchedKeywordResponse, UpdateNotesRequest, UpdateTags,
+            UnmatchedKeywordResponse, UpdateNotesRequest, UpdateNotesResponse, UpdateTags,
         },
         parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
         review::{StatisticsRequest, StatisticsResponse, StudyAction, SubmitStudyActionRequest},
@@ -712,9 +713,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .await
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let responses: Vec<NoteResponse> =
+                let update_response: UpdateNotesResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{}", serde_json::to_string_pretty(&responses).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&update_response.notes).unwrap()
+                );
             }
             EditCommands::Card {
                 selector: selector_local,
@@ -748,9 +752,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .await
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let response: Vec<CardResponse> =
+                let update_response: UpdateCardsResponse =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&update_response.cards).unwrap()
+                );
             }
         },
         Commands::Delete(delete_args) => match delete_args.command {
@@ -1276,10 +1283,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 }
             }
             for card_id in card_ids {
-                let card_response = forget_card(card_id, &base_url, &client)
+                let forget_response = forget_card(card_id, &base_url, &client)
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                println!("Forgot card: {:#?}", &card_response);
+                println!("Forgot card: {:#?}", &forget_response.card);
             }
         }
         Commands::Leeches { scheduler_name } => {
