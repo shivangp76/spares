@@ -20,7 +20,8 @@ use std::sync::Arc;
 mod card_tests;
 mod match_cards;
 pub mod overlapper;
-use crate::parsers::DEFAULT_BACK_EMPHASIS;
+use crate::model::NoteId;
+use crate::parsers::{DEFAULT_BACK_EMPHASIS, ReadableCardIdentifier};
 pub use match_cards::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,6 +34,7 @@ pub struct CardData {
     pub back_reveal: BackReveal,
     pub back_emphasis: bool,
     pub back_type: BackType,
+    pub inherit: Option<ReadableCardIdentifier>,
     pub data: Vec<NotePart>,
 }
 
@@ -238,6 +240,7 @@ fn boil_up_settings(
             // Update `boiled_cloze_settings` with settings that deviated from main and reset settings to default
             let ClozeGroupingSettings {
                 grouping: _,
+                inherit,
                 orders: _,
                 include_forward_card,
                 include_backward_card,
@@ -285,6 +288,10 @@ fn boil_up_settings(
                 boiled_cloze_settings.back_emphasis = *back_emphasis;
                 grouping_settings.back_emphasis = default_cloze_settings.back_emphasis;
             }
+            if inherit.is_some() {
+                boiled_cloze_settings.inherit = *inherit;
+                grouping_settings.inherit = None;
+            }
         }
 
         // Update first non-hidden cloze with boiled settings
@@ -298,6 +305,7 @@ fn boil_up_settings(
         cloze.1.front_conceal = boiled_cloze_settings.front_conceal;
         cloze.1.back_reveal = boiled_cloze_settings.back_reveal;
         cloze.1.back_emphasis = boiled_cloze_settings.back_emphasis;
+        cloze.1.inherit = boiled_cloze_settings.inherit;
 
         // Validate settings
         let contains_image_occlusion = clozes
@@ -803,6 +811,7 @@ pub fn get_cards_main(
         // Since cloze settings are boiled up, just examine the first cloze for the settings.
         let ClozeGroupingSettings {
             grouping,
+            inherit,
             orders,
             include_forward_card,
             include_backward_card,
@@ -869,6 +878,7 @@ pub fn get_cards_main(
 
         // Create cards
         let clozes_num = clozes.len();
+        let mut is_first_direction = true;
         for (side1, side2) in directions {
             let mut card_data: Vec<NotePart> = Vec::new();
             for (i, (cloze, grouping_settings)) in clozes.iter().enumerate() {
@@ -953,7 +963,10 @@ pub fn get_cards_main(
                 back_reveal: *back_reveal,
                 back_emphasis: *back_emphasis,
                 back_type: BackType::from_back_reveal(back_reveal, groupings_count, *back_emphasis),
+                // WORKAROUND: To reduce complexity, `inherit` only applies to the first (forward) card. For `r:` clozes that produce both a forward and backward card, the backward card starts fresh. If we wanted to implement it for the backwards card as well, we would need modify the syntax of `inh:` and also add a key to `ClozeGroupingSettings` which is already a large struct.
+                inherit: if is_first_direction { *inherit } else { None },
             });
+            is_first_direction = false;
         }
     }
     Ok(cards)
