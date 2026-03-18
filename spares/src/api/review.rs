@@ -219,7 +219,9 @@ pub async fn get_review_card(
     } else {
         String::new()
     };
-    let restrictions = if let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) = filter {
+    let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
+    let buried_state = SpecialState::BuriedUntilLaterToday as u8;
+    let where_clause = if let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) = filter {
         // Verify tag has a query
         let tag_query_opt: Option<(Option<String>,)> =
             sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
@@ -244,13 +246,15 @@ pub async fn get_review_card(
         }
         // Get all review cards that match the tag, regardless of whether they are due today
         format!(
-            "AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {})",
-            tag_id
+            "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
         )
     } else {
-        format!("AND c.due <= ? {} {}", not_new_card_str, card_id_query_str)
+        format!(
+            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str}{card_id_query_str})\n    OR (c.special_state = {buried_state}{card_id_query_str}))"
+        )
     };
     // Sort by `n.created_at` after `c.due` so cards from older notes are shown first. This ensures that notes that depend on previous knowledge are shown in the right order.
+    // BuriedUntilLaterToday cards are shown after normal cards, ordered by their burial timestamp (FIFO).
     let query_str = format!(
         indoc! {
         "SELECT
@@ -263,16 +267,18 @@ pub async fn get_review_card(
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
-        WHERE c.special_state IS NULL
-            {}
-        ORDER BY c.due ASC, n.created_at ASC
+        WHERE {}
+        ORDER BY
+            CASE WHEN c.special_state IS NULL THEN 0 ELSE 1 END ASC,
+            c.due ASC,
+            n.created_at ASC
         LIMIT 1"
         },
-        restrictions
+        where_clause
     );
     info!("{}", &query_str);
     let mut query = sqlx::query_as(&query_str);
-    if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
+    if !is_filtered_tag {
         query = query.bind(card_due_limit.timestamp());
     }
     let review_card_opt: Option<ReviewCard> = query
@@ -292,14 +298,13 @@ pub async fn get_review_card(
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
-        WHERE c.special_state IS NULL
-            {}
+        WHERE {}
         GROUP BY c.state"
         },
-        restrictions
+        where_clause
     );
     let mut count_query = sqlx::query_as(&count_query_str);
-    if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
+    if !is_filtered_tag {
         count_query = count_query.bind(card_due_limit.timestamp());
     }
     let cards_by_state_vec: Vec<(StateId, u32)> = count_query
@@ -325,13 +330,12 @@ pub async fn get_review_card(
             FROM review_log
             GROUP BY card_id
         ) rl ON rl.card_id = c.id
-        WHERE c.special_state IS NULL
-            {}"
+        WHERE {}"
         },
-        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, restrictions
+        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, where_clause
     );
     let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
-    if !matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. })) {
+    if !is_filtered_tag {
         time_estimate_query = time_estimate_query.bind(card_due_limit.timestamp());
     }
     let total_time_seconds: f64 = time_estimate_query
@@ -656,7 +660,9 @@ pub async fn bury_card(
                     SchedulerErrorKind::Suspended,
                 )));
             }
-            SpecialState::UserBuried | SpecialState::SchedulerBuried => {
+            SpecialState::UserBuried
+            | SpecialState::SchedulerBuried
+            | SpecialState::BuriedUntilLaterToday => {
                 return Err(Error::Library(LibraryError::Scheduler(
                     SchedulerErrorKind::AlreadyBuried,
                 )));
@@ -931,5 +937,316 @@ mod tests {
         assert!(new_card_res.is_ok());
         let new_card = new_card_res.unwrap();
         assert!(new_card.due > old_card.due);
+    }
+
+    #[sqlx::test]
+    async fn test_bury_until_later_today_hides_card_while_others_remain(
+        pool: sqlx::SqlitePool,
+    ) -> () {
+        // create_note_helper creates 3 notes, 1 card each
+        let _ = create_note(&pool).await;
+        let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(all_cards.len(), 3);
+
+        let now = Utc::now();
+
+        // Initialize last_unburied = today so subsequent get_review_card calls don't unbury
+        let _ = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+
+        // Bury card_a as BuriedUntilLaterToday
+        let card_a_id = all_cards[0].id;
+        crate::api::card::update_cards(
+            &pool,
+            crate::schema::card::UpdateCardsRequest {
+                selector: crate::schema::card::CardsSelector::Ids(vec![card_a_id]),
+                desired_retention: None,
+                special_state: Some(Some(
+                    crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
+                )),
+                due: Some(now),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Next review card should NOT be card_a (it's buried, 2 normal cards remain)
+        let review = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_ne!(
+            review.card_id, card_a_id,
+            "BuriedUntilLaterToday card should not be shown while normal cards remain"
+        );
+
+        // Confirm the card is still in BuriedUntilLaterToday state
+        let card_a: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_a_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card_a.special_state, Some(SpecialState::BuriedUntilLaterToday));
+    }
+
+    #[sqlx::test]
+    async fn test_bury_until_later_today_reappears_when_no_normal_cards(
+        pool: sqlx::SqlitePool,
+    ) -> () {
+        // create_note_helper creates 3 notes, 1 card each
+        let _ = create_note(&pool).await;
+        let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(all_cards.len(), 3);
+
+        let now = Utc::now();
+
+        // Initialize last_unburied = today
+        let _ = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+
+        // Bury card_a (index 0) as BuriedUntilLaterToday
+        let card_a_id = all_cards[0].id;
+        crate::api::card::update_cards(
+            &pool,
+            crate::schema::card::UpdateCardsRequest {
+                selector: crate::schema::card::CardsSelector::Ids(vec![card_a_id]),
+                desired_retention: None,
+                special_state: Some(Some(
+                    crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
+                )),
+                due: Some(now),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Rate the remaining 2 normal cards (rating=4 schedules them far in the future)
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        for card in &all_cards[1..] {
+            rate_card(
+                &pool,
+                scheduler.as_ref(),
+                crate::schema::review::RatingSubmission {
+                    card_id: card.id,
+                    rating: 4,
+                    recall_duration: Duration::seconds(5),
+                    rate_duration: Duration::seconds(2),
+                    tag_id: None,
+                },
+                now,
+                false,
+            )
+            .await
+            .unwrap();
+        }
+
+        // card_a (BuriedUntilLaterToday) should now be the only reviewable card
+        let review = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            review.is_some(),
+            "Expected BuriedUntilLaterToday card to reappear when no normal cards remain"
+        );
+        assert_eq!(
+            review.unwrap().card_id,
+            card_a_id,
+            "Expected card_a to be returned"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_bury_until_later_today_fifo_ordering(pool: sqlx::SqlitePool) -> () {
+        // create_note_helper creates 3 notes, 1 card each
+        let _ = create_note(&pool).await;
+        let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(all_cards.len(), 3);
+
+        let now = Utc::now();
+
+        // Initialize last_unburied = today
+        let _ = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+
+        let card_a_id = all_cards[0].id;
+        let card_b_id = all_cards[1].id;
+        let card_c_id = all_cards[2].id;
+
+        // Bury all 3 cards with increasing timestamps (t1 < t2 < t3)
+        let t1 = now;
+        let t2 = now + Duration::seconds(1);
+        let t3 = now + Duration::seconds(2);
+
+        for (id, t) in [(card_a_id, t1), (card_b_id, t2), (card_c_id, t3)] {
+            crate::api::card::update_cards(
+                &pool,
+                crate::schema::card::UpdateCardsRequest {
+                    selector: crate::schema::card::CardsSelector::Ids(vec![id]),
+                    desired_retention: None,
+                    special_state: Some(Some(
+                        crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
+                    )),
+                    due: Some(t),
+                },
+                now,
+                false,
+            )
+            .await
+            .unwrap();
+        }
+
+        // First review should be card_a (earliest burial timestamp t1)
+        let review1 = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            review1.card_id, card_a_id,
+            "card_a (earliest burial) should come first"
+        );
+
+        // Re-bury card_a with a later timestamp (t4 > t3), pushing it to the back
+        let t4 = now + Duration::seconds(3);
+        crate::api::card::update_cards(
+            &pool,
+            crate::schema::card::UpdateCardsRequest {
+                selector: crate::schema::card::CardsSelector::Ids(vec![card_a_id]),
+                desired_retention: None,
+                special_state: Some(Some(
+                    crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
+                )),
+                due: Some(t4),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Now card_b (t2) should be first, then card_c (t3), then card_a (t4)
+        let review2 = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            review2.card_id, card_b_id,
+            "card_b should be shown after card_a is re-buried to the back"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_bury_until_later_today_unburied_next_day(pool: sqlx::SqlitePool) -> () {
+        // create_note_helper creates 3 notes, 1 card each
+        let _ = create_note(&pool).await;
+        let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+
+        // Initialize last_unburied = today to prevent immediate unburying
+        let _ = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+
+        // Bury all cards as BuriedUntilLaterToday
+        for card in &all_cards {
+            crate::api::card::update_cards(
+                &pool,
+                crate::schema::card::UpdateCardsRequest {
+                    selector: crate::schema::card::CardsSelector::Ids(vec![card.id]),
+                    desired_retention: None,
+                    special_state: Some(Some(
+                        crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
+                    )),
+                    due: Some(now),
+                },
+                now,
+                false,
+            )
+            .await
+            .unwrap();
+        }
+
+        // Verify all cards are buried
+        let buried_count: i64 =
+            sqlx::query_scalar(r"SELECT COUNT(*) FROM card WHERE special_state = ?")
+                .bind(SpecialState::BuriedUntilLaterToday)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(buried_count, 3);
+
+        // Simulate next day by calling unbury_cards directly
+        let tomorrow = now + Duration::days(1);
+        crate::api::card::unbury_cards(&pool, None, tomorrow, false)
+            .await
+            .unwrap();
+
+        // All cards should now have special_state = NULL
+        let still_buried_count: i64 =
+            sqlx::query_scalar(r"SELECT COUNT(*) FROM card WHERE special_state = ?")
+                .bind(SpecialState::BuriedUntilLaterToday)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(still_buried_count, 0, "All BuriedUntilLaterToday cards should be unburied at next-day rollover");
     }
 }

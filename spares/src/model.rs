@@ -110,11 +110,10 @@ impl Card {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, sqlx::Type)]
 #[repr(u8)]
 pub enum SpecialState {
-    // NOTE: Can this be Buried(User), Buried(Scheduler) instead of UserBuried and SchedulerBuried?
     Suspended = 1,
     UserBuried = 2,
     SchedulerBuried = 3,
-    // Buried(bool),
+    BuriedUntilLaterToday = 4,
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
