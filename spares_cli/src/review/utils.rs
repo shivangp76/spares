@@ -1,5 +1,5 @@
 use super::ReviewAction;
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -363,26 +363,13 @@ pub(super) async fn bury_until_later_today(
     base_url: &str,
     client: &Client,
 ) -> Result<Option<i64>, String> {
-    // Get current time in UTC and convert to local timezone to get today's date
-    let now_utc = Utc::now();
-    // Calculate end of today (23:59:59) in local timezone, then convert to UTC
-    let end_of_today_utc = Local
-        .from_local_datetime(
-            &now_utc
-                .with_timezone(&Local)
-                .date_naive()
-                .and_hms_opt(23, 59, 59)
-                .unwrap(),
-        )
-        .unwrap()
-        .to_utc();
-
-    // Send update card request
+    // Set special_state to BuriedUntilLaterToday and due = now() (used as burial timestamp for FIFO ordering).
+    // Re-pressing this on an already-buried card updates due = now(), pushing it to the back of the queue.
     let request = UpdateCardsRequest {
         selector: CardsSelector::Ids(vec![card_id]),
         desired_retention: None,
-        special_state: None,
-        due: Some(end_of_today_utc),
+        special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
+        due: Some(Utc::now()),
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -395,7 +382,7 @@ pub(super) async fn bury_until_later_today(
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
         let message = response_json.get("message");
         return Err(message.map_or_else(
-            || "Failed to update card due date".to_string(),
+            || "Failed to bury card until later today".to_string(),
             |m| m.to_string(),
         ));
     }

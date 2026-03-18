@@ -346,6 +346,7 @@ pub mod card {
     pub enum SpecialStateUpdate {
         Suspended,
         Buried,
+        BuriedUntilLaterToday,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
