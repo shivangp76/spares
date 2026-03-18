@@ -55,12 +55,15 @@ async fn update_cards(
     let old_cards_orders = old_cards.iter().map(|x| x.order).collect::<Vec<_>>();
     // `previous_order` holds the order references from the submitted note text (before
     // sequential renumbering), which is what `match_cards` needs to reconcile with old DB cards.
-    let new_cards_orders = new_cards.iter().map(|x| x.previous_order).collect::<Vec<_>>();
+    let new_cards_orders = new_cards
+        .iter()
+        .map(|x| x.previous_order)
+        .collect::<Vec<_>>();
     let match_cards_result = match_cards(&old_cards_orders, &new_cards_orders)?;
     let MatchCardsResult {
         move_card_indices,
-        delete_card_indices,
-        create_card_indices,
+        mut delete_card_indices,
+        mut create_card_indices,
         same_indices,
     } = match_cards_result;
 
@@ -68,6 +71,26 @@ async fn update_cards(
         .iter()
         .filter_map(|c| c.order.map(|o| (o, c)))
         .collect();
+
+    // When a card switches between forward and reverse (e.g. `ro:` added or removed), it is
+    // fundamentally a different card — front and back are swapped — so it must be deleted and
+    // recreated rather than updated in place (which would incorrectly preserve the old schedule).
+    let reverse_changed_indices: Vec<usize> = same_indices
+        .iter()
+        .copied()
+        .filter(|&i| {
+            let old_card = &old_cards_by_order[&i];
+            let new_card = &new_cards[i - 1];
+            old_card.is_reverse() != new_card.is_reverse()
+        })
+        .collect();
+    let same_indices: Vec<usize> = same_indices
+        .into_iter()
+        .filter(|i| !reverse_changed_indices.contains(i))
+        .collect();
+    delete_card_indices.extend(reverse_changed_indices.iter().copied());
+    create_card_indices.extend(reverse_changed_indices.iter().copied());
+
     let changed_same_indices: Vec<usize> = same_indices
         .iter()
         .copied()
@@ -1276,7 +1299,6 @@ mod tests {
     }
 
     #[sqlx::test]
-    #[ignore]
     async fn test_update_note_change_to_reverse_only(pool: SqlitePool) -> () {
         let (old_cards, new_cards, _updated_note) =
             update_note_change_sides_helper(&pool, "o:1;ro:").await;

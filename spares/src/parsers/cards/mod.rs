@@ -36,6 +36,24 @@ pub struct CardData {
     pub data: Vec<NotePart>,
 }
 
+impl CardData {
+    /// Returns `true` if this card is a reverse card (i.e. created with `ro:` or as the backward
+    /// direction of `r:`). Detected by finding a `ClozeData` part that appears *outside* of
+    /// `ClozeStart`/`ClozeEnd` delimiters — forward cards only ever put `SurroundingData` there.
+    pub fn is_reverse(&self) -> bool {
+        let mut in_cloze = false;
+        for part in &self.data {
+            match part {
+                NotePart::ClozeStart(_) => in_cloze = true,
+                NotePart::ClozeEnd(_) => in_cloze = false,
+                NotePart::ClozeData(_, _) if !in_cloze => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
 pub fn validate_cards(cards: &[CardData]) -> Result<(), LibraryError> {
     if cards.iter().any(|cd| cd.data.is_empty()) {
         return Err(LibraryError::Card(CardErrorKind::Empty));
