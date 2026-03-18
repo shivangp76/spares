@@ -1,6 +1,7 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, add_order_to_note_data, get_cards, impls::markdown::MarkdownParser,
+    Parseable, ReadableCardIdentifier, add_order_to_note_data, get_cards,
+    impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 
@@ -22,6 +23,7 @@ fn test_get_cards_basic_1_markdown() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -47,6 +49,7 @@ fn test_get_cards_basic_1_markdown() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{".to_string()),
@@ -79,6 +82,7 @@ fn test_get_cards_add_order_1() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -129,6 +133,7 @@ fn test_get_cards_order() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -160,6 +165,7 @@ fn test_get_cards_hint() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::ClozeStart("{{[h:this is a hint]".to_string()),
                 NotePart::ClozeData(
@@ -191,6 +197,7 @@ fn test_get_cards_hidden_1() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;hide:]".to_string()),
@@ -235,6 +242,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData("a".to_string(), ClozeHiddenReplacement::NotToAnswer),
@@ -258,6 +266,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData(
@@ -281,6 +290,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;hide:; g:3]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;hide:; g:2]".to_string()),
@@ -342,6 +352,7 @@ fn test_get_cards_reverse_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -362,6 +373,7 @@ fn test_get_cards_reverse_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -397,6 +409,7 @@ fn test_get_cards_reverse_2() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::ClozeData(
                     "a".to_string(),
@@ -444,6 +457,7 @@ fn test_get_cards_nested_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -464,6 +478,7 @@ fn test_get_cards_nested_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -497,6 +512,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -517,6 +533,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -540,6 +557,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1,2;r:]b".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -585,6 +603,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -605,6 +624,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -625,6 +645,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b{{[o:2]c}}d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -662,6 +683,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -692,6 +714,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -712,6 +735,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData(
                         "a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e{{[o:2]f}}g".to_string(),
@@ -751,6 +775,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -778,6 +803,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -798,6 +824,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:2;o:3]".to_string()),
@@ -831,6 +858,7 @@ fn test_get_cards_grouping_all_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -858,6 +886,7 @@ fn test_get_cards_grouping_all_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -901,6 +930,7 @@ fn test_get_cards_grouping_all_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -926,6 +956,7 @@ fn test_get_cards_grouping_all_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -965,6 +996,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -992,6 +1024,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -1029,6 +1062,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1056,6 +1090,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -1101,6 +1136,7 @@ fn test_get_cards_grouping_all_4() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1124,6 +1160,7 @@ fn test_get_cards_grouping_all_4() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1173,6 +1210,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1;ro:]".to_string()),
                     NotePart::SurroundingData("a".to_string()),
@@ -1192,6 +1230,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1;ro:]a}}b".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -1233,6 +1272,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -1258,6 +1298,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -1283,6 +1324,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1; g:2;o:2]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;o:3]".to_string()),
@@ -1328,6 +1370,7 @@ fn test_get_cards_order_before_grouping() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -1366,6 +1409,7 @@ fn test_get_cards_grouping_multiple_times() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),
@@ -1396,6 +1440,7 @@ fn test_get_cards_grouping_multiple_times() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),
@@ -1431,6 +1476,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1453,6 +1499,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1473,6 +1520,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1518,6 +1566,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1;f:all]".to_string()),
@@ -1545,6 +1594,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1565,6 +1615,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -1597,6 +1648,7 @@ fn test_get_cards_back_reveal_1() {
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1;b:a]".to_string()),
@@ -1629,6 +1681,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1651,6 +1704,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1671,6 +1725,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::OnlyAnswered,
                 back_emphasis: false,
                 back_type: BackType::CardFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1724,6 +1779,7 @@ fn test_get_cards_suspended_only_deserialized() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1756,6 +1812,7 @@ fn test_get_cards_suspended_false() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            inherit: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1792,6 +1849,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1812,6 +1870,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1849,6 +1908,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1869,6 +1929,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -1889,6 +1950,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -1926,6 +1988,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -1946,6 +2009,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2,3;r:]".to_string()),
@@ -1966,6 +2030,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                inherit: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a{{[o:1]b}}c".to_string(),
@@ -1983,4 +2048,136 @@ fn test_get_cards_previous_order_with_reverse() {
         ];
         assert_eq!(cards, expected);
     }
+}
+
+#[test]
+fn test_get_cards_inherit_basic() {
+    // `inh:NOTE_ID/ORDER` should be parsed into `CardData.inherit` and stripped from the output.
+    let data = r"{{[inh:123/1]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_ok());
+    if let Ok(cards) = cards_res {
+        let expected = vec![CardData {
+            order: None,
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(1),
+            is_suspended: None,
+            front_conceal: FrontConceal::OnlyGrouping,
+            back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
+            back_type: BackType::NoteFilePath,
+            inherit: Some(ReadableCardIdentifier {
+                note_id: 123,
+                order: 1,
+            }),
+            data: vec![
+                // `inh:` is not serialized, so ClozeStart has no settings.
+                NotePart::ClozeStart("{{".to_string()),
+                NotePart::ClozeData(
+                    "b".to_string(),
+                    ClozeHiddenReplacement::ToAnswer { hint: None },
+                ),
+                NotePart::ClozeEnd("}}".to_string()),
+            ],
+        }];
+        assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_inherit_with_order() {
+    // `inh:` can be combined with other settings; only `inh:` is stripped from the output.
+    let data = r"{{[o:1;inh:456/2]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_ok());
+    if let Ok(cards) = cards_res {
+        let expected = vec![CardData {
+            order: Some(1),
+            previous_order: Some(1),
+            grouping: ClozeGrouping::Auto(1),
+            is_suspended: None,
+            front_conceal: FrontConceal::OnlyGrouping,
+            back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
+            back_type: BackType::NoteFilePath,
+            inherit: Some(ReadableCardIdentifier {
+                note_id: 456,
+                order: 2,
+            }),
+            data: vec![
+                NotePart::ClozeStart("{{[o:1]".to_string()),
+                NotePart::ClozeData(
+                    "b".to_string(),
+                    ClozeHiddenReplacement::ToAnswer { hint: None },
+                ),
+                NotePart::ClozeEnd("}}".to_string()),
+            ],
+        }];
+        assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_inherit_negative_note_id() {
+    // Negative note IDs are valid i64 values and should be accepted.
+    let data = r"{{[inh:-99/3]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_ok());
+    if let Ok(cards) = cards_res {
+        assert_eq!(
+            cards[0].inherit,
+            Some(ReadableCardIdentifier {
+                note_id: -99,
+                order: 3,
+            })
+        );
+    }
+}
+
+#[test]
+fn test_get_cards_inherit_invalid_note_id() {
+    // A non-integer note ID should produce an error.
+    let data = r"{{[inh:abc/1]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_err());
+    let err = cards_res.unwrap_err().to_string();
+    assert!(err.contains("inh:"), "expected error mentioning `inh:`, got: {err}");
+}
+
+#[test]
+fn test_get_cards_inherit_invalid_order() {
+    // A non-integer order should produce an error.
+    let data = r"{{[inh:123/abc]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_err());
+    let err = cards_res.unwrap_err().to_string();
+    assert!(err.contains("inh:"), "expected error mentioning `inh:`, got: {err}");
+}
+
+#[test]
+fn test_get_cards_inherit_zero_order() {
+    // Order 0 is invalid; orders must be >= 1.
+    let data = r"{{[inh:123/0]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_err());
+    let err = cards_res.unwrap_err().to_string();
+    assert!(
+        err.contains("inh:"),
+        "expected error mentioning `inh:`, got: {err}"
+    );
+}
+
+#[test]
+fn test_get_cards_inherit_missing_order() {
+    // A value without the `/ORDER` part should fail to parse.
+    let data = r"{{[inh:123]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
+    assert!(cards_res.is_err());
 }

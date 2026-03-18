@@ -1,6 +1,6 @@
 use super::{AUTOMATIC_REBUILD, BULK_REQUEST_THRESHOLD};
 use crate::{
-    Error, LibraryError, TagErrorKind,
+    CardErrorKind, Error, LibraryError, TagErrorKind,
     api::{
         card::create_card_tags,
         execute_batched_query, fetch_batched_query,
@@ -17,7 +17,8 @@ use crate::{
     helpers::{intersect, remove_ancestor_tags},
     model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
-        Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
+        Parseable, ReadableCardIdentifier, add_order_to_note_data, extract_and_combine_keywords,
+        find_parser,
         generate_files::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
         },
@@ -92,6 +93,8 @@ pub async fn create_notes(
     let mut note_link_entries = Vec::new();
     let mut note_tag_entries = Vec::new();
     let mut card_entries = Vec::new();
+    // (dst_note_id, dst_order, src_note_id, src_order)
+    let mut inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     for create_note_request in &body.requests {
         let CreateNoteRequest {
@@ -150,12 +153,21 @@ pub async fn create_notes(
                 .iter()
                 .enumerate()
                 .map(|(i, card_data)| {
+                    let order = (i + 1) as u32;
                     let mut card = Card::new(at);
                     card.note_id = note_id;
-                    card.order = (i + 1) as u32;
+                    card.order = order;
                     card.back_type = card_data.back_type;
                     if *is_suspended {
                         card.special_state = Some(SpecialState::Suspended);
+                    }
+                    // Collect inheritance directives for post-creation update
+                    if let Some(ReadableCardIdentifier {
+                        note_id: src_note_id,
+                        order: src_order,
+                    }) = card_data.inherit
+                    {
+                        inherit_entries.push((note_id, order, src_note_id, src_order));
                     }
                     card
                 })
@@ -208,6 +220,8 @@ pub async fn create_notes(
 
     // Create all cards at the very end, in bulk
     create_cards(db, &card_entries).await?;
+
+    apply_srs_inheritance(db, &inherit_entries).await?;
 
     if AUTOMATIC_REBUILD {
         // Add notes to matched filtered tags
@@ -518,6 +532,49 @@ pub async fn create_note_tags(
     .await
 }
 
+/// After newly created cards have been inserted into the database, copy SRS fields from a source
+/// card to each card that carried an `inh:NOTE_ID/ORDER` cloze setting.
+///
+/// `inherit_entries` is a list of `(dst_note_id, dst_order, src_note_id, src_order)`.
+pub(super) async fn apply_srs_inheritance(
+    db: &SqlitePool,
+    inherit_entries: &[(NoteId, u32, NoteId, usize)],
+) -> Result<(), Error> {
+    for &(dst_note_id, dst_order, src_note_id, src_order) in inherit_entries {
+        let src_card: Option<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = ?"#)
+                .bind(src_note_id)
+                .bind(src_order as u32)
+                .fetch_optional(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+
+        let src_card = src_card.ok_or_else(|| {
+            Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
+                "`inh:` source card not found: note_id={src_note_id}, order={src_order}"
+            ))))
+        })?;
+
+        sqlx::query(
+            r#"UPDATE card SET stability = ?, difficulty = ?, desired_retention = ?,
+               state = ?, due = ?, special_state = ?
+               WHERE note_id = ? AND "order" = ?"#,
+        )
+        .bind(src_card.stability)
+        .bind(src_card.difficulty)
+        .bind(src_card.desired_retention)
+        .bind(src_card.state)
+        .bind(src_card.due.timestamp())
+        .bind(src_card.special_state)
+        .bind(dst_note_id)
+        .bind(dst_order)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    Ok(())
+}
+
 pub async fn create_cards(db: &SqlitePool, card_entries: &[Card]) -> Result<(), Error> {
     execute_batched_query(db, card_entries, async |db, chunk| {
         let query_str = format!(
@@ -597,4 +654,148 @@ async fn add_note_tags(
         }
     }
     Ok((tag_ids, new_tag_payloads))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        api::{note::create_notes, parser::tests::create_parser_helper, review::submit_study_action},
+        model::Card,
+        parsers::get_all_parsers,
+        schema::{
+            note::{CreateNoteRequest, CreateNotesRequest},
+            review::{RatingSubmission, StudyAction, SubmitStudyActionRequest},
+        },
+    };
+    use chrono::Utc;
+    use serde_json::Map;
+    use sqlx::SqlitePool;
+
+    /// Creates a note with a single cloze and returns `(note_id, card)`.
+    async fn create_single_cloze_note(pool: &SqlitePool, data: &str) -> (NoteId, Card) {
+        let parser = create_parser_helper(pool, "markdown").await;
+        let res = create_notes(
+            pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: data.to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let note_id = res.notes[0].id;
+        let card: Card = sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = 1"#)
+            .bind(note_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (note_id, card)
+    }
+
+    /// `inh:NOTE_ID/ORDER` on a newly created card copies all SRS fields from the source card.
+    #[sqlx::test]
+    async fn test_create_note_inherit_copies_srs_data(pool: SqlitePool) {
+        // Step 1: Create the source note and give its card non-default SRS data by rating it.
+        let (src_note_id, src_card) = create_single_cloze_note(&pool, "{{ source }}").await;
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id: src_card.id,
+                    rating: 4,
+                    recall_duration: chrono::Duration::seconds(5),
+                    rate_duration: chrono::Duration::seconds(2),
+                    tag_id: None,
+                }),
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        let src_card_after_review: Card =
+            sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
+                .bind(src_card.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // Sanity-check: the review must have changed the SRS fields.
+        assert_ne!(src_card_after_review.stability, src_card.stability);
+
+        // Step 2: Create a new note whose card inherits from the source card.
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let inherit_data = format!("{{{{[inh:{src_note_id}/1] destination }}}}");
+        let res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: inherit_data,
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let dst_note_id = res.notes[0].id;
+
+        // Step 3: Verify the destination card's SRS fields match the source card's.
+        let dst_card: Card =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = 1"#)
+                .bind(dst_note_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(dst_card.stability, src_card_after_review.stability);
+        assert_eq!(dst_card.difficulty, src_card_after_review.difficulty);
+        assert_eq!(dst_card.desired_retention, src_card_after_review.desired_retention);
+        assert_eq!(dst_card.state, src_card_after_review.state);
+        assert_eq!(dst_card.due.timestamp(), src_card_after_review.due.timestamp());
+        assert_eq!(dst_card.special_state, src_card_after_review.special_state);
+    }
+
+    /// `inh:` referencing a non-existent card returns an error.
+    #[sqlx::test]
+    async fn test_create_note_inherit_missing_source_returns_error(pool: SqlitePool) {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{[inh:99999/1] destination }}".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await;
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(
+            err.contains("inh:"),
+            "expected error mentioning `inh:`, got: {err}"
+        );
+    }
 }

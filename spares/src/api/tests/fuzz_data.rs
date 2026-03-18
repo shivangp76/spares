@@ -237,6 +237,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
     let cloze_settings = ClozeSettings::default();
     let grouping_settings = ClozeGroupingSettings {
         grouping: ClozeGrouping::Custom(node.card_number.to_string()),
+        inherit: None,
         orders: None,
         include_forward_card,
         include_backward_card,
