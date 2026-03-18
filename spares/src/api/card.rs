@@ -61,6 +61,7 @@ pub async fn update_cards(
         x.map(|y| match y {
             SpecialStateUpdate::Suspended => SpecialState::Suspended,
             SpecialStateUpdate::Buried => SpecialState::UserBuried,
+            SpecialStateUpdate::BuriedUntilLaterToday => SpecialState::BuriedUntilLaterToday,
         })
     });
     for card_id in card_ids {
@@ -84,7 +85,9 @@ pub async fn update_cards(
                         SchedulerErrorKind::Suspended,
                     )));
                 }
-                SpecialState::UserBuried | SpecialState::SchedulerBuried => {
+                SpecialState::UserBuried
+                | SpecialState::SchedulerBuried
+                | SpecialState::BuriedUntilLaterToday => {
                     return Err(Error::Library(LibraryError::Scheduler(
                         SchedulerErrorKind::AlreadyBuried,
                     )));
@@ -380,23 +383,25 @@ pub async fn unbury_cards(
     };
     if log {
         let select_query = format!(
-            "SELECT * FROM card WHERE special_state IN (?, ?){}",
+            "SELECT * FROM card WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
         let cards_to_unbury: Vec<Card> = sqlx::query_as(&select_query)
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
+            .bind(SpecialState::BuriedUntilLaterToday)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         let update_query = format!(
-            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?){}",
+            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
         sqlx::query(&update_query)
             .bind(now.timestamp())
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
+            .bind(SpecialState::BuriedUntilLaterToday)
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
@@ -429,13 +434,14 @@ pub async fn unbury_cards(
         }
     } else {
         let update_query = format!(
-            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?){}",
+            "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
         sqlx::query(&update_query)
             .bind(now.timestamp())
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
+            .bind(SpecialState::BuriedUntilLaterToday)
             .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
@@ -546,5 +552,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(card.special_state, Some(SpecialState::Suspended));
+    }
+
+    async fn create_single_card(pool: &SqlitePool) -> CardId {
+        let parser = create_parser_helper(pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "Test {{1}}".to_string(),
+                keywords: vec![],
+                tags: vec![],
+                is_suspended: false,
+                custom_data: Map::new(),
+            }],
+        };
+        let created = create_notes(pool, request, Utc::now(), &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let cards = get_cards(pool, created.notes[0].id).await.unwrap();
+        cards[0].id
+    }
+
+    #[sqlx::test]
+    async fn test_bury_until_later_today_sets_special_state(pool: SqlitePool) -> () {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+
+        let result = update_cards(
+            &pool,
+            UpdateCardsRequest {
+                selector: CardsSelector::Ids(vec![card_id]),
+                desired_retention: None,
+                special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
+                due: Some(now),
+            },
+            now,
+            false,
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card.special_state, Some(SpecialState::BuriedUntilLaterToday));
+        assert_eq!(card.due.timestamp(), now.timestamp());
+    }
+
+    #[sqlx::test]
+    async fn test_rebury_updates_due_timestamp(pool: SqlitePool) -> () {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        let t1 = now;
+        let t2 = now + chrono::Duration::seconds(5);
+
+        // Bury at t1
+        update_cards(
+            &pool,
+            UpdateCardsRequest {
+                selector: CardsSelector::Ids(vec![card_id]),
+                desired_retention: None,
+                special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
+                due: Some(t1),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Re-bury at t2 (should push to back of queue)
+        update_cards(
+            &pool,
+            UpdateCardsRequest {
+                selector: CardsSelector::Ids(vec![card_id]),
+                desired_retention: None,
+                special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
+                due: Some(t2),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card.special_state, Some(SpecialState::BuriedUntilLaterToday));
+        assert_eq!(card.due.timestamp(), t2.timestamp());
+    }
+
+    #[sqlx::test]
+    async fn test_unbury_clears_buried_until_later_today(pool: SqlitePool) -> () {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+
+        // Bury as BuriedUntilLaterToday
+        update_cards(
+            &pool,
+            UpdateCardsRequest {
+                selector: CardsSelector::Ids(vec![card_id]),
+                desired_retention: None,
+                special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
+                due: Some(now),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Unbury
+        unbury_cards(&pool, None, now, false).await.unwrap();
+
+        let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card.special_state, None, "unbury_cards should clear BuriedUntilLaterToday");
     }
 }
