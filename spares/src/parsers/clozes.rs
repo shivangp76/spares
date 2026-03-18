@@ -1,4 +1,5 @@
 use crate::helpers::{GroupByInsertion, find_pairs, split_inclusive_following};
+use crate::model::NoteId;
 use crate::parsers::{
     NoteSettingsKeys, RegexMatch, get_settings_pairs, image_occlusion::ImageOcclusionCloze,
 };
@@ -47,12 +48,24 @@ pub enum ClozeSettingsSide {
     End,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReadableCardIdentifier {
+    pub note_id: NoteId,
+    pub order: usize,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClozeGroupingSettings {
     /// Any unique string that is shared among all clozes that are meant to be a part of the same card. The special keyword `*` indicates this cloze is a part of all groups.
     /// If this is not specified, then the cloze will be in its own group. In other words, a card will be created for this cloze and the card will only contain this one cloze.
     pub grouping: ClozeGrouping,
+    /// When the card produced by this cloze is *newly created*, copy SRS fields from the card at the given note id and order. This field is not serialized, i.e., it is stripped from stored note data after processing.
+    ///
+    /// This is added to support 2 workflows:
+    /// - Moving a card to a different note
+    /// - Splitting a card into multiple cards
+    pub inherit: Option<ReadableCardIdentifier>,
     /// `orders` is used to specify the order of the cards created from a cloze. Using this information, a card's parameters can be properly lined up when a cloze is added, deleted, or moved.
     /// It is only specified on the first cloze in a card, since that determines the order of how the cards are parsed.
     /// This is typically 1 number unless the cloze is a part of multiple cards, such as if the option to include the reverse card is enabled. This is so actions like adding a reverse card are properly accounted for as a card creation.
@@ -276,6 +289,7 @@ impl ClozeGroupingSettings {
     ) -> Self {
         let mut result = Self {
             grouping,
+            inherit: None,
             orders: None,
             include_forward_card: true,
             include_backward_card: false,
@@ -318,6 +332,7 @@ pub struct ClozeSettingsKeys {
     pub front_conceal: &'static str,
     pub back_reveal: &'static str,
     pub back_emphasis: &'static str,
+    pub inherit: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -333,6 +348,7 @@ impl Default for ClozeSettingsKeys {
             front_conceal: "f",
             back_reveal: "b",
             back_emphasis: "be",
+            inherit: "inh",
         }
     }
 }
@@ -372,6 +388,7 @@ pub fn construct_cloze_string(
         i,
         ClozeGroupingSettings {
             grouping,
+            inherit: _,
             orders,
             include_forward_card,
             include_backward_card,
@@ -505,6 +522,44 @@ fn parse_grouping(
     }
 }
 
+fn parse_card_source(
+    value: &str,
+    data: &str,
+    card_settings_indices: &Range<usize>,
+) -> Result<ReadableCardIdentifier, LibraryError> {
+    let mut parts = value.splitn(2, '/');
+    let note_id_str = parts.next().unwrap_or("").trim();
+    let order_str = parts.next().unwrap_or("").trim();
+    let note_id = note_id_str.parse::<i64>().map_err(|e| {
+        LibraryError::Card(CardErrorKind::InvalidSettings {
+            description: format!(
+                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid note id `{}`. Error: {}",
+                note_id_str, e
+            ),
+            src: data.to_string(),
+            at: card_settings_indices.clone().into(),
+        })
+    })?;
+    let order = order_str.parse::<usize>().map_err(|e| {
+        LibraryError::Card(CardErrorKind::InvalidSettings {
+            description: format!(
+                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid order `{}`. Error: {}",
+                order_str, e
+            ),
+            src: data.to_string(),
+            at: card_settings_indices.clone().into(),
+        })
+    })?;
+    if order == 0 {
+        return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
+            description: "`inh:` order must be >= 1.".to_string(),
+            src: data.to_string(),
+            at: card_settings_indices.clone().into(),
+        }));
+    }
+    Ok(ReadableCardIdentifier { note_id, order })
+}
+
 fn parse_grouping_settings(
     grouping_settings: &mut Vec<(&str, &str)>,
     settings: &mut ClozeSettings,
@@ -522,6 +577,7 @@ fn parse_grouping_settings(
         front_conceal: front_conceal_key,
         back_reveal: back_reveal_key,
         back_emphasis: back_emphasis_key,
+        inherit: inherit_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -560,6 +616,9 @@ fn parse_grouping_settings(
             })?;
         } else if key == back_emphasis_key {
             current_grouping_settings.back_emphasis = true;
+        } else if key == inherit_key {
+            current_grouping_settings.inherit =
+                Some(parse_card_source(value, data, card_settings_indices)?);
         } else if key == orders_key {
             let orders = value
                 .split(',')

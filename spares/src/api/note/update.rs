@@ -1,9 +1,9 @@
 use super::{
-    AUTOMATIC_REBUILD, create_cards, create_note_keywords, create_note_links, create_note_tags,
-    delete_empty_tags, delete_note_files,
+    AUTOMATIC_REBUILD, apply_srs_inheritance, create_cards, create_note_keywords,
+    create_note_links, create_note_tags, delete_empty_tags, delete_note_files,
 };
 use crate::{
-    Error, LibraryError, ParserErrorKind, TagErrorKind,
+    CardErrorKind, Error, LibraryError, ParserErrorKind, TagErrorKind,
     api::{
         card::{create_card_tags, delete_card_tags},
         execute_batched_query, fetch_batched_query,
@@ -22,7 +22,7 @@ use crate::{
     helpers::remove_ancestor_tags,
     model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
-        CardData, MatchCardsResult, Parseable, add_order_to_note_data,
+        CardData, MatchCardsResult, Parseable, ReadableCardIdentifier, add_order_to_note_data,
         extract_and_combine_keywords, find_parser,
         generate_files::{
             GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
@@ -90,6 +90,22 @@ async fn update_cards(
         .collect();
     delete_card_indices.extend(reverse_changed_indices.iter().copied());
     create_card_indices.extend(reverse_changed_indices.iter().copied());
+
+    let create_indices_set: HashSet<usize> = create_card_indices.iter().copied().collect();
+    for (i, card_data) in new_cards.iter().enumerate() {
+        if card_data.inherit.is_some() {
+            let order = i + 1;
+            if !create_indices_set.contains(&order) {
+                return Err(Error::Library(LibraryError::Card(
+                    CardErrorKind::InvalidInput(format!(
+                        "`inh:` was specified on card at order {order} but this card already \
+                         exists (was matched, not newly created). `inh:` is only valid on \
+                         newly created cards."
+                    )),
+                )));
+            }
+        }
+    }
 
     let changed_same_indices: Vec<usize> = same_indices
         .iter()
@@ -177,10 +193,11 @@ async fn update_cards(
     .await;
 
     // Create new cards
-    let new_cards = create_card_indices
+    let new_card_data_ref = new_cards; // keep reference before shadowing
+    let new_cards_created = create_card_indices
         .into_iter()
         .map(|i| {
-            let new_card = new_cards.get(i - 1).unwrap();
+            let new_card = new_card_data_ref.get(i - 1).unwrap();
             let mut card = Card::new(at);
             card.note_id = note_id;
             card.order = i as u32;
@@ -191,7 +208,21 @@ async fn update_cards(
             card
         })
         .collect::<Vec<_>>();
-    create_cards(db, &new_cards).await?;
+    create_cards(db, &new_cards_created).await?;
+
+    // Apply SRS inheritance for newly created cards that carried `inh:NOTE_ID/ORDER`
+    let inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = new_cards_created
+        .iter()
+        .filter_map(|card| {
+            let card_data = new_card_data_ref.get(card.order as usize - 1)?;
+            let ReadableCardIdentifier {
+                note_id: src_note_id,
+                order: src_order,
+            } = card_data.inherit?;
+            Some((note_id, card.order, src_note_id, src_order))
+        })
+        .collect();
+    apply_srs_inheritance(db, &inherit_entries).await?;
     Ok(())
 }
 
