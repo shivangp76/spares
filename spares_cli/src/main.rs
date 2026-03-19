@@ -96,31 +96,10 @@ enum Commands {
     Migrate(MigrateArgs),
     /// Export notes matching a query
     Export(ExportArgs),
-    /// Get unmatched keywords
-    UnmatchedKeywords,
-    /// Get keywords associated with more than 1 note
-    DuplicateKeywords,
-    /// Rebuild a tag's dynamic membership
-    RebuildTag {
-        #[arg(short, long)]
-        id: i64,
-    },
-    /// Forget cards (reset scheduling, keep review logs)
-    ForgetCard(ForgetCardArgs),
-    /// Get leeches (cards that are frequently forgotten)
-    Leeches {
-        #[arg(short, long, default_value = "fsrs")]
-        scheduler_name: String,
-    },
-    /// Unbury all cards
-    Unbury {
-        #[arg(short, long)]
-        query: Option<String>,
-    },
-    /// Advance cards (review material ahead of time)
-    Advance(AdvanceArgs),
-    /// Postpone cards (delay reviews)
-    Postpone(PostponeArgs),
+    #[command(arg_required_else_help = true)]
+    Keyword(KeywordArgs),
+    #[command(arg_required_else_help = true)]
+    Schedule(ScheduleArgs),
     /// Undo an event
     Undo(UndoArgs),
     /// Generate shell completions
@@ -217,6 +196,9 @@ enum EditCommands {
         query: Option<Option<String>>,
         #[arg(short, long)]
         auto_delete: Option<bool>,
+        /// Rebuild the tag's dynamic membership instead of patching it
+        #[arg(long, default_value_t = false)]
+        rebuild: bool,
     },
     Note {
         #[command(flatten)]
@@ -440,6 +422,50 @@ struct UndoArgs {
     undo_group: bool,
 }
 
+#[derive(Args, Debug)]
+struct KeywordArgs {
+    #[command(subcommand)]
+    command: KeywordCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum KeywordCommands {
+    /// Get unmatched keywords
+    Unmatched,
+    /// Get keywords associated with more than 1 note
+    Duplicate,
+    /// Search for a keyword (returns best match)
+    Search { keyword: String },
+    /// Search for a keyword and show all matches ranked
+    Ranking { keyword: String },
+}
+
+#[derive(Args, Debug)]
+struct ScheduleArgs {
+    #[command(subcommand)]
+    command: ScheduleCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum ScheduleCommands {
+    /// Forget cards (reset scheduling, keep review logs)
+    Forget(ForgetCardArgs),
+    /// Get leeches (cards that are frequently forgotten)
+    Leeches {
+        #[arg(short, long, default_value = "fsrs")]
+        scheduler_name: String,
+    },
+    /// Unbury all cards
+    Unbury {
+        #[arg(short, long)]
+        query: Option<String>,
+    },
+    /// Advance cards (review material ahead of time)
+    Advance(AdvanceArgs),
+    /// Postpone cards (delay reviews)
+    Postpone(PostponeArgs),
+}
+
 fn get_current_utc_datetime() -> DateTime<Utc> {
     let local_time = Local::now();
     local_time.with_timezone(&Utc)
@@ -457,25 +483,12 @@ enum OutputFormat {
     RenderedFilepath,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum, Default)]
-enum SearchMode {
-    #[default]
-    Query,
-    Keyword,
-    KeywordRanking,
-}
-
 #[derive(Args, Debug)]
 struct SearchArgs {
-    #[arg(short, long, default_value = "query")]
-    mode: SearchMode,
-    // This option does not work if `matches!(mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
     #[arg(short, long, default_value = "notes")]
     output_type: OutputItemType,
-    // This option does not work if `matches!(mode, SearchMode::Keyword)`. There is no easy way to get around this since clap does not support default subcommands.
     #[arg(long, default_value = "raw-filepath")]
     output_format: OutputFormat,
-    // Positional argument
     query: String,
 }
 
@@ -655,31 +668,41 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 description,
                 query,
                 auto_delete,
+                rebuild,
             } => {
-                let tag_to_modify = if let Some(tag_id) = tag_id_opt {
-                    TagSelector::Id(tag_id)
-                } else if let Some(tag_name) = tag_name_opt {
-                    TagSelector::Name(tag_name)
+                if rebuild {
+                    let tag_id = tag_id_opt.expect("--id is required when using --rebuild");
+                    let url = format!("{}/api/tags/{}/rebuild", base_url, tag_id);
+                    let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+                    let _ = ensure_ok(response).await?;
+                    println!("Done");
                 } else {
-                    unreachable!("required by clap");
-                };
-                let request = UpdateTagRequest {
-                    tag_to_modify,
-                    name,
-                    description,
-                    query,
-                    auto_delete,
-                };
-                let url = format!("{}/api/tags", base_url);
-                let response = client
-                    .patch(url)
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|e| miette!("{}", e))?;
-                let response = ensure_ok(response).await?;
-                let response: TagResponse = response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                    let tag_to_modify = if let Some(tag_id) = tag_id_opt {
+                        TagSelector::Id(tag_id)
+                    } else if let Some(tag_name) = tag_name_opt {
+                        TagSelector::Name(tag_name)
+                    } else {
+                        unreachable!("required by clap");
+                    };
+                    let request = UpdateTagRequest {
+                        tag_to_modify,
+                        name,
+                        description,
+                        query,
+                        auto_delete,
+                    };
+                    let url = format!("{}/api/tags", base_url);
+                    let response = client
+                        .patch(url)
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(|e| miette!("{}", e))?;
+                    let response = ensure_ok(response).await?;
+                    let response: TagResponse =
+                        response.json().await.map_err(|e| miette!("{}", e))?;
+                    println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                }
             }
             EditCommands::Note {
                 selector,
@@ -1063,125 +1086,25 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&response).unwrap());
         }
-        Commands::UnmatchedKeywords => {
-            let url = format!("{}/api/notes/unmatched-keywords", base_url);
-            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let response: Vec<UnmatchedKeywordResponse> =
-                response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{}", serde_json::to_string_pretty(&response).unwrap());
-        }
-        Commands::DuplicateKeywords => {
-            let url = format!("{}/api/notes/duplicate-keywords", base_url);
-            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let response: Vec<(String, Vec<NoteId>)> =
-                response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{}", serde_json::to_string_pretty(&response).unwrap());
-        }
-        Commands::RebuildTag { id } => {
-            let url = format!("{}/api/tags/{}/rebuild", base_url, id);
-            let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Done");
-        }
-        Commands::Search(SearchArgs {
-            mode,
-            query,
-            output_type,
-            output_format,
-        }) => match mode {
-            SearchMode::Query => {
-                let return_item_type = match output_type {
-                    OutputItemType::Cards => QueryReturnItemType::Cards,
-                    OutputItemType::Notes => QueryReturnItemType::Notes,
-                };
-                let request = SearchNotesRequest {
-                    query,
-                    output_type: return_item_type,
-                };
-                let url = format!("{}/api/notes/search", base_url);
-                let response = client
-                    .post(url)
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|e| miette!("{}", e))?;
+        Commands::Keyword(KeywordArgs { command }) => match command {
+            KeywordCommands::Unmatched => {
+                let url = format!("{}/api/notes/unmatched-keywords", base_url);
+                let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let response: SearchNotesResponse =
+                let response: Vec<UnmatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                match response {
-                    SearchNotesResponse::Notes(note_responses) => {
-                        for (note_response, parser_name) in note_responses {
-                            let parser = find_parser(parser_name.as_str(), &get_all_parsers())?;
-                            match output_format {
-                                OutputFormat::RawFilepath => {
-                                    let mut note_raw_path = get_output_raw_dir(
-                                        parser.get_parser_name(),
-                                        RenderOutputType::Note,
-                                        None,
-                                    );
-                                    note_raw_path.push(parser.get_output_filename(
-                                        RenderOutputType::Note,
-                                        note_response.id,
-                                    ));
-                                    note_raw_path.set_extension(parser.file_extension());
-                                    println!("{}", note_raw_path.display());
-                                }
-                                OutputFormat::RenderedFilepath => {
-                                    let mut note_rendered_path = parser
-                                        .get_output_rendered_dir(RenderOutputDirectoryType::Note);
-                                    note_rendered_path.push(parser.get_output_filename(
-                                        RenderOutputType::Note,
-                                        note_response.id,
-                                    ));
-                                    println!("{}", note_rendered_path.display());
-                                }
-                            }
-                        }
-                    }
-                    SearchNotesResponse::Cards(card_responses) => {
-                        for (card_response, parser_name) in card_responses {
-                            let parser = find_parser(parser_name.as_str(), &get_all_parsers())?;
-                            match output_format {
-                                OutputFormat::RawFilepath => {
-                                    let mut card_raw_path = get_output_raw_dir(
-                                        parser.get_parser_name(),
-                                        RenderOutputType::Card(
-                                            card_response.order as usize,
-                                            CardSide::Front,
-                                        ),
-                                        None,
-                                    );
-                                    card_raw_path.push(parser.get_output_filename(
-                                        RenderOutputType::Card(
-                                            card_response.order as usize,
-                                            CardSide::Front,
-                                        ),
-                                        card_response.note_id,
-                                    ));
-                                    card_raw_path.set_extension(parser.file_extension());
-                                    println!("{}", card_raw_path.display());
-                                }
-                                OutputFormat::RenderedFilepath => {
-                                    let mut card_rendered_path = parser
-                                        .get_output_rendered_dir(RenderOutputDirectoryType::Card);
-                                    card_rendered_path.push(parser.get_output_filename(
-                                        RenderOutputType::Card(
-                                            card_response.order as usize,
-                                            CardSide::Front,
-                                        ),
-                                        card_response.note_id,
-                                    ));
-                                    println!("{}", card_rendered_path.display());
-                                }
-                            }
-                        }
-                    }
-                }
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
-            SearchMode::Keyword | SearchMode::KeywordRanking => {
-                let request = SearchKeywordRequest { keyword: query };
+            KeywordCommands::Duplicate => {
+                let url = format!("{}/api/notes/duplicate-keywords", base_url);
+                let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                let response: Vec<(String, Vec<NoteId>)> =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            }
+            KeywordCommands::Search { keyword } => {
+                let request = SearchKeywordRequest { keyword };
                 let url = format!("{}/api/notes/search/keyword", base_url);
                 let response = client
                     .post(url)
@@ -1192,16 +1115,116 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                if mode == SearchMode::Keyword {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&response.first()).unwrap()
-                    );
-                } else if mode == SearchMode::KeywordRanking {
-                    println!("{}", serde_json::to_string_pretty(&response).unwrap());
-                }
+                println!("{}", serde_json::to_string_pretty(&response.first()).unwrap());
+            }
+            KeywordCommands::Ranking { keyword } => {
+                let request = SearchKeywordRequest { keyword };
+                let url = format!("{}/api/notes/search/keyword", base_url);
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                let response: Vec<MatchedKeywordResponse> =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
         },
+        Commands::Search(SearchArgs {
+            query,
+            output_type,
+            output_format,
+        }) => {
+            let return_item_type = match output_type {
+                OutputItemType::Cards => QueryReturnItemType::Cards,
+                OutputItemType::Notes => QueryReturnItemType::Notes,
+            };
+            let request = SearchNotesRequest {
+                query,
+                output_type: return_item_type,
+            };
+            let url = format!("{}/api/notes/search", base_url);
+            let response = client
+                .post(url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let response = ensure_ok(response).await?;
+            let response: SearchNotesResponse =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            match response {
+                SearchNotesResponse::Notes(note_responses) => {
+                    for (note_response, parser_name) in note_responses {
+                        let parser = find_parser(parser_name.as_str(), &get_all_parsers())?;
+                        match output_format {
+                            OutputFormat::RawFilepath => {
+                                let mut note_raw_path = get_output_raw_dir(
+                                    parser.get_parser_name(),
+                                    RenderOutputType::Note,
+                                    None,
+                                );
+                                note_raw_path.push(parser.get_output_filename(
+                                    RenderOutputType::Note,
+                                    note_response.id,
+                                ));
+                                note_raw_path.set_extension(parser.file_extension());
+                                println!("{}", note_raw_path.display());
+                            }
+                            OutputFormat::RenderedFilepath => {
+                                let mut note_rendered_path = parser
+                                    .get_output_rendered_dir(RenderOutputDirectoryType::Note);
+                                note_rendered_path.push(parser.get_output_filename(
+                                    RenderOutputType::Note,
+                                    note_response.id,
+                                ));
+                                println!("{}", note_rendered_path.display());
+                            }
+                        }
+                    }
+                }
+                SearchNotesResponse::Cards(card_responses) => {
+                    for (card_response, parser_name) in card_responses {
+                        let parser = find_parser(parser_name.as_str(), &get_all_parsers())?;
+                        match output_format {
+                            OutputFormat::RawFilepath => {
+                                let mut card_raw_path = get_output_raw_dir(
+                                    parser.get_parser_name(),
+                                    RenderOutputType::Card(
+                                        card_response.order as usize,
+                                        CardSide::Front,
+                                    ),
+                                    None,
+                                );
+                                card_raw_path.push(parser.get_output_filename(
+                                    RenderOutputType::Card(
+                                        card_response.order as usize,
+                                        CardSide::Front,
+                                    ),
+                                    card_response.note_id,
+                                ));
+                                card_raw_path.set_extension(parser.file_extension());
+                                println!("{}", card_raw_path.display());
+                            }
+                            OutputFormat::RenderedFilepath => {
+                                let mut card_rendered_path = parser
+                                    .get_output_rendered_dir(RenderOutputDirectoryType::Card);
+                                card_rendered_path.push(parser.get_output_filename(
+                                    RenderOutputType::Card(
+                                        card_response.order as usize,
+                                        CardSide::Front,
+                                    ),
+                                    card_response.note_id,
+                                ));
+                                println!("{}", card_rendered_path.display());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)
                 .await
@@ -1268,17 +1291,44 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             shell.generate(&mut Cli::command(), &mut io::stdout());
             // generate(shell, &mut Cli::command(), "spares_cli", &mut io::stdout());
         }
-        Commands::ForgetCard(ForgetCardArgs { ids, query }) => {
-            let mut card_ids = Vec::new();
-            if let Some(ids_vec) = ids {
-                card_ids = ids_vec;
-            } else if let Some(q) = query {
-                // Fetch card ids using existing search endpoint, adapt for cards
-                let url = format!("{}/api/notes/search", base_url);
-                let req = spares::schema::note::SearchNotesRequest {
-                    query: q,
-                    output_type: spares::search::QueryReturnItemType::Cards,
-                };
+        Commands::Schedule(ScheduleArgs { command }) => match command {
+            ScheduleCommands::Forget(ForgetCardArgs { ids, query }) => {
+                let mut card_ids = Vec::new();
+                if let Some(ids_vec) = ids {
+                    card_ids = ids_vec;
+                } else if let Some(q) = query {
+                    let url = format!("{}/api/notes/search", base_url);
+                    let req = spares::schema::note::SearchNotesRequest {
+                        query: q,
+                        output_type: spares::search::QueryReturnItemType::Cards,
+                    };
+                    let response = client
+                        .post(&url)
+                        .json(&req)
+                        .send()
+                        .await
+                        .map_err(|e| miette!("{}", e))?;
+                    let response = ensure_ok(response).await?;
+                    let search_response: spares::schema::note::SearchNotesResponse =
+                        response.json().await.map_err(|e| miette!("{}", e))?;
+                    if let spares::schema::note::SearchNotesResponse::Cards(cards) =
+                        search_response
+                    {
+                        for (card, _) in cards {
+                            card_ids.push(card.id);
+                        }
+                    }
+                }
+                for card_id in card_ids {
+                    let forget_response = forget_card(card_id, &base_url, &client)
+                        .await
+                        .map_err(|e| miette!("{}", e))?;
+                    println!("Forgot card: {:#?}", &forget_response.card);
+                }
+            }
+            ScheduleCommands::Leeches { scheduler_name } => {
+                let url = format!("{}/api/cards/leeches", base_url);
+                let req = GetLeechesRequest { scheduler_name };
                 let response = client
                     .post(&url)
                     .json(&req)
@@ -1286,84 +1336,60 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     .await
                     .map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let search_response: spares::schema::note::SearchNotesResponse =
+                let card_responses: Vec<CardResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                if let spares::schema::note::SearchNotesResponse::Cards(cards) = search_response {
-                    for (card, _) in cards {
-                        card_ids.push(card.id);
-                    }
-                }
+                println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
             }
-            for card_id in card_ids {
-                let forget_response = forget_card(card_id, &base_url, &client)
+            ScheduleCommands::Unbury { query } => {
+                let url = format!("{}/api/cards/unbury", base_url);
+                let req = UnburyRequest { query };
+                let response = client
+                    .post(&url)
+                    .json(&req)
+                    .send()
                     .await
                     .map_err(|e| miette!("{}", e))?;
-                println!("Forgot card: {:#?}", &forget_response.card);
+                let _ = ensure_ok(response).await?;
+                println!("Done");
             }
-        }
-        Commands::Leeches { scheduler_name } => {
-            let url = format!("{}/api/cards/leeches", base_url);
-            let req = GetLeechesRequest { scheduler_name };
-            let response = client
-                .post(&url)
-                .json(&req)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let card_responses: Vec<CardResponse> =
-                response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
-        }
-        Commands::Unbury { query } => {
-            let url = format!("{}/api/cards/unbury", base_url);
-            let req = UnburyRequest { query };
-            let response = client
-                .post(&url)
-                .json(&req)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Done");
-        }
-        Commands::Advance(AdvanceArgs {
-            count,
-            scheduler_name,
-            query,
-        }) => {
-            let request = SubmitStudyActionRequest {
+            ScheduleCommands::Advance(AdvanceArgs {
+                count,
                 scheduler_name,
-                action: StudyAction::Advance { count, query },
-            };
-            let url = format!("{}/api/review/submit", base_url);
-            let response = client
-                .post(&url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Advanced {} cards.", count);
-        }
-        Commands::Postpone(PostponeArgs {
-            count,
-            scheduler_name,
-            query,
-        }) => {
-            let request = SubmitStudyActionRequest {
+                query,
+            }) => {
+                let request = SubmitStudyActionRequest {
+                    scheduler_name,
+                    action: StudyAction::Advance { count, query },
+                };
+                let url = format!("{}/api/review/submit", base_url);
+                let response = client
+                    .post(&url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let _ = ensure_ok(response).await?;
+                println!("Advanced {} cards.", count);
+            }
+            ScheduleCommands::Postpone(PostponeArgs {
+                count,
                 scheduler_name,
-                action: StudyAction::Postpone { count, query },
-            };
-            let url = format!("{}/api/review/submit", base_url);
-            let response = client
-                .post(&url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Postponed {} cards.", count);
+                query,
+            }) => {
+                let request = SubmitStudyActionRequest {
+                    scheduler_name,
+                    action: StudyAction::Postpone { count, query },
+                };
+                let url = format!("{}/api/review/submit", base_url);
+                let response = client
+                    .post(&url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let _ = ensure_ok(response).await?;
+                println!("Postponed {} cards.", count);
+            }
         }
         Commands::Undo(UndoArgs {
             event_id,
