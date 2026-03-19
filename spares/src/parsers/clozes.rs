@@ -545,7 +545,7 @@ fn parse_grouping_settings(
             current_grouping_settings.front_conceal =
                 FrontConceal::from_str(value).map_err(|e| {
                     LibraryError::Card(CardErrorKind::InvalidSettings {
-                        description: format!("The card back `{}` is invalid. Error: {}", value, e),
+                        description: format!("The card front `{}` is invalid. Error: {}", value, e),
                         src: data.to_string(),
                         at: card_settings_indices.clone().into(),
                     })
