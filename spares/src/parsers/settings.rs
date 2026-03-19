@@ -155,7 +155,7 @@ pub fn get_adapter_note_id_key(adapter_name: &str) -> String {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn parse_note_settings(
     parser: &dyn Parseable,
     data: &str,

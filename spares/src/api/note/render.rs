@@ -159,11 +159,36 @@ async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Er
     Ok(updated_note_links)
 }
 
+/// Deletes the old rows for the given note links and re-inserts the updated ones.
+async fn persist_updated_note_links(
+    db: &SqlitePool,
+    updated_note_links: &[NoteLink],
+) -> Result<(), Error> {
+    execute_batched_query(db, updated_note_links, async |db, chunk| {
+        let query_str = format!(
+            "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
+            placeholders_2d(chunk.len(), 2)
+        );
+        let mut delete_query = sqlx::query(query_str.as_str());
+        for nl in chunk {
+            delete_query = delete_query.bind(nl.parent_note_id);
+            delete_query = delete_query.bind(nl.order);
+        }
+        delete_query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await;
+    create_note_links(db, updated_note_links).await
+}
+
 /// - Determines linked notes for _all_ notes. This is not possible for only some notes. See note below.
 /// - Generates files for specified notes, usually all notes.
 ///
 /// Note: Only generating linked notes for some notes is not possible. Suppose a user has 3 notes: Notes A, B, and C. Suppose the user requests Note A to be rendered. Suppose Note B currently has a keyword that matches with Note C. However, the change to Note A could mean that Note B now has a better match with Note A. This means that Note B should be rendered as well. Therefore, it is possible that notes that are not requested need to have their linked notes regenerated as well.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn render_notes(
     db: &SqlitePool,
     body: RenderNotesRequest,
@@ -189,24 +214,7 @@ pub async fn render_notes(
             .collect();
 
         // Update note links with updated score
-        execute_batched_query(db, &updated_note_links, async |db, chunk| {
-            let query_str = format!(
-                "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
-                placeholders_2d(chunk.len(), 2)
-            );
-            let mut delete_query = sqlx::query(query_str.as_str());
-            for nl in chunk {
-                delete_query = delete_query.bind(nl.parent_note_id);
-                delete_query = delete_query.bind(nl.order);
-            }
-            delete_query
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            Ok(())
-        })
-        .await;
-        create_note_links(db, &updated_note_links).await?;
+        persist_updated_note_links(db, &updated_note_links).await?;
         // Note: We'll load all note links for rendered notes later, after we know which notes we're rendering
         // The updated note links are already in the database, so we'll get them when we query
     }

@@ -62,7 +62,7 @@ pub async fn create_undo_event(
     })
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Error> {
     match event.kind {
         EventType::CreateParser => {

@@ -41,7 +41,53 @@ pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardRespo
         .collect::<Vec<_>>())
 }
 
-#[allow(clippy::too_many_lines)]
+fn build_update_card_payload(
+    card_id: CardId,
+    existing_card: &Card,
+    final_card: &Card,
+) -> UpdateCardPayload {
+    UpdateCardPayload {
+        card_id,
+        order: None,
+        back_type: None,
+        due: (final_card.due != existing_card.due).then_some(Transition {
+            before: existing_card.due,
+            after: final_card.due,
+        }),
+        stability: ((final_card.stability - existing_card.stability).abs() > ALLOWED_F64_ERROR)
+            .then_some(Transition {
+                before: existing_card.stability,
+                after: final_card.stability,
+            }),
+        difficulty: ((final_card.difficulty - existing_card.difficulty).abs() > ALLOWED_F64_ERROR)
+            .then_some(Transition {
+                before: existing_card.difficulty,
+                after: final_card.difficulty,
+            }),
+        desired_retention: ((final_card.desired_retention - existing_card.desired_retention).abs()
+            > ALLOWED_F64_ERROR)
+            .then_some(Transition {
+                before: existing_card.desired_retention,
+                after: final_card.desired_retention,
+            }),
+        special_state: (final_card.special_state != existing_card.special_state).then_some(
+            Transition {
+                before: existing_card.special_state,
+                after: final_card.special_state,
+            },
+        ),
+        state: (final_card.state != existing_card.state).then_some(Transition {
+            before: existing_card.state,
+            after: final_card.state,
+        }),
+        custom_data: (final_card.custom_data != existing_card.custom_data).then_some(Transition {
+            before: existing_card.custom_data.clone(),
+            after: final_card.custom_data.clone(),
+        }),
+    }
+}
+
+#[expect(clippy::too_many_lines)]
 pub async fn update_cards(
     db: &SqlitePool,
     body: UpdateCardsRequest,
@@ -140,51 +186,7 @@ pub async fn update_cards(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         if log {
-            card_payloads.push(UpdateCardPayload {
-                card_id,
-                order: None,
-                back_type: None,
-                due: (final_card.due != existing_card.due).then_some(Transition {
-                    before: existing_card.due,
-                    after: final_card.due,
-                }),
-                stability: ((final_card.stability - existing_card.stability).abs()
-                    > ALLOWED_F64_ERROR)
-                    .then_some(Transition {
-                        before: existing_card.stability,
-                        after: final_card.stability,
-                    }),
-                difficulty: ((final_card.difficulty - existing_card.difficulty).abs()
-                    > ALLOWED_F64_ERROR)
-                    .then_some(Transition {
-                        before: existing_card.difficulty,
-                        after: final_card.difficulty,
-                    }),
-                desired_retention: ((final_card.desired_retention
-                    - existing_card.desired_retention)
-                    .abs()
-                    > ALLOWED_F64_ERROR)
-                    .then_some(Transition {
-                        before: existing_card.desired_retention,
-                        after: final_card.desired_retention,
-                    }),
-                special_state: (final_card.special_state != existing_card.special_state).then_some(
-                    Transition {
-                        before: existing_card.special_state,
-                        after: final_card.special_state,
-                    },
-                ),
-                state: (final_card.state != existing_card.state).then_some(Transition {
-                    before: existing_card.state,
-                    after: final_card.state,
-                }),
-                custom_data: (final_card.custom_data != existing_card.custom_data).then_some(
-                    Transition {
-                        before: existing_card.custom_data,
-                        after: final_card.custom_data.clone(),
-                    },
-                ),
-            });
+            card_payloads.push(build_update_card_payload(card_id, &existing_card, &final_card));
         }
         card_responses.push(CardResponse::new(&final_card));
     }

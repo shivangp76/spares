@@ -305,38 +305,12 @@ async fn sync_note_background(
     let _ = tx.send(Ok(note_id));
 }
 
-#[allow(clippy::too_many_lines)]
-pub async fn review_cards(
-    review_args: ReviewArgs,
+async fn build_review_actions(
+    scheduler_name: &str,
+    set_card_due_date_duration_str: String,
     base_url: &str,
     client: &Client,
-) -> Result<(), String> {
-    let open_command = review_args.open_command.as_deref();
-    let close_command = review_args.close_command.as_deref();
-    let scheduler_name = &review_args.scheduler_name;
-    let tag_id = review_args.filter_args.tag_id;
-
-    let review_card_opt = get_review_card(
-        &review_args.filter_args,
-        open_command,
-        base_url,
-        client,
-        true,
-    )
-    .await?;
-
-    if review_card_opt.is_none() {
-        println!("Done");
-        return Ok(());
-    }
-
-    let (mut review_card_response, mut card_front_rendered_child) = review_card_opt.unwrap();
-    let config = read_external_config().map_err(|e| format!("{}", e))?;
-    let flagged_tag_name = config.flagged_tag_name;
-    let set_card_due_date_duration = config.set_card_due_date_duration;
-    let set_card_due_date_duration_str = format_duration(set_card_due_date_duration);
-
-    // Get scheduler ratings
+) -> Result<Vec<ReviewAction>, String> {
     let mut all_options = ReviewAction::iter()
         .filter(|x| {
             !matches!(
@@ -374,13 +348,18 @@ pub async fn review_cards(
         get_scheduler_ratings(scheduler_name, base_url, client).await?,
     );
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Result<NoteId, String>>();
+    Ok(all_options)
+}
 
-    // Spawn background task to fetch day statistics
-    let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<StatisticsResponse>();
+fn spawn_stats_fetch(
+    scheduler_name: &str,
+    base_url: &str,
+    client: &Client,
+) -> mpsc::UnboundedReceiver<StatisticsResponse> {
+    let (stats_tx, stats_rx) = mpsc::unbounded_channel::<StatisticsResponse>();
     let url = format!("{}/api/review/statistics", base_url);
     let client_clone = client.clone();
-    let scheduler_name_clone = scheduler_name.clone();
+    let scheduler_name_clone = scheduler_name.to_string();
     tokio::spawn(async move {
         let request = StatisticsRequest {
             scheduler_name: scheduler_name_clone,
@@ -393,6 +372,48 @@ pub async fn review_cards(
             let _ = stats_tx.send(stats);
         }
     });
+    stats_rx
+}
+
+#[expect(clippy::too_many_lines)]
+pub async fn review_cards(
+    review_args: ReviewArgs,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    let open_command = review_args.open_command.as_deref();
+    let close_command = review_args.close_command.as_deref();
+    let scheduler_name = &review_args.scheduler_name;
+    let tag_id = review_args.filter_args.tag_id;
+
+    let review_card_opt = get_review_card(
+        &review_args.filter_args,
+        open_command,
+        base_url,
+        client,
+        true,
+    )
+    .await?;
+
+    if review_card_opt.is_none() {
+        println!("Done");
+        return Ok(());
+    }
+
+    let (mut review_card_response, mut card_front_rendered_child) = review_card_opt.unwrap();
+    let config = read_external_config().map_err(|e| format!("{}", e))?;
+    let flagged_tag_name = config.flagged_tag_name;
+    let set_card_due_date_duration = config.set_card_due_date_duration;
+    let set_card_due_date_duration_str = format_duration(set_card_due_date_duration);
+
+    let all_options =
+        build_review_actions(scheduler_name, set_card_due_date_duration_str, base_url, client)
+            .await?;
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<Result<NoteId, String>>();
+
+    // Spawn background task to fetch day statistics
+    let mut stats_rx = spawn_stats_fetch(scheduler_name, base_url, client);
 
     let session_start = Instant::now();
     let mut session_recall_duration = Duration::default();

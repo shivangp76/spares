@@ -353,7 +353,7 @@ impl Default for ClozeSettingsKeys {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn construct_cloze_string(
     global_settings: &ClozeSettings,
     grouping_settings: &[ClozeGroupingSettings],
@@ -681,7 +681,6 @@ fn parse_grouping_settings(
 // type ModifyDefaultsFn = Option<Arc<dyn Fn(&mut ClozeGroupingSettings)>>;
 type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
 
-#[allow(clippy::too_many_lines)]
 pub fn parse_card_settings(
     data: &str,
     card_settings_indices: &Range<usize>,

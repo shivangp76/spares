@@ -42,7 +42,7 @@ use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn update_cards(
     db: &SqlitePool,
     old_cards: &[CardData],
@@ -226,7 +226,100 @@ async fn update_cards(
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
+/// Validates that none of the tags are filtered tags, creates any missing tags, and inserts
+/// note-tag rows for all of them.  Returns payloads for any newly created tags.
+async fn add_tags_to_note(
+    db: &SqlitePool,
+    note_id: NoteId,
+    tags_to_add: &[String],
+    existing_filtered_tag_names: &[String],
+) -> Result<Vec<CreateTagPayload>, Error> {
+    if let Some(filtered_tag) = tags_to_add
+        .iter()
+        .find(|t| existing_filtered_tag_names.contains(t))
+    {
+        return Err(Error::Library(LibraryError::Tag(
+            TagErrorKind::InvalidInput(format!(
+                "Cannot manually add filtered tag `{}`. Filtered tags are dynamically assigned.",
+                filtered_tag
+            )),
+        )));
+    }
+    let mut new_tag_payloads = Vec::new();
+    let tags_info: Vec<(TagId, String)> =
+        fetch_batched_query(db, tags_to_add, async |db, chunk| {
+            let query_str = format!(
+                "SELECT id, name FROM tag WHERE name IN ({})",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_as(query_str.as_str());
+            for tag_name in chunk {
+                query = query.bind(tag_name);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
+    let mut new_tag_ids: Vec<i64> = tags_info.iter().map(|(x, _)| *x).collect::<Vec<_>>();
+    let existing_tag_names = tags_info
+        .iter()
+        .map(|x| x.1.clone())
+        .collect::<HashSet<_>>();
+    let new_tags = tags_to_add
+        .iter()
+        .filter(|tag_name| !existing_tag_names.contains(tag_name.as_str()))
+        .collect::<Vec<_>>();
+    let new_tag_names: Vec<String> = new_tags.iter().map(|s| (*s).clone()).collect();
+    let tag_responses = try_join_all(
+        new_tags
+            .into_iter()
+            .map(|tag| {
+                create_tag(
+                    db,
+                    CreateTagRequest {
+                        name: (*tag).clone(),
+                        description: String::new(),
+                        query: None,
+                        auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                    },
+                    false,
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+    .await?;
+    new_tag_payloads.extend(new_tag_names.into_iter().zip(tag_responses.iter()).map(
+        |(name, resp)| CreateTagPayload {
+            id: Some(resp.id),
+            name,
+            description: String::new(),
+            query: None,
+            auto_delete: DEFAULT_TAG_AUTO_DELETE,
+        },
+    ));
+    new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
+    execute_batched_query(db, &new_tag_ids, async |db, chunk| {
+        let query_str = format!(
+            "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
+            placeholders_2d(chunk.len(), 2)
+        );
+        let mut query = sqlx::query(query_str.as_str());
+        for tag_id in chunk {
+            query = query.bind(note_id);
+            query = query.bind(tag_id);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await?;
+    Ok(new_tag_payloads)
+}
+
 async fn update_tags(
     db: &SqlitePool,
     tags: &UpdateTags,
@@ -323,97 +416,9 @@ async fn update_tags(
     delete_empty_tags(db, &tags_to_check).await?;
 
     if let Some(tags_to_add) = tags_to_add {
-        let tags_to_add = &remove_ancestor_tags(tags_to_add);
-        if let Some(filtered_tag) = tags_to_add
-            .iter()
-            .find(|t| existing_filtered_tags_names.contains(t))
-        {
-            return Err(Error::Library(LibraryError::Tag(
-                TagErrorKind::InvalidInput(format!(
-                    "Cannot manually add filtered tag `{}`. Filtered tags are dynamically assigned.",
-                    filtered_tag
-                )),
-            )));
-        }
-
-        // Add tags
-        // Determine new tags
-        let tags_info: Vec<(TagId, String)> =
-            fetch_batched_query(db, tags_to_add, async |db, chunk| {
-                let query_str = format!(
-                    "SELECT id, name FROM tag WHERE name IN ({})",
-                    placeholders(chunk.len())
-                );
-                let mut query = sqlx::query_as(query_str.as_str());
-                for tag_name in chunk {
-                    query = query.bind(tag_name);
-                }
-                query
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })
-            })
-            .await?;
-        let mut new_tag_ids: Vec<i64> = tags_info.iter().map(|(x, _)| *x).collect::<Vec<_>>();
-        let existing_tag_names = tags_info
-            .iter()
-            .map(|x| x.1.clone())
-            .collect::<HashSet<_>>();
-
-        let new_tags = tags_to_add
-            .iter()
-            .filter(|tag_name| !existing_tag_names.contains(tag_name.as_str()))
-            .collect::<Vec<_>>();
-
-        // Create new tags
-        let new_tag_names: Vec<String> = new_tags.iter().map(|s| (*s).clone()).collect();
-        let tag_responses = try_join_all(
-            new_tags
-                .into_iter()
-                .map(|tag| {
-                    create_tag(
-                        db,
-                        CreateTagRequest {
-                            name: (*tag).clone(),
-                            description: String::new(),
-                            query: None,
-                            auto_delete: DEFAULT_TAG_AUTO_DELETE,
-                        },
-                        false,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await?;
-        new_tag_payloads.extend(new_tag_names.into_iter().zip(tag_responses.iter()).map(
-            |(name, resp)| CreateTagPayload {
-                id: Some(resp.id),
-                name,
-                description: String::new(),
-                query: None,
-                auto_delete: DEFAULT_TAG_AUTO_DELETE,
-            },
-        ));
-        new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
-
-        // Add these tags
-        execute_batched_query(db, &new_tag_ids, async |db, chunk| {
-            let query_str = format!(
-                "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
-                placeholders_2d(chunk.len(), 2)
-            );
-            let mut query = sqlx::query(query_str.as_str());
-            for tag_id in chunk {
-                query = query.bind(note_id);
-                query = query.bind(tag_id);
-            }
-            query
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            Ok(())
-        })
-        .await?;
+        let tags_to_add = remove_ancestor_tags(tags_to_add);
+        new_tag_payloads
+            .extend(add_tags_to_note(db, note_id, &tags_to_add, &existing_filtered_tags_names).await?);
     }
     Ok(new_tag_payloads)
 }
@@ -514,6 +519,108 @@ fn get_parser_only(
     find_parser(parser_name.as_str(), all_parsers)
 }
 
+/// Builds an `UpdateNotePayload` by comparing two snapshots of the same note.
+/// All fields that did not change will have their transition set to `None`.
+fn build_update_note_payload(
+    note_id: NoteId,
+    before: &NoteSnapshot,
+    after: &NoteSnapshot,
+) -> UpdateNotePayload {
+    UpdateNotePayload {
+        id: note_id,
+        data: (before.data != after.data).then(|| Transition {
+            before: before.data.clone(),
+            after: after.data.clone(),
+        }),
+        parser_id: (before.parser_id != after.parser_id).then_some(Transition {
+            before: before.parser_id,
+            after: after.parser_id,
+        }),
+        keywords: (before.keywords != after.keywords).then(|| Transition {
+            before: before.keywords.clone(),
+            after: after.keywords.clone(),
+        }),
+        tags: (before.tags != after.tags).then(|| Transition {
+            before: before.tags.clone(),
+            after: after.tags.clone(),
+        }),
+        custom_data: (before.custom_data != after.custom_data).then(|| Transition {
+            before: before.custom_data.clone(),
+            after: after.custom_data.clone(),
+        }),
+        cards: (before.cards != after.cards).then(|| Transition {
+            before: before.cards.clone(),
+            after: after.cards.clone(),
+        }),
+    }
+}
+
+/// Re-evaluates all filtered-tag queries against the given notes' cards, adding or removing
+/// card-tag associations as appropriate.  Must be called after cards and manual tags are committed.
+async fn rebuild_filtered_tags_for_updated_notes(
+    db: &SqlitePool,
+    note_responses: &[NoteResponse],
+) -> Result<(), Error> {
+    let existing_filtered_tags: Vec<(TagId, String)> =
+        sqlx::query_as(r"SELECT id, query FROM tag WHERE query IS NOT NULL")
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let created_card_ids: Vec<CardId> =
+        fetch_batched_query(db, note_responses, async |db, chunk| {
+            let query_str = format!(
+                "SELECT id FROM cards WHERE note_id IN ({})",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_scalar(query_str.as_str());
+            for note in chunk {
+                query = query.bind(note.id);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
+    let mut card_filtered_tag_entries = Vec::new();
+    let mut delete_card_tag_entries = Vec::new();
+    for (tag_id, query) in existing_filtered_tags {
+        let evaluator = Evaluator::new(query.as_str());
+        let search_card_ids = evaluator.get_card_ids(db).await?;
+        let (card_ids_to_add_tag, card_ids_to_remove_tag): (Vec<_>, Vec<_>) = created_card_ids
+            .iter()
+            .map(|card_id| (*card_id, tag_id))
+            .partition(|(card_id, _)| search_card_ids.contains(card_id));
+        let existing_card_tags: Vec<(CardId, TagId)> =
+            fetch_batched_query(db, &created_card_ids, async |db, chunk| {
+                let query_str = format!(
+                    "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as(query_str.as_str());
+                for card_id in chunk {
+                    query = query.bind(card_id);
+                }
+                query
+                    .bind(tag_id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            })
+            .await?;
+        let existing_card_tags_set: HashSet<(CardId, TagId)> =
+            existing_card_tags.into_iter().collect();
+        let card_ids_to_add_tag: Vec<(CardId, TagId)> = card_ids_to_add_tag
+            .into_iter()
+            .filter(|entry| !existing_card_tags_set.contains(entry))
+            .collect();
+        card_filtered_tag_entries.extend(card_ids_to_add_tag);
+        delete_card_tag_entries.extend(card_ids_to_remove_tag);
+    }
+    create_card_tags(db, &card_filtered_tag_entries).await?;
+    delete_card_tags(db, &delete_card_tag_entries).await
+}
+
 fn get_parser_and_cards(
     parser_rows: &[(i64, String)],
     parser_id: i64,
@@ -525,7 +632,7 @@ fn get_parser_and_cards(
     Ok((parser, cards))
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn update_notes(
     db: &SqlitePool,
     body: UpdateNotesRequest,
@@ -714,133 +821,14 @@ pub async fn update_notes(
                 &updated_note.custom_data,
             )
             .await?;
-
-            let data_transition = if before.data == after_snapshot.data {
-                None
-            } else {
-                Some(Transition {
-                    before: before.data.clone(),
-                    after: after_snapshot.data.clone(),
-                })
-            };
-            let parser_id_transition = if before.parser_id == after_snapshot.parser_id {
-                None
-            } else {
-                Some(Transition {
-                    before: before.parser_id,
-                    after: after_snapshot.parser_id,
-                })
-            };
-            let keywords_transition = if before.keywords == after_snapshot.keywords {
-                None
-            } else {
-                Some(Transition {
-                    before: before.keywords.clone(),
-                    after: after_snapshot.keywords.clone(),
-                })
-            };
-            let tags_transition = if before.tags == after_snapshot.tags {
-                None
-            } else {
-                Some(Transition {
-                    before: before.tags.clone(),
-                    after: after_snapshot.tags.clone(),
-                })
-            };
-            let custom_data_transition = if before.custom_data == after_snapshot.custom_data {
-                None
-            } else {
-                Some(Transition {
-                    before: before.custom_data.clone(),
-                    after: after_snapshot.custom_data.clone(),
-                })
-            };
-            let cards_transition = if before.cards == after_snapshot.cards {
-                None
-            } else {
-                Some(Transition {
-                    before: before.cards.clone(),
-                    after: after_snapshot.cards.clone(),
-                })
-            };
-
-            update_note_payloads.push(UpdateNotePayload {
-                id: *note_id,
-                data: data_transition,
-                parser_id: parser_id_transition,
-                keywords: keywords_transition,
-                tags: tags_transition,
-                custom_data: custom_data_transition,
-                cards: cards_transition,
-            });
+            update_note_payloads.push(build_update_note_payload(*note_id, &before, &after_snapshot));
         }
     }
 
     if AUTOMATIC_REBUILD {
-        // Add/ Remove notes from matched filtered tags
-        // This must be done after creating other note tags and creating cards since that impacts if the note matches a query.
-        // Find all tags with queries
-        let existing_filtered_tags: Vec<(TagId, String)> =
-            sqlx::query_as(r"SELECT id, query FROM tag WHERE query IS NOT NULL")
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        // Get card ids from the note.id
-        let created_card_ids: Vec<CardId> =
-            fetch_batched_query(db, &note_responses, async |db, chunk| {
-                let query_str = format!(
-                    "SELECT id FROM cards WHERE note_id IN ({})",
-                    placeholders(chunk.len())
-                );
-                let mut query = sqlx::query_scalar(query_str.as_str());
-                for note in chunk {
-                    query = query.bind(note.id);
-                }
-                query
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })
-            })
-            .await?;
-        let mut card_filtered_tag_entries = Vec::new();
-        let mut delete_card_tag_entries = Vec::new();
-        for (tag_id, query) in existing_filtered_tags {
-            // Reexecute query to see if this card matches
-            let evaluator = Evaluator::new(query.as_str());
-            let search_card_ids = evaluator.get_card_ids(db).await?;
-            let (card_ids_to_add_tag, card_ids_to_remove_tag): (Vec<_>, Vec<_>) = created_card_ids
-                .iter()
-                .map(|card_id| (*card_id, tag_id))
-                .partition(|(card_id, _)| search_card_ids.contains(card_id));
-            // Check for existing card-tag relationships to avoid duplicates
-            let existing_card_tags: Vec<(CardId, TagId)> =
-                fetch_batched_query(db, &created_card_ids, async |db, chunk| {
-                    let query_str = format!(
-                        "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
-                        placeholders(chunk.len())
-                    );
-                    let mut query = sqlx::query_as(query_str.as_str());
-                    for card_id in chunk {
-                        query = query.bind(card_id);
-                    }
-                    query
-                        .bind(tag_id)
-                        .fetch_all(db)
-                        .await
-                        .map_err(|e| Error::Sqlx { source: e })
-                })
-                .await?;
-            let existing_card_tags_set: HashSet<(CardId, TagId)> =
-                existing_card_tags.into_iter().collect();
-            let card_ids_to_add_tag: Vec<(CardId, TagId)> = card_ids_to_add_tag
-                .into_iter()
-                .filter(|entry| !existing_card_tags_set.contains(entry))
-                .collect();
-            card_filtered_tag_entries.extend(card_ids_to_add_tag);
-            delete_card_tag_entries.extend(card_ids_to_remove_tag);
-        }
-        create_card_tags(db, &card_filtered_tag_entries).await?;
-        delete_card_tags(db, &delete_card_tag_entries).await?;
+        // Add/Remove notes from matched filtered tags.
+        // Must be done after creating other note tags and cards since those affect query matching.
+        rebuild_filtered_tags_for_updated_notes(db, &note_responses).await?;
     }
 
     // Get parser
@@ -900,7 +888,7 @@ pub async fn update_notes(
 
 /// Apply an `UpdateNotes` event payload (used when undoing `UpdateNotes`).
 /// For each note, applies the `after` field values from each transition.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub(crate) async fn update_notes_event(
     db: &SqlitePool,
     payload: UpdateNotesPayload,

@@ -131,7 +131,7 @@ impl SrsAdapter for SparesAdapter {
         unreachable!("The default adapter has no migrations.");
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     async fn process_data(
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,

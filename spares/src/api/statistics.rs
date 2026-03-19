@@ -12,7 +12,7 @@ use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
 
 #[allow(clippy::cast_possible_wrap)]
-#[allow(clippy::too_many_lines, reason = "off by a few")]
+#[expect(clippy::too_many_lines)]
 pub async fn get_statistics(
     db: &SqlitePool,
     request: StatisticsRequest,

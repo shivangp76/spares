@@ -181,7 +181,7 @@ async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
 }
 
 // Note that `requested_date` is not in `ReviewOptions` since we don't want the user to be able to edit it. However, for testing purposes, we still want to be able to mimic calling this function on different days, so it is included as an argument.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn get_review_card(
     db: &SqlitePool,
     body: GetReviewCardRequest,
@@ -460,7 +460,33 @@ pub async fn update_filtered_tag_scheduler_data(
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
+/// Fetches all sibling cards for a note (excluding `card_id`) together with
+/// their full review-log history, ordered by `reviewed_at ASC`.
+async fn fetch_siblings_with_review_logs(
+    db: &SqlitePool,
+    note_id: NoteId,
+    card_id: CardId,
+) -> Result<Vec<(Card, Vec<ReviewLog>)>, Error> {
+    let siblings: Vec<Card> = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ? AND id != ?")
+        .bind(note_id)
+        .bind(card_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let mut siblings_with_review_logs = Vec::with_capacity(siblings.len());
+    for sibling in siblings {
+        let review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC")
+                .bind(sibling.id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        siblings_with_review_logs.push((sibling, review_logs));
+    }
+    Ok(siblings_with_review_logs)
+}
+
+#[expect(clippy::too_many_lines)]
 pub async fn rate_card(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
@@ -522,23 +548,8 @@ pub async fn rate_card(
 
     // Smart schedule
     review_logs.push(new_review_log.clone());
-    let siblings: Vec<Card> = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ? AND id != ?")
-        .bind(card.note_id)
-        .bind(card.id)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let mut siblings_with_review_logs = vec![];
-    // Get latest reviews for this card
-    for card in siblings {
-        let review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC")
-                .bind(card.id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        siblings_with_review_logs.push((card, review_logs));
-    }
+    let siblings_with_review_logs =
+        fetch_siblings_with_review_logs(db, card.note_id, card.id).await?;
     let config = read_external_config()?;
     updated_card.due = scheduler
         .smart_schedule(
