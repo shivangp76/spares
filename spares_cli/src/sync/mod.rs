@@ -172,7 +172,7 @@ fn replace_action(
 /// | Delete | 3    | 1    |
 ///
 /// Returns modified note.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn update_changes(
     original_sync_source_from: SyncSource,
     original_sync_source_to: SyncSource,
@@ -354,7 +354,7 @@ async fn regenerate_notes(
 }
 
 /// Generate all notes (not cards) in temp directory
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn generate_notes(
     base_url: &str,
     client: &Client,

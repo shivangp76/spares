@@ -48,6 +48,51 @@ impl AnkiAdapter {
             confirm_bypass: false,
         }
     }
+
+    /// After non-suspended Add requests have been executed, correlates each result with its
+    /// `spares_id` and updates the corresponding Spares note's `custom_data` to record the
+    /// newly assigned Anki note ID.
+    async fn update_spares_with_anki_ids(
+        &self,
+        requests: &[ApiRequest],
+        anki_results: &[Value],
+        added_notes: Vec<(Option<NoteId>, CustomData)>,
+        dry_run: bool,
+    ) -> Result<(), Error> {
+        let relevant_data: Vec<(String, NoteId, CustomData)> = requests
+            .iter()
+            .zip(anki_results.iter())
+            .filter(|(request, _)| matches!(request.action, ApiAction::AddNote))
+            .filter(|(request, _)| match &request.params {
+                ApiRequestParams::AddNote(AddNoteApiRequestData { note }) => {
+                    note.fields.spares_id.is_some()
+                }
+                _ => unreachable!(),
+            })
+            .map(|(_request, result)| serde_json::from_value::<i64>(result.clone()))
+            .zip(added_notes)
+            .filter_map(|(anki_note_id, (spares_id, custom_data))| {
+                match (anki_note_id, spares_id) {
+                    (Ok(anki_note_id), Some(spares_id)) => {
+                        Some((anki_note_id.to_string(), spares_id, custom_data))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        if !dry_run {
+            let spares_adapter = SparesAdapter::new(SparesRequestProcessor::Server);
+            let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
+            for (anki_note_id, spares_note_id, mut custom_data) in relevant_data {
+                custom_data.remove(NOTE_ID_KEY);
+                custom_data.insert(new_key.clone(), Value::String(anki_note_id));
+                spares_adapter
+                    .update_custom_data(spares_note_id, custom_data, dry_run, Utc::now())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -158,7 +203,7 @@ impl SrsAdapter for AnkiAdapter {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     async fn process_data(
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,
@@ -367,39 +412,8 @@ impl SrsAdapter for AnkiAdapter {
         // Update Spares with Anki note id if it was:
         // 1. Already added to Spares
         // 2. Just added to Anki
-        let relevant_data: Vec<(String, NoteId, CustomData)> = requests
-            .into_iter()
-            .zip(anki_results)
-            .filter(|(request, _)| matches!(request.action, ApiAction::AddNote))
-            .filter(|(request, _)| match &request.params {
-                ApiRequestParams::AddNote(AddNoteApiRequestData { note }) => {
-                    note.fields.spares_id.is_some()
-                }
-                _ => unreachable!(),
-            })
-            .map(|(_request, result)| serde_json::from_value::<i64>(result))
-            // Since we are only looking at the relevant requests/results now, the data is now lined up. We can simply zip up the spares id and custom data.
-            .zip(added_notes)
-            .filter_map(|(anki_note_id, (spares_id, custom_data))| {
-                match (anki_note_id, spares_id) {
-                    (Ok(anki_note_id), Some(spares_id)) => {
-                        Some((anki_note_id.to_string(), spares_id, custom_data))
-                    }
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
-        if !dry_run {
-            let spares_adapter = SparesAdapter::new(SparesRequestProcessor::Server);
-            let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
-            for (anki_note_id, spares_note_id, mut custom_data) in relevant_data {
-                custom_data.remove(NOTE_ID_KEY);
-                custom_data.insert(new_key.clone(), Value::String(anki_note_id.clone()));
-                spares_adapter
-                    .update_custom_data(spares_note_id, custom_data, dry_run, Utc::now())
-                    .await?;
-            }
-        }
+        self.update_spares_with_anki_ids(&requests, &anki_results, added_notes, dry_run)
+            .await?;
 
         Ok(())
     }

@@ -164,7 +164,7 @@ pub fn create_note_files_bulk(
 }
 
 #[allow(clippy::too_many_arguments, reason = "function is only called once")]
-#[allow(clippy::too_many_lines, reason = "off by a few")]
+#[expect(clippy::too_many_lines)]
 fn create_note_files(
     parser: &dyn Parseable,
     request: &GenerateNoteFilesRequest,
