@@ -151,7 +151,6 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     use crate::api::card::update_card_event;
     use crate::api::note::{create_notes_event, delete_notes_event, update_notes_event};

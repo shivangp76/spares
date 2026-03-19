@@ -708,7 +708,49 @@ fn evaluate_colon(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
+fn validate_field_value_types(
+    field: &Field,
+    field_type: &FieldType,
+    value_type: &FieldType,
+    value_str: &str,
+) -> Result<(), Error> {
+    match (field_type, value_type) {
+        (FieldType::Integer, FieldType::Integer)
+        | (FieldType::Float, FieldType::Float | FieldType::Integer)
+        | (FieldType::String | FieldType::Json, _)
+        | (FieldType::DateTime, FieldType::DateTime)
+        | (FieldType::Boolean, FieldType::Boolean)
+        | (FieldType::String, FieldType::Regex) => Ok(()),
+        _ => Err(miette!(
+            "The field `{:?}` has a type of `{:?}`. The provided value of `{}` has a type of `{:?}` which does not match the field's type.",
+            field,
+            field_type,
+            value_str,
+            value_type
+        )),
+    }
+}
+
+fn validate_field_operator_types(
+    field: &Field,
+    field_type: &FieldType,
+    op: Op,
+) -> Result<(), Error> {
+    match (field_type, op) {
+        (
+            FieldType::String | FieldType::Boolean,
+            Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual,
+        )
+        | (FieldType::Integer | FieldType::Float | FieldType::Boolean, Op::Tilde) => Err(miette!(
+            "The field `{:?}` has a type of `{:?}` which cannot use operator `{}`",
+            field,
+            field_type,
+            op,
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn evaluate_field_value(
     trees: &[TokenTree],
     context: &mut EvaluationContext,
@@ -814,44 +856,14 @@ fn evaluate_field_value(
     let value_str = value_context.params.join(" ");
 
     // Ensure field and value have the same type
-    match (&field_type, &value_type) {
-        (FieldType::Integer, FieldType::Integer)
-        | (FieldType::Float, FieldType::Float | FieldType::Integer)
-        | (FieldType::String | FieldType::Json, _)
-        | (FieldType::DateTime, FieldType::DateTime)
-        | (FieldType::Boolean, FieldType::Boolean)
-        | (FieldType::String, FieldType::Regex) => {}
-        _ => {
-            return Err(miette!(
-                "The field `{:?}` has a type of `{:?}`. The provided value of `{}` has a type of `{:?}` which does not match the field's type.",
-                field,
-                field_type,
-                value_str,
-                value_type
-            ));
-        }
-    }
+    validate_field_value_types(&field, &field_type, &value_type, &value_str)?;
 
     // Ensure field and operator have valid type
     // - Strings do not have an order
     // - Booleans do not have an order
     // - Booleans cannot use containment operator
     // - Numbers cannot use containment operator
-    match (&field_type, &op) {
-        (
-            FieldType::String | FieldType::Boolean,
-            Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual,
-        )
-        | (FieldType::Integer | FieldType::Float | FieldType::Boolean, Op::Tilde) => {
-            return Err(miette!(
-                "The field `{:?}` has a type of `{:?}` which cannot use operator `{}`",
-                field,
-                field_type,
-                op,
-            ));
-        }
-        _ => {}
-    }
+    validate_field_operator_types(&field, &field_type, op)?;
 
     let sql_condition = field.to_sql_str(&value_str);
     context.add_where_clause(sql_condition);

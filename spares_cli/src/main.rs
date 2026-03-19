@@ -569,7 +569,7 @@ fn parse_list(data: &str) -> Vec<String> {
         .collect::<Vec<_>>()
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 #[allow(clippy::similar_names)]
 async fn process_args(args: Cli) -> Result<(), Error> {
     let env_config = get_env_config(args.environment);

@@ -369,7 +369,7 @@ fn update_first_cloze_with_order(cards_raw: &mut [Vec<(ClozeData, ClozeGroupingS
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn modify_card_settings(
     cards_raw: &mut Vec<Vec<(ClozeData, ClozeGroupingSettings)>>,
     data: &mut String,
@@ -669,7 +669,7 @@ pub fn get_cards(
 }
 
 // The order of the returned cards matters here and is used to reference cards in the database. Cloze number cannot be used in the database because 1 card can have multiple clozes (grouped clozes).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn get_cards_main(
     parser: &dyn Parseable,
     to_parser: Option<&dyn Parseable>,
