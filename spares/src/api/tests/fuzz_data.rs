@@ -14,7 +14,7 @@ use crate::{
     schema::note::{CreateNoteRequest, CreateNotesRequest, NotesResponse},
 };
 use rand::{
-    Rng,
+    Rng, RngExt,
     rngs::ThreadRng,
     seq::{IndexedRandom, SliceRandom},
 };
@@ -323,7 +323,8 @@ pub async fn generate_notes(
         parser_id: parser_response.id,
         requests: create_note_requests,
     };
-    let note_responses_res = create_notes(&pool, request, *start_date, &get_all_parsers(), false).await;
+    let note_responses_res =
+        create_notes(&pool, request, *start_date, &get_all_parsers(), false).await;
     assert!(note_responses_res.is_ok());
     let mut note_responses = note_responses_res.unwrap();
 

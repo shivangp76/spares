@@ -34,7 +34,7 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use log::info;
 use rand::{
-    Rng,
+    Rng, RngExt,
     distr::{Distribution, weighted::WeightedIndex},
     rngs::ThreadRng,
 };

@@ -353,7 +353,7 @@ mod tests {
     use crate::config::read_external_config;
     use crate::schedulers::get_scheduler_from_string;
     use chrono::{TimeZone, Utc};
-    use rand::Rng;
+    use rand::{Rng, RngExt};
     use std::collections::HashMap;
 
     #[test]
