@@ -284,6 +284,13 @@ async fn update_changes(
             }
         }
 
+        // Collect delete filepaths before consuming import_data_filepaths
+        let delete_filepaths: Vec<PathBuf> = import_data_filepaths
+            .iter()
+            .filter(|(_, action, _)| matches!(action, SyncImportAction::Delete { .. }))
+            .map(|(fp, _, _)| (*fp).clone())
+            .collect();
+
         // Import
         if let Some(ref mut adapter) = adapter_opt {
             if dry_run {
@@ -305,6 +312,11 @@ async fn update_changes(
                 )
                 .await
                 .map_err(|e| format!("{}", e))?;
+
+                // Remove deleted notes from cache so next sync is up to date
+                for filepath in &delete_filepaths {
+                    let _ = fs::remove_file(filepath);
+                }
             }
         }
     }
