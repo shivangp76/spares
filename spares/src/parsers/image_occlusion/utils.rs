@@ -142,6 +142,82 @@ pub fn get_center_of_shape(shape_type: SvgClozeType, element: &Element) -> (f64,
             // Default case, return (0, 0) for unknown shapes
             (0.0, 0.0)
         }
+        SvgClozeType::Group => {
+            // Find the center of the bounding box that encloses all child shapes.
+            get_bounding_box_of_group(element)
+                .map_or((0.0, 0.0), |(min_x, min_y, max_x, max_y)| {
+                    (f64::midpoint(min_x, max_x), f64::midpoint(min_y, max_y))
+                })
+        }
+    }
+}
+
+/// Returns the axis-aligned bounding box `(min_x, min_y, max_x, max_y)` that
+/// covers all recognised primitive-shape children of a `<g>` group element.
+/// Returns `None` when the group has no recognised children.
+fn get_bounding_box_of_group(group: &Element) -> Option<(f64, f64, f64, f64)> {
+    group
+        .children
+        .iter()
+        .filter_map(|node| match node {
+            xmltree::XMLNode::Element(el) => el.name.parse::<SvgClozeType>().ok().map(|t| (t, el)),
+            _ => None,
+        })
+        .filter_map(|(shape_type, el)| get_bounding_box_of_shape(shape_type, el))
+        .reduce(|(ax, ay, ax2, ay2), (bx, by, bx2, by2)| {
+            (ax.min(bx), ay.min(by), ax2.max(bx2), ay2.max(by2))
+        })
+}
+
+/// Returns `(min_x, min_y, max_x, max_y)` for a single primitive shape.
+/// Returns `None` for shapes whose bounds cannot be determined analytically
+/// (currently `Path`).
+fn get_bounding_box_of_shape(shape_type: SvgClozeType, element: &Element) -> Option<(f64, f64, f64, f64)> {
+    let attr = |key: &str| -> f64 {
+        element
+            .attributes
+            .get(key)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_default()
+    };
+    match shape_type {
+        SvgClozeType::Rectangle => {
+            let x = attr("x");
+            let y = attr("y");
+            let w = attr("width");
+            let h = attr("height");
+            Some((x, y, x + w, y + h))
+        }
+        SvgClozeType::Circle => {
+            let cx = attr("cx");
+            let cy = attr("cy");
+            let r = attr("r");
+            Some((cx - r, cy - r, cx + r, cy + r))
+        }
+        SvgClozeType::Ellipse => {
+            let cx = attr("cx");
+            let cy = attr("cy");
+            let rx = attr("rx");
+            let ry = attr("ry");
+            Some((cx - rx, cy - ry, cx + rx, cy + ry))
+        }
+        SvgClozeType::Polygon => {
+            let points_str = element.attributes.get("points")?;
+            let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+            let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for point in points_str.split(' ') {
+                let mut parts = point.split(',');
+                let x: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or_default();
+                let y: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or_default();
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+            if min_x.is_finite() { Some((min_x, min_y, max_x, max_y)) } else { None }
+        }
+        // Path bounds require parsing path data — not attempted here.
+        SvgClozeType::Path | SvgClozeType::Group => None,
     }
 }
 
@@ -243,4 +319,83 @@ pub fn unpremultiply_rgba(premul: &[u8]) -> Vec<u8> {
         i += 4;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper: parse a compact XML fragment into an Element.
+    fn parse(xml: &str) -> Element {
+        Element::parse(xml.as_bytes()).unwrap()
+    }
+
+    // ── get_center_of_shape(Group, …) ─────────────────────────────────────────
+
+    /// Two non-overlapping rects → centre of their union bounding box.
+    ///   rect1: (0, 0, 100, 40)
+    ///   rect2: (200, 10, 300, 30)
+    ///   union: (0, 0, 300, 40) → centre (150, 20)
+    #[test]
+    fn test_group_center_two_rects() {
+        let group = parse(
+            r#"<g><rect x="0" y="0" width="100" height="40"/><rect x="200" y="10" width="100" height="20"/></g>"#,
+        );
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 150.0);
+        assert_eq!(cy, 20.0);
+    }
+
+    /// A single circle → centre equals (cx, cy) of that circle.
+    ///   circle cx=50 cy=30 r=20 → bbox (30, 10, 70, 50) → centre (50, 30)
+    #[test]
+    fn test_group_center_single_circle() {
+        let group = parse(r#"<g><circle cx="50" cy="30" r="20"/></g>"#);
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 50.0);
+        assert_eq!(cy, 30.0);
+    }
+
+    /// A single ellipse → centre equals (cx, cy) of that ellipse.
+    ///   ellipse cx=100 cy=60 rx=40 ry=20 → bbox (60, 40, 140, 80) → centre (100, 60)
+    #[test]
+    fn test_group_center_single_ellipse() {
+        let group = parse(r#"<g><ellipse cx="100" cy="60" rx="40" ry="20"/></g>"#);
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 100.0);
+        assert_eq!(cy, 60.0);
+    }
+
+    /// Mixed shapes: rect + ellipse.
+    ///   rect   (0,  0, 100, 40)
+    ///   ellipse cx=200 cy=20 rx=20 ry=20 → (180, 0, 220, 40)
+    ///   union  (0, 0, 220, 40) → centre (110, 20)
+    #[test]
+    fn test_group_center_rect_and_ellipse() {
+        let group = parse(
+            r#"<g><rect x="0" y="0" width="100" height="40"/><ellipse cx="200" cy="20" rx="20" ry="20"/></g>"#,
+        );
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 110.0);
+        assert_eq!(cy, 20.0);
+    }
+
+    /// An empty group has no bounding box, so the fallback (0.0, 0.0) is returned.
+    #[test]
+    fn test_group_center_empty_group() {
+        let group = parse(r#"<g/>"#);
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 0.0);
+        assert_eq!(cy, 0.0);
+    }
+
+    /// A group whose only children are `<path>` elements also returns (0.0, 0.0)
+    /// because path bounds are not computed analytically.
+    #[test]
+    fn test_group_center_only_path_children() {
+        let group = parse(r#"<g><path d="M0 0 L100 100"/></g>"#);
+        let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
+        assert_eq!(cx, 0.0);
+        assert_eq!(cy, 0.0);
+    }
 }

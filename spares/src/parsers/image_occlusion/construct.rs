@@ -329,9 +329,22 @@ fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
 }
 
 fn set_cloze_color(cloze: &mut Element, cloze_color: &str) {
-    cloze
-        .attributes
-        .insert("fill".to_string(), cloze_color.to_string());
+    // SVG `fill` on a `<g>` element is inherited by children, but only as a
+    // presentation-attribute default — any child that already has an explicit
+    // `fill` attribute (e.g. set by the editor) will override it.  We therefore
+    // recurse into groups and set the fill directly on every descendant element
+    // so the card color is applied uniformly regardless of what the editor wrote.
+    if cloze.name == "g" {
+        for child in &mut cloze.children {
+            if let xmltree::XMLNode::Element(child_element) = child {
+                set_cloze_color(child_element, cloze_color);
+            }
+        }
+    } else {
+        cloze
+            .attributes
+            .insert("fill".to_string(), cloze_color.to_string());
+    }
 }
 
 fn hide_cloze_mask(cloze: &mut Element) {
@@ -693,17 +706,6 @@ pub fn get_clozes_from_svg(
             xmltree::XMLNode::Element(element) => Some(element),
             _ => None,
         })
-        .map(|element| {
-            if element.name == "g" {
-                return Err((
-                    "Grouped shapes are not supported.".to_string(),
-                    Some("Use the cloze settings to group shapes.".to_string()),
-                ));
-            }
-            Ok(element)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
         .filter(|element| valid_cloze_types.contains(&element.name))
         .collect::<Vec<_>>();
     Ok(clozes)
