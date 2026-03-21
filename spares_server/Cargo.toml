@@ -12,15 +12,15 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-axum = { version = "0.8.4", features = ["macros"] }
-clap = { version = "4.5.48", features = ["derive", "cargo"] }
-chrono = { version = "0.4.42", features = ["serde"] }
-env_logger = "0.11.8"
-serde_json = { version = "1.0.145", features = ["preserve_order"] }
+axum = { version = "0.8.8", features = ["macros"] }
+clap = { version = "4.6.0", features = ["derive", "cargo"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+env_logger = "0.11.9"
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
 spares = { path = "../spares" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
-tokio = { version = "1.47.1", features = ["full"] }
-tower-http = { version = "0.6.6", features = ["cors"] }
+tokio = { version = "1.50.0", features = ["full"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
 log = "0.4.29"
 
 [dev-dependencies]
