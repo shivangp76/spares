@@ -917,3 +917,125 @@ fn test_image_occlusion_parallel_performance() {
         sequential_duration
     );
 }
+
+// ── Grouped-shape tests ───────────────────────────────────────────────────────
+
+/// A `<g>` element inside `clozes-group` is accepted as a single cloze shape.
+/// Mixed SVGs (group + primitive) produce the correct count.
+#[test]
+fn test_grouped_shapes_accepted_by_get_clozes_from_svg() {
+    let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><g id="shape_group"><rect x="0" y="0" width="50" height="50"/><ellipse cx="100" cy="25" rx="20" ry="20"/></g><rect x="200" y="0" width="40" height="40"/></g></svg>"#;
+
+    let mut svg_element = Element::parse(svg.as_bytes()).unwrap();
+    let clozes = get_clozes_from_svg(&mut svg_element).unwrap();
+
+    assert_eq!(clozes.len(), 2, "one group + one primitive = 2 clozes");
+    assert_eq!(clozes[0].name, "g", "first cloze is the group");
+    assert_eq!(clozes[1].name, "rect", "second cloze is the standalone rect");
+}
+
+/// `modify_clozes_for_card` with a group cloze (front, `ToAnswer + hint`) should:
+/// - recursively apply the answer colour to every shape child
+/// - wrap the group in a hint `<g>` with a `<text>` element whose position is
+///   the centre of the group's bounding box
+#[test]
+fn test_grouped_shapes_modify_card_to_answer() {
+    // Two shapes:
+    //   rect  x=0  y=0  w=100 h=40  → bbox (0,  0, 100, 40)
+    //   ellipse cx=200 cy=20 rx=20 ry=20 → bbox (180, 0, 220, 40)
+    //   union bbox → (0, 0, 220, 40)  centre → (110, 20)
+    let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><g id="group_1"><rect x="0" y="0" width="100" height="40"/><ellipse cx="200" cy="20" rx="20" ry="20"/></g></g></svg>"#;
+
+    let mut svg_element = Element::parse(svg.as_bytes()).unwrap();
+    let mut clozes = get_clozes_from_svg(&mut svg_element).unwrap();
+    assert_eq!(clozes.len(), 1);
+
+    let config = ImageOcclusionConfig::default();
+    modify_clozes_for_card(
+        &[(0, ClozeHiddenReplacement::ToAnswer { hint: Some("label".to_string()) })],
+        &mut clozes,
+        FrontConceal::OnlyGrouping,
+        BackReveal::FullNote,
+        false,
+        CardSide::Front,
+        &config,
+    );
+
+    // add_text_to_cloze wraps the group in a new <g> and adds a <text> sibling.
+    let wrapper = &clozes[0];
+    assert_eq!(wrapper.name, "g");
+    assert_eq!(wrapper.children.len(), 2, "wrapper must have inner group + text");
+
+    // ── inner group ──────────────────────────────────────────────────────────
+    let inner = match &wrapper.children[0] {
+        xmltree::XMLNode::Element(e) => e,
+        other => panic!("expected Element, got {:?}", other),
+    };
+    assert_eq!(inner.name, "g");
+    assert_eq!(inner.attributes.get("id").map(String::as_str), Some("group_1"));
+
+    // Fill must have been applied recursively to every shape child, not just
+    // inherited — explicit child fills override SVG inheritance.
+    let shapes: Vec<&Element> = inner
+        .children
+        .iter()
+        .filter_map(|n| match n {
+            xmltree::XMLNode::Element(e) => Some(e),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes.len(), 2);
+    assert!(
+        shapes.iter().all(|s| s.attributes.get("fill").map(String::as_str) == Some("#FF7E7E")),
+        "answer colour must be set on every child shape"
+    );
+
+    // ── hint text element ────────────────────────────────────────────────────
+    let text_el = match &wrapper.children[1] {
+        xmltree::XMLNode::Element(e) => e,
+        other => panic!("expected Element, got {:?}", other),
+    };
+    assert_eq!(text_el.name, "text");
+    assert_eq!(
+        text_el.attributes.get("x").map(String::as_str),
+        Some("110"),
+        "text x must be at horizontal centre of union bounding box"
+    );
+    assert_eq!(
+        text_el.attributes.get("y").map(String::as_str),
+        Some("20"),
+        "text y must be at vertical centre of union bounding box"
+    );
+    assert_eq!(
+        text_el.children,
+        vec![xmltree::XMLNode::Text("label".to_string())]
+    );
+}
+
+/// When a group cloze is hidden (`hide_cloze_mask`), opacity is set on the
+/// outer `<g>` which composites all children — no recursion needed.
+#[test]
+fn test_grouped_shapes_modify_card_hidden() {
+    let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><g id="group_1"><rect x="0" y="0" width="100" height="40"/></g></g></svg>"#;
+
+    let mut svg_element = Element::parse(svg.as_bytes()).unwrap();
+    let mut clozes = get_clozes_from_svg(&mut svg_element).unwrap();
+
+    let config = ImageOcclusionConfig::default();
+    // Cloze 0 is not in cloze_indices → OnlyGrouping → hide it.
+    modify_clozes_for_card(
+        &[(999, ClozeHiddenReplacement::ToAnswer { hint: None })],
+        &mut clozes,
+        FrontConceal::OnlyGrouping,
+        BackReveal::FullNote,
+        false,
+        CardSide::Front,
+        &config,
+    );
+
+    assert_eq!(
+        clozes[0].attributes.get("opacity").map(String::as_str),
+        Some("0"),
+        "hidden group must have opacity=0 set directly on the <g>"
+    );
+}

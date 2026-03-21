@@ -187,6 +187,12 @@ enum SvgClozeType {
     // Polyline,
     Polygon,
     Path,
+    /// A `<g>` element whose children are primitive shapes. The editor can group
+    /// multiple shapes into a single logical cloze by wrapping them in a `<g>`;
+    /// the `data-cloze-settings` attribute lives on the group element itself,
+    /// just like it does on primitive shapes.
+    #[strum(serialize = "g")]
+    Group,
 }
 
 pub fn parse_image_occlusion_data(
