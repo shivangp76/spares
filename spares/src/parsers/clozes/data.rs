@@ -22,6 +22,10 @@ pub struct ClozeData {
 pub struct ClozeSettings {
     pub hint: Option<String>,
     pub all_groupings: Option<ClozeGroupingSettings>,
+    /// Whether this cloze is part of an overlapper sequence. Clozes with this flag set
+    /// have their grouping settings replaced dynamically by the overlapper algorithm
+    /// during card generation. The flag is preserved in the note via the `ov:` key.
+    pub is_overlapper: bool,
 }
 
 #[derive(Debug)]

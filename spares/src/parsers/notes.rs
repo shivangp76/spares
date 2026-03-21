@@ -1,5 +1,6 @@
 use super::generate_files::CardSide;
 use super::get_cards_main;
+use crate::parsers::cards::overlapper::OverlapperConfig;
 use crate::parsers::image_occlusion::{ConstructImageOcclusionType, ImageOcclusionData};
 use crate::parsers::{
     CardData, NoteImportAction, NoteSettings, Parseable, SrsAdapter, parse_note_settings,
@@ -68,6 +69,7 @@ pub fn get_notes(
     data: &str,
     adapter: &dyn SrsAdapter,
     move_files: bool,
+    overlapper: Option<&OverlapperConfig>,
 ) -> Result<Vec<(NoteSettings, Option<String>)>, Error> {
     // Remove comments
     // let data = if let Some(comment_regex) = parser.comment_regex() {
@@ -114,6 +116,7 @@ pub fn get_notes(
             &note_c,
             &mut local_settings,
             move_files,
+            overlapper,
         )
         .map_err(|e| {
             local_settings.errors_and_warnings.push(e);
@@ -131,6 +134,7 @@ fn complete_note(
     note_c: &Range<usize>,
     local_settings: &mut NoteSettings,
     move_files: bool,
+    overlapper: Option<&OverlapperConfig>,
 ) -> Result<String, LibraryError> {
     let data = &full_data[note_c.clone()];
     if data.contains("TODO") {
@@ -162,6 +166,7 @@ fn complete_note(
             local_settings.back_reveal,
             local_settings.back_emphasis,
         ),
+        overlapper,
     )?;
     // dbg!(&cards);
     validate_cards(&cards)?;
@@ -289,7 +294,7 @@ mod tests {
             \end{note}
 
             "};
-        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false);
+        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None);
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
             assert_eq!(notes.len(), 1);
@@ -316,7 +321,7 @@ mod tests {
             \end{cl}
             c
             \end{note}"};
-        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false);
+        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None);
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
             assert_eq!(notes.len(), 1);
@@ -350,6 +355,7 @@ mod tests {
             data,
             adapter.as_ref(),
             false,
+            None,
         );
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
@@ -380,6 +386,7 @@ mod tests {
             data,
             adapter.as_ref(),
             false,
+            None,
         );
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
@@ -410,6 +417,7 @@ mod tests {
             data,
             adapter.as_ref(),
             false,
+            None,
         );
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
@@ -441,6 +449,7 @@ mod tests {
             data,
             adapter.as_ref(),
             false,
+            None,
         );
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {
@@ -556,6 +565,7 @@ mod tests {
             note_data.as_str(),
             adapter.as_ref(),
             false,
+            None,
         );
         assert!(notes_res.is_ok());
         if let Ok(notes) = notes_res {

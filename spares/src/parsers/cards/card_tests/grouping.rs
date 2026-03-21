@@ -465,7 +465,7 @@ fn test_get_cards_grouping_all_4() {
     let data_1 = r"a{{[g:1]b}}c{{[g:*;hide:]f}}";
     // let data_1 = r"a{{[g:1]b}}c{{a}}{{[g:*;r:]f}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1).unwrap();
+    let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1, None).unwrap();
     assert!(new_data.contains("g:*;hide:;"));
     let data = r"a{{[g:1]b}}c{{d}}{{[g:*;hide:]f}}";
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);

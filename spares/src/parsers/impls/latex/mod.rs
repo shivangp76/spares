@@ -823,7 +823,7 @@ mod tests {
             \end{cl}
             \end{note}
             "#};
-        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false);
+        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None);
         assert!(notes_res.is_ok());
         let notes = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
@@ -847,7 +847,7 @@ mod tests {
             \end{cl}
             \end{note}
             "#};
-        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false);
+        let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None);
         assert!(notes_res.is_ok());
         let notes = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
