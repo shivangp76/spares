@@ -269,8 +269,8 @@ pub(crate) mod tests {
                 0,
             ),
             (
-                r"Third {{ Cloze here, linking to [keyword 1][li], [keyword 1.5][li], and [keyword 2][li] }}",
-                r"Third {{[o:1] Cloze here, linking to [keyword 1][li], [keyword 1.5][li], and [keyword 2][li] }}",
+                r"Third {{ Cloze here, linking to [keyword 1][li], [keywords 1][li], and [keyword 2][li] }}",
+                r"Third {{[o:1] Cloze here, linking to [keyword 1][li], [keywords 1][li], and [keyword 2][li] }}",
                 &[],
                 &[],
                 3,
