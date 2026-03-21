@@ -6,6 +6,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use interactive::sync_notes_interactive;
 use itertools::Itertools;
 use log::info;
+use rayon::prelude::*;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use spares::{
@@ -27,6 +28,7 @@ use spares::{
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 use std::{fs, process::Command};
 use std::{fs::remove_dir_all, io::Write};
 use strum::EnumIter;
@@ -727,25 +729,29 @@ fn build_file_map(base_dir: &Path) -> Result<HashMap<PathBuf, PathBuf>, String> 
     Ok(file_map)
 }
 
-/// Compare file contents. Returns true if files are identical.
-fn files_are_identical(path1: &Path, path2: &Path) -> Result<bool, String> {
-    // First check file sizes as a fast filter
-    let metadata1 = fs::metadata(path1)
-        .map_err(|e| format!("Failed to read metadata for {}: {}", path1.display(), e))?;
-    let metadata2 = fs::metadata(path2)
-        .map_err(|e| format!("Failed to read metadata for {}: {}", path2.display(), e))?;
+/// Persistent mtime+hash cache keyed by absolute path string → (`mtime_secs`, `sha256_hex`).
+type HashIndex = HashMap<String, (u64, String)>;
 
-    if metadata1.len() != metadata2.len() {
-        return Ok(false);
+fn hash_index_path() -> PathBuf {
+    let mut p = get_cache_dir();
+    p.push("sync");
+    p.push("hash_index.json");
+    p
+}
+
+fn load_hash_index() -> HashIndex {
+    let path = hash_index_path();
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_hash_index(index: &HashIndex) {
+    let path = hash_index_path();
+    if let Ok(json) = serde_json::to_string(index) {
+        let _ = fs::write(&path, json);
     }
-
-    // If sizes match, compare contents byte-by-byte
-    let contents1 =
-        fs::read(path1).map_err(|e| format!("Failed to read {}: {}", path1.display(), e))?;
-    let contents2 =
-        fs::read(path2).map_err(|e| format!("Failed to read {}: {}", path2.display(), e))?;
-
-    Ok(contents1 == contents2)
 }
 
 #[expect(clippy::too_many_lines)]
@@ -769,6 +775,61 @@ fn get_import_data(
     let to_files = build_file_map(to_output_dir)?;
     let from_files = build_file_map(from_output_dir)?;
 
+    // Compute SHA256 hashes for all files, reusing cached hashes when mtime is unchanged.
+    // Step 1: collect all paths and read their mtimes (sequential, just metadata).
+    let all_paths: Vec<PathBuf> = from_files
+        .values()
+        .chain(to_files.values())
+        .cloned()
+        .collect();
+    let path_mtimes: Vec<(PathBuf, u64)> = all_paths
+        .iter()
+        .map(|p| {
+            let mtime = fs::metadata(p)
+                .and_then(|m| m.modified())
+                .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
+                .unwrap_or(0);
+            (p.clone(), mtime)
+        })
+        .collect();
+
+    // Step 2: load persistent index and find which paths need re-hashing.
+    let mut hash_index = load_hash_index();
+    let needs_hashing: Vec<(PathBuf, u64)> = path_mtimes
+        .iter()
+        .filter(|(p, mtime)| {
+            let key = p.to_string_lossy().to_string();
+            !matches!(hash_index.get(&key), Some((cached_mtime, _)) if cached_mtime == mtime)
+        })
+        .cloned()
+        .collect();
+
+    // Step 3: parallel hash only stale/new files.
+    let new_hashes: Vec<(PathBuf, u64, String)> = needs_hashing
+        .par_iter()
+        .map(|(p, mtime)| {
+            let contents =
+                fs::read(p).map_err(|e| format!("Failed to read {}: {}", p.display(), e))?;
+            let hash = sha256::digest(contents.as_slice());
+            Ok((p.clone(), *mtime, hash))
+        })
+        .collect::<Result<_, String>>()?;
+
+    // Step 4: update index with fresh hashes.
+    for (p, mtime, hash) in &new_hashes {
+        hash_index.insert(p.to_string_lossy().to_string(), (*mtime, hash.clone()));
+    }
+
+    // Step 5: build a path → hash lookup for the comparison loop.
+    let file_hashes: HashMap<PathBuf, String> = path_mtimes
+        .iter()
+        .filter_map(|(p, _)| {
+            let key = p.to_string_lossy().to_string();
+            let hash = hash_index.get(&key).map(|(_, h)| h.clone())?;
+            Some((p.clone(), hash))
+        })
+        .collect();
+
     let mut import_data = Vec::new();
 
     // Find files that are in 'from' but not in 'to' (Add)
@@ -785,8 +846,12 @@ fn get_import_data(
         } = note_info_opt.unwrap();
 
         if let Some(to_path) = to_files.get(relative_path) {
-            // File exists in both directories - check if modified
-            if !files_are_identical(to_path, from_path)? {
+            // File exists in both directories - check if modified via hash comparison.
+            let hashes_match = match (file_hashes.get(to_path), file_hashes.get(from_path)) {
+                (Some(h1), Some(h2)) => h1 == h2,
+                _ => false,
+            };
+            if !hashes_match {
                 let parser = find_parser(parser_name.as_str(), &get_all_parsers())
                     .map_err(|e| format!("{:?}", e))?;
                 let mut note_from_filepath = get_output_raw_dir(
@@ -922,5 +987,7 @@ fn get_import_data(
         .into_iter()
         .flat_map(|(_, v)| v)
         .collect::<Vec<_>>();
+
+    save_hash_index(&hash_index);
     Ok(result)
 }
