@@ -136,6 +136,9 @@ pub struct Tag {
     pub name: String,
     pub description: String,
     pub query: Option<String>,
+    /// This is useful for filtered tags. Setting this to `false` for filtered tags allows the
+    /// query to be saved and the tag to be rebuilt so those cards can be reviewed again in the
+    /// future.
     pub auto_delete: bool,
 }
 
