@@ -1,4 +1,4 @@
-use crate::helpers::{GroupByInsertion, change_offset};
+use crate::helpers::GroupByInsertion;
 use crate::parsers::image_occlusion::{
     ConstructImageOcclusionType, ImageOcclusionClozeIndex, update_cloze_settings,
 };
@@ -8,13 +8,14 @@ use crate::parsers::{
 };
 use crate::{CardErrorKind, LibraryError};
 use itertools::Itertools;
-use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 #[allow(clippy::type_complexity, reason = "avoid creating extra struct")]
-#[expect(clippy::too_many_lines, reason = "off by a few")]
+#[allow(clippy::ptr_arg)]
+#[expect(clippy::too_many_lines, reason = "off by 1")]
 pub(super) fn group_clozes(
-    mut all_clozes: Vec<(ClozeData, Vec<ClozeGroupingSettings>)>,
+    all_clozes: &mut Vec<(ClozeData, Vec<ClozeGroupingSettings>)>,
     data: &str,
 ) -> Result<(Vec<Vec<(ClozeData, ClozeGroupingSettings)>>, usize), LibraryError> {
     // Group clozes into cards by examining their grouping
@@ -61,7 +62,7 @@ pub(super) fn group_clozes(
     }
 
     let cards_raw: Vec<Vec<(ClozeData, ClozeGroupingSettings)>> = all_clozes
-        .into_iter()
+        .iter()
         .flat_map(|(cloze_data, grouping_settings)| {
             grouping_settings
                 .iter()
@@ -296,7 +297,36 @@ pub(super) fn update_first_cloze_with_order(
     }
 }
 
+#[derive(Debug)]
+enum ReplacementKind {
+    TextStart,
+    TextEnd,
+    // Stores inner delimiter positions so new start_delim.end / end_delim.start can be
+    // recomputed to match the original offset-tracking behaviour.
+    ImageOcclusion {
+        orig_start_delim_end: usize,
+        orig_end_delim_start: usize,
+    },
+}
+
+#[derive(Debug)]
+struct Replacement {
+    cloze_index: usize,
+    range: Range<usize>,
+    new_text: String,
+    kind: ReplacementKind,
+}
+
+#[derive(Debug, Default)]
+struct NewPosition {
+    ss: usize,
+    se: usize,
+    es: usize,
+    ee: usize,
+}
+
 #[expect(clippy::too_many_lines)]
+#[allow(clippy::cast_sign_loss)]
 pub(super) fn modify_card_settings(
     cards_raw: &mut Vec<Vec<(ClozeData, ClozeGroupingSettings)>>,
     data: &mut String,
@@ -313,19 +343,6 @@ pub(super) fn modify_card_settings(
         update_first_cloze_with_order(cards_raw);
     }
 
-    let mut seen_clozes: HashSet<usize> = HashSet::new();
-    let cards_raw_refcell = cards_raw
-        .clone()
-        .into_iter()
-        .map(|clozes| {
-            clozes
-                .into_iter()
-                .map(|(cloze_data, grouping_settings)| {
-                    (RefCell::new(cloze_data), grouping_settings)
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
     let NoteSettingsKeys {
         settings_delim,
         settings_key_value_delim,
@@ -333,180 +350,183 @@ pub(super) fn modify_card_settings(
         ..
     } = output_parser.note_settings_keys();
     let cloze_settings_keys = output_parser.cloze_settings_keys();
-    for card_index in 0..cards_raw_refcell.len() {
-        for cloze_index in 0..cards_raw_refcell[card_index].len() {
-            if !seen_clozes.contains(&cards_raw[card_index][cloze_index].0.index) {
-                // Modify the settings string for the cloze and change `data` accordingly
-                let all_groupings = cards_raw_refcell
-                    .iter()
-                    .flatten()
-                    .filter(|cloze| {
-                        cloze.0.borrow().index
-                            == cards_raw_refcell[card_index][cloze_index].0.borrow().index
-                    })
-                    .map(|cloze| cloze.1.clone())
-                    .collect::<Vec<_>>();
-                let current_cloze = &cards_raw_refcell[card_index][cloze_index];
-                let modify_defaults = current_cloze.0.borrow().image_occlusion.as_ref().map(|d| {
-                    (
-                        d.data.front_conceal,
-                        d.data.back_reveal,
-                        d.data.back_emphasis,
-                    )
-                });
-                let cloze_settings_string = construct_cloze_string(
-                    &cards_raw_refcell[card_index][cloze_index]
-                        .0
-                        .borrow()
-                        .settings,
-                    &all_groupings,
-                    &cloze_settings_keys,
-                    settings_delim,
-                    settings_key_value_delim,
-                    modify_defaults,
-                    groupings_all,
-                );
-                let replaced_range = current_cloze.0.borrow().start_delim.start
-                    ..current_cloze.0.borrow().end_delim.end;
-                let (new_cloze_prefix, new_cloze_suffix) = if let Some(ref image_occlusion_cloze) =
-                    current_cloze.0.borrow().image_occlusion
-                {
-                    // Update clozes file with new settings string
-                    // The cloze most likely changed since the order changed.
-                    let image_occlusion_cloze_index =
-                        if let ImageOcclusionClozeIndex::OriginalIndex(ref x) =
-                            image_occlusion_cloze.index
-                        {
-                            *x
-                        } else {
-                            unreachable!()
-                        };
-                    update_cloze_settings(
-                        image_occlusion_cloze_index,
-                        &cloze_settings_string,
-                        &image_occlusion_cloze.data.clozes_filepath,
-                        data,
-                        &(current_cloze.0.borrow().start_delim.start
-                            ..current_cloze.0.borrow().end_delim.end),
-                    )?;
 
-                    // Add image path for previewing
-                    (
-                        output_parser.construct_image_occlusion(
-                            &image_occlusion_cloze.data,
-                            ConstructImageOcclusionType::Note,
-                        ),
-                        String::new(),
-                    )
-                } else {
-                    let cloze_body_range = current_cloze.0.borrow().start_delim.end
-                        ..current_cloze.0.borrow().end_delim.start;
-                    output_parser
-                        .construct_cloze(cloze_settings_string.as_str(), &data[cloze_body_range])
-                };
-                let (cloze_start_diff_count, new_cloze) =
-                    if current_cloze.0.borrow().image_occlusion.is_none() {
-                        (
-                            i64::try_from(new_cloze_prefix.len()).unwrap()
-                                - i64::try_from(current_cloze.0.borrow().start_delim.len())
-                                    .unwrap(),
-                            format!(
-                                "{}{}{}",
-                                new_cloze_prefix,
-                                &data[current_cloze.0.borrow().start_delim.end
-                                    ..current_cloze.0.borrow().end_delim.start],
-                                new_cloze_suffix
-                            ),
-                        )
-                    } else {
-                        (
-                            i64::try_from(new_cloze_prefix.len()).unwrap()
-                                - i64::try_from(replaced_range.len()).unwrap(),
-                            new_cloze_prefix,
-                        )
-                    };
-                let character_diff_count = i64::try_from(new_cloze.len()).unwrap()
-                    - i64::try_from(replaced_range.len()).unwrap();
-                data.replace_range(replaced_range, &new_cloze);
+    // Collect delimiter-level replacements — one or two per unique cloze.
+    // For text clozes: two replacements covering only the start and end delimiters (not the body).
+    // For image occlusion: one replacement covering the entire cloze range.
+    // Because only delimiters (never bodies) are replaced, replacements never overlap,
+    // which enables a single forward pass to rebuild `data` without incremental offset
+    // tracking or cloning `cards_raw`.
+    let mut seen: HashSet<usize> = HashSet::new();
+    // Multiple IO clozes from the same note block share identical start/end delims. Track the
+    // first cloze index seen per IO block so we add only one string replacement per block.
+    let mut seen_io_range_start: HashSet<usize> = HashSet::new();
+    let mut replacements: Vec<Replacement> = Vec::new();
 
-                // Modify all the future clozes to account for added/removed characters
-                let current_start_start = current_cloze.0.borrow().start_delim.start;
-                let current_start_end = current_cloze.0.borrow().start_delim.end;
-                let start_delim_limit = current_cloze.0.borrow().start_delim.start;
-                let end_delim_limit = current_cloze.0.borrow().end_delim.start;
-                for (cloze, _) in cards_raw_refcell.iter().flatten() {
-                    // Since the cloze we changed can be a part of multiple cards, we must update it everywhere.
-                    if cloze.borrow().start_delim.start == current_start_start
-                        && cloze.borrow().start_delim.end == current_start_end
+    for card in &*cards_raw {
+        for (cloze_data, _) in card {
+            let cloze_index = cloze_data.index;
+            if !seen.insert(cloze_index) {
+                continue;
+            }
+
+            // Collect all grouping settings for this cloze across all cards.
+            let all_groupings: Vec<ClozeGroupingSettings> = cards_raw
+                .iter()
+                .flatten()
+                .filter(|(cd, _)| cd.index == cloze_index)
+                .map(|(_, gs)| gs.clone())
+                .collect();
+
+            let modify_defaults = cloze_data.image_occlusion.as_ref().map(|d| {
+                (
+                    d.data.front_conceal,
+                    d.data.back_reveal,
+                    d.data.back_emphasis,
+                )
+            });
+            let cloze_settings_string = construct_cloze_string(
+                &cloze_data.settings,
+                &all_groupings,
+                &cloze_settings_keys,
+                settings_delim,
+                settings_key_value_delim,
+                modify_defaults,
+                groupings_all,
+            );
+
+            if let Some(ref image_occlusion_cloze) = cloze_data.image_occlusion {
+                let image_occlusion_cloze_index =
+                    if let ImageOcclusionClozeIndex::OriginalIndex(ref x) =
+                        image_occlusion_cloze.index
                     {
-                        change_offset(
-                            &mut cloze.borrow_mut().start_delim.end,
-                            cloze_start_diff_count,
-                        );
-                        change_offset(
-                            &mut cloze.borrow_mut().end_delim.start,
-                            cloze_start_diff_count,
-                        );
-                        change_offset(&mut cloze.borrow_mut().end_delim.end, character_diff_count);
+                        *x
                     } else {
-                        if cloze.borrow().start_delim.start > end_delim_limit {
-                            // Sibling cloze
-                            change_offset(
-                                &mut cloze.borrow_mut().start_delim.start,
-                                character_diff_count,
-                            );
-                            change_offset(
-                                &mut cloze.borrow_mut().start_delim.end,
-                                character_diff_count,
-                            );
-                        } else if cloze.borrow().start_delim.start > start_delim_limit {
-                            // Nested cloze
-                            change_offset(
-                                &mut cloze.borrow_mut().start_delim.start,
-                                cloze_start_diff_count,
-                            );
-                            change_offset(
-                                &mut cloze.borrow_mut().start_delim.end,
-                                cloze_start_diff_count,
-                            );
-                        }
-                        // The if blocks for start and end delims must be separate because we may
-                        // be handling a nested cloze, in which case we still need to shift the end
-                        // delim of the parent cloze.
-                        if cloze.borrow().end_delim.start > end_delim_limit {
-                            change_offset(
-                                &mut cloze.borrow_mut().end_delim.start,
-                                character_diff_count,
-                            );
-                            change_offset(
-                                &mut cloze.borrow_mut().end_delim.end,
-                                character_diff_count,
-                            );
-                        } else if cloze.borrow().end_delim.start > start_delim_limit {
-                            change_offset(
-                                &mut cloze.borrow_mut().end_delim.start,
-                                cloze_start_diff_count,
-                            );
-                            change_offset(
-                                &mut cloze.borrow_mut().end_delim.end,
-                                cloze_start_diff_count,
-                            );
-                        }
-                    }
+                        unreachable!()
+                    };
+                // Always update the SVG file for each individual IO cloze.
+                update_cloze_settings(
+                    image_occlusion_cloze_index,
+                    &cloze_settings_string,
+                    &image_occlusion_cloze.data.clozes_filepath,
+                    data,
+                    &(cloze_data.start_delim.start..cloze_data.end_delim.end),
+                )?;
+                // But only add one string replacement per IO block: all clozes from the same
+                // block produce the same new text and share the same delim range.
+                if seen_io_range_start.insert(cloze_data.start_delim.start) {
+                    let new_text = output_parser.construct_image_occlusion(
+                        &image_occlusion_cloze.data,
+                        ConstructImageOcclusionType::Note,
+                    );
+                    replacements.push(Replacement {
+                        cloze_index,
+                        range: cloze_data.start_delim.start..cloze_data.end_delim.end,
+                        new_text,
+                        kind: ReplacementKind::ImageOcclusion {
+                            orig_start_delim_end: cloze_data.start_delim.end,
+                            orig_end_delim_start: cloze_data.end_delim.start,
+                        },
+                    });
                 }
-                seen_clozes.insert(cards_raw[card_index][cloze_index].0.index);
+            } else {
+                let cloze_body_range = cloze_data.start_delim.end..cloze_data.end_delim.start;
+                let (new_prefix, new_suffix) =
+                    output_parser.construct_cloze(&cloze_settings_string, &data[cloze_body_range]);
+                replacements.push(Replacement {
+                    cloze_index,
+                    range: cloze_data.start_delim.start..cloze_data.start_delim.end,
+                    new_text: new_prefix,
+                    kind: ReplacementKind::TextStart,
+                });
+                replacements.push(Replacement {
+                    cloze_index,
+                    range: cloze_data.end_delim.start..cloze_data.end_delim.end,
+                    new_text: new_suffix,
+                    kind: ReplacementKind::TextEnd,
+                });
             }
         }
     }
-    *cards_raw = cards_raw_refcell
-        .into_iter()
-        .map(|clozes| {
-            clozes
-                .into_iter()
-                .map(|(x, y)| (x.into_inner(), y))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+
+    // Sort by range start — delimiter ranges never overlap, so this is safe.
+    replacements.sort_unstable_by_key(|r| r.range.start);
+
+    // Single forward pass: build the new `data` string and record new absolute positions.
+    // Text cloze positions are keyed by cloze_index.
+    // IO cloze positions are keyed by original start_delim.start (all clozes from the same IO
+    // block share that value, so they all get the same updated positions).
+    let mut text_new_pos: HashMap<usize, NewPosition> = HashMap::with_capacity(seen.len());
+    let mut io_new_pos: HashMap<usize, NewPosition> =
+        HashMap::with_capacity(seen_io_range_start.len());
+    let mut new_data = String::with_capacity(data.len());
+    let mut prev_end = 0usize;
+    let mut offset: i64 = 0;
+
+    for replacement in &replacements {
+        new_data.push_str(&data[prev_end..replacement.range.start]);
+        let new_range_start = (i64::try_from(replacement.range.start).unwrap() + offset) as usize;
+        match replacement.kind {
+            ReplacementKind::TextStart => {
+                let entry = text_new_pos.entry(replacement.cloze_index).or_default();
+                entry.ss = new_range_start;
+                entry.se = new_range_start + replacement.new_text.len();
+            }
+            ReplacementKind::TextEnd => {
+                let entry = text_new_pos.entry(replacement.cloze_index).or_default();
+                entry.es = new_range_start;
+                entry.ee = new_range_start + replacement.new_text.len();
+            }
+            ReplacementKind::ImageOcclusion {
+                orig_start_delim_end,
+                orig_end_delim_start,
+            } => {
+                // Reproduce the same arithmetic as the original offset-tracking code:
+                // cloze_start_diff = new_text.len() - replaced_range.len()
+                let cloze_start_diff = i64::try_from(replacement.new_text.len()).unwrap()
+                    - i64::try_from(replacement.range.len()).unwrap();
+                let se = (i64::try_from(orig_start_delim_end).unwrap() + offset + cloze_start_diff)
+                    as usize;
+                let es = (i64::try_from(orig_end_delim_start).unwrap() + offset + cloze_start_diff)
+                    as usize;
+                let ee = new_range_start + replacement.new_text.len();
+                // Key by original start_delim.start (= repl.range.start) so all IO clozes from
+                // the same block are updated together in the step below.
+                io_new_pos.insert(
+                    replacement.range.start,
+                    NewPosition {
+                        ss: new_range_start,
+                        se,
+                        es,
+                        ee,
+                    },
+                );
+            }
+        }
+        new_data.push_str(&replacement.new_text);
+        offset += i64::try_from(replacement.new_text.len()).unwrap()
+            - i64::try_from(replacement.range.len()).unwrap();
+        prev_end = replacement.range.end;
+    }
+    new_data.push_str(&data[prev_end..]);
+    *data = new_data;
+
+    // Update all cloze positions in cards_raw.
+    for card in &mut *cards_raw {
+        for (cloze_data, _) in card {
+            let pos_opt = if cloze_data.image_occlusion.is_some() {
+                io_new_pos.get(&cloze_data.start_delim.start)
+            } else {
+                text_new_pos.get(&cloze_data.index)
+            };
+            if let Some(pos) = pos_opt {
+                cloze_data.start_delim.start = pos.ss;
+                cloze_data.start_delim.end = pos.se;
+                cloze_data.end_delim.start = pos.es;
+                cloze_data.end_delim.end = pos.ee;
+            }
+        }
+    }
 
     Ok(())
 }
