@@ -80,7 +80,14 @@ pub async fn search_keyword(
 pub async fn get_unmatched_keywords(
     db: &SqlitePool,
 ) -> Result<Vec<UnmatchedKeywordResponse>, Error> {
-    // TODO: This might be because linked notes were not generated, so either this needs to be documented or the function needs to return an error if the linked notes are not generated.
+    let config = read_internal_config()?;
+    if !config.linked_notes_generated {
+        return Err(crate::LibraryError::InvalidConfig(
+            "Linked notes have not been generated yet. Run the link generation step first."
+                .to_string(),
+        )
+        .into());
+    }
     let unmatched_keywords: Vec<(NoteId, String)> = sqlx::query_as(
         r"SELECT parent_note_id, searched_keyword
          FROM note_link
