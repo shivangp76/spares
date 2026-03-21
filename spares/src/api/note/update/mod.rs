@@ -9,7 +9,7 @@ use crate::{
             payloads::{CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
         },
     },
-    config::{read_internal_config, write_internal_config},
+    config::{read_external_config, read_internal_config, write_internal_config},
     model::{EventType, Note, NoteId},
     parsers::{
         CardData, Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
@@ -179,8 +179,12 @@ pub async fn update_notes(
         //   - `order`: new sequential positions (what the DB will store)
         //   - `previous_order`: the orders from the submitted text (references to old positions,
         //     used by `match_cards` to reconcile old DB cards with the new layout)
-        let (new_data, new_cards) =
-            add_order_to_note_data(new_parser.as_ref(), submitted_new_data.as_str())?;
+        let external_config = read_external_config().ok();
+        let (new_data, new_cards) = add_order_to_note_data(
+            new_parser.as_ref(),
+            submitted_new_data.as_str(),
+            external_config.as_ref().map(|c| &c.overlapper),
+        )?;
         let created_at: i64 =
         sqlx::query_scalar(r"UPDATE note SET data = ?, parser_id = ?, custom_data = ?, updated_at = ? WHERE id = ? RETURNING created_at")
             .bind(&new_data)

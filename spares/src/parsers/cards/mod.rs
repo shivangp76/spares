@@ -10,6 +10,7 @@ use crate::parsers::{
     parse_card_settings,
 };
 use crate::{Error, LibraryError};
+use overlapper::{OverlapperConfig, apply_overlapper_groupings};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -52,6 +53,7 @@ pub fn get_cards(
             BackReveal::default(),
             DEFAULT_BACK_EMPHASIS,
         ),
+        None,
     )
 }
 
@@ -64,6 +66,7 @@ pub fn get_cards_main(
     add_order: bool,
     move_files: bool,
     defaults: (FrontConceal, BackReveal, bool),
+    overlapper: Option<&OverlapperConfig>,
 ) -> Result<Vec<CardData>, LibraryError> {
     let mut data = data;
     let cloze_matches = parser.get_clozes(&data)?;
@@ -164,8 +167,42 @@ pub fn get_cards_main(
         .enumerate()
         .for_each(|(i, x)| x.0.index = i);
 
+    // Apply overlapper groupings if any cloze is marked with `ov:`.
+    let ov_group_range = if let Some(ov_config) = overlapper
+        && all_clozes.iter().any(|(cd, _)| cd.settings.is_overlapper)
+    {
+        apply_overlapper_groupings(&mut all_clozes, ov_config, &mut current_grouping_number)
+    } else {
+        None
+    };
+
     // Note the clozes are cloned if they are a part of multiple groups. They are NOT passed by reference, since their settings must be boiled up, which would be different for each card.
     let (mut cards_raw, groupings_count) = group_clozes(&mut all_clozes, &data)?;
+
+    // Overlapper cards may come out of `group_clozes` in non-sequential order (because context
+    // items have no assignment for a group, so that group may be "discovered" out of order).
+    // Sort overlapper cards by their Auto group number to restore the expected sequence order.
+    if let Some(range) = ov_group_range {
+        cards_raw.sort_by(|a, b| {
+            let auto_in_range = |clozes: &Vec<(ClozeData, ClozeGroupingSettings)>| -> Option<u32> {
+                clozes
+                    .iter()
+                    .find(|(_, x)| !x.skip_serialization)
+                    .and_then(|(_, x)| {
+                        if let ClozeGrouping::Auto(n) = &x.grouping {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|n| range.contains(n))
+            };
+            match (auto_in_range(a), auto_in_range(b)) {
+                (Some(an), Some(bn)) => an.cmp(&bn),
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+    }
 
     // Once cards are created by grouping clozes by their grouping, we can add other clozes that should be hidden if `FrontConceal::AllGroupings`.
     // This must be done after the image occlusions are interweaved since `FrontConceal` works across image occlusion clozes.
@@ -367,8 +404,21 @@ pub fn get_cards_main(
 pub fn add_order_to_note_data(
     parser: &dyn Parseable,
     original_note_data: &str,
+    overlapper: Option<&OverlapperConfig>,
 ) -> Result<(String, Vec<CardData>), Error> {
-    let card_datas = get_cards(parser, None, original_note_data, true, true)?;
+    let card_datas = get_cards_main(
+        parser,
+        None,
+        original_note_data.to_string(),
+        true,
+        true,
+        (
+            FrontConceal::default(),
+            BackReveal::default(),
+            DEFAULT_BACK_EMPHASIS,
+        ),
+        overlapper,
+    )?;
     let note_data = card_datas
         .first()
         .map_or(original_note_data.to_owned(), |card_data| {

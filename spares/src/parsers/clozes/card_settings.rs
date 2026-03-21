@@ -23,6 +23,7 @@ pub struct ClozeSettingsKeys {
     pub back_reveal: &'static str,
     pub back_emphasis: &'static str,
     pub inherit: &'static str,
+    pub overlapper: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -39,6 +40,7 @@ impl Default for ClozeSettingsKeys {
             back_reveal: "b",
             back_emphasis: "be",
             inherit: "inh",
+            overlapper: "ov",
         }
     }
 }
@@ -59,6 +61,12 @@ pub fn construct_cloze_string(
         parts.push(format!(
             "{}{}{}",
             cloze_settings_keys.hint, settings_key_value_delim, hint
+        ));
+    }
+    if global_settings.is_overlapper {
+        parts.push(format!(
+            "{}{}",
+            cloze_settings_keys.overlapper, settings_key_value_delim
         ));
     }
 
@@ -268,6 +276,7 @@ fn parse_grouping_settings(
         back_reveal: back_reveal_key,
         back_emphasis: back_emphasis_key,
         inherit: inherit_key,
+        overlapper: overlapper_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -306,6 +315,8 @@ fn parse_grouping_settings(
             })?;
         } else if key == back_emphasis_key {
             current_grouping_settings.back_emphasis = true;
+        } else if key == overlapper_key {
+            settings.is_overlapper = true;
         } else if key == inherit_key {
             current_grouping_settings.inherit =
                 Some(parse_card_source(value, data, card_settings_indices)?);

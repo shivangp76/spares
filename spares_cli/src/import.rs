@@ -3,6 +3,7 @@ use clap::Args;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressIterator};
 use spares::adapters::SrsAdapter;
+use spares::config::read_external_config;
 use spares::parsers::{NoteSettings, Parseable, get_all_parsers, get_notes};
 use spares::{Error, LibraryError, ParserErrorKind};
 use std::collections::HashMap;
@@ -128,6 +129,7 @@ where
     };
     let mut parser_to_notes: HashMap<&str, (&dyn Parseable, Vec<_>)> = HashMap::new();
 
+    let external_config = read_external_config().ok();
     let count = file_paths.len();
     let progress_bar = if quiet {
         ProgressBar::hidden()
@@ -151,7 +153,7 @@ where
                 .map(|c| c.unwrap().get(1).unwrap().as_str())
                 .collect::<Vec<_>>();
             for block in blocks {
-                let notes = get_notes(*parser, to_parser_opt, block, adapter, !dry_run)?;
+                let notes = get_notes(*parser, to_parser_opt, block, adapter, !dry_run, external_config.as_ref().map(|c| &c.overlapper))?;
                 all_notes.extend(notes);
             }
             if !all_notes.is_empty() {
