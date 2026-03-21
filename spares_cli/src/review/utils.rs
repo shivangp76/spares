@@ -49,7 +49,7 @@ pub(super) fn open_rendered_file(
     // open::that(file_path).map_err(|e| format!("{}", e))
 }
 
-pub fn close_rendered_file(
+pub(crate) fn close_rendered_file(
     rendered_file_child: &mut Child,
     close_command_opt: Option<&str>,
     last: bool,
@@ -76,7 +76,7 @@ pub fn close_rendered_file(
     Ok(())
 }
 
-pub async fn get_scheduler_ratings(
+pub(crate) async fn get_scheduler_ratings(
     scheduler_name: &str,
     base_url: &str,
     client: &Client,
@@ -99,7 +99,7 @@ pub async fn get_scheduler_ratings(
         .collect::<Vec<_>>())
 }
 
-pub async fn tag_note(
+pub(crate) async fn tag_note(
     note_id: NoteId,
     tag_name: &str,
     base_url: &str,
@@ -134,7 +134,7 @@ pub async fn tag_note(
     Ok(update_response.event_id)
 }
 
-pub async fn note_id_to_cards(
+pub(crate) async fn note_id_to_cards(
     note_id: NoteId,
     base_url: &str,
     client: &Client,
@@ -151,7 +151,7 @@ pub async fn note_id_to_cards(
     Ok(cards)
 }
 
-pub async fn bury_card(
+pub(crate) async fn bury_card(
     scheduler_name: &str,
     card_id: CardId,
     base_url: &str,
@@ -179,7 +179,7 @@ pub async fn bury_card(
     Ok(submit_response.event_id)
 }
 
-pub async fn bury_cards(
+pub(crate) async fn bury_cards(
     card_ids: &[CardId],
     base_url: &str,
     client: &Client,
@@ -208,7 +208,7 @@ pub async fn bury_cards(
     Ok(update_response.event_id)
 }
 
-pub async fn suspend_note(
+pub(crate) async fn suspend_note(
     note_id: NoteId,
     base_url: &str,
     client: &Client,
@@ -218,7 +218,7 @@ pub async fn suspend_note(
     suspend_cards(&card_ids, base_url, client).await
 }
 
-pub async fn bury_note(
+pub(crate) async fn bury_note(
     note_id: NoteId,
     base_url: &str,
     client: &Client,
@@ -232,7 +232,7 @@ pub async fn bury_note(
     bury_cards(&card_ids, base_url, client).await
 }
 
-pub async fn suspend_cards(
+pub(crate) async fn suspend_cards(
     card_ids: &[CardId],
     base_url: &str,
     client: &Client,
@@ -261,7 +261,7 @@ pub async fn suspend_cards(
     Ok(update_response.event_id)
 }
 
-pub async fn submit_rating(
+pub(crate) async fn submit_rating(
     scheduler_name: &str,
     rating_submission: RatingSubmission,
     base_url: &str,
@@ -289,7 +289,7 @@ pub async fn submit_rating(
     Ok(submit_response.event_id)
 }
 
-pub async fn forget_card(
+pub(crate) async fn forget_card(
     card_id: i64,
     base_url: &str,
     client: &Client,
@@ -310,7 +310,7 @@ pub async fn forget_card(
     Ok(forget_response)
 }
 
-pub async fn set_due_date_with_prompt<F>(
+pub(crate) async fn set_due_date_with_prompt<F>(
     card_ids: F,
     base_url: &str,
     client: &Client,
@@ -329,7 +329,7 @@ where
     Ok(None)
 }
 
-pub async fn set_due_date(
+pub(crate) async fn set_due_date(
     card_ids: Vec<CardId>,
     due_date: DateTime<Utc>,
     base_url: &str,

@@ -34,7 +34,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-pub fn create_router(app_state: Arc<AppState>) -> Router {
+pub(crate) fn create_router(app_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/healthcheck", get(health_check_handler))
         // Parser

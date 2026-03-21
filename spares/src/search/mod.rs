@@ -2,23 +2,23 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, ops::Range};
 
-pub mod evaluator;
-pub mod lexer;
+pub(crate) mod evaluator;
+pub(crate) mod lexer;
 mod parser;
 
 /// Design note: There is no need to store the token's value here. Value parsing
 /// is done in the parser, and the value is stored in the Abstract Syntax Tree.
 /// It is memory inefficient to add a new "value" field here.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Token {
+pub(crate) struct Token {
     /// Token kind.
-    pub kind: TokenKind,
+    pub(crate) kind: TokenKind,
     /// Byte offset range of the token in the source code.
-    pub span: Range<usize>,
+    pub(crate) span: Range<usize>,
 }
 
 impl Token {
-    pub fn unescape(s: &str) -> Cow<'_, str> {
+    pub(crate) fn unescape(s: &str) -> Cow<'_, str> {
         if s.contains('\\') {
             Cow::Owned(s.replace("\\\"", "\""))
         } else {
@@ -28,7 +28,7 @@ impl Token {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, strum::Display)]
-pub enum TokenKind {
+pub(crate) enum TokenKind {
     // Field identifiers
     Field,
     // Literals
@@ -62,7 +62,7 @@ pub enum QueryReturnItemType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Op {
+pub(crate) enum Op {
     And,
     Or,
     Minus,
@@ -99,7 +99,7 @@ impl fmt::Display for Op {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Atom<'de> {
+pub(crate) enum Atom<'de> {
     // Field identifiers
     Field(Cow<'de, str>),
     // Literals
@@ -128,7 +128,7 @@ impl fmt::Display for Atom<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenTree<'de> {
+pub(crate) enum TokenTree<'de> {
     Atom(Atom<'de>),
     Cons(Op, Vec<TokenTree<'de>>),
 }

@@ -1,5 +1,5 @@
-pub mod interactive;
-pub mod utils;
+pub(crate) mod interactive;
+pub(crate) mod utils;
 
 use crate::import::import_from_files;
 use clap::{Args, Subcommand, ValueEnum};
@@ -52,13 +52,13 @@ fn extract_note_ids_from_import_data(import_data: &[SyncImportData]) -> Vec<Note
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct SyncArgs {
+pub(crate) struct SyncArgs {
     #[command(subcommand)]
-    pub action: SyncMainAction,
+    pub(crate) action: SyncMainAction,
 }
 
 #[derive(Debug, Clone, Subcommand)]
-pub enum SyncMainAction {
+pub(crate) enum SyncMainAction {
     #[command(arg_required_else_help = false)]
     Interactive {
         // Having `from` and `to` is clearer than just specifying `source` to synce with the Hub (SparesDb). This also allows the git diffs to be highlighted appropriately.
@@ -92,7 +92,7 @@ pub enum SyncMainAction {
 
 /// Follows the hub-spoke model, where [`SyncSource::default()`] is the hub.
 #[derive(Clone, Copy, Debug, Default, Display, PartialEq, ValueEnum)]
-pub enum SyncSource {
+pub(crate) enum SyncSource {
     #[default]
     Spares,
     SparesLocalFiles,
@@ -660,7 +660,7 @@ fn generate_diffs(from_output_dir: &Path, to_output_dir: &Path) -> Result<PathBu
     Ok(diff_dir)
 }
 
-pub async fn sync_notes(
+pub(crate) async fn sync_notes(
     base_url: &str,
     client: &Client,
     sync_args: SyncArgs,

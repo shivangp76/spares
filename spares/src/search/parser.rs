@@ -20,25 +20,25 @@ fn parse_date(date_str: &str) -> Result<DateTime<Utc>, Error> {
     Err(miette!("Invalid date format: {}", date_str))
 }
 
-pub struct Parser<'de> {
+pub(crate) struct Parser<'de> {
     whole: &'de str,
     lexer: Lexer<'de>,
 }
 
 impl<'de> Parser<'de> {
-    pub fn new(input: &'de str) -> Self {
+    pub(crate) fn new(input: &'de str) -> Self {
         Self {
             whole: input,
             lexer: Lexer::new(input),
         }
     }
 
-    pub fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
+    pub(crate) fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
         self.parse_expression_within(0)
     }
 
     #[allow(clippy::too_many_lines, reason = "main parser method")]
-    pub fn parse_expression_within(&mut self, min_bp: u8) -> Result<TokenTree<'de>, Error> {
+    pub(crate) fn parse_expression_within(&mut self, min_bp: u8) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
             None => return Ok(TokenTree::Atom(Atom::Nil)),

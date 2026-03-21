@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Write};
 
 #[derive(Default)]
-pub struct TreeNode {
+pub(crate) struct TreeNode {
     children: HashMap<String, TreeNode>,
 }
 
@@ -28,7 +28,7 @@ impl TreeNode {
     // }
 }
 
-pub fn build_tree(strings: Vec<String>) -> TreeNode {
+pub(crate) fn build_tree(strings: Vec<String>) -> TreeNode {
     let mut root = TreeNode::default();
 
     for s in strings {
@@ -39,7 +39,7 @@ pub fn build_tree(strings: Vec<String>) -> TreeNode {
     root
 }
 
-pub fn tree_to_string(node: &TreeNode, indent: usize) -> String {
+pub(crate) fn tree_to_string(node: &TreeNode, indent: usize) -> String {
     let mut result = String::new();
     let mut keys: Vec<_> = node.children.keys().collect();
     keys.sort();

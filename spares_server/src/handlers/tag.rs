@@ -16,7 +16,7 @@ use spares::{
 };
 use std::sync::Arc;
 
-pub async fn create_tag_handler(
+pub(crate) async fn create_tag_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CreateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -26,7 +26,7 @@ pub async fn create_tag_handler(
     Ok(Json(result))
 }
 
-pub async fn get_tag_handler(
+pub(crate) async fn get_tag_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -34,7 +34,7 @@ pub async fn get_tag_handler(
     Ok(Json(tag_res))
 }
 
-pub async fn get_tag_by_name_handler(
+pub(crate) async fn get_tag_by_name_handler(
     Path(name): Path<String>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -44,7 +44,7 @@ pub async fn get_tag_by_name_handler(
     Ok(Json(tag_res))
 }
 
-pub async fn update_tag_handler(
+pub(crate) async fn update_tag_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -54,7 +54,7 @@ pub async fn update_tag_handler(
     Ok(Json(update_tag_res))
 }
 
-pub async fn delete_tag_handler(
+pub(crate) async fn delete_tag_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -62,7 +62,7 @@ pub async fn delete_tag_handler(
     Ok(StatusCode::OK)
 }
 
-pub async fn list_tags_handler(
+pub(crate) async fn list_tags_handler(
     opts: Query<FilterOptions>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -72,7 +72,7 @@ pub async fn list_tags_handler(
     Ok(Json(list_tags_res))
 }
 
-pub async fn rebuild_tag_handler(
+pub(crate) async fn rebuild_tag_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
