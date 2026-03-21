@@ -1,15 +1,17 @@
 use super::{SyncImportAction, SyncImportData, replace_action};
 use crate::sync::{
-    SyncSource, UpdateDirection, generate_notes, get_import_data, hub_spoke_error,
-    regenerate_notes, update_changes, utils::apply_select_settings,
+    SyncSource, UpdateDirection, generate_notes, get_import_data, hub_spoke_error, update_changes,
+    utils::apply_select_settings,
 };
 use colored::Colorize;
 use inquire::Select;
 use log::info;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
+use serde_json::Value;
 use spares::{
     model::NoteId,
     parsers::{find_parser, get_all_parsers},
+    schema::note::{NotesSelector, RenderNotesRequest},
 };
 use std::fs;
 use std::io::{self, Write};
@@ -239,5 +241,46 @@ pub(crate) async fn sync_notes_interactive(
     .await?;
 
     println!("Done");
+    Ok(())
+}
+
+async fn regenerate_notes(
+    base_url: &str,
+    client: &Client,
+    modified_notes: Vec<NoteId>,
+    immutable_note_ids: Option<Vec<NoteId>>,
+    dry_run: bool,
+) -> Result<(), String> {
+    // Regenerate linked notes and generate files
+    // This will also ensure that updated notes will have their clozes renumbered sequentially so the note is ready to be edited again.
+    if !modified_notes.is_empty() {
+        println!("Rerendering notes...");
+        let request = RenderNotesRequest {
+            // Note that all notes can not have their files generated since some notes may still not be synced. For example, a couple notes may be skipped over.
+            // Instead, all notes will have their linked notes regenerated, but only the specified notes will have their files regenerated.
+            // See `render_notes()`.
+            selector: NotesSelector::Ids(modified_notes),
+            immutable_note_ids,
+            overridden_output_raw_dir: None,
+            include_linked_notes: true,
+            include_cards: true,
+            generate_rendered: true,
+            force_generate_rendered: false,
+        };
+        if !dry_run {
+            let url = format!("{}/api/notes/generate_files", base_url);
+            let response = client
+                .post(url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| format!("{}", e))?;
+            let status = response.status();
+            if status != StatusCode::OK {
+                let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
+                return Err(response.to_string());
+            }
+        }
+    }
     Ok(())
 }

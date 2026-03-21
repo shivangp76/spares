@@ -1,7 +1,11 @@
-pub(crate) mod interactive;
-pub(crate) mod utils;
+mod interactive;
+mod render_diffs;
+mod utils;
 
-use crate::import::import_from_files;
+use crate::{
+    import::import_from_files,
+    sync::utils::{build_file_map, clear_dir, load_hash_index, replace_action, save_hash_index},
+};
 use clap::{Args, Subcommand, ValueEnum};
 use interactive::sync_notes_interactive;
 use itertools::Itertools;
@@ -20,38 +24,19 @@ use spares::{
     config::{get_cache_dir, get_data_dir},
     model::NoteId,
     parsers::{
-        NoteFilepathData, NoteSettingsKeys, Parseable, find_parser,
+        NoteFilepathData, find_parser,
         generate_files::{GenerateNoteFilesRequests, RenderOutputType, create_note_files_bulk},
         get_all_parsers, get_note_info_from_filepath, get_output_raw_dir,
     },
     schema::note::{NotesSelector, RenderNotesRequest},
 };
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use std::{fs, process::Command};
-use std::{fs::remove_dir_all, io::Write};
+use std::{collections::HashMap, fs::remove_dir_all};
+use std::{fs, io::Write};
 use strum::EnumIter;
 use strum_macros::{Display, EnumString};
-use utils::{GroupByInsertion as _, clear_dir, hub_spoke_error};
-use walkdir::WalkDir;
-
-/// Check if cached database notes directory exists and is valid (has files)
-fn is_cache_valid(cache_dir: &Path) -> bool {
-    if !cache_dir.exists() || !cache_dir.is_dir() {
-        return false;
-    }
-    // Check if directory has at least one file
-    WalkDir::new(cache_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .any(|entry| entry.file_type().is_file())
-}
-
-/// Extract note IDs from `SyncImportData`
-fn extract_note_ids_from_import_data(import_data: &[SyncImportData]) -> Vec<NoteId> {
-    import_data.iter().map(|d| d.note_id).collect()
-}
+use utils::{GroupByInsertion as _, hub_spoke_error};
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct SyncArgs {
@@ -102,14 +87,14 @@ pub(crate) enum SyncSource {
 }
 
 #[derive(Debug)]
-struct SyncImportData {
+pub(super) struct SyncImportData {
     parser_name: String,
     note_id: NoteId,
     action: SyncImportAction,
 }
 
 #[derive(Clone, Debug, Display, EnumIter, EnumString, PartialEq)]
-enum SyncImportAction {
+pub(super) enum SyncImportAction {
     Add { to: PathBuf },
     Update { from: PathBuf, to: PathBuf },
     Delete { to: PathBuf },
@@ -119,48 +104,6 @@ enum SyncImportAction {
 enum UpdateDirection {
     Push,
     Pull,
-}
-
-fn replace_action(
-    original_note_contents: &str,
-    action: &SyncImportAction,
-    parser: &dyn Parseable,
-    note_id: NoteId,
-) -> Option<String> {
-    if matches!(action, SyncImportAction::Update { .. }) {
-        return None;
-    }
-    let NoteSettingsKeys {
-        action: action_key,
-        action_add,
-        action_delete,
-        settings_key_value_delim,
-        settings_delim,
-        note_id: note_id_key,
-        ..
-    } = parser.note_settings_keys();
-    let action_str = match action {
-        SyncImportAction::Add { .. } => action_add,
-        SyncImportAction::Update { .. } => unreachable!(),
-        SyncImportAction::Delete { .. } => action_delete,
-    };
-    let old_note_id_string = format!(
-        "{}{} {}",
-        note_id_key.get_write(),
-        settings_key_value_delim,
-        note_id
-    );
-    let new_action_note_id_string = format!(
-        "{}{} {}{} {}",
-        action_key.get_write(),
-        settings_key_value_delim,
-        action_str.get_write(),
-        settings_delim,
-        old_note_id_string
-    );
-    let new_content =
-        original_note_contents.replacen(&old_note_id_string, new_action_note_id_string.as_str(), 1);
-    Some(new_content)
 }
 
 /// Note that you can switch entries in this table as long as you flip the direction of syncing.
@@ -325,55 +268,297 @@ async fn update_changes(
     Ok(import_datas.iter().map(|x| x.note_id).collect::<Vec<_>>())
 }
 
-async fn regenerate_notes(
+pub(crate) async fn sync_notes(
     base_url: &str,
     client: &Client,
-    modified_notes: Vec<NoteId>,
-    immutable_note_ids: Option<Vec<NoteId>>,
-    dry_run: bool,
+    sync_args: SyncArgs,
 ) -> Result<(), String> {
-    // Regenerate linked notes and generate files
-    // This will also ensure that updated notes will have their clozes renumbered sequentially so the note is ready to be edited again.
-    if !modified_notes.is_empty() {
-        println!("Rerendering notes...");
-        let request = RenderNotesRequest {
-            // Note that all notes can not have their files generated since some notes may still not be synced. For example, a couple notes may be skipped over.
-            // Instead, all notes will have their linked notes regenerated, but only the specified notes will have their files regenerated.
-            // See `render_notes()`.
-            selector: NotesSelector::Ids(modified_notes),
-            immutable_note_ids,
-            overridden_output_raw_dir: None,
-            include_linked_notes: true,
-            include_cards: true,
-            generate_rendered: true,
-            force_generate_rendered: false,
-        };
-        if !dry_run {
-            let url = format!("{}/api/notes/generate_files", base_url);
-            let response = client
-                .post(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| format!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                return Err(response.to_string());
-            }
+    match sync_args.action {
+        SyncMainAction::Interactive {
+            from: sync_source_from,
+            to: sync_source_to,
+            dry_run,
+            all: sync_all_notes,
+        } => {
+            sync_notes_interactive(
+                base_url,
+                client,
+                sync_source_from,
+                sync_source_to,
+                dry_run,
+                sync_all_notes,
+            )
+            .await
+        }
+        SyncMainAction::RenderDiffs {
+            from: sync_source_from,
+            to: sync_source_to,
+        } => {
+            // Render notes in cache directory
+            let (from_output_dir, to_output_dir) =
+                generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
+
+            // Render diffs
+            let diffs_directory_path =
+                render_diffs::generate_diffs(&from_output_dir, &to_output_dir)?;
+            println!("{}", diffs_directory_path.display());
+
+            Ok(())
         }
     }
-    Ok(())
+}
+
+/// Compute SHA256 hashes for all paths, reusing mtime-based cached hashes where possible.
+/// Loads and saves the persistent hash index.
+fn compute_file_hashes(all_paths: &[PathBuf]) -> Result<HashMap<PathBuf, String>, String> {
+    // Collect mtimes (sequential metadata reads)
+    let path_mtimes: Vec<(PathBuf, u64)> = all_paths
+        .iter()
+        .map(|p| {
+            let mtime = fs::metadata(p)
+                .and_then(|m| m.modified())
+                .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
+                .unwrap_or(0);
+            (p.clone(), mtime)
+        })
+        .collect();
+
+    // Find which paths have stale or missing cache entries
+    let mut hash_index = load_hash_index();
+    let needs_hashing: Vec<(PathBuf, u64)> = path_mtimes
+        .iter()
+        .filter(|(p, mtime)| {
+            let key = p.to_string_lossy().to_string();
+            !matches!(hash_index.get(&key), Some((cached_mtime, _)) if cached_mtime == mtime)
+        })
+        .cloned()
+        .collect();
+
+    // Hash stale/new files in parallel
+    let new_hashes: Vec<(PathBuf, u64, String)> = needs_hashing
+        .par_iter()
+        .map(|(p, mtime)| {
+            let contents =
+                fs::read(p).map_err(|e| format!("Failed to read {}: {}", p.display(), e))?;
+            let hash = sha256::digest(contents.as_slice());
+            Ok((p.clone(), *mtime, hash))
+        })
+        .collect::<Result<_, String>>()?;
+
+    for (p, mtime, hash) in &new_hashes {
+        hash_index.insert(p.to_string_lossy().to_string(), (*mtime, hash.clone()));
+    }
+
+    let file_hashes: HashMap<PathBuf, String> = path_mtimes
+        .iter()
+        .filter_map(|(p, _)| {
+            let key = p.to_string_lossy().to_string();
+            hash_index.get(&key).map(|(_, h)| (p.clone(), h.clone()))
+        })
+        .collect();
+
+    save_hash_index(&hash_index);
+    Ok(file_hashes)
+}
+
+/// Find add/update/delete actions by comparing `from_files` against `to_files`.
+fn find_diff_actions(
+    from_files: &HashMap<PathBuf, PathBuf>,
+    to_files: &HashMap<PathBuf, PathBuf>,
+    file_hashes: &HashMap<PathBuf, String>,
+    from_output_base_dir: &Path,
+) -> Vec<SyncImportData> {
+    let mut import_data = Vec::new();
+
+    // Files in 'from' only → Add; files in both but differing → Update
+    for (relative_path, from_path) in from_files {
+        let Some(NoteFilepathData {
+            parser_name,
+            note_id,
+        }) = get_note_info_from_filepath(from_path).ok()
+        else {
+            continue;
+        };
+
+        if let Some(to_path) = to_files.get(relative_path) {
+            let hashes_match = match (file_hashes.get(to_path), file_hashes.get(from_path)) {
+                (Some(h1), Some(h2)) => h1 == h2,
+                _ => false,
+            };
+            if !hashes_match {
+                let mut note_from_filepath = get_output_raw_dir(
+                    &parser_name,
+                    RenderOutputType::Note,
+                    Some(from_output_base_dir),
+                );
+                note_from_filepath.push(from_path.file_name().unwrap());
+                import_data.push(SyncImportData {
+                    note_id,
+                    parser_name,
+                    action: SyncImportAction::Update {
+                        from: note_from_filepath,
+                        to: to_path.clone(),
+                    },
+                });
+            }
+        } else {
+            // Note: for Add, the 'to' field contains the source file path (in 'from')
+            import_data.push(SyncImportData {
+                note_id,
+                parser_name,
+                action: SyncImportAction::Add {
+                    to: from_path.clone(),
+                },
+            });
+        }
+    }
+
+    // Files in 'to' only → Delete
+    import_data.extend(
+        to_files
+            .iter()
+            .filter(|(relative_path, _)| !from_files.contains_key(*relative_path))
+            .filter_map(|(_, to_path)| {
+                get_note_info_from_filepath(to_path)
+                    .ok()
+                    .map(|info| (to_path, info.parser_name, info.note_id))
+            })
+            .map(|(to_path, parser_name, note_id)| SyncImportData {
+                note_id,
+                parser_name,
+                action: SyncImportAction::Delete {
+                    to: to_path.clone(),
+                },
+            }),
+    );
+
+    import_data
+}
+
+/// When `sync_all_notes` is set, append Update actions for all `to` files not already covered.
+fn expand_sync_all(
+    import_data: &mut Vec<SyncImportData>,
+    to_files: &HashMap<PathBuf, PathBuf>,
+    from_output_base_dir: &Path,
+) {
+    let existing_to_paths: std::collections::HashSet<_> = import_data
+        .iter()
+        .filter_map(|d| match &d.action {
+            SyncImportAction::Update { to, .. } | SyncImportAction::Delete { to } => {
+                Some(to.clone())
+            }
+            SyncImportAction::Add { .. } => None,
+        })
+        .collect();
+
+    for to_path in to_files.values() {
+        if existing_to_paths.contains(to_path) {
+            continue;
+        }
+        let Some(NoteFilepathData {
+            parser_name,
+            note_id,
+        }) = get_note_info_from_filepath(to_path).ok()
+        else {
+            continue;
+        };
+        let mut note_from_filepath = get_output_raw_dir(
+            &parser_name,
+            RenderOutputType::Note,
+            Some(from_output_base_dir),
+        );
+        note_from_filepath.push(to_path.file_name().unwrap());
+        import_data.push(SyncImportData {
+            note_id,
+            parser_name,
+            action: SyncImportAction::Update {
+                from: note_from_filepath,
+                to: to_path.clone(),
+            },
+        });
+    }
+}
+
+/// Fuse pairs of (Add, Delete) for the same note id into a single Update.
+/// This handles notes whose parser was changed, which appears as a delete from the old
+/// parser path and an add to the new parser path.
+fn fuse_parser_changes(import_data: Vec<SyncImportData>) -> Vec<SyncImportData> {
+    // Use into_group_by_insertion instead of into_group_map for deterministic output order
+    let mut import_data_map = import_data
+        .into_iter()
+        .map(|d| (d.note_id, d))
+        // This is used instead of `.into_group_map()` for consistency in the user output
+        .into_group_by_insertion();
+    for (note_id, dups) in import_data_map.iter_mut().filter(|(_, v)| v.len() == 2) {
+        let mut new_parser_name: Option<String> = None;
+        let mut note_from_filepath: Option<PathBuf> = None;
+        let mut note_to_filepath: Option<PathBuf> = None;
+        for dup in &*dups {
+            match &dup.action {
+                SyncImportAction::Add { to: from } => {
+                    new_parser_name = Some(dup.parser_name.clone());
+                    note_from_filepath = Some(from.clone());
+                }
+                SyncImportAction::Update { .. } => unreachable!(),
+                SyncImportAction::Delete { to } => {
+                    note_to_filepath = Some(to.clone());
+                }
+            }
+        }
+        *dups = vec![SyncImportData {
+            note_id: *note_id,
+            parser_name: new_parser_name.unwrap(),
+            action: SyncImportAction::Update {
+                from: note_from_filepath.unwrap(),
+                to: note_to_filepath.unwrap(),
+            },
+        }];
+    }
+    import_data_map.into_iter().flat_map(|(_, v)| v).collect()
+}
+
+fn get_import_data(
+    from_output_dir: &Path,
+    to_output_dir: &Path,
+    dry_run: bool,
+    sync_all_notes: bool,
+) -> Result<Vec<SyncImportData>, String> {
+    let from_output_base_dir = from_output_dir.parent().unwrap();
+
+    if dry_run {
+        info!(
+            "Comparing directories: {} vs {}",
+            to_output_dir.display(),
+            from_output_dir.display()
+        );
+    }
+
+    let to_files = build_file_map(to_output_dir)?;
+    let from_files = build_file_map(from_output_dir)?;
+
+    let all_paths: Vec<PathBuf> = from_files
+        .values()
+        .chain(to_files.values())
+        .cloned()
+        .collect();
+    let file_hashes = compute_file_hashes(&all_paths)?;
+
+    let mut import_data =
+        find_diff_actions(&from_files, &to_files, &file_hashes, from_output_base_dir);
+
+    if sync_all_notes {
+        expand_sync_all(&mut import_data, &to_files, from_output_base_dir);
+    }
+
+    Ok(fuse_parser_changes(import_data))
 }
 
 /// Generate all notes (not cards) in cache directory
-#[expect(clippy::too_many_lines)]
 async fn generate_notes(
     base_url: &str,
     client: &Client,
     sync_source_from: SyncSource,
     sync_source_to: SyncSource,
-    // base_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), String> {
     // Use persistent cache directory so rendered notes survive reboots
     let mut base_dir = get_cache_dir();
@@ -381,26 +566,6 @@ async fn generate_notes(
     fs::create_dir_all(&base_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
     let mut output_dirs: Vec<PathBuf> = Vec::with_capacity(2);
-
-    // Check if we can use incremental generation for spares-local-files -> spares
-    let use_incremental = matches!(
-        (sync_source_from, sync_source_to),
-        (SyncSource::SparesLocalFiles, SyncSource::Spares)
-    );
-
-    let mut spares_cache_dir: Option<PathBuf> = None;
-    if use_incremental {
-        let mut cache_dir = base_dir.clone();
-        cache_dir.push("spares");
-        cache_dir.push("notes");
-        if is_cache_valid(&cache_dir) {
-            spares_cache_dir = Some(cache_dir);
-            info!("Using cached database notes for faster sync");
-        }
-    }
-
-    // Process sources, handling Spares specially for incremental generation
-    let mut spares_output_dir: Option<PathBuf> = None;
 
     for source in [sync_source_from, sync_source_to] {
         match source {
@@ -410,46 +575,35 @@ async fn generate_notes(
                 let mut returned_output_dir = output_dir.clone();
                 returned_output_dir.push("notes");
                 output_dirs.push(returned_output_dir.clone());
-                spares_output_dir = Some(returned_output_dir.clone());
 
-                // If we have a valid cache and we're doing incremental generation, reuse it
-                if spares_cache_dir.is_some() {
-                    // Cache already exists at returned_output_dir, so we can use it directly
-                    // We'll regenerate changed notes later after diffing
-                    info!("Reusing cached database notes");
-                    // Don't clear or regenerate - the cache files are already there
-                } else {
-                    // Full generation path
-                    // Clear directory first
-                    if output_dir.exists() {
-                        clear_dir(&output_dir).map_err(|e| format!("{}", e))?;
-                    }
+                // Clear directory first
+                if output_dir.exists() {
+                    clear_dir(&output_dir).map_err(|e| format!("{}", e))?;
+                }
 
-                    info!("Rendering notes from Spares...");
-                    let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
-                        || sync_source_to == SyncSource::SparesLocalFiles;
-                    let request = RenderNotesRequest {
-                        selector: NotesSelector::All,
-                        immutable_note_ids: None,
-                        overridden_output_raw_dir: Some(output_dir.clone()),
-                        include_linked_notes,
-                        include_cards: false,
-                        generate_rendered: false,
-                        force_generate_rendered: false,
-                    };
-                    let url = format!("{}/api/notes/generate_files", base_url);
-                    let response = client
-                        .post(url)
-                        .json(&request)
-                        .send()
-                        .await
-                        .map_err(|e| format!("{}", e))?;
-                    let status = response.status();
-                    if status != StatusCode::OK {
-                        let response: Value =
-                            response.json().await.map_err(|e| format!("{}", e))?;
-                        return Err(response.to_string());
-                    }
+                info!("Rendering notes from Spares...");
+                let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
+                    || sync_source_to == SyncSource::SparesLocalFiles;
+                let request = RenderNotesRequest {
+                    selector: NotesSelector::All,
+                    immutable_note_ids: None,
+                    overridden_output_raw_dir: Some(output_dir.clone()),
+                    include_linked_notes,
+                    include_cards: false,
+                    generate_rendered: false,
+                    force_generate_rendered: false,
+                };
+                let url = format!("{}/api/notes/generate_files", base_url);
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| format!("{}", e))?;
+                let status = response.status();
+                if status != StatusCode::OK {
+                    let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
+                    return Err(response.to_string());
                 }
             }
             SyncSource::SparesLocalFiles => {
@@ -470,7 +624,6 @@ async fn generate_notes(
                 let mut local_notes_dir = get_data_dir();
                 local_notes_dir.push("notes");
                 copy_dir::copy_dir(local_notes_dir, output_dir).map_err(|e| format!("{}", e))?;
-                // output_dirs.push(local_notes_dir);
             }
             SyncSource::Anki => {
                 let mut output_dir = base_dir.clone();
@@ -516,478 +669,5 @@ async fn generate_notes(
     assert_eq!(output_dirs.len(), 2);
     let (from_output_dir, to_output_dir) = (output_dirs[0].clone(), output_dirs[1].clone());
 
-    // If we used cache and are doing incremental generation, we need to regenerate changed notes
-    if let (Some(_), Some(ref spares_dir)) = (spares_cache_dir, spares_output_dir) {
-        // Diff local files against cache to find changed notes
-        let changed_import_data =
-            get_import_data(&from_output_dir, spares_dir, true, false).unwrap_or_default();
-
-        if !changed_import_data.is_empty() {
-            let changed_note_ids = extract_note_ids_from_import_data(&changed_import_data);
-            info!(
-                "Regenerating {} changed note(s) from database...",
-                changed_note_ids.len()
-            );
-
-            // Regenerate only changed notes
-            let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
-                || sync_source_to == SyncSource::SparesLocalFiles;
-            let request = RenderNotesRequest {
-                selector: NotesSelector::Ids(changed_note_ids),
-                immutable_note_ids: None,
-                overridden_output_raw_dir: Some({
-                    let mut parent = spares_dir.clone();
-                    parent.pop(); // Go up from "notes" to "spares"
-                    parent
-                }),
-                include_linked_notes,
-                include_cards: false,
-                generate_rendered: false,
-                force_generate_rendered: false,
-            };
-            let url = format!("{}/api/notes/generate_files", base_url);
-            let response = client
-                .post(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| format!("{}", e))?;
-            let status = response.status();
-            if status != StatusCode::OK {
-                let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                return Err(response.to_string());
-            }
-        }
-    }
-
     Ok((from_output_dir, to_output_dir))
-}
-
-// Render diffs in `/tmp/spares_cli/{from_source_name}/diffs`
-//   - `from_output_dir` is `/tmp/spares_cli/{from_source_name}/notes/`
-//   - `to_output_dir` is `/tmp/spares_cli/{to_source_name}/notes/`
-//   - Add `action: add` and `action: delete`, if needed.
-fn generate_diffs(from_output_dir: &Path, to_output_dir: &Path) -> Result<PathBuf, String> {
-    // Get the parent of the 'notes' directory which should be the source directory
-    let source_dir = from_output_dir
-        .parent()
-        .ok_or_else(|| String::from("from_output_dir must have a parent directory"))?;
-
-    // Create the diff directory as a sibling to 'notes'
-    let diff_dir = source_dir.join("diffs");
-    if diff_dir.exists() {
-        clear_dir(&diff_dir).map_err(|e| format!("Failed to clear directory: {}", e))?;
-    } else {
-        std::fs::create_dir_all(&diff_dir)
-            .map_err(|e| format!("Failed to create diff directory: {}", e))?;
-    }
-
-    // First, get the list of changed files
-    let all_import_data = get_import_data(from_output_dir, to_output_dir, true, false)?;
-
-    let dev_null = PathBuf::from("/dev/null");
-
-    // Generate individual diffs for each file
-    for sync_import_data in all_import_data {
-        let (from_file_path, to_file_path, import_file_path) = match &sync_import_data.action {
-            SyncImportAction::Add { to: from } => (from, &dev_null, from),
-            SyncImportAction::Update { from, to } => (from, to, to),
-            SyncImportAction::Delete { to } => (&dev_null, to, to),
-        };
-        let mut diff_file_path = diff_dir.clone();
-        diff_file_path.push(&sync_import_data.parser_name);
-        let parser = find_parser(sync_import_data.parser_name.as_str(), &get_all_parsers())
-            .map_err(|e| format!("{}", e))?;
-        diff_file_path
-            .push(parser.get_output_filename(RenderOutputType::Note, sync_import_data.note_id));
-        let ext = import_file_path
-            .extension()
-            .ok_or_else(|| format!("Failed to get extension: {}", diff_file_path.display()))?;
-        let mut new_ext = ext.to_os_string();
-        new_ext.push(".diff");
-        diff_file_path.set_extension(new_ext);
-
-        // Replace the action in the note file
-        let file_contents = fs::read_to_string(import_file_path).map_err(|e| format!("{}", e))?;
-        let replaced_file_contents = replace_action(
-            &file_contents,
-            &sync_import_data.action,
-            parser.as_ref(),
-            sync_import_data.note_id,
-        )
-        .unwrap_or(file_contents);
-        std::fs::write(import_file_path, replaced_file_contents).map_err(|e| {
-            format!(
-                "Failed to write file for {}: {}",
-                import_file_path.display(),
-                e
-            )
-        })?;
-        // If deleting, then create note file so replacing the `diffs` directory with `notes` makes sense.
-        if matches!(sync_import_data.action, SyncImportAction::Delete { .. }) {
-            let mut from_file_path = from_output_dir.to_path_buf();
-
-            from_file_path.push(&sync_import_data.parser_name);
-            from_file_path
-                .push(parser.get_output_filename(RenderOutputType::Note, sync_import_data.note_id));
-            from_file_path.set_extension(ext);
-            fs::copy(import_file_path, from_file_path)
-                .map_err(|e| format!("Failed to copy data: {}", e))?;
-        }
-
-        // Generate diff for this specific file
-        let output = Command::new("git")
-            .arg("diff")
-            .arg("--color")
-            .arg("--no-index")
-            .arg("--patch")
-            // This is inverted on purpose since we want to diff against the source we are pushing data to.
-            .arg(to_file_path)
-            .arg(from_file_path)
-            .output()
-            .map_err(|e| {
-                format!(
-                    "Failed to execute git diff for {}: {}",
-                    from_file_path.display(),
-                    e
-                )
-            })?;
-        let diff_file_contents = String::from_utf8(output.stdout)
-            .map_err(|e| format!("Failed to parse git diff output: {}", e))?;
-
-        // Create necessary subdirectories in the diff directory
-        if let Some(parent) = diff_file_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory structure for diff: {}", e))?;
-        }
-        std::fs::write(&diff_file_path, diff_file_contents).map_err(|e| {
-            format!(
-                "Failed to write diff file for {}: {}",
-                from_file_path.display(),
-                e
-            )
-        })?;
-    }
-
-    Ok(diff_dir)
-}
-
-pub(crate) async fn sync_notes(
-    base_url: &str,
-    client: &Client,
-    sync_args: SyncArgs,
-) -> Result<(), String> {
-    match sync_args.action {
-        SyncMainAction::Interactive {
-            from: sync_source_from,
-            to: sync_source_to,
-            dry_run,
-            all: sync_all_notes,
-        } => {
-            sync_notes_interactive(
-                base_url,
-                client,
-                sync_source_from,
-                sync_source_to,
-                dry_run,
-                sync_all_notes,
-            )
-            .await
-        }
-        SyncMainAction::RenderDiffs {
-            from: sync_source_from,
-            to: sync_source_to,
-        } => {
-            // Render notes in cache directory
-            let (from_output_dir, to_output_dir) =
-                generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
-
-            // Render diffs
-            let diffs_directory_path = generate_diffs(&from_output_dir, &to_output_dir)?;
-            println!("{}", diffs_directory_path.display());
-
-            Ok(())
-        }
-    }
-}
-
-/// Build a map of relative paths (from the base directory) to full file paths
-/// for all files in the given directory.
-fn build_file_map(base_dir: &Path) -> Result<HashMap<PathBuf, PathBuf>, String> {
-    let mut file_map = HashMap::new();
-    for entry in WalkDir::new(base_dir) {
-        let entry = entry.map_err(|e| format!("Failed to walk directory: {}", e))?;
-        if entry.file_type().is_file() {
-            let full_path = entry.path().to_path_buf();
-            let relative_path = full_path
-                .strip_prefix(base_dir)
-                .map_err(|e| format!("Failed to get relative path: {}", e))?
-                .to_path_buf();
-            file_map.insert(relative_path, full_path);
-        }
-    }
-    Ok(file_map)
-}
-
-/// Persistent mtime+hash cache keyed by absolute path string → (`mtime_secs`, `sha256_hex`).
-type HashIndex = HashMap<String, (u64, String)>;
-
-fn hash_index_path() -> PathBuf {
-    let mut p = get_cache_dir();
-    p.push("sync");
-    p.push("hash_index.json");
-    p
-}
-
-fn load_hash_index() -> HashIndex {
-    let path = hash_index_path();
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_hash_index(index: &HashIndex) {
-    let path = hash_index_path();
-    if let Ok(json) = serde_json::to_string(index) {
-        let _ = fs::write(&path, json);
-    }
-}
-
-#[expect(clippy::too_many_lines)]
-fn get_import_data(
-    from_output_dir: &Path,
-    to_output_dir: &Path,
-    dry_run: bool,
-    sync_all_notes: bool,
-) -> Result<Vec<SyncImportData>, String> {
-    let from_output_base_dir = &from_output_dir.parent().unwrap();
-
-    if dry_run {
-        info!(
-            "Comparing directories: {} vs {}",
-            to_output_dir.display(),
-            from_output_dir.display()
-        );
-    }
-
-    // Build file maps for both directories
-    let to_files = build_file_map(to_output_dir)?;
-    let from_files = build_file_map(from_output_dir)?;
-
-    // Compute SHA256 hashes for all files, reusing cached hashes when mtime is unchanged.
-    // Step 1: collect all paths and read their mtimes (sequential, just metadata).
-    let all_paths: Vec<PathBuf> = from_files
-        .values()
-        .chain(to_files.values())
-        .cloned()
-        .collect();
-    let path_mtimes: Vec<(PathBuf, u64)> = all_paths
-        .iter()
-        .map(|p| {
-            let mtime = fs::metadata(p)
-                .and_then(|m| m.modified())
-                .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
-                .unwrap_or(0);
-            (p.clone(), mtime)
-        })
-        .collect();
-
-    // Step 2: load persistent index and find which paths need re-hashing.
-    let mut hash_index = load_hash_index();
-    let needs_hashing: Vec<(PathBuf, u64)> = path_mtimes
-        .iter()
-        .filter(|(p, mtime)| {
-            let key = p.to_string_lossy().to_string();
-            !matches!(hash_index.get(&key), Some((cached_mtime, _)) if cached_mtime == mtime)
-        })
-        .cloned()
-        .collect();
-
-    // Step 3: parallel hash only stale/new files.
-    let new_hashes: Vec<(PathBuf, u64, String)> = needs_hashing
-        .par_iter()
-        .map(|(p, mtime)| {
-            let contents =
-                fs::read(p).map_err(|e| format!("Failed to read {}: {}", p.display(), e))?;
-            let hash = sha256::digest(contents.as_slice());
-            Ok((p.clone(), *mtime, hash))
-        })
-        .collect::<Result<_, String>>()?;
-
-    // Step 4: update index with fresh hashes.
-    for (p, mtime, hash) in &new_hashes {
-        hash_index.insert(p.to_string_lossy().to_string(), (*mtime, hash.clone()));
-    }
-
-    // Step 5: build a path → hash lookup for the comparison loop.
-    let file_hashes: HashMap<PathBuf, String> = path_mtimes
-        .iter()
-        .filter_map(|(p, _)| {
-            let key = p.to_string_lossy().to_string();
-            let hash = hash_index.get(&key).map(|(_, h)| h.clone())?;
-            Some((p.clone(), hash))
-        })
-        .collect();
-
-    let mut import_data = Vec::new();
-
-    // Find files that are in 'from' but not in 'to' (Add)
-    // or in both but different (Modified)
-    for (relative_path, from_path) in &from_files {
-        let note_info_opt = get_note_info_from_filepath(from_path).ok();
-        if note_info_opt.is_none() {
-            continue;
-        }
-
-        let NoteFilepathData {
-            parser_name,
-            note_id,
-        } = note_info_opt.unwrap();
-
-        if let Some(to_path) = to_files.get(relative_path) {
-            // File exists in both directories - check if modified via hash comparison.
-            let hashes_match = match (file_hashes.get(to_path), file_hashes.get(from_path)) {
-                (Some(h1), Some(h2)) => h1 == h2,
-                _ => false,
-            };
-            if !hashes_match {
-                let parser = find_parser(parser_name.as_str(), &get_all_parsers())
-                    .map_err(|e| format!("{:?}", e))?;
-                let mut note_from_filepath = get_output_raw_dir(
-                    parser.get_parser_name(),
-                    RenderOutputType::Note,
-                    Some(from_output_base_dir),
-                );
-                let note_filename = from_path.file_name().unwrap().to_str().unwrap();
-                note_from_filepath.push(note_filename);
-
-                import_data.push(SyncImportData {
-                    note_id,
-                    parser_name,
-                    action: SyncImportAction::Update {
-                        from: note_from_filepath,
-                        to: to_path.clone(),
-                    },
-                });
-            }
-        } else {
-            // File only exists in 'from' - this is an Add
-            // Note: for Add, the 'to' field actually contains the source file path (in 'from')
-            import_data.push(SyncImportData {
-                note_id,
-                parser_name,
-                action: SyncImportAction::Add {
-                    to: from_path.clone(),
-                },
-            });
-        }
-    }
-
-    // Find files that are in 'to' but not in 'from' (Delete)
-    for (relative_path, to_path) in &to_files {
-        if !from_files.contains_key(relative_path) {
-            let note_info_opt = get_note_info_from_filepath(to_path).ok();
-            if note_info_opt.is_none() {
-                continue;
-            }
-
-            let NoteFilepathData {
-                parser_name,
-                note_id,
-            } = note_info_opt.unwrap();
-
-            import_data.push(SyncImportData {
-                note_id,
-                parser_name,
-                action: SyncImportAction::Delete {
-                    to: to_path.clone(),
-                },
-            });
-        }
-    }
-
-    // If sync_all_notes is true, include all files from 'to' as modified
-    if sync_all_notes {
-        let existing_import_paths: std::collections::HashSet<_> = import_data
-            .iter()
-            .filter_map(|d| match &d.action {
-                SyncImportAction::Update { to, .. } | SyncImportAction::Delete { to } => {
-                    Some(to.clone())
-                }
-                SyncImportAction::Add { .. } => None,
-            })
-            .collect();
-
-        for to_path in to_files.values() {
-            if !existing_import_paths.contains(to_path) {
-                let note_info_opt = get_note_info_from_filepath(to_path).ok();
-                if note_info_opt.is_none() {
-                    continue;
-                }
-
-                let NoteFilepathData {
-                    parser_name,
-                    note_id,
-                } = note_info_opt.unwrap();
-
-                let parser = find_parser(parser_name.as_str(), &get_all_parsers())
-                    .map_err(|e| format!("{:?}", e))?;
-                let mut note_from_filepath = get_output_raw_dir(
-                    parser.get_parser_name(),
-                    RenderOutputType::Note,
-                    Some(from_output_base_dir),
-                );
-                let note_filename = to_path.file_name().unwrap().to_str().unwrap();
-                note_from_filepath.push(note_filename);
-
-                import_data.push(SyncImportData {
-                    note_id,
-                    parser_name,
-                    action: SyncImportAction::Update {
-                        from: note_from_filepath,
-                        to: to_path.clone(),
-                    },
-                });
-            }
-        }
-    }
-    // Identify notes that had their parser changed. This will appear as 2 actions: deleting the note from the old parser and adding the note to the new parser. These should be fused to an update.
-    let mut import_data_map = import_data
-        .into_iter()
-        .map(|d| (d.note_id, d))
-        // This is used instead of `.into_group_map()` for consistency in the user output
-        .into_group_by_insertion();
-    for (note_id, dups) in import_data_map.iter_mut().filter(|(_, v)| v.len() == 2) {
-        let mut new_parser_name: Option<String> = None;
-        let mut note_from_filepath: Option<PathBuf> = None;
-        let mut note_to_filepath: Option<PathBuf> = None;
-        for dup in &*dups {
-            match &dup.action {
-                SyncImportAction::Add { to: from } => {
-                    new_parser_name = Some(dup.parser_name.clone());
-                    note_from_filepath = Some(from.clone());
-                }
-                SyncImportAction::Update { .. } => unreachable!(),
-                SyncImportAction::Delete { to: from } => {
-                    note_to_filepath = Some(from.clone());
-                }
-            }
-        }
-        *dups = vec![SyncImportData {
-            note_id: *note_id,
-            parser_name: new_parser_name.unwrap(),
-            action: SyncImportAction::Update {
-                from: note_from_filepath.unwrap(),
-                to: note_to_filepath.unwrap(),
-            },
-        }];
-    }
-    let result = import_data_map
-        .into_iter()
-        .flat_map(|(_, v)| v)
-        .collect::<Vec<_>>();
-
-    save_hash_index(&hash_index);
-    Ok(result)
 }
