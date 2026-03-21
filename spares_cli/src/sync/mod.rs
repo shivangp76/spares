@@ -16,7 +16,7 @@ use spares::{
             spares::{SparesAdapter, SparesRequestProcessor},
         },
     },
-    config::get_data_dir,
+    config::{get_cache_dir, get_data_dir},
     model::NoteId,
     parsers::{
         NoteFilepathData, NoteSettingsKeys, Parseable, find_parser,
@@ -212,7 +212,7 @@ async fn update_changes(
             return Err(hub_spoke_error(sync_source_from, sync_source_to));
         }
         (SyncSource::Spares, SyncSource::SparesLocalFiles) => {
-            // Overwrite note file with temp file
+            // Overwrite note file with cache file
             for import_data in &mut *import_datas {
                 match import_data.action {
                     SyncImportAction::Add { .. } | SyncImportAction::Update { .. } => {
@@ -365,7 +365,7 @@ async fn regenerate_notes(
     Ok(())
 }
 
-/// Generate all notes (not cards) in temp directory
+/// Generate all notes (not cards) in cache directory
 #[expect(clippy::too_many_lines)]
 async fn generate_notes(
     base_url: &str,
@@ -374,9 +374,10 @@ async fn generate_notes(
     sync_source_to: SyncSource,
     // base_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), String> {
-    // Create temp directory
-    let mut base_dir = PathBuf::from("/tmp");
-    base_dir.push(clap::crate_name!());
+    // Use persistent cache directory so rendered notes survive reboots
+    let mut base_dir = get_cache_dir();
+    base_dir.push("sync");
+    fs::create_dir_all(&base_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
     let mut output_dirs: Vec<PathBuf> = Vec::with_capacity(2);
 
@@ -698,7 +699,7 @@ pub(crate) async fn sync_notes(
             from: sync_source_from,
             to: sync_source_to,
         } => {
-            // Render notes in temp directory
+            // Render notes in cache directory
             let (from_output_dir, to_output_dir) =
                 generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
 

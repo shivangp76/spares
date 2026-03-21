@@ -193,7 +193,7 @@ pub(crate) async fn sync_notes_interactive(
     }
     println!("Syncing from {} to {}.", sync_source_from, sync_source_to);
 
-    // Render notes in temp directory
+    // Render notes in cache directory
     let (from_output_dir, to_output_dir) =
         generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
 
