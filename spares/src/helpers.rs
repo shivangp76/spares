@@ -18,14 +18,6 @@ pub fn value_to_string_vec(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn change_offset(original: &mut usize, change: i64) {
-    let original_int = i64::try_from(*original).unwrap();
-    if change < 0 {
-        assert!(change.abs() <= original_int);
-    }
-    *original = usize::try_from(original_int + change).unwrap();
-}
-
 pub fn get_start_end_local_date(requested_date: &DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
     let lower_limit = Local
         .from_local_datetime(
