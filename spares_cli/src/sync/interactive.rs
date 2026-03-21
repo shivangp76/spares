@@ -5,6 +5,7 @@ use crate::sync::{
 };
 use colored::Colorize;
 use inquire::Select;
+use log::info;
 use reqwest::Client;
 use spares::{
     model::NoteId,
@@ -198,7 +199,7 @@ pub(crate) async fn sync_notes_interactive(
         generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
 
     // See which notes changed
-    println!(
+    info!(
         "Diffing notes from {} to {}...",
         &from_output_dir.display(),
         &to_output_dir.display()
@@ -228,7 +229,14 @@ pub(crate) async fn sync_notes_interactive(
     )
     .await?;
 
-    regenerate_notes(base_url, client, modified_notes, immutable_note_ids, dry_run).await?;
+    regenerate_notes(
+        base_url,
+        client,
+        modified_notes,
+        immutable_note_ids,
+        dry_run,
+    )
+    .await?;
 
     println!("Done");
     Ok(())

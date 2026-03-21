@@ -357,7 +357,6 @@ async fn regenerate_notes(
             let status = response.status();
             if status != StatusCode::OK {
                 let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                dbg!(&response);
                 return Err(response.to_string());
             }
         }
@@ -447,7 +446,6 @@ async fn generate_notes(
                     if status != StatusCode::OK {
                         let response: Value =
                             response.json().await.map_err(|e| format!("{}", e))?;
-                        dbg!(&response);
                         return Err(response.to_string());
                     }
                 }
@@ -555,7 +553,6 @@ async fn generate_notes(
             let status = response.status();
             if status != StatusCode::OK {
                 let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
-                dbg!(&response);
                 return Err(response.to_string());
             }
         }
@@ -761,7 +758,7 @@ fn get_import_data(
     let from_output_base_dir = &from_output_dir.parent().unwrap();
 
     if dry_run {
-        println!(
+        info!(
             "Comparing directories: {} vs {}",
             to_output_dir.display(),
             from_output_dir.display()
