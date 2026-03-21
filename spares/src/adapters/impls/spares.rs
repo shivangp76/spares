@@ -175,6 +175,7 @@ impl SrsAdapter for SparesAdapter {
         let parser_id = parser_response.id;
 
         let mut create_note_requests: Vec<CreateNoteRequest> = Vec::new();
+        let mut delete_note_ids: Vec<i64> = Vec::new();
         for (local_settings, note_data_res) in notes {
             if note_data_res.is_none() {
                 continue;
@@ -221,29 +222,29 @@ impl SrsAdapter for SparesAdapter {
                     }
                 }
                 NoteImportAction::Delete(note_id) => {
-                    if !dry_run {
-                        match &request_processor {
-                            SparesRequestProcessorInternal::Server { base_url, client } => {
-                                let request = DeleteNotesRequest {
-                                    selector: NotesSelector::Ids(vec![note_id]),
-                                };
-                                let url = format!("{}/api/notes", base_url);
-                                let response = client
-                                    .delete(url)
-                                    .json(&request)
-                                    .send()
-                                    .await
-                                    .map_err(Error::ApiRequest)?;
-                                self.handle_response(response).await?;
-                            }
-                            SparesRequestProcessorInternal::Database { pool } => {
-                                let request = DeleteNotesRequest {
-                                    selector: NotesSelector::Ids(vec![note_id]),
-                                };
-                                delete_notes(pool, request, &get_all_parsers(), false).await?;
-                            }
-                        }
-                    }
+                    delete_note_ids.push(note_id);
+                }
+            }
+        }
+
+        // Issue a single bulk delete for all collected note IDs.
+        if !delete_note_ids.is_empty() && !dry_run {
+            let request = DeleteNotesRequest {
+                selector: NotesSelector::Ids(delete_note_ids),
+            };
+            match &request_processor {
+                SparesRequestProcessorInternal::Server { base_url, client } => {
+                    let url = format!("{}/api/notes", base_url);
+                    let response = client
+                        .delete(url)
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(Error::ApiRequest)?;
+                    self.handle_response(response).await?;
+                }
+                SparesRequestProcessorInternal::Database { pool } => {
+                    delete_notes(pool, request, &get_all_parsers(), false).await?;
                 }
             }
         }
