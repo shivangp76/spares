@@ -284,10 +284,13 @@ pub async fn create_notes(
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Update config
-    let mut config = read_internal_config()?;
-    config.linked_notes_generated = false;
-    write_internal_config(&config)?;
+    // Update config — only invalidate linked-note cache if any note has keywords or note links
+    let has_keywords = note_keyword_entries.iter().any(|(_, ks)| !ks.is_empty());
+    if has_keywords || !note_link_entries.is_empty() {
+        let mut config = read_internal_config()?;
+        config.linked_notes_generated = false;
+        write_internal_config(&config)?;
+    }
 
     // Log event
     if log {
