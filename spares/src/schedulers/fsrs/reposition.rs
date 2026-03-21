@@ -9,7 +9,7 @@ use crate::{
     schedulers::MoveCardsResult,
 };
 use chrono::{DateTime, Duration, Utc};
-use rand::Rng;
+use rand::{Rng, RngExt};
 use sqlx::SqlitePool;
 use std::cmp;
 
