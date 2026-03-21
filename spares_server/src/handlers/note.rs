@@ -23,7 +23,7 @@ use spares::{
 };
 use std::sync::Arc;
 
-pub async fn create_notes_handler(
+pub(crate) async fn create_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CreateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -33,7 +33,7 @@ pub async fn create_notes_handler(
     Ok(Json(result))
 }
 
-pub async fn get_note_handler(
+pub(crate) async fn get_note_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -41,7 +41,7 @@ pub async fn get_note_handler(
     Ok(Json(note_res))
 }
 
-pub async fn update_notes_handler(
+pub(crate) async fn update_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -51,7 +51,7 @@ pub async fn update_notes_handler(
     Ok(Json(update_notes_res))
 }
 
-pub async fn delete_notes_handler(
+pub(crate) async fn delete_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -61,7 +61,7 @@ pub async fn delete_notes_handler(
     Ok(StatusCode::OK)
 }
 
-pub async fn list_notes_handler(
+pub(crate) async fn list_notes_handler(
     opts: Query<FilterOptions>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -71,7 +71,7 @@ pub async fn list_notes_handler(
     Ok(Json(list_notes_res))
 }
 
-pub async fn search_notes_handler(
+pub(crate) async fn search_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SearchNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -81,7 +81,7 @@ pub async fn search_notes_handler(
     Ok(Json(search_notes_res))
 }
 
-pub async fn search_keyword_handler(
+pub(crate) async fn search_keyword_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SearchKeywordRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -91,7 +91,7 @@ pub async fn search_keyword_handler(
     Ok(Json(search_keyword_res))
 }
 
-pub async fn generate_note_files_handler(
+pub(crate) async fn generate_note_files_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<RenderNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -101,7 +101,7 @@ pub async fn generate_note_files_handler(
     Ok(StatusCode::OK)
 }
 
-pub async fn get_unmatched_keywords_handler(
+pub(crate) async fn get_unmatched_keywords_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let unmatched_keywords = get_unmatched_keywords(&data.db)
@@ -110,7 +110,7 @@ pub async fn get_unmatched_keywords_handler(
     Ok(Json(unmatched_keywords))
 }
 
-pub async fn get_note_links_handler(
+pub(crate) async fn get_note_links_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<NoteLinksRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -120,7 +120,7 @@ pub async fn get_note_links_handler(
     Ok(Json(note_links))
 }
 
-pub async fn export_notes_handler(
+pub(crate) async fn export_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<ExportNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -130,7 +130,7 @@ pub async fn export_notes_handler(
     Ok(Json(result))
 }
 
-pub async fn get_duplicate_keywords_handler(
+pub(crate) async fn get_duplicate_keywords_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let duplicate_keywords = spares::api::note::get_duplicate_keywords(&data.db)

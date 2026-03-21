@@ -10,13 +10,13 @@ use sqlx::SqlitePool;
 use std::time::Instant;
 
 #[derive(Args, Debug)]
-pub struct MigrateArgs {
+pub(crate) struct MigrateArgs {
     #[arg(short, long)]
-    pub adapter: String,
+    pub(crate) adapter: String,
     #[arg(short, long, default_value_t = false)]
-    pub initial_migration: bool,
+    pub(crate) initial_migration: bool,
     #[arg(short, long, default_value_t = true)]
-    pub dry_run: bool,
+    pub(crate) dry_run: bool,
 }
 
 fn migration_func(
@@ -109,7 +109,7 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
     Ok(())
 }
 
-pub async fn migrate_from_adapter(
+pub(crate) async fn migrate_from_adapter(
     base_url: &str,
     spares_pool: &SqlitePool,
     client: &Client,

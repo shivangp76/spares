@@ -31,32 +31,32 @@ use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_pro
 use crate::utils::undo_event;
 use spares::schema::card::CardResponse;
 use spares::schema::undo::UndoEventRequest;
-pub use utils::forget_card;
+pub(crate) use utils::forget_card;
 
 #[derive(Args, Debug)]
-pub struct ReviewArgs {
+pub(crate) struct ReviewArgs {
     // Using `Option<FilterArgs>` here instead won't work since they `query` becomes a required parameter.
     #[command(flatten)]
-    pub filter_args: FilterArgs,
+    pub(crate) filter_args: FilterArgs,
     #[arg(short, long, default_value = "fsrs")]
-    pub scheduler_name: String,
+    pub(crate) scheduler_name: String,
     #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
-    pub open_command: Option<String>,
+    pub(crate) open_command: Option<String>,
     #[arg(long, env = "SPARES_RENDERED_FILE_CLOSE_COMMAND")]
-    pub close_command: Option<String>,
+    pub(crate) close_command: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct FilterArgs {
+pub(crate) struct FilterArgs {
     /// Filter the cards due today with the supplied query
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
     /// Study a filtered tag with the supplied id
     #[arg(long, conflicts_with_all = ["query", "tag_name"])]
-    pub tag_id: Option<TagId>,
+    pub(crate) tag_id: Option<TagId>,
     /// Study a filtered tag with the supplied name
     #[arg(short, long, conflicts_with_all = ["query", "tag_id"])]
-    pub tag_name: Option<String>,
+    pub(crate) tag_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Display, EnumIter, EnumString, PartialEq)]
@@ -376,7 +376,7 @@ fn spawn_stats_fetch(
 }
 
 #[expect(clippy::too_many_lines)]
-pub async fn review_cards(
+pub(crate) async fn review_cards(
     review_args: ReviewArgs,
     base_url: &str,
     client: &Client,

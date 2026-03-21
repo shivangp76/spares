@@ -109,9 +109,9 @@ pub fn get_env_config(env: Environment) -> EnvironmentConfig {
 #[serde_with::serde_as]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
-pub struct SparesInternalConfig {
-    pub last_unburied: DateTime<Utc>,
-    pub linked_notes_generated: bool,
+pub(crate) struct SparesInternalConfig {
+    pub(crate) last_unburied: DateTime<Utc>,
+    pub(crate) linked_notes_generated: bool,
     // #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     // pub fuzz_range: Duration,
     // #[serde_as(as = "serde_with::DurationSeconds<i64>")]
@@ -306,7 +306,7 @@ fn get_internal_config_file() -> PathBuf {
     config_file_path
 }
 
-pub fn read_internal_config() -> Result<SparesInternalConfig, Error> {
+pub(crate) fn read_internal_config() -> Result<SparesInternalConfig, Error> {
     let config_file_path = get_internal_config_file();
     if !config_file_path.exists() {
         let config = SparesInternalConfig::default();
@@ -328,7 +328,7 @@ pub fn read_internal_config() -> Result<SparesInternalConfig, Error> {
     Ok(config)
 }
 
-pub fn write_internal_config(config: &SparesInternalConfig) -> Result<(), Error> {
+pub(crate) fn write_internal_config(config: &SparesInternalConfig) -> Result<(), Error> {
     let config_file_path = get_internal_config_file();
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
         Error::Library(LibraryError::InvalidConfig(format!(
@@ -377,7 +377,7 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     Ok(config)
 }
 
-pub fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
+pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
         Error::Library(LibraryError::InvalidConfig(format!(

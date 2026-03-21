@@ -17,7 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Debug)]
 struct AppState {
-    pub db: SqlitePool,
+    pub(crate) db: SqlitePool,
 }
 
 async fn start_server(args: Args) -> Result<(), String> {

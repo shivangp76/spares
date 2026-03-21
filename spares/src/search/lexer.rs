@@ -4,7 +4,7 @@ use miette::{Diagnostic, Error, LabeledSpan, SourceSpan};
 use thiserror::Error;
 use unscanny::Scanner;
 
-pub struct Lexer<'de> {
+pub(crate) struct Lexer<'de> {
     /// The scanner: contains the underlying string and location as a "cursor".
     s: Scanner<'de>,
     buffered: Vec<Result<Token, miette::Error>>,
@@ -14,7 +14,7 @@ pub struct Lexer<'de> {
 }
 
 impl<'de> Lexer<'de> {
-    pub fn new(text: &'de str) -> Self {
+    pub(crate) fn new(text: &'de str) -> Self {
         Self {
             s: Scanner::new(text),
             buffered: Vec::with_capacity(5),
@@ -27,7 +27,7 @@ impl<'de> Lexer<'de> {
 
 #[derive(Diagnostic, Debug, Error)]
 #[error("Unexpected EOF")]
-pub struct Eof;
+pub(crate) struct Eof;
 
 #[derive(Diagnostic, Debug, Error)]
 #[error("Unexpected token '{token}'")]
@@ -43,7 +43,7 @@ struct SingleTokenError {
 
 #[derive(Diagnostic, Debug, Error)]
 #[error("Unterminated string")]
-pub struct StringTerminationError {
+pub(crate) struct StringTerminationError {
     #[source_code]
     src: String,
 
@@ -277,7 +277,7 @@ impl Lexer<'_> {
 }
 
 impl Lexer<'_> {
-    pub fn expect(
+    pub(crate) fn expect(
         &mut self,
         expected: TokenKind,
         unexpected: &str,
@@ -285,7 +285,7 @@ impl Lexer<'_> {
         self.expect_where(|next| next.kind == expected, unexpected)
     }
 
-    pub fn expect_where(
+    pub(crate) fn expect_where(
         &mut self,
         mut check: impl FnMut(&Token) -> bool,
         unexpected: &str,
@@ -305,7 +305,7 @@ impl Lexer<'_> {
         }
     }
 
-    pub fn peek(&mut self) -> Option<&Result<Token, miette::Error>> {
+    pub(crate) fn peek(&mut self) -> Option<&Result<Token, miette::Error>> {
         // if self.peeked.is_some() {
         //     return self.peeked.as_ref();
         // }
@@ -322,7 +322,7 @@ impl Lexer<'_> {
         None
     }
 
-    pub fn extract_tag_dependencies(&mut self) -> Result<Vec<String>, miette::Error> {
+    pub(crate) fn extract_tag_dependencies(&mut self) -> Result<Vec<String>, miette::Error> {
         let tokens = self
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
