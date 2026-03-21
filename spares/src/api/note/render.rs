@@ -407,7 +407,7 @@ mod tests {
                 .iter()
                 .map(|nl| nl.searched_keyword.clone())
                 .collect::<Vec<_>>(),
-            vec!["keyword 1", "keyword 1.5", "keyword 2"]
+            vec!["keyword 1", "keywords 1", "keyword 2"]
         );
         assert_eq!(
             note_links

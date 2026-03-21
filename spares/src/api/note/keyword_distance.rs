@@ -1,6 +1,27 @@
 const MAX_KEYWORD_DIFFERENCE_SCORE: f64 = 7.0;
 
+fn extract_numbers(s: &str) -> Vec<&str> {
+    let mut numbers = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, c) in s.char_indices() {
+        if c.is_ascii_digit() {
+            if start.is_none() {
+                start = Some(i);
+            }
+        } else if let Some(s_idx) = start.take() {
+            numbers.push(&s[s_idx..i]);
+        }
+    }
+    if let Some(s_idx) = start {
+        numbers.push(&s[s_idx..]);
+    }
+    numbers
+}
+
 pub fn weighted_levenshtein(a: &str, b: &str) -> Option<f64> {
+    if extract_numbers(a) != extract_numbers(b) {
+        return None;
+    }
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
     let (m, n) = (a_chars.len(), b_chars.len());
@@ -96,11 +117,10 @@ mod tests {
     }
 
     #[test]
-    fn numeric_difference_penalized() {
+    fn numeric_difference_does_not_match() {
         let a = "Ziemer Theorem 1.2.3";
         let b = "Ziemer Theorem 1.2.2";
-        let dist = weighted_levenshtein(a, b).unwrap();
-        assert!(dist >= 2.0 && dist < 3.0, "got {dist}");
+        assert!(weighted_levenshtein(a, b).is_none());
     }
 
     #[test]
@@ -121,7 +141,21 @@ mod tests {
     #[test]
     fn long_but_close_is_accepted() {
         let a = "Ziemer Theorem 12.3.4";
-        let b = "Ziemer Theorem 12.3.5";
+        let b = "Ziemer  Theorem 12.3.4";
+        assert!(weighted_levenshtein(a, b).is_some());
+    }
+
+    #[test]
+    fn same_numbers_different_chapter_label_does_not_match() {
+        let a = "Ziemer Chapter 2 Theorem 5.1";
+        let b = "Ziemer Chapter 2 Theorem 5.2";
+        assert!(weighted_levenshtein(a, b).is_none());
+    }
+
+    #[test]
+    fn same_reference_matches_despite_spacing() {
+        let a = "Ziemer 5.1";
+        let b = "Ziemer  5.1";
         assert!(weighted_levenshtein(a, b).is_some());
     }
 
