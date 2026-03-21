@@ -40,7 +40,10 @@ impl<'de> Evaluator<'de> {
         Ok(context.build_query(internal_output_type))
     }
 
-    pub(crate) async fn get_notes(self, db: &SqlitePool) -> Result<Vec<(Note, String)>, crate::Error> {
+    pub(crate) async fn get_notes(
+        self,
+        db: &SqlitePool,
+    ) -> Result<Vec<(Note, String)>, crate::Error> {
         #[derive(sqlx::FromRow)]
         struct EnrichedNote {
             #[sqlx(flatten)]
@@ -75,7 +78,10 @@ impl<'de> Evaluator<'de> {
         Ok(note_ids)
     }
 
-    pub(crate) async fn get_cards(self, db: &SqlitePool) -> Result<Vec<(Card, String)>, crate::Error> {
+    pub(crate) async fn get_cards(
+        self,
+        db: &SqlitePool,
+    ) -> Result<Vec<(Card, String)>, crate::Error> {
         #[derive(sqlx::FromRow)]
         struct EnrichedCard {
             #[sqlx(flatten)]
@@ -117,6 +123,7 @@ enum Field {
     Card(CardField),
     SortAsc(String),
     SortDesc(String),
+    Limit,
 }
 
 impl Default for Field {
@@ -233,6 +240,7 @@ impl Field {
             "c.count" => Ok(Field::Card(CardField::Count)),
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
             "sort_by_desc" => Ok(Field::SortDesc(String::new())),
+            "limit" => Ok(Field::Limit),
             f => Err(miette!("Unrecognized field: {}", f)),
         }
     }
@@ -316,7 +324,7 @@ impl Field {
                     with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
                 }
             },
-            Field::SortAsc(_) | Field::SortDesc(_) => String::new(),
+            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => String::new(),
         }
     }
 
@@ -344,7 +352,7 @@ impl Field {
                 }
                 CardField::CustomData(_) => FieldType::Json,
             },
-            Field::SortAsc(_) | Field::SortDesc(_) => FieldType::String,
+            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => FieldType::Integer,
         }
     }
 
@@ -397,7 +405,7 @@ impl Field {
                 | CardField::SchedulerBuried
                 | CardField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
             },
-            Field::SortAsc(_) | Field::SortDesc(_) => Err(miette!("Cannot sort by sort field `{:?}`", field)),
+            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => Err(miette!("Cannot sort by sort field `{:?}`", field)),
         }
     }
 }
@@ -428,7 +436,7 @@ impl TableRequirements {
             }
             // Sort fields don't have requirements until we know the target field name,
             // which is determined during evaluation, not parsing
-            Field::SortAsc(_) | Field::SortDesc(_) => {}
+            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => {}
         }
         req
     }
@@ -459,6 +467,7 @@ struct EvaluationContext<'a> {
     where_clauses: Vec<String>,
     root_context: bool,
     order_by: Vec<String>,
+    limit: Option<u64>,
 }
 
 impl EvaluationContext<'_> {
@@ -472,6 +481,7 @@ impl EvaluationContext<'_> {
             where_clauses: Vec::new(),
             root_context: false,
             order_by: Vec::new(),
+            limit: None,
         }
     }
 
@@ -543,6 +553,10 @@ impl EvaluationContext<'_> {
             }
         }
 
+        if let Some(limit) = self.limit {
+            self.query_builder.push(format!(" LIMIT {}", limit));
+        }
+
         self.query_builder.sql().to_string()
     }
 
@@ -579,6 +593,12 @@ impl Evaluate for TokenTree<'_> {
                                 "Cannot use sort operations with 'or' operator. Sort operations cannot be used in alternative conditions."
                             ));
                         }
+                        // Cannot use limit with 'or' operator
+                        if matches!(op, Op::Or) && inner_context.limit.is_some() {
+                            return Err(miette!(
+                                "Cannot use limit with 'or' operator. Limit cannot be used in alternative conditions."
+                            ));
+                        }
                         if let Some(clause) = inner_context.where_clauses.first() {
                             clauses.push(clause.clone());
                         }
@@ -586,6 +606,13 @@ impl Evaluate for TokenTree<'_> {
                         // This is necessary to not allow sort by conditions
                         // inside groups "c.stability>=2 or (a sort_by_asc=linked_to)"
                         context.order_by.extend(inner_context.order_by);
+                        // Merge limit
+                        if let Some(inner_limit) = inner_context.limit {
+                            if context.limit.is_some() {
+                                return Err(miette!("limit can only be specified once"));
+                            }
+                            context.limit = Some(inner_limit);
+                        }
                         // Merge table requirements
                         context
                             .table_requirements
@@ -670,6 +697,12 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
             "Cannot negate sort operations. Sort operations cannot be used with the minus operator."
         ));
     }
+    // Cannot negate limit
+    if inner_context.limit.is_some() {
+        return Err(miette!(
+            "Cannot negate limit. Limit cannot be used with the minus operator."
+        ));
+    }
     if let Some(clause) = inner_context.where_clauses.first() {
         context.add_where_clause(format!("NOT ({})", clause));
     }
@@ -751,6 +784,7 @@ fn validate_field_operator_types(
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn evaluate_field_value(
     trees: &[TokenTree],
     context: &mut EvaluationContext,
@@ -808,6 +842,24 @@ fn evaluate_field_value(
             Field::SortDesc(_) => context.order_by.push(format!("{} DESC", order_expr)),
             _ => {}
         }
+        return Ok(());
+    }
+
+    // Special-case limit
+    if matches!(field, Field::Limit) {
+        if !matches!(op, Op::Equal) {
+            return Err(miette!("Limit requires '=' operator, e.g., limit=100"));
+        }
+        if context.limit.is_some() {
+            return Err(miette!("limit can only be specified once"));
+        }
+        let limit_value = value_context
+            .params
+            .first()
+            .ok_or_else(|| miette!("Missing limit value"))?
+            .parse::<u64>()
+            .map_err(|_| miette!("Limit value must be a positive integer"))?;
+        context.limit = Some(limit_value);
         return Ok(());
     }
     match op {
@@ -1172,6 +1224,63 @@ mod tests {
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
             assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_limit() {
+        let inputs = vec![
+            // Basic limit
+            ("limit=10", "SELECT DISTINCT n.id FROM note n LIMIT 10"),
+            // Limit combined with WHERE clause
+            (
+                "dog limit=5",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' LIMIT 5",
+            ),
+            // Limit combined with ORDER BY
+            (
+                "sort_by_asc=created_at limit=20",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC LIMIT 20",
+            ),
+            // Limit combined with WHERE and ORDER BY
+            (
+                "c.stability>=2 sort_by_desc=c.due limit=100",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC LIMIT 100",
+            ),
+        ];
+
+        for (input, expected_sql) in inputs {
+            let evaluator = Evaluator::new(input);
+            let query_str = evaluator
+                .evaluate(EvaluatorReturnItemType::NoteIds)
+                .unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_limit_errors() {
+        let inputs = [
+            // Cannot use non-equal operator for limit
+            "limit>=10",
+            "limit~10",
+            // Cannot negate limit
+            "-limit=10",
+            // Cannot use limit with 'or' operator
+            "dog or limit=10",
+            // limit can only be specified once
+            "limit=10 limit=20",
+            // Cannot use limit inside grouping
+            "c.stability>=2 or (a limit=20)",
+        ];
+        for input in inputs {
+            let evaluator = Evaluator::new(input);
+            let query_str_res = evaluator.evaluate(EvaluatorReturnItemType::NoteIds);
+            assert!(
+                query_str_res.is_err(),
+                "Expected error for input: {}",
+                input
+            );
         }
     }
 
