@@ -177,6 +177,49 @@ async fn e2e_undo_group_undoes_all_events_in_group(pool: SqlitePool) {
 }
 
 #[sqlx::test]
+async fn e2e_undo_create_parser_with_notes_fails_with_dependency_error(pool: SqlitePool) {
+    let p = create_parser(
+        &pool,
+        crate::schema::parser::CreateParserRequest {
+            name: "with_notes".to_string(),
+        },
+        true,
+    )
+    .await
+    .unwrap();
+    let ts = Utc::now().timestamp();
+    let custom_data = json!({}).to_string();
+    // Add a note referencing the parser so undoing the CreateParser (which deletes it) must fail.
+    sqlx::query(
+        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("n1")
+    .bind(ts)
+    .bind(ts)
+    .bind(p.id)
+    .bind(&custom_data)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await;
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.unwrap_err());
+    assert!(
+        err_msg.contains("notes still depend") || err_msg.contains("Cannot undo CreateParser"),
+        "expected dependency error: {}",
+        err_msg
+    );
+}
+
+#[sqlx::test]
 async fn e2e_undo_delete_parser_with_notes_fails_with_dependency_error(pool: SqlitePool) {
     let p = create_parser_helper(&pool, "with_notes").await;
     let ts = Utc::now().timestamp();

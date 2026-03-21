@@ -82,13 +82,12 @@ pub async fn undo_event(
     };
     let undone_event_ids = events_to_undo.iter().map(|e| e.id).collect::<Vec<_>>();
 
-    // Validate dependencies before undoing
-    for event in &events_to_undo {
-        validate_undo_dependencies(db, event).await?;
-    }
-
-    // Create undo events for each event (in reverse order to maintain chronological order) and apply them
+    // Undo each event in reverse chronological order, validating dependencies just before each
+    // application. Validating inline (rather than upfront) ensures that when undoing a group,
+    // earlier undos in the same batch have already cleaned up their associations before the
+    // later events are validated.
     for event in events_to_undo.iter().rev() {
+        validate_undo_dependencies(db, event).await?;
         let undo_event = create_undo_event(db, event, Utc::now()).await?;
         let undo_event: Event = sqlx::query_as(r"SELECT * FROM event WHERE id = ?")
             .bind(undo_event.id)
@@ -101,12 +100,70 @@ pub async fn undo_event(
     Ok(Some(UndoEventResponse { undone_event_ids }))
 }
 
-// TODO: Is this function really needed? Maybe this validation is already in the respective methods
-// for these events?
+// Validates that undoing `event` won't violate referential integrity.
+//
+// Two cases require explicit checks; all others are either enforced by DB constraints or
+// are safe by construction:
+//
+// - Undoing `CreateParser` deletes the parser. The DB RESTRICT FK prevents this when notes
+//   still reference it, but we check early to surface a clear error message.
+// - Undoing `DeleteParser` re-creates the parser. This is normally safe (RESTRICT means the
+//   parser couldn't have been deleted while notes referenced it), but we guard against
+//   inconsistent event-log state where the deletion was logged without actually succeeding.
+//
+// `DeleteTag` needs no check: after a real tag deletion `note_tag`/`card_tag` are already gone
+// via CASCADE. Undoing `CreateTag` (which deletes the tag) is blocked if associations still exist,
+// to prevent silently losing note/card tag data.
 async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     match event.kind {
+        EventType::CreateParser => {
+            // Undoing CreateParser will delete the parser — block if notes still reference it.
+            let payload: CreateParserPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            if let Some(id) = payload.id {
+                let note_count: i64 =
+                    sqlx::query_scalar(r"SELECT COUNT(*) FROM note WHERE parser_id = ?")
+                        .bind(id)
+                        .fetch_one(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                if note_count > 0 {
+                    return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                        "Cannot undo CreateParser: {} notes still depend on parser '{}'",
+                        note_count, payload.name
+                    ))));
+                }
+            }
+        }
+        EventType::CreateTag => {
+            // Undoing CreateTag will delete the tag (cascade-deleting note/card associations).
+            // Block if any associations exist to prevent silent data loss.
+            let payload: CreateTagPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            if let Some(id) = payload.id {
+                let note_tag_count: i64 =
+                    sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE tag_id = ?")
+                        .bind(id)
+                        .fetch_one(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                let card_tag_count: i64 =
+                    sqlx::query_scalar(r"SELECT COUNT(*) FROM card_tag WHERE tag_id = ?")
+                        .bind(id)
+                        .fetch_one(db)
+                        .await
+                        .map_err(|e| Error::Sqlx { source: e })?;
+                if note_tag_count > 0 || card_tag_count > 0 {
+                    return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                        "Cannot undo CreateTag: {} note tags and {} card tags still reference tag '{}'",
+                        note_tag_count, card_tag_count, payload.name
+                    ))));
+                }
+            }
+        }
         EventType::DeleteParser => {
-            // Check if any notes depend on this parser
+            // Guard against inconsistent state where a DeleteParser event was logged but
+            // notes still reference the parser id.
             let payload: DeleteParserPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             let note_count: i64 =
@@ -122,31 +179,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
                 ))));
             }
         }
-        EventType::DeleteTag => {
-            // Check if any notes or cards depend on this tag
-            let payload: DeleteTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let note_tag_count: i64 =
-                sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE tag_id = ?")
-                    .bind(payload.id)
-                    .fetch_one(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-            let card_tag_count: i64 =
-                sqlx::query_scalar(r"SELECT COUNT(*) FROM card_tag WHERE tag_id = ?")
-                    .bind(payload.id)
-                    .fetch_one(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-            if note_tag_count > 0 || card_tag_count > 0 {
-                return Err(Error::Library(LibraryError::InvalidConfig(format!(
-                    "Cannot undo DeleteTag: {} note tags and {} card tags still reference tag '{}'",
-                    note_tag_count, card_tag_count, payload.name
-                ))));
-            }
-        }
-        _ => {
-            // No dependency validation needed for other event types
-        }
+        _ => {}
     }
     Ok(())
 }
