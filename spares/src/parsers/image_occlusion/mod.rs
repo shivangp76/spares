@@ -46,6 +46,7 @@ const CLOZES_GROUP_ID: &str = "clozes-group";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[allow(clippy::struct_field_names)]
 pub struct ImageOcclusionConfig {
     pub cloze_to_answer_color: String,
     pub cloze_not_to_answer_color: String,

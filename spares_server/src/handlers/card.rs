@@ -10,7 +10,7 @@ use spares::{
 };
 use std::sync::Arc;
 
-pub async fn get_card_handler(
+pub(crate) async fn get_card_handler(
     Path(card_id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -20,7 +20,7 @@ pub async fn get_card_handler(
     Ok(Json(card_res))
 }
 
-pub async fn get_cards_handler(
+pub(crate) async fn get_cards_handler(
     Path(note_id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -30,7 +30,7 @@ pub async fn get_cards_handler(
     Ok(Json(card_res))
 }
 
-pub async fn update_cards_handler(
+pub(crate) async fn update_cards_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateCardsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -40,7 +40,7 @@ pub async fn update_cards_handler(
     Ok(Json(update_cards_res))
 }
 
-pub async fn get_leeches_handler(
+pub(crate) async fn get_leeches_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<GetLeechesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -50,7 +50,7 @@ pub async fn get_leeches_handler(
     Ok(Json(cards_res))
 }
 
-pub async fn forget_card_handler(
+pub(crate) async fn forget_card_handler(
     Path(card_id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -60,7 +60,7 @@ pub async fn forget_card_handler(
     Ok(Json(forget_card_response))
 }
 
-pub async fn unbury_cards_handler(
+pub(crate) async fn unbury_cards_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     body: Option<Json<UnburyRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

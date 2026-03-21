@@ -176,7 +176,7 @@ async fn sync_notes_between_files(
     ))
 }
 
-pub async fn sync_notes_interactive(
+pub(crate) async fn sync_notes_interactive(
     base_url: &str,
     client: &Client,
     sync_source_from: SyncSource,

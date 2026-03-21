@@ -7,13 +7,13 @@ use log::info;
 use miette::{Error, Report, miette};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
-pub struct Evaluator<'de> {
+pub(crate) struct Evaluator<'de> {
     // whole: &'de str,
     parser: Parser<'de>,
 }
 
 impl<'de> Evaluator<'de> {
-    pub fn new(input: &'de str) -> Self {
+    pub(crate) fn new(input: &'de str) -> Self {
         Self {
             // whole: input,
             parser: Parser::new(input),
@@ -40,7 +40,7 @@ impl<'de> Evaluator<'de> {
         Ok(context.build_query(internal_output_type))
     }
 
-    pub async fn get_notes(self, db: &SqlitePool) -> Result<Vec<(Note, String)>, crate::Error> {
+    pub(crate) async fn get_notes(self, db: &SqlitePool) -> Result<Vec<(Note, String)>, crate::Error> {
         #[derive(sqlx::FromRow)]
         struct EnrichedNote {
             #[sqlx(flatten)]
@@ -63,7 +63,7 @@ impl<'de> Evaluator<'de> {
         Ok(result)
     }
 
-    pub async fn get_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, crate::Error> {
+    pub(crate) async fn get_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, crate::Error> {
         let query_str = self
             .evaluate(EvaluatorReturnItemType::NoteIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
@@ -75,7 +75,7 @@ impl<'de> Evaluator<'de> {
         Ok(note_ids)
     }
 
-    pub async fn get_cards(self, db: &SqlitePool) -> Result<Vec<(Card, String)>, crate::Error> {
+    pub(crate) async fn get_cards(self, db: &SqlitePool) -> Result<Vec<(Card, String)>, crate::Error> {
         #[derive(sqlx::FromRow)]
         struct EnrichedCard {
             #[sqlx(flatten)]
@@ -98,7 +98,7 @@ impl<'de> Evaluator<'de> {
         Ok(result)
     }
 
-    pub async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
+    pub(crate) async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
         let query_str = self
             .evaluate(EvaluatorReturnItemType::CardIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
@@ -443,7 +443,7 @@ impl TableRequirements {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum EvaluatorReturnItemType {
+pub(crate) enum EvaluatorReturnItemType {
     Notes,
     NoteIds,
     Cards,

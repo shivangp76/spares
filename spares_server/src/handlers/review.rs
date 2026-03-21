@@ -8,7 +8,7 @@ use spares::parsers::get_all_parsers;
 use spares::schema::review::{GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest};
 use std::sync::Arc;
 
-pub async fn get_review_card_handler(
+pub(crate) async fn get_review_card_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<GetReviewCardRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -18,7 +18,7 @@ pub async fn get_review_card_handler(
     Ok(Json(review_card_response))
 }
 
-pub async fn submit_study_action_handler(
+pub(crate) async fn submit_study_action_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SubmitStudyActionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -28,7 +28,7 @@ pub async fn submit_study_action_handler(
     Ok(Json(submit_study_action_response))
 }
 
-pub async fn get_review_card_by_id_handler(
+pub(crate) async fn get_review_card_by_id_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     axum::extract::Path(card_id): axum::extract::Path<CardId>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -38,7 +38,7 @@ pub async fn get_review_card_by_id_handler(
     Ok(Json(response))
 }
 
-pub async fn get_statistics_handler(
+pub(crate) async fn get_statistics_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<StatisticsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

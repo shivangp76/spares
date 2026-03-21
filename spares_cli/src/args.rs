@@ -15,7 +15,7 @@ use spares::parsers::get_note_info_from_filepath;
 use spares::schema::note::NotesSelector;
 use std::path::PathBuf;
 
-pub fn get_current_utc_datetime() -> DateTime<Utc> {
+pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
     let local_time = Local::now();
     local_time.with_timezone(&Utc)
 }
@@ -23,16 +23,16 @@ pub fn get_current_utc_datetime() -> DateTime<Utc> {
 /// Spaced Repetition System
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     #[arg(short, long, default_value_t = Environment::Production)]
-    pub environment: Environment,
+    pub(crate) environment: Environment,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub(crate) command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     #[command(arg_required_else_help = true)]
     Add(AddArgs),
     #[command(arg_required_else_help = true)]
@@ -80,37 +80,37 @@ pub enum Commands {
 }
 
 #[derive(Args, Debug)]
-pub struct AddArgs {
+pub(crate) struct AddArgs {
     #[command(subcommand)]
-    pub command: AddCommands,
+    pub(crate) command: AddCommands,
 }
 
 #[derive(Args, Debug)]
-pub struct DeleteArgs {
+pub(crate) struct DeleteArgs {
     #[command(subcommand)]
-    pub command: DeleteCommands,
+    pub(crate) command: DeleteCommands,
 }
 
 #[derive(Args, Debug)]
-pub struct EditArgs {
+pub(crate) struct EditArgs {
     #[command(subcommand)]
-    pub command: EditCommands,
+    pub(crate) command: EditCommands,
 }
 
 #[derive(Args, Debug)]
-pub struct GetArgs {
+pub(crate) struct GetArgs {
     #[command(subcommand)]
-    pub command: GetCommands,
+    pub(crate) command: GetCommands,
 }
 
 #[derive(Args, Debug)]
-pub struct ListArgs {
+pub(crate) struct ListArgs {
     #[command(subcommand)]
-    pub command: ListCommands,
+    pub(crate) command: ListCommands,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum AddCommands {
+pub(crate) enum AddCommands {
     Parser {
         #[arg(short, long)]
         name: String,
@@ -141,7 +141,7 @@ pub enum AddCommands {
 
 #[derive(Debug, Subcommand)]
 #[allow(clippy::option_option)]
-pub enum EditCommands {
+pub(crate) enum EditCommands {
     Parser {
         id: i64,
         #[arg(short, long)]
@@ -199,7 +199,7 @@ pub enum EditCommands {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
-pub enum SpecialStateLocal {
+pub(crate) enum SpecialStateLocal {
     None,
     Suspended,
     Buried,
@@ -213,13 +213,13 @@ pub enum SpecialStateLocal {
         .args(&["ids", "files", "query"])
         .required(true)
 ))]
-pub struct NotesSelectorLocal {
+pub(crate) struct NotesSelectorLocal {
     #[arg(long, value_delimiter = ' ', num_args = 1..)]
-    pub ids: Option<Vec<NoteId>>,
+    pub(crate) ids: Option<Vec<NoteId>>,
     #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-    pub files: Option<Vec<PathBuf>>,
+    pub(crate) files: Option<Vec<PathBuf>>,
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -228,17 +228,17 @@ pub struct NotesSelectorLocal {
         .args(&["ids", "query"])
         .required(true)
 ))]
-pub struct CardsSelectorLocal {
+pub(crate) struct CardsSelectorLocal {
     #[arg(long, value_delimiter = ' ', num_args = 1..)]
-    pub ids: Option<Vec<CardId>>,
+    pub(crate) ids: Option<Vec<CardId>>,
     // #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
     // files: Option<Vec<PathBuf>>,
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DeleteCommands {
+pub(crate) enum DeleteCommands {
     Parser {
         id: i64,
     },
@@ -252,7 +252,7 @@ pub enum DeleteCommands {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum GetCommands {
+pub(crate) enum GetCommands {
     Parser {
         id: i64,
     },
@@ -277,7 +277,7 @@ pub enum GetCommands {
 }
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, ValueEnum)]
-pub enum ListTagOutput {
+pub(crate) enum ListTagOutput {
     #[default]
     Long,
     Short,
@@ -285,7 +285,7 @@ pub enum ListTagOutput {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ListCommands {
+pub(crate) enum ListCommands {
     Parser {
         #[arg(short, long)]
         page: Option<usize>,
@@ -324,82 +324,82 @@ pub enum ListCommands {
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Args, Debug)]
-pub struct GenerateArgs {
+pub(crate) struct GenerateArgs {
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
     #[arg(short, long)]
-    pub overridden_output_raw_dir: Option<PathBuf>,
+    pub(crate) overridden_output_raw_dir: Option<PathBuf>,
     #[arg(long, default_value_t = true)]
-    pub include_linked_notes: bool,
+    pub(crate) include_linked_notes: bool,
     #[arg(short, long, default_value_t = true)]
-    pub include_cards: bool,
+    pub(crate) include_cards: bool,
     #[arg(short, long, default_value_t = false)]
-    pub render: bool,
+    pub(crate) render: bool,
     #[arg(short, long, default_value_t = false)]
-    pub force_render: bool,
+    pub(crate) force_render: bool,
 }
 
 #[derive(Args, Debug)]
-pub struct StatisticsArgs {
+pub(crate) struct StatisticsArgs {
     #[arg(short, long, default_value = "fsrs")]
-    pub scheduler_name: String,
+    pub(crate) scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
-    pub date: DateTime<Utc>,
+    pub(crate) date: DateTime<Utc>,
 }
 
 #[derive(Args, Debug)]
-pub struct ExportArgs {
-    pub query: String,
+pub(crate) struct ExportArgs {
+    pub(crate) query: String,
     #[arg(short, long)]
-    pub output_dir: PathBuf,
+    pub(crate) output_dir: PathBuf,
 }
 
 #[derive(Debug, Parser)]
-pub struct ForgetCardArgs {
+pub(crate) struct ForgetCardArgs {
     #[arg(long, value_delimiter = ' ', num_args = 1..)]
-    pub ids: Option<Vec<i64>>,
+    pub(crate) ids: Option<Vec<i64>>,
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub struct AdvanceArgs {
+pub(crate) struct AdvanceArgs {
     /// Number of cards to advance
-    pub count: u32,
+    pub(crate) count: u32,
     #[arg(short, long, default_value = "fsrs")]
-    pub scheduler_name: String,
+    pub(crate) scheduler_name: String,
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub struct PostponeArgs {
+pub(crate) struct PostponeArgs {
     /// Number of cards to postpone
-    pub count: u32,
+    pub(crate) count: u32,
     #[arg(short, long, default_value = "fsrs")]
-    pub scheduler_name: String,
+    pub(crate) scheduler_name: String,
     #[arg(short, long)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub struct UndoArgs {
+pub(crate) struct UndoArgs {
     /// Event ID to undo. If not provided, undoes the latest event.
     #[arg(short, long)]
-    pub event_id: Option<i64>,
+    pub(crate) event_id: Option<i64>,
     /// If true, undo all events in the same group as the specified event
     #[arg(short, long, default_value_t = false)]
-    pub undo_group: bool,
+    pub(crate) undo_group: bool,
 }
 
 #[derive(Args, Debug)]
-pub struct KeywordArgs {
+pub(crate) struct KeywordArgs {
     #[command(subcommand)]
-    pub command: KeywordCommands,
+    pub(crate) command: KeywordCommands,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum KeywordCommands {
+pub(crate) enum KeywordCommands {
     /// Get unmatched keywords
     Unmatched,
     /// Get keywords associated with more than 1 note
@@ -411,13 +411,13 @@ pub enum KeywordCommands {
 }
 
 #[derive(Args, Debug)]
-pub struct ScheduleArgs {
+pub(crate) struct ScheduleArgs {
     #[command(subcommand)]
-    pub command: ScheduleCommands,
+    pub(crate) command: ScheduleCommands,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ScheduleCommands {
+pub(crate) enum ScheduleCommands {
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
     /// Get leeches (cards that are frequently forgotten)
@@ -437,28 +437,28 @@ pub enum ScheduleCommands {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
-pub enum OutputItemType {
+pub(crate) enum OutputItemType {
     Notes,
     Cards,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     RawFilepath,
     RenderedFilepath,
 }
 
 #[derive(Args, Debug)]
-pub struct SearchArgs {
+pub(crate) struct SearchArgs {
     #[arg(short, long, default_value = "notes")]
-    pub output_type: OutputItemType,
+    pub(crate) output_type: OutputItemType,
     #[arg(long, default_value = "raw-filepath")]
-    pub output_format: OutputFormat,
-    pub query: String,
+    pub(crate) output_format: OutputFormat,
+    pub(crate) query: String,
 }
 
 impl NotesSelectorLocal {
-    pub fn get_notes_selector(self) -> Result<NotesSelector, String> {
+    pub(crate) fn get_notes_selector(self) -> Result<NotesSelector, String> {
         if let Some(ids) = self.ids {
             Ok(NotesSelector::Ids(ids))
         } else if let Some(files) = self.files {

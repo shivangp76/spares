@@ -6,7 +6,7 @@ use spares::{
 };
 use std::sync::Arc;
 
-pub async fn undo_event_handler(
+pub(crate) async fn undo_event_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UndoEventRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

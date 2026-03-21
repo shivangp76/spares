@@ -14,7 +14,7 @@ use spares::{
 };
 use std::sync::Arc;
 
-pub async fn create_parser_handler(
+pub(crate) async fn create_parser_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CreateParserRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -24,7 +24,7 @@ pub async fn create_parser_handler(
     Ok(Json(result))
 }
 
-pub async fn get_parser_handler(
+pub(crate) async fn get_parser_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -32,7 +32,7 @@ pub async fn get_parser_handler(
     Ok(Json(parser_res))
 }
 
-pub async fn update_parser_handler(
+pub(crate) async fn update_parser_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateParserRequest>,
@@ -43,7 +43,7 @@ pub async fn update_parser_handler(
     Ok(Json(update_parser_res))
 }
 
-pub async fn delete_parser_handler(
+pub(crate) async fn delete_parser_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -54,7 +54,7 @@ pub async fn delete_parser_handler(
 }
 
 #[debug_handler]
-pub async fn list_parsers_handler(
+pub(crate) async fn list_parsers_handler(
     opts: Query<FilterOptions>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

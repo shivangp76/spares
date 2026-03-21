@@ -5,7 +5,7 @@ use spares::schema::note::{LinkedNote, NoteResponse};
 use std::collections::HashMap;
 
 /// Usage: Paste output into <https://dreampuf.github.io/GraphvizOnline/> with engine set to `osage`.
-pub fn chart(note_responses: Vec<NoteResponse>) {
+pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
     let mut nodes = HashMap::<i64, NodeIndex>::new();
     let mut graph = Graph::<String, String>::new();
 

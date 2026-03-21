@@ -10,25 +10,25 @@ use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
-pub struct ImportArgs {
+pub(crate) struct ImportArgs {
     // NOTE: To import to spares-local-files, refer to `spares_cli generate`
     #[arg(short, long, default_value = "spares")]
-    pub adapter: String,
+    pub(crate) adapter: String,
 
     /// If this is not specified, then spares will attempt to automatically determine the parser.
     #[arg(short, long, required = false)]
-    pub parser: Option<String>,
+    pub(crate) parser: Option<String>,
 
     /// Parser to convert notes to before importing
     #[arg(short, long, required = false)]
-    pub to_parser: Option<String>,
+    pub(crate) to_parser: Option<String>,
 
     #[arg(short, long, default_value_t = false)]
-    pub dry_run: bool,
+    pub(crate) dry_run: bool,
 
     /// Input file(s)
     #[arg(required = true, value_delimiter = ' ', num_args = 1..)]
-    pub files: Vec<PathBuf>,
+    pub(crate) files: Vec<PathBuf>,
 }
 
 fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: bool) {
@@ -101,7 +101,7 @@ fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: b
 }
 
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
-pub async fn import_from_files<P>(
+pub(crate) async fn import_from_files<P>(
     adapter: &mut dyn SrsAdapter,
     parser_opt: Option<&dyn Parseable>,
     to_parser_opt: Option<&dyn Parseable>,
