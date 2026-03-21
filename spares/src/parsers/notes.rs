@@ -154,7 +154,7 @@ fn complete_note(
     let cards: Vec<CardData> = get_cards_main(
         parser,
         to_parser_opt,
-        note_data.as_str(),
+        note_data.clone(),
         add_order,
         move_files,
         (
