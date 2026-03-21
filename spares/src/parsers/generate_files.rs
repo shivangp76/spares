@@ -320,8 +320,7 @@ fn create_raw_and_rendered_file(
     output_text_filepath.set_extension(parser.file_extension());
     create_dir_all(output_text_filepath.parent().unwrap()).unwrap();
 
-    // Warn before overwriting file
-    // TODO: This doesn't work because the new file may just be the current file + linked notes. In this case we are not overwriting.
+    // Note we cannot warn before overwriting the file since the new file may just be the current file with linked notes. In this case, we are not overwriting.
     // let output_text_filepath_current_data_opt = read_to_string(&output_text_filepath).ok();
     // if let Some(current_file_contents) = output_text_filepath_current_data_opt {
     //     if current_file_contents != file_contents {
