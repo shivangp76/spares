@@ -28,6 +28,12 @@ use crate::model::NoteId;
 use crate::parsers::{DEFAULT_BACK_EMPHASIS, ReadableCardIdentifier};
 use grouping::{apply_conceal_and_reveal, group_clozes, modify_card_settings};
 
+#[derive(Clone, Copy)]
+enum Direction {
+    Forward,
+    Backward,
+}
+
 pub fn get_cards(
     parser: &dyn Parseable,
     to_parser: Option<&dyn Parseable>,
@@ -38,7 +44,7 @@ pub fn get_cards(
     get_cards_main(
         parser,
         to_parser,
-        data,
+        data.to_string(),
         add_order,
         move_files,
         (
@@ -54,12 +60,12 @@ pub fn get_cards(
 pub fn get_cards_main(
     parser: &dyn Parseable,
     to_parser: Option<&dyn Parseable>,
-    data: &str,
+    data: String,
     add_order: bool,
     move_files: bool,
     defaults: (FrontConceal, BackReveal, bool),
 ) -> Result<Vec<CardData>, LibraryError> {
-    let mut data = data.to_string();
+    let mut data = data;
     let cloze_matches = parser.get_clozes(&data)?;
 
     let mut current_grouping_number = 1;
@@ -159,7 +165,7 @@ pub fn get_cards_main(
         .for_each(|(i, x)| x.0.index = i);
 
     // Note the clozes are cloned if they are a part of multiple groups. They are NOT passed by reference, since their settings must be boiled up, which would be different for each card.
-    let (mut cards_raw, groupings_count) = group_clozes(all_clozes.clone(), &data)?;
+    let (mut cards_raw, groupings_count) = group_clozes(&mut all_clozes, &data)?;
 
     // Once cards are created by grouping clozes by their grouping, we can add other clozes that should be hidden if `FrontConceal::AllGroupings`.
     // This must be done after the image occlusions are interweaved since `FrontConceal` works across image occlusion clozes.
@@ -220,52 +226,55 @@ pub fn get_cards_main(
             .flatten();
 
         // Construct directions
-        #[allow(clippy::type_complexity)]
-        let mut directions: Vec<(
-            Box<dyn Fn(String, bool) -> NotePart>,
-            Box<dyn Fn(String, bool) -> NotePart>,
-        )> = Vec::with_capacity(2);
+        let mut directions: Vec<Direction> = Vec::with_capacity(2);
         if *include_forward_card {
-            directions.push((
-                Box::new(|data, _hidden| NotePart::SurroundingData(data)),
-                Box::new(|data, hidden| {
-                    if hidden {
-                        NotePart::ClozeData(data, ClozeHiddenReplacement::NotToAnswer)
-                    } else {
-                        NotePart::ClozeData(
-                            data,
-                            ClozeHiddenReplacement::ToAnswer { hint: hint.clone() },
-                        )
-                    }
-                }),
-            ));
+            directions.push(Direction::Forward);
         }
         if *include_backward_card {
-            directions.push((
-                Box::new(|data, hidden| {
-                    if hidden {
-                        NotePart::ClozeData(data, ClozeHiddenReplacement::NotToAnswer)
-                    } else {
-                        NotePart::ClozeData(
-                            data,
-                            ClozeHiddenReplacement::ToAnswer { hint: hint.clone() },
-                        )
-                    }
-                }),
-                Box::new(|data, _hidden| NotePart::SurroundingData(data)),
-            ));
+            directions.push(Direction::Backward);
         }
         assert!(!directions.is_empty());
 
         // Create cards
         let clozes_num = clozes.len();
         let mut is_first_direction = true;
-        for (side1, side2) in directions {
+        for dir in directions {
+            // Inline closures capture `hint` and `dir` without heap allocation.
+            let outer = |text: String, hidden: bool| -> NotePart {
+                match dir {
+                    Direction::Forward => NotePart::SurroundingData(text),
+                    Direction::Backward => {
+                        if hidden {
+                            NotePart::ClozeData(text, ClozeHiddenReplacement::NotToAnswer)
+                        } else {
+                            NotePart::ClozeData(
+                                text,
+                                ClozeHiddenReplacement::ToAnswer { hint: hint.clone() },
+                            )
+                        }
+                    }
+                }
+            };
+            let inner = |text: String, hidden: bool| -> NotePart {
+                match dir {
+                    Direction::Forward => {
+                        if hidden {
+                            NotePart::ClozeData(text, ClozeHiddenReplacement::NotToAnswer)
+                        } else {
+                            NotePart::ClozeData(
+                                text,
+                                ClozeHiddenReplacement::ToAnswer { hint: hint.clone() },
+                            )
+                        }
+                    }
+                    Direction::Backward => NotePart::SurroundingData(text),
+                }
+            };
             let mut card_data: Vec<NotePart> = Vec::new();
             for (i, (cloze, grouping_settings)) in clozes.iter().enumerate() {
                 let hidden = grouping_settings.hidden_no_answer;
                 if i == 0 && cloze.start_delim.start > 0 {
-                    card_data.push(side1(data[..cloze.start_delim.start].to_string(), hidden));
+                    card_data.push(outer(data[..cloze.start_delim.start].to_string(), hidden));
                 }
                 if let Some(image_occlusion_cloze) = &cloze.image_occlusion {
                     let cloze_indices = if let ImageOcclusionClozeIndex::MultipleIndices(ref x) =
@@ -283,7 +292,7 @@ pub fn get_cards_main(
                     card_data.push(NotePart::ClozeStart(
                         data[cloze.start_delim.start..cloze.start_delim.end].to_string(),
                     ));
-                    card_data.push(side2(
+                    card_data.push(inner(
                         data[cloze.start_delim.end..cloze.end_delim.start].to_string(),
                         hidden,
                     ));
@@ -297,7 +306,7 @@ pub fn get_cards_main(
                     clozes[i + 1].0.start_delim.start
                 };
                 if cloze.end_delim.end < clozes_end {
-                    card_data.push(side1(
+                    card_data.push(outer(
                         data[cloze.end_delim.end..clozes_end].to_string(),
                         hidden,
                     ));
@@ -321,10 +330,12 @@ pub fn get_cards_main(
                     .flatten()
                     .all(|x| matches!(x, ClozeHiddenReplacement::NotToAnswer))
             {
-                return Err(LibraryError::Card(crate::CardErrorKind::InvalidInput(format!(
-                    "All clozes cannot be hidden. See grouping `{}`.",
-                    grouping.to_parser_string(note_settings_keys.groupings_all)
-                ))));
+                return Err(LibraryError::Card(crate::CardErrorKind::InvalidInput(
+                    format!(
+                        "All clozes cannot be hidden. See grouping `{}`.",
+                        grouping.to_parser_string(note_settings_keys.groupings_all)
+                    ),
+                )));
             }
             if matches!(front_conceal, FrontConceal::OnlyGrouping)
                 && matches!(back_reveal, BackReveal::OnlyAnswered)
