@@ -13,7 +13,7 @@ use crate::{
             payloads::{CreateNotesPayload, CreateTagPayload, NoteSnapshot},
         },
     },
-    config::{read_internal_config, write_internal_config},
+    config::{read_external_config, read_internal_config, write_internal_config},
     helpers::{intersect, remove_ancestor_tags},
     model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
     parsers::{
@@ -150,7 +150,12 @@ pub async fn create_notes(
         let mut tags = remove_ancestor_tags(tags);
         tags.sort();
         let custom_data_str = Value::Object(custom_data.clone());
-        let (note_data, card_datas) = add_order_to_note_data(parser.as_ref(), data)?;
+        let external_config = read_external_config().ok();
+        let (note_data, card_datas) = add_order_to_note_data(
+            parser.as_ref(),
+            data,
+            external_config.as_ref().map(|c| &c.overlapper),
+        )?;
         // Create note
         // The RETURNING keyword is used instead of insert_result.last_insert_rowid() to prevent concurrency issues. If another writer writes in between the execution of the insert and the call of last_insert_rowid(), then the wrong id will be returned.
         let note_id: NoteId = sqlx::query_scalar(r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id")

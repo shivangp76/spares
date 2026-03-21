@@ -94,7 +94,7 @@ async fn read_generated_notes(
         .map(|c| c.unwrap().get(1).unwrap().as_str())
         .collect::<Vec<_>>();
     for block in blocks {
-        let notes = get_notes(parser.as_ref(), None, block, adapter.as_ref(), false).unwrap();
+        let notes = get_notes(parser.as_ref(), None, block, adapter.as_ref(), false, None).unwrap();
         all_notes.extend(notes);
     }
     let start_date_value = all_notes
