@@ -348,6 +348,7 @@ impl Parseable for TypstParser {
         })?;
         let output = Command::new("typst")
             .arg("compile")
+            .arg("--no-pdf-tags") // To reduce output filesize
             .arg("--root")
             .arg(typst_root_dir)
             .arg(output_text_filepath)
