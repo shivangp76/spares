@@ -243,15 +243,15 @@ async fn update_changes(
 
         // Import
         if let Some(ref mut adapter) = adapter_opt {
+            let filepaths = import_data_filepaths
+                .into_iter()
+                .map(|(filepath, _, _)| filepath)
+                .collect::<Vec<_>>();
             if dry_run {
-                for (note_from_filepath, _, _) in import_data_filepaths {
-                    println!("{} will be imported", note_from_filepath.display());
+                for filepath in filepaths {
+                    println!("{} will be imported", filepath.display());
                 }
             } else {
-                let filepaths = import_data_filepaths
-                    .into_iter()
-                    .map(|(filepath, _, _)| filepath)
-                    .collect::<Vec<_>>();
                 import_from_files(
                     adapter.as_mut(),
                     Some(parser.as_ref()),
