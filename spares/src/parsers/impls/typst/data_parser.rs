@@ -161,7 +161,9 @@ impl<'a> TypstDataParser<'a> {
                             self.open_square_bracket_count + 1,
                         ));
                     }
-                    self.s.uneat();
+                    if open_delim.is_some() {
+                        self.s.uneat();
+                    }
                     if open_delim == Some('[') {
                         self.modes.push(DataMode::Markup);
                     } else if open_delim == Some('(') {
@@ -627,6 +629,24 @@ mod tests {
                 start_match: 0..4,
                 end_match: 31..37,
                 settings_match: 33..36,
+            },]]
+        );
+    }
+
+    #[test]
+    fn test_comment_in_code_mode_within_cloze() {
+        let input = "#cl[test ```py\n m.sample() # equal probability\n  ```\n]";
+        let mut parser = TypstDataParser::new(input);
+        let mut all_clozes = Vec::new();
+        while let Some(cloze) = parser.next_cloze() {
+            all_clozes.push(cloze);
+        }
+        assert_eq!(
+            all_clozes,
+            vec![vec![ClozeMatch {
+                start_match: 0..4,
+                end_match: 53..54,
+                settings_match: Range::default(),
             },]]
         );
     }
