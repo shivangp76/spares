@@ -56,11 +56,12 @@ pub(crate) enum Commands {
     Import(ImportArgs),
     /// Sync data between local note files, database, and adapters.
     ///
-    /// There are 2 modes to sync data: interactive and rendered diffs. Interactive mode will walk
-    /// you through the changes. Rendered diffs mode works by rendering the differences between the
-    /// 2 data source in a separate directory. You can then use a tool like `fzf` to select which
-    /// diffs you would like to push and import them with `spares_cli import`. See the workflows
-    /// documentation for a more detailed example.
+    /// By default, runs in interactive bulk mode: all changes are shown together and you choose
+    /// to push or pull them as a group. Use `--individual` to review changes one at a time.
+    ///
+    /// The `render-diffs` subcommand is non-interactive: it writes diffs to a directory so you
+    /// can use a tool like `fzf` to select which diffs to apply, then import them with
+    /// `spares_cli import`. See the workflows documentation for a more detailed example.
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),

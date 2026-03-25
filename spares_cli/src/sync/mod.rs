@@ -7,7 +7,7 @@ use crate::{
     sync::utils::{build_file_map, clear_dir, load_hash_index, replace_action, save_hash_index},
 };
 use clap::{Args, Subcommand, ValueEnum};
-use interactive::sync_notes_interactive;
+use interactive::{SyncMode, sync_notes_interactive};
 use itertools::Itertools;
 use log::info;
 use rayon::prelude::*;
@@ -39,28 +39,33 @@ use strum_macros::{Display, EnumString};
 use utils::{GroupByInsertion as _, hub_spoke_error};
 
 #[derive(Args, Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct SyncArgs {
     #[command(subcommand)]
-    pub(crate) action: SyncMainAction,
+    pub(crate) subcommand: Option<SyncSubcommand>,
+
+    // Having `from` and `to` is clearer than just specifying `source` to sync with the Hub (SparesDb). This also allows the git diffs to be highlighted appropriately.
+    /// Sync Source
+    #[arg(short, long, default_value = "spares-local-files")]
+    pub(crate) from: SyncSource,
+    /// Sync Destination
+    #[arg(short, long, default_value = "spares")]
+    pub(crate) to: SyncSource,
+    #[arg(short, long, default_value_t = false)]
+    pub(crate) dry_run: bool,
+    /// Sync all files
+    #[arg(long, default_value_t = false)]
+    pub(crate) all: bool,
+    /// Review all changes together as one group [default]
+    #[arg(long, default_value_t = true, overrides_with_all = ["individual"])]
+    pub(crate) bulk: bool,
+    /// Review each change one at a time
+    #[arg(long, overrides_with_all = ["bulk"])]
+    pub(crate) individual: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
-pub(crate) enum SyncMainAction {
-    #[command(arg_required_else_help = false)]
-    Interactive {
-        // Having `from` and `to` is clearer than just specifying `source` to synce with the Hub (SparesDb). This also allows the git diffs to be highlighted appropriately.
-        /// Sync Source
-        #[arg(short, long, default_value = "spares-local-files")]
-        from: SyncSource,
-        /// Sync Destination
-        #[arg(short, long, default_value = "spares")]
-        to: SyncSource,
-        #[arg(short, long, default_value_t = false)]
-        dry_run: bool,
-        /// Sync all files
-        #[arg(long, default_value_t = false)]
-        all: bool,
-    },
+pub(crate) enum SyncSubcommand {
     /// Render all diffs between the source and destination.
     ///
     /// For example, if syncing from Spares to Anki, then `/tmp/spares/spares/markdown/0001.md` will have the diff of the note with id 1 in spares with the note with spares id 1 in Anki. All files in `/tmp/spares/spares/` will contain the diffs for all the notes, sorted by their parser. To sync this note, `spares_cli sync files --from spares --to anki /tmp/spares/spares/markdown/0001.md` can be run.
@@ -87,14 +92,14 @@ pub(crate) enum SyncSource {
 }
 
 #[derive(Debug)]
-pub(super) struct SyncImportData {
+struct SyncImportData {
     parser_name: String,
     note_id: NoteId,
     action: SyncImportAction,
 }
 
 #[derive(Clone, Debug, Display, EnumIter, EnumString, PartialEq)]
-pub(super) enum SyncImportAction {
+enum SyncImportAction {
     Add { to: PathBuf },
     Update { from: PathBuf, to: PathBuf },
     Delete { to: PathBuf },
@@ -273,27 +278,11 @@ pub(crate) async fn sync_notes(
     client: &Client,
     sync_args: SyncArgs,
 ) -> Result<(), String> {
-    match sync_args.action {
-        SyncMainAction::Interactive {
+    match sync_args.subcommand {
+        Some(SyncSubcommand::RenderDiffs {
             from: sync_source_from,
             to: sync_source_to,
-            dry_run,
-            all: sync_all_notes,
-        } => {
-            sync_notes_interactive(
-                base_url,
-                client,
-                sync_source_from,
-                sync_source_to,
-                dry_run,
-                sync_all_notes,
-            )
-            .await
-        }
-        SyncMainAction::RenderDiffs {
-            from: sync_source_from,
-            to: sync_source_to,
-        } => {
+        }) => {
             // Render notes in cache directory
             let (from_output_dir, to_output_dir) =
                 generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
@@ -304,6 +293,23 @@ pub(crate) async fn sync_notes(
             println!("{}", diffs_directory_path.display());
 
             Ok(())
+        }
+        None => {
+            let sync_mode = if sync_args.individual {
+                SyncMode::Individual
+            } else {
+                SyncMode::Bulk
+            };
+            sync_notes_interactive(
+                base_url,
+                client,
+                sync_args.from,
+                sync_args.to,
+                sync_args.dry_run,
+                sync_args.all,
+                sync_mode,
+            )
+            .await
         }
     }
 }

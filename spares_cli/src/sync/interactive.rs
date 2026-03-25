@@ -16,8 +16,8 @@ use spares::{
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
-use strum::{EnumIter, IntoEnumIterator};
-use strum_macros::{Display, EnumString};
+use strum::IntoEnumIterator;
+use strum_macros::{Display, EnumIter, EnumString};
 
 #[derive(Debug, Display, EnumIter, EnumString, PartialEq)]
 enum SyncAction {
@@ -31,7 +31,7 @@ enum SyncAction {
 }
 
 #[derive(Debug, Display, EnumIter, EnumString, PartialEq)]
-enum SyncMode {
+pub(crate) enum SyncMode {
     Individual,
     Bulk,
 }
@@ -186,6 +186,7 @@ pub(crate) async fn sync_notes_interactive(
     sync_source_to: SyncSource,
     dry_run: bool,
     sync_all_notes: bool,
+    sync_mode: SyncMode,
 ) -> Result<(), String> {
     let sync_source_hub = SyncSource::default();
     if sync_source_from != sync_source_hub && sync_source_to != sync_source_hub {
@@ -213,15 +214,6 @@ pub(crate) async fn sync_notes_interactive(
         return Ok(());
     }
     println!("Found {} note(s) with differences\n", import_data.len());
-    let options = SyncMode::iter().collect::<Vec<_>>();
-    let mut select = Select::new("Mode:", options);
-    apply_select_settings(&mut select);
-    let chosen_mode_res = select.prompt();
-    if chosen_mode_res.is_err() {
-        // The user exited. (Probably pressed Escape).
-        return Ok(());
-    }
-    let sync_mode = chosen_mode_res.unwrap();
     let (modified_notes, immutable_note_ids) = sync_notes_between_files(
         &sync_mode,
         sync_source_from,
