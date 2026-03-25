@@ -8,7 +8,7 @@ use crate::parsers::{
 };
 use crate::schema::note::LinkedNote;
 use indicatif::{ParallelProgressIterator, ProgressStyle};
-use log::info;
+use log::{debug, info};
 use rayon::prelude::*;
 use std::fs::{create_dir_all, read_to_string, write};
 use std::path::{Path, PathBuf};
@@ -292,7 +292,7 @@ fn create_note_files(
     // let done_count = counter.fetch_add(1, Ordering::SeqCst) + 1;
     // info!("Parsed {} out of {} notes", done_count, total_notes);
     let duration = start.elapsed();
-    info!("[Note Id: {}] Duration: {:?}", note_id, duration);
+    debug!("[Note Id: {}] Duration: {:?}", note_id, duration);
     result
 }
 
