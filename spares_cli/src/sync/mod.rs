@@ -13,7 +13,7 @@ use log::info;
 use rayon::prelude::*;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::{
+use spares_core::{
     adapters::{
         SrsAdapter,
         impls::{
@@ -68,7 +68,7 @@ pub(crate) struct SyncArgs {
 pub(crate) enum SyncSubcommand {
     /// Render all diffs between the source and destination.
     ///
-    /// For example, if syncing from Spares to Anki, then `/tmp/spares/spares/markdown/0001.md` will have the diff of the note with id 1 in spares with the note with spares id 1 in Anki. All files in `/tmp/spares/spares/` will contain the diffs for all the notes, sorted by their parser. To sync this note, `spares_cli sync files --from spares --to anki /tmp/spares/spares/markdown/0001.md` can be run.
+    /// For example, if syncing from Spares to Anki, then `/tmp/spares/spares/markdown/0001.md` will have the diff of the note with id 1 in spares with the note with spares id 1 in Anki. All files in `/tmp/spares/spares/` will contain the diffs for all the notes, sorted by their parser. To sync this note, `spares sync files --from spares --to anki /tmp/spares/spares/markdown/0001.md` can be run.
     ///
     /// Returns the path to the directory containing the diffs.
     #[command(arg_required_else_help = false)]

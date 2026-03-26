@@ -1,12 +1,12 @@
 use super::{SyncImportAction, get_import_data, replace_action, utils::clear_dir};
-use spares::parsers::{find_parser, generate_files::RenderOutputType, get_all_parsers};
+use spares_core::parsers::{find_parser, generate_files::RenderOutputType, get_all_parsers};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// Render diffs in `/tmp/spares_cli/{from_source_name}/diffs`
-//   - `from_output_dir` is `/tmp/spares_cli/{from_source_name}/notes/`
-//   - `to_output_dir` is `/tmp/spares_cli/{to_source_name}/notes/`
+// Render diffs in `/tmp/spares/{from_source_name}/diffs`
+//   - `from_output_dir` is `/tmp/spares/{from_source_name}/notes/`
+//   - `to_output_dir` is `/tmp/spares/{to_source_name}/notes/`
 //   - Add `action: add` and `action: delete`, if needed.
 pub(super) fn generate_diffs(
     from_output_dir: &Path,

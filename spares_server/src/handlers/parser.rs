@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use spares::{
+use spares_core::{
     api::parser::{create_parser, delete_parser, get_parser, list_parsers, update_parser},
     schema::{
         FilterOptions,

@@ -18,7 +18,7 @@ use migrate::migrate_from_adapter;
 use reqwest::Client;
 use review::{forget_card, review_cards};
 use serde_json::Map;
-use spares::{
+use spares_core::{
     adapters::get_adapter_from_string,
     config::get_env_config,
     model::NoteLink,
@@ -293,8 +293,8 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     unreachable!("by clap conflicts_with")
                 };
                 let special_state = special_state_local.map(|x| match x {
-                    SpecialStateLocal::Suspended => Some(spares::schema::card::SpecialStateUpdate::Suspended),
-                    SpecialStateLocal::Buried => Some(spares::schema::card::SpecialStateUpdate::Buried),
+                    SpecialStateLocal::Suspended => Some(spares_core::schema::card::SpecialStateUpdate::Suspended),
+                    SpecialStateLocal::Buried => Some(spares_core::schema::card::SpecialStateUpdate::Buried),
                     SpecialStateLocal::None => None,
                 });
                 let request = UpdateCardsRequest {
@@ -630,7 +630,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let url = format!("{}/api/notes/duplicate-keywords", base_url);
                 let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
                 let response = ensure_ok(response).await?;
-                let response: Vec<(String, Vec<spares::model::NoteId>)> =
+                let response: Vec<(String, Vec<spares_core::model::NoteId>)> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
@@ -694,11 +694,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                             OutputFormat::RawFilepath => {
                                 let mut note_raw_path = get_output_raw_dir(
                                     parser.get_parser_name(),
-                                    spares::parsers::generate_files::RenderOutputType::Note,
+                                    spares_core::parsers::generate_files::RenderOutputType::Note,
                                     None,
                                 );
                                 note_raw_path.push(parser.get_output_filename(
-                                    spares::parsers::generate_files::RenderOutputType::Note,
+                                    spares_core::parsers::generate_files::RenderOutputType::Note,
                                     note_response.id,
                                 ));
                                 note_raw_path.set_extension(parser.file_extension());
@@ -706,9 +706,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                             }
                             OutputFormat::RenderedFilepath => {
                                 let mut note_rendered_path = parser
-                                    .get_output_rendered_dir(spares::parsers::RenderOutputDirectoryType::Note);
+                                    .get_output_rendered_dir(spares_core::parsers::RenderOutputDirectoryType::Note);
                                 note_rendered_path.push(parser.get_output_filename(
-                                    spares::parsers::generate_files::RenderOutputType::Note,
+                                    spares_core::parsers::generate_files::RenderOutputType::Note,
                                     note_response.id,
                                 ));
                                 println!("{}", note_rendered_path.display());
@@ -723,14 +723,14 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                             OutputFormat::RawFilepath => {
                                 let mut card_raw_path = get_output_raw_dir(
                                     parser.get_parser_name(),
-                                    spares::parsers::generate_files::RenderOutputType::Card(
+                                    spares_core::parsers::generate_files::RenderOutputType::Card(
                                         card_response.order as usize,
                                         CardSide::Front,
                                     ),
                                     None,
                                 );
                                 card_raw_path.push(parser.get_output_filename(
-                                    spares::parsers::generate_files::RenderOutputType::Card(
+                                    spares_core::parsers::generate_files::RenderOutputType::Card(
                                         card_response.order as usize,
                                         CardSide::Front,
                                     ),
@@ -741,9 +741,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                             }
                             OutputFormat::RenderedFilepath => {
                                 let mut card_rendered_path = parser
-                                    .get_output_rendered_dir(spares::parsers::RenderOutputDirectoryType::Card);
+                                    .get_output_rendered_dir(spares_core::parsers::RenderOutputDirectoryType::Card);
                                 card_rendered_path.push(parser.get_output_filename(
-                                    spares::parsers::generate_files::RenderOutputType::Card(
+                                    spares_core::parsers::generate_files::RenderOutputType::Card(
                                         card_response.order as usize,
                                         CardSide::Front,
                                     ),
@@ -820,7 +820,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         }
         Commands::GenerateShellCompletion { shell } => {
             shell.generate(&mut Cli::command(), &mut io::stdout());
-            // generate(shell, &mut Cli::command(), "spares_cli", &mut io::stdout());
+            // generate(shell, &mut Cli::command(), "spares", &mut io::stdout());
         }
         Commands::Schedule(ScheduleArgs { command }) => match command {
             ScheduleCommands::Forget(ForgetCardArgs { ids, query }) => {
@@ -829,9 +829,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     card_ids = ids_vec;
                 } else if let Some(q) = query {
                     let url = format!("{}/api/notes/search", base_url);
-                    let req = spares::schema::note::SearchNotesRequest {
+                    let req = spares_core::schema::note::SearchNotesRequest {
                         query: q,
-                        output_type: spares::search::QueryReturnItemType::Cards,
+                        output_type: spares_core::search::QueryReturnItemType::Cards,
                     };
                     let response = client
                         .post(&url)
@@ -840,9 +840,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                         .await
                         .map_err(|e| miette!("{}", e))?;
                     let response = ensure_ok(response).await?;
-                    let search_response: spares::schema::note::SearchNotesResponse =
+                    let search_response: spares_core::schema::note::SearchNotesResponse =
                         response.json().await.map_err(|e| miette!("{}", e))?;
-                    if let spares::schema::note::SearchNotesResponse::Cards(cards) =
+                    if let spares_core::schema::note::SearchNotesResponse::Cards(cards) =
                         search_response
                     {
                         for (card, _) in cards {

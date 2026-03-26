@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "spares",
+    "spares_core",
     "spares_cli",
     "spares_server",
     "spares_io",
