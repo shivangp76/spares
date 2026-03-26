@@ -20,6 +20,7 @@ use std::{
 };
 
 mod data_parser;
+mod old_data_parser;
 
 /// See <https://typst.app/>
 ///
@@ -42,31 +43,19 @@ impl Parseable for TypstParser {
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-        let mut all_linked_notes = Vec::new();
         let mut parser = TypstDataParser::new(data);
-        while let Some(linked_note) = parser.next_linked_note() {
-            all_linked_notes.push(linked_note);
-        }
-        Ok(all_linked_notes.into_iter().collect::<Vec<_>>())
+        Ok(parser.linked_notes)
     }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        let mut all_keywords = Vec::new();
         let mut parser = TypstDataParser::new(data);
-        while let Some(linked_note) = parser.next_keyword() {
-            all_keywords.push(linked_note);
-        }
-        Ok(all_keywords.into_iter().collect::<Vec<_>>())
+        Ok(parser.keywords)
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        let mut all_settings = Vec::new();
         let mut parser = TypstDataParser::new(data);
-        while let Some(setting) = parser.next_setting() {
-            all_settings.push(setting);
-        }
-        Ok(all_settings)
+        Ok(parser.settings)
     }
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
@@ -78,12 +67,8 @@ impl Parseable for TypstParser {
 
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
         // Note that a regex approach will not work for nested clozes.
-        let mut all_clozes = Vec::new();
-        let mut cloze_parser = TypstDataParser::new(data);
-        while let Some(cloze) = cloze_parser.next_cloze() {
-            all_clozes.push(cloze.clone());
-        }
-        Ok(all_clozes.into_iter().flatten().collect::<Vec<_>>())
+        let mut parser = TypstDataParser::new(data);
+        Ok(parser.clozes.into_iter().flatten().collect::<Vec<_>>())
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
