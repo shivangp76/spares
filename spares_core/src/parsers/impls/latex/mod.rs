@@ -1,3 +1,5 @@
+mod data_parser;
+
 use crate::config::get_cache_dir;
 use crate::helpers::{find_pair, is_monotonic_increasing};
 use crate::model::NoteId;
@@ -12,6 +14,7 @@ use crate::parsers::{
 };
 use crate::schema::note::LinkedNote;
 use crate::{DelimiterErrorKind, Error, LibraryError};
+use data_parser::LatexDataParser;
 use fancy_regex::Regex;
 use std::ffi::OsString;
 use std::ops::Range;
@@ -366,34 +369,34 @@ fn get_latex_command(
     Ok(result)
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn get_linked_notes(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-    // TODO: Regex won't work here. Some edge cases: `\% \se{` and `a \% \se{`. We need a full character parser like typst for this to work.
-    let linked_notes_start_regex = Regex::new(r"\\li{").unwrap();
-    let linked_notes = get_latex_command(data, &linked_notes_start_regex)
-        .map_err(LibraryError::Delimiter)?
-        .into_iter()
-        .map(|settings_match| settings_match.capture_range)
-        .collect::<Vec<_>>();
+    let mut parser = LatexDataParser::new(data);
+    let mut linked_notes = Vec::new();
+    while let Some(range) = parser.next_linked_note() {
+        linked_notes.push(range);
+    }
     Ok(linked_notes)
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn get_embedded_keywords(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-    // TODO: Regex won't work here. Some edge cases: `\% \se{` and `a \% \se{`. We need a full character parser like typst for this to work.
-    let keyword_start_regex = Regex::new(r"\\key{").unwrap();
-    let keywords = get_latex_command(data, &keyword_start_regex)
-        .map_err(LibraryError::Delimiter)?
-        .into_iter()
-        .map(|settings_match| settings_match.capture_range)
-        .collect::<Vec<_>>();
+    let mut parser = LatexDataParser::new(data);
+    let mut keywords = Vec::new();
+    while let Some(range) = parser.next_keyword() {
+        keywords.push(range);
+    }
     Ok(keywords)
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn get_settings(data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
-    // TODO: Regex won't work here. Some edge cases: `\% \se{` and `a \% \se{`. We need a full character parser like typst for this to work.
-    let settings_start_regex = Regex::new(r"\\se{").unwrap();
-    let settings_str =
-        get_latex_command(data, &settings_start_regex).map_err(LibraryError::Delimiter)?;
-    Ok(settings_str)
+    let mut parser = LatexDataParser::new(data);
+    let mut settings = Vec::new();
+    while let Some(regex_match) = parser.next_setting() {
+        settings.push(regex_match);
+    }
+    Ok(settings)
 }
 
 fn construct_setting(data: &str) -> String {
