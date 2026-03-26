@@ -4,7 +4,7 @@ use crate::{
     parsers::{
         ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ConstructFileDataType,
         ConstructImageOcclusionType, GenerateNoteFilesRequest, NoteImportAction, NotePart,
-        NoteSettingsKeys, Parseable, RegexMatch, RenderOutputDirectoryType, RenderOutputType,
+        NoteSettingsKeys, Parseable, RenderOutputDirectoryType, RenderOutputType,
         generate_files::CardSide,
         get_output_raw_dir,
         image_occlusion::{ImageOcclusionData, construct_image_occlusion_from_image},
@@ -59,17 +59,14 @@ impl Parseable for TypstParser {
         Ok(all_keywords.into_iter().collect::<Vec<_>>())
     }
 
-    fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+    fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
         let mut all_settings = Vec::new();
         let mut parser = TypstDataParser::new(data);
         while let Some(setting) = parser.next_setting() {
-            all_settings.push(RegexMatch {
-                match_range: setting.clone(),
-                capture_range: setting,
-            });
+            all_settings.push(setting);
         }
-        Ok(all_settings.into_iter().collect::<Vec<_>>())
+        Ok(all_settings)
     }
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
