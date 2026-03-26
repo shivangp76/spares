@@ -6,11 +6,11 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use spares::{
+use spares_core::{
     api::note::{
-        create_notes, delete_notes, export::export_notes, get_note, get_note_links,
-        get_unmatched_keywords, list_notes, render_notes, search_keyword, search_notes,
-        update_notes,
+        create_notes, delete_notes, export::export_notes, get_duplicate_keywords, get_note,
+        get_note_links, get_unmatched_keywords, list_notes, render_notes, search_keyword,
+        search_notes, update_notes,
     },
     parsers::get_all_parsers,
     schema::{
@@ -133,7 +133,7 @@ pub(crate) async fn export_notes_handler(
 pub(crate) async fn get_duplicate_keywords_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let duplicate_keywords = spares::api::note::get_duplicate_keywords(&data.db)
+    let duplicate_keywords = get_duplicate_keywords(&data.db)
         .await
         .map_err(error_to_response)?;
     Ok(Json(duplicate_keywords))

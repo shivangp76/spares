@@ -12,7 +12,7 @@ pub struct MatchCardsResult {
 
 /// This function determines how cards were changed when a note changes. A note is rendered with its card indices in sequential order. This means that `old_cards` will be similar to `[Some(1), Some(2), Some(3)]`. New cards will contain the new indices. Consider the following example:
 /// ```
-/// use spares::parsers::{match_cards, MatchCardsResult};
+/// use spares_core::parsers::{match_cards, MatchCardsResult};
 ///
 /// let old_cards = vec![Some(1), Some(2), Some(3), Some(4)];
 /// let new_cards = vec![Some(1), Some(3), None, None, None, Some(2)];

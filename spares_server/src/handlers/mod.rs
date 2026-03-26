@@ -1,6 +1,6 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde_json::{Value, json};
-use spares::Error;
+use spares_core::Error;
 
 pub(crate) mod card;
 pub(crate) mod note;

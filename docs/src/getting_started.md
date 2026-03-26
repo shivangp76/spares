@@ -29,12 +29,12 @@ Spares ships with a script to migrate data from Anki. See `spares_migrate --help
 
 ## Adding notes
 
-Spares ships with a CLI to interact with the server. Its documentation can be found by running `spares_cli --help`.
+Spares ships with a CLI to interact with the server. Its documentation can be found by running `spares --help`.
 
 Using the CLI, we can add our parsers to the database. This is needed for creating notes that use these parsers.
 ```sh
-spares_cli add parser --name markdown
-spares_cli add parser --name latex-note
+spares add parser --name markdown
+spares add parser --name latex-note
 ```
 
 The CLI also provides an import functionality to add notes in bulk. For example, using the "markdown" parser, we can create a file called `notes.md` with the following contents:
@@ -67,9 +67,9 @@ The CLI also provides an import functionality to add notes in bulk. For example,
 
 We can import this file with the following command:
 ```sh
-spares_cli import --parser markdown ./notes.md
+spares import --parser markdown ./notes.md
 ```
-(See `spares_cli import --help` for more options)
+(See `spares import --help` for more options)
 
 ## Linked Notes
 
@@ -86,25 +86,25 @@ You can render notes with the following command. This will create the following 
     - The card's rendered file. For the markdown parser, this is a pdf file.
 
 ```sh
-spares_cli render --include-linked-notes --include-cards --render
+spares generate --include-linked-notes --include-cards --render
 ```
 
 The note's text file will also contain the linked notes. The exact syntax of these files can be modified in the parser.
 
 ## Editing notes
 
-Notes can be edited by directly editing their corresponding file which is created after rendering. They can then be reimported in (see `spares_cli import --help`).
+Notes can be edited by directly editing their corresponding file which is created after rendering. They can then be reimported in (see `spares import --help`).
 
 To facilitate importing multiple notes, you can sync notes between your local files and spares:
 ```sh
-spares_cli sync
+spares sync
 ```
 This will walk you through your changes, letting you decide what to keep and what to discard.
 
 # Reviewing
 
 ```sh
-spares_cli review
+spares review
 ```
 
 ## Image Occlusions

@@ -1,7 +1,7 @@
 use petgraph::Graph;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
-use spares::schema::note::{LinkedNote, NoteResponse};
+use spares_core::schema::note::{LinkedNote, NoteResponse};
 use std::collections::HashMap;
 
 /// Usage: Paste output into <https://dreampuf.github.io/GraphvizOnline/> with engine set to `osage`.

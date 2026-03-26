@@ -1,11 +1,11 @@
 use crate::{AppState, handlers::error_to_response};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
-use spares::api::review::{get_review_card, get_review_card_by_id, submit_study_action};
-use spares::api::statistics::get_statistics;
-use spares::model::CardId;
-use spares::parsers::get_all_parsers;
-use spares::schema::review::{GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest};
+use spares_core::api::review::{get_review_card, get_review_card_by_id, submit_study_action};
+use spares_core::api::statistics::get_statistics;
+use spares_core::model::CardId;
+use spares_core::parsers::get_all_parsers;
+use spares_core::schema::review::{GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest};
 use std::sync::Arc;
 
 pub(crate) async fn get_review_card_handler(

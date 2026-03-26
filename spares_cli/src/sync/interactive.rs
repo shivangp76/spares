@@ -8,7 +8,7 @@ use inquire::Select;
 use log::info;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::{
+use spares_core::{
     model::NoteId,
     parsers::{find_parser, get_all_parsers},
     schema::note::{NotesSelector, RenderNotesRequest},

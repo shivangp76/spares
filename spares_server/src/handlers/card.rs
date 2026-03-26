@@ -1,7 +1,7 @@
 use crate::{AppState, handlers::error_to_response};
 use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
-use spares::{
+use spares_core::{
     api::{
         card::{get_card, get_cards, get_leeches, unbury_cards, update_cards},
         forget_card,

@@ -11,65 +11,64 @@ use std::fs::{create_dir_all, read_to_string, write};
 use std::path::PathBuf;
 use toml_edit::DocumentMut;
 
+const SPARES: &str = "spares";
+
 #[allow(clippy::missing_panics_doc)]
 pub fn get_config_dir() -> PathBuf {
-    let crate_name = env!("CARGO_PKG_NAME");
     if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(crate_name);
+        tmp_dir.push(SPARES);
         tmp_dir.push("config");
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
     }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
-        author: crate_name.to_string(),
-        app_name: crate_name.to_string(),
+        author: SPARES.to_string(),
+        app_name: SPARES.to_string(),
     })
     .unwrap();
-    strategy.config_dir().push(crate_name);
+    strategy.config_dir().push(SPARES);
     create_dir_all(strategy.config_dir()).unwrap();
     strategy.config_dir()
 }
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_cache_dir() -> PathBuf {
-    let crate_name = env!("CARGO_PKG_NAME");
     if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(crate_name);
+        tmp_dir.push(SPARES);
         tmp_dir.push("cache");
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
     }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
-        author: crate_name.to_string(),
-        app_name: crate_name.to_string(),
+        author: SPARES.to_string(),
+        app_name: SPARES.to_string(),
     })
     .unwrap();
-    strategy.cache_dir().push(crate_name);
+    strategy.cache_dir().push(SPARES);
     create_dir_all(strategy.cache_dir()).unwrap();
     strategy.cache_dir()
 }
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_data_dir() -> PathBuf {
-    let crate_name = env!("CARGO_PKG_NAME");
     if cfg!(test) {
         let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(crate_name);
+        tmp_dir.push(SPARES);
         tmp_dir.push("data");
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
     }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
-        author: crate_name.to_string(),
-        app_name: crate_name.to_string(),
+        author: SPARES.to_string(),
+        app_name: SPARES.to_string(),
     })
     .unwrap();
-    strategy.data_dir().push(crate_name);
+    strategy.data_dir().push(SPARES);
     create_dir_all(strategy.data_dir()).unwrap();
     strategy.data_dir()
 }
