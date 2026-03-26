@@ -71,7 +71,7 @@ pub trait Parseable: Send + Sync {
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
 
-    fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError>;
+    fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
         NoteSettingsKeys::default()
