@@ -66,7 +66,7 @@ impl Parseable for LatexParserExerciseSolution {
         get_embedded_keywords(data)
     }
 
-    fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+    fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         get_settings(data)
     }
 
@@ -203,7 +203,7 @@ impl Parseable for LatexParserNote {
         get_embedded_keywords(data)
     }
 
-    fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+    fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         get_settings(data)
     }
 
@@ -390,11 +390,11 @@ fn get_embedded_keywords(data: &str) -> Result<Vec<Range<usize>>, LibraryError> 
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn get_settings(data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+fn get_settings(data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
     let mut parser = LatexDataParser::new(data);
     let mut settings = Vec::new();
-    while let Some(regex_match) = parser.next_setting() {
-        settings.push(regex_match);
+    while let Some(range) = parser.next_setting() {
+        settings.push(range);
     }
     Ok(settings)
 }

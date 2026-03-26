@@ -92,10 +92,10 @@ pub fn get_notes(
         local_settings.errors_and_warnings.clear();
         let mut note_settings_capture_ranges = Vec::new();
         while let Some(setting_match) = settings_iter.peek() {
-            if setting_match.capture_range.end >= note_c.start {
+            if setting_match.end >= note_c.start {
                 break;
             }
-            note_settings_capture_ranges.push(setting_match.capture_range.clone());
+            note_settings_capture_ranges.push(setting_match.clone());
             settings_iter.next();
         }
         parse_note_settings(

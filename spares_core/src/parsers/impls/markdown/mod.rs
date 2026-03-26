@@ -4,7 +4,7 @@ use crate::{
     parsers::{
         ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ConstructFileDataType,
         ConstructImageOcclusionType, GenerateNoteFilesRequest, NoteImportAction, NotePart,
-        NoteSettingsKeys, Parseable, RegexMatch, RenderOutputDirectoryType, RenderOutputType,
+        NoteSettingsKeys, Parseable, RenderOutputDirectoryType, RenderOutputType,
         generate_files::CardSide,
         get_output_raw_dir,
         image_occlusion::{ImageOcclusionData, construct_image_occlusion_from_image},
@@ -60,22 +60,12 @@ impl Parseable for MarkdownParser {
         Ok(vec![])
     }
 
-    fn get_settings(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+    fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // let settings_regex = Regex::new(r"(?m)<!--- # (.*) --->").unwrap();
         let settings_regex = Regex::new(r"(?s)<!--- # ([^\n]*) --->").unwrap();
         let settings_data = settings_regex
-            .find_iter(data)
-            .map(|m| m.unwrap())
-            .map(|m| m.start()..m.end())
-            .zip(
-                settings_regex
-                    .captures_iter(data)
-                    .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap()),
-            )
-            .map(|(match_range, capture_range)| RegexMatch {
-                match_range,
-                capture_range,
-            })
+            .captures_iter(data)
+            .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap())
             .collect::<Vec<_>>();
         Ok(settings_data)
     }

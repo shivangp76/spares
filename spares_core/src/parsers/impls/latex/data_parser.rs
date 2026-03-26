@@ -1,4 +1,3 @@
-use crate::parsers::RegexMatch;
 use std::ops::Range;
 use unscanny::Scanner;
 
@@ -22,12 +21,9 @@ impl<'a> LatexDataParser<'a> {
             .map(|(_, capture)| capture)
     }
 
-    pub fn next_setting(&mut self) -> Option<RegexMatch> {
+    pub fn next_setting(&mut self) -> Option<Range<usize>> {
         self.find_command(SETTINGS_CMD)
-            .map(|(match_range, capture_range)| RegexMatch {
-                match_range,
-                capture_range,
-            })
+            .map(|(_, capture)| capture)
     }
 
     pub fn next_keyword(&mut self) -> Option<Range<usize>> {
@@ -117,8 +113,7 @@ mod tests {
         let input = r"text \se{key: value} more";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "key: value");
-        assert_eq!(&input[setting.match_range], r"\se{key: value}");
+        assert_eq!(&input[setting], "key: value");
     }
 
     #[test]
@@ -127,7 +122,7 @@ mod tests {
         let input = "% \\se{ignored}\n\\se{real}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "real");
+        assert_eq!(&input[setting], "real");
     }
 
     #[test]
@@ -136,7 +131,7 @@ mod tests {
         let input = r"\% \se{found}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "found");
+        assert_eq!(&input[setting], "found");
     }
 
     #[test]
@@ -145,7 +140,7 @@ mod tests {
         let input = r"\\ \se{found}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "found");
+        assert_eq!(&input[setting], "found");
     }
 
     #[test]
@@ -153,7 +148,7 @@ mod tests {
         let input = r"\se{custom-data: {nested}}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "custom-data: {nested}");
+        assert_eq!(&input[setting], "custom-data: {nested}");
     }
 
     #[test]
@@ -162,8 +157,8 @@ mod tests {
         let mut parser = LatexDataParser::new(input);
         let s1 = parser.next_setting().unwrap();
         let s2 = parser.next_setting().unwrap();
-        assert_eq!(&input[s1.capture_range], "a");
-        assert_eq!(&input[s2.capture_range], "b");
+        assert_eq!(&input[s1], "a");
+        assert_eq!(&input[s2], "b");
         assert!(parser.next_setting().is_none());
     }
 
@@ -187,7 +182,7 @@ mod tests {
         let input = "\\se{key % comment\n: value}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "key % comment\n: value");
+        assert_eq!(&input[setting], "key % comment\n: value");
     }
 
     #[test]
@@ -195,7 +190,7 @@ mod tests {
         let input = r"\begin{note} \se{id: 1} \end{note}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "id: 1");
+        assert_eq!(&input[setting], "id: 1");
     }
 
     // ── linked notes ──────────────────────────────────────────────────────────
@@ -276,7 +271,7 @@ mod tests {
         let input = "before % \\se{ignored}\nafter \\se{found}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], "found");
+        assert_eq!(&input[setting], "found");
         assert!(parser.next_setting().is_none());
     }
 
@@ -286,14 +281,6 @@ mod tests {
         let input = r"\se{a \{ b \} c}";
         let mut parser = LatexDataParser::new(input);
         let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.capture_range], r"a \{ b \} c");
-    }
-
-    #[test]
-    fn test_match_range_covers_full_command() {
-        let input = r"prefix \se{value} suffix";
-        let mut parser = LatexDataParser::new(input);
-        let setting = parser.next_setting().unwrap();
-        assert_eq!(&input[setting.match_range], r"\se{value}");
+        assert_eq!(&input[setting], r"a \{ b \} c");
     }
 }
