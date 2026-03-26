@@ -1,260 +1,366 @@
 use crate::parsers::ClozeMatch;
 use std::ops::Range;
-use unscanny::Scanner;
+use typst_syntax::{LinkedNode, SyntaxKind, parse};
 
 const CLOZE_FUNC_NAME: &str = "cl";
 const LINKED_NOTE_FUNC_NAME: &str = "lin";
 const SETTINGS_FUNC_NAME: &str = "se";
 const KEYWORD_FUNC_NAME: &str = "key";
 
-#[derive(Debug, Default, PartialEq, Eq)]
-enum DataMode {
-    #[default]
-    Markup,
-    Code,
-    Math,
+/// A stateful iterator over parsed Typst source that yields clozes,
+/// linked-note refs, settings blocks, and keyword blocks one at a time.
+pub struct TypstDataParser {
+    /// One entry per top-level `#cl[…]` call; each entry contains that call
+    /// and all nested `#cl[…]` calls it contains, sorted start→end (outer first).
+    pub clozes: Vec<Vec<ClozeMatch>>,
+    pub linked_notes: Vec<Range<usize>>,
+    pub settings: Vec<Range<usize>>,
+    pub keywords: Vec<Range<usize>>,
 }
 
-pub struct TypstDataParser<'de> {
-    s: Scanner<'de>,
-    modes: Vec<DataMode>,
-    /// This counts open square brackets not in math mode. By not counting math mode, we can ensure that this count will always be balanced at the end of a document. This may be from a function call (`#strong[`), start of code mode (`#[`), or just bracketed text (`[`).
-    open_square_bracket_count: u32,
-}
+impl TypstDataParser {
+    pub fn new(input: &str) -> Self {
+        let root = parse(input);
+        let linked = LinkedNode::new(&root);
 
-#[derive(Debug)]
-enum OutputType {
-    Cloze,
-    LinkedNote,
-    Settings,
-    Keyword,
-}
+        let mut collector = Collector::default();
+        collector.walk(&linked, 0);
 
-#[derive(Debug)]
-enum Output {
-    Cloze(Vec<ClozeMatch>),
-    LinkedNote(Range<usize>),
-    Settings(Range<usize>),
-    Keyword(Range<usize>),
-}
-
-#[derive(Debug)]
-struct Cloze {
-    // `#cl`
-    start: Range<usize>,
-    // Eventually, `]` or `][`
-    first_arg_end: Option<Range<usize>>,
-    // `]` or `None`
-    // second_arg_end: Option<Range<usize>>,
-    depth: u32,
-}
-
-impl<'a> TypstDataParser<'a> {
-    pub fn new(input: &'a str) -> Self {
         Self {
-            s: Scanner::new(input),
-            modes: vec![],
-            open_square_bracket_count: 0,
+            clozes: collector.cloze_groups,
+            linked_notes: collector.linked_notes,
+            settings: collector.settings,
+            keywords: collector.keywords,
         }
     }
+}
 
-    /// Returns clozes, ordered by their starting delim position. This means for nested clozes, the outer cloze will be returned first, then the inner cloze.
-    pub fn next_cloze(&mut self) -> Option<Vec<ClozeMatch>> {
-        self.next_data(&OutputType::Cloze).map(|x| match x {
-            Output::Cloze(vec) => vec,
-            _ => unreachable!(),
-        })
-    }
+#[derive(Default)]
+struct Collector {
+    /// Groups of clozes. Each entry is one top-level `#cl[…]` call together
+    /// with all nested `#cl[…]` calls it contains, sorted start→end (so outer
+    /// comes first, matching the original parser's contract).
+    cloze_groups: Vec<Vec<ClozeMatch>>,
+    linked_notes: Vec<Range<usize>>,
+    settings: Vec<Range<usize>>,
+    keywords: Vec<Range<usize>>,
+    /// Nesting depth of `#cl[…]` calls currently being walked. Used to avoid
+    /// treating nested `#cl` calls as new top-level cloze groups while still
+    /// recursing into them to collect `#lin`, `#se`, and `#key` nodes.
+    cloze_depth: usize,
+}
 
-    pub fn next_linked_note(&mut self) -> Option<Range<usize>> {
-        self.next_data(&OutputType::LinkedNote).map(|x| match x {
-            Output::LinkedNote(res) => res,
-            _ => unreachable!(),
-        })
-    }
-
-    pub fn next_setting(&mut self) -> Option<Range<usize>> {
-        self.next_data(&OutputType::Settings).map(|x| match x {
-            Output::Settings(res) => res,
-            _ => unreachable!(),
-        })
-    }
-
-    pub fn next_keyword(&mut self) -> Option<Range<usize>> {
-        self.next_data(&OutputType::Keyword).map(|x| match x {
-            Output::Keyword(res) => res,
-            _ => unreachable!(),
-        })
-    }
-
-    #[expect(clippy::too_many_lines)]
-    fn next_data(&mut self, output_type: &OutputType) -> Option<Output> {
-        let mut cloze_nesting_level = 0;
-        let mut all_clozes = Vec::new();
-        let mut current_clozes = Vec::new();
-
-        let mut current_linked_notes = Vec::new();
-        let mut current_settings = Vec::new();
-        let mut current_keywords = Vec::new();
-
-        loop {
-            let cursor_start = self.s.cursor();
-            // dbg!(&self.s.peek());
-            // dbg!(&self.s.string()[cursor_start..]);
-            match self.s.eat() {
-                // Comments
-                Some('/') if self.s.eat_if('/') => {
-                    self.s.eat_until("\n");
-                }
-                // Escaped character
-                Some('\\') => {
-                    self.s.eat(); // Consume backslash
-                }
-                // Handle math mode transitions
-                Some('$') => {
-                    if let Some(DataMode::Math) = self.modes.last() {
-                        self.modes.pop();
-                    } else {
-                        self.modes.push(DataMode::Math);
-                    }
-                }
-                // Handle function argument opening
-                Some('#') => {
-                    let func_name = self
-                        .s
-                        .eat_while(|c| char::is_alphanumeric(c) || c == '_' || c == '-');
-                    let open_delim = if let Some('(') = self.s.peek() {
-                        self.s.eat();
-                        Some('(')
-                    } else if let Some('[') = self.s.peek() {
-                        self.s.eat();
-                        Some('[')
-                    } else {
-                        None
-                    };
-                    if func_name == CLOZE_FUNC_NAME && matches!(output_type, OutputType::Cloze) {
-                        cloze_nesting_level += 1;
-                        current_clozes.push(Cloze {
-                            start: cursor_start..self.s.cursor(),
-                            first_arg_end: None,
-                            depth: self.open_square_bracket_count + 1,
-                        });
-                    } else if func_name == LINKED_NOTE_FUNC_NAME
-                        && matches!(output_type, OutputType::LinkedNote)
-                    {
-                        current_linked_notes.push((
-                            cursor_start..self.s.cursor(),
-                            self.open_square_bracket_count + 1,
-                        ));
-                    } else if func_name == SETTINGS_FUNC_NAME
-                        && matches!(output_type, OutputType::Settings)
-                    {
-                        current_settings.push((
-                            cursor_start..self.s.cursor(),
-                            self.open_square_bracket_count + 1,
-                        ));
-                    } else if func_name == KEYWORD_FUNC_NAME
-                        && matches!(output_type, OutputType::Keyword)
-                    {
-                        current_keywords.push((
-                            cursor_start..self.s.cursor(),
-                            self.open_square_bracket_count + 1,
-                        ));
-                    }
-                    if open_delim.is_some() {
-                        self.s.uneat();
-                    }
-                    if open_delim == Some('[') {
-                        self.modes.push(DataMode::Markup);
-                    } else if open_delim == Some('(') {
-                        self.modes.push(DataMode::Code);
-                    }
-                }
-                Some(')') if matches!(self.modes.last(), Some(DataMode::Code)) => {
-                    self.modes.pop();
-                }
-                Some('[') if self.modes.last().is_none_or(|x| *x != DataMode::Math) => {
-                    self.open_square_bracket_count += 1;
-                }
-                // Handle function argument closing
-                Some(']') if self.modes.last().is_none_or(|x| *x != DataMode::Math) => {
-                    if self.s.eat_if('[') {
-                        // Second argument
-                        // Don't increment `open_square_bracket_count` here.
-                        let first_arg_end = self.s.cursor();
-                        if let Some(cloze) = current_clozes.last_mut()
-                            && cloze.depth == self.open_square_bracket_count
-                        {
-                            cloze.first_arg_end = Some(cursor_start..first_arg_end);
-                        }
-                    } else {
-                        // End of all arguments (could be 1 or 2 args)
-                        self.open_square_bracket_count -= 1;
-                        self.modes.pop();
-
-                        if matches!(output_type, OutputType::LinkedNote)
-                            && let Some(linked_note_start) = current_linked_notes
-                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
-                        {
-                            return Some(Output::LinkedNote(linked_note_start.0.end..cursor_start));
-                        } else if matches!(output_type, OutputType::Keyword)
-                            && let Some(keyword_start) = current_keywords
-                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
-                        {
-                            return Some(Output::Keyword(keyword_start.0.end..cursor_start));
-                        } else if matches!(output_type, OutputType::Settings)
-                            && let Some(setting_start) = current_settings
-                                .pop_if(|x| x.1 == self.open_square_bracket_count + 1)
-                        {
-                            return Some(Output::Settings(setting_start.0.end..cursor_start));
-                        } else if let Some(mut cloze) = current_clozes
-                            .pop_if(|c| c.depth == (self.open_square_bracket_count + 1))
-                        {
-                            cloze_nesting_level -= 1;
-                            let second_arg_end = cloze
-                                .first_arg_end
-                                .as_ref()
-                                .map(|_| cursor_start..self.s.cursor());
-                            if cloze.first_arg_end.is_none() {
-                                cloze.first_arg_end = Some(cursor_start..self.s.cursor());
-                            }
-                            let first_arg_end = cloze.first_arg_end.unwrap();
-                            all_clozes.push(ClozeMatch {
-                                start_match: cloze.start,
-                                end_match: first_arg_end.start
-                                    ..second_arg_end.as_ref().map_or(first_arg_end.end, |x| x.end),
-                                settings_match: second_arg_end
-                                    .map(|x| first_arg_end.start + 2..x.start)
-                                    .filter(|x| !x.is_empty())
-                                    .unwrap_or_default(),
-                            });
-                            if cloze_nesting_level == 0 && matches!(output_type, OutputType::Cloze)
-                            {
-                                break;
-                            }
+impl Collector {
+    /// Recursively walk the CST. `offset` is the byte position of `node`'s
+    /// first byte in the original source string.
+    fn walk(&mut self, node: &LinkedNode<'_>, offset: usize) {
+        // We only care about FuncCall nodes — everything else we just descend.
+        let mut entered_cloze = false;
+        if node.kind() == SyntaxKind::FuncCall
+            && let Some(name) = func_name(node, offset)
+        {
+            match name.text.as_str() {
+                CLOZE_FUNC_NAME => {
+                    if self.cloze_depth == 0 {
+                        // Build a group for this top-level cloze call.
+                        let group = collect_cloze_group(node, offset);
+                        if !group.is_empty() {
+                            self.cloze_groups.push(group);
                         }
                     }
+                    // Track depth so nested `#cl` nodes aren't treated as new
+                    // top-level groups, but we still recurse to collect
+                    // `#lin`, `#se`, and `#key` nodes inside.
+                    self.cloze_depth += 1;
+                    entered_cloze = true;
                 }
-                Some(_) => {}
-                None => {
-                    break;
+                LINKED_NOTE_FUNC_NAME => {
+                    if let Some(range) = first_content_block_range(node, offset) {
+                        self.linked_notes.push(range);
+                    }
                 }
+                SETTINGS_FUNC_NAME => {
+                    if let Some(range) = first_content_block_range(node, offset) {
+                        self.settings.push(range);
+                    }
+                }
+                KEYWORD_FUNC_NAME => {
+                    if let Some(range) = first_content_block_range(node, offset) {
+                        self.keywords.push(range);
+                    }
+                }
+                _ => {}
             }
         }
 
-        match output_type {
-            OutputType::Cloze => {
-                if all_clozes.is_empty() {
-                    None
-                } else {
-                    assert!(current_clozes.is_empty());
-                    all_clozes.sort_by_key(|x| x.start_match.start);
-                    Some(Output::Cloze(all_clozes))
-                }
-            }
-            OutputType::LinkedNote | OutputType::Keyword | OutputType::Settings => None,
+        // Descend into children.
+        let mut child_off = offset;
+        for child in node.children() {
+            self.walk(&child, child_off);
+            child_off += child.len();
+        }
+
+        if entered_cloze {
+            self.cloze_depth -= 1;
         }
     }
+}
+
+// ── Cloze group builder ───────────────────────────────────────────────────────
+
+/// Build the flat, start-sorted `Vec<ClozeMatch>` for one top-level `#cl[…]`
+/// call, including all nested `#cl[…]` calls inside it.
+///
+/// `#cl` supports two content-block arguments:
+///
+/// ```text
+/// #cl[body]           → one arg
+/// #cl[body][settings] → two args
+/// ```
+///
+/// The CST represents this as a single `FuncCall` whose Args child may contain
+/// two consecutive `ContentBlock` children:
+///
+/// ```text
+/// FuncCall
+/// ├── Ident "cl"
+/// └── Args
+///     ├── ContentBlock   ← first arg  (body)
+///     └── ContentBlock   ← second arg (settings) — optional
+/// ```
+fn collect_cloze_group(call: &LinkedNode<'_>, call_offset: usize) -> Vec<ClozeMatch> {
+    let mut out = Vec::new();
+    collect_cloze_recursive(call, call_offset, &mut out);
+    out.sort_by_key(|m| m.start_match.start);
+    out
+}
+
+fn collect_cloze_recursive(call: &LinkedNode<'_>, call_offset: usize, out: &mut Vec<ClozeMatch>) {
+    // `call` must be a FuncCall for "cl".
+    let Some(cm) = build_cloze_match(call, call_offset) else {
+        return;
+    };
+    out.push(cm);
+
+    // Recurse into the body (first content block) to find nested cloze calls.
+    let args_node = args_child(call, call_offset);
+    let Some((args, args_off)) = args_node else {
+        return;
+    };
+
+    let mut content_blocks_found = 0u32;
+    let mut child_off = args_off;
+    for child in args.children() {
+        if child.kind() == SyntaxKind::ContentBlock && content_blocks_found == 0 {
+            // This is the body block — descend into it for nested #cl calls.
+            let mut body_child_off = child_off;
+            for body_child in child.children() {
+                find_nested_cloze_calls(&body_child, body_child_off, out);
+                body_child_off += body_child.len();
+            }
+            content_blocks_found += 1;
+        }
+        child_off += child.len();
+    }
+}
+
+/// Descend looking for `#cl[…]` calls anywhere inside `node`.
+fn find_nested_cloze_calls(node: &LinkedNode<'_>, offset: usize, out: &mut Vec<ClozeMatch>) {
+    if node.kind() == SyntaxKind::FuncCall
+        && let Some(name) = func_name(node, offset)
+        && name.text == CLOZE_FUNC_NAME
+    {
+        collect_cloze_recursive(node, offset, out);
+        return; // collect_cloze_recursive handles recursion itself
+    }
+    let mut child_off = offset;
+    for child in node.children() {
+        find_nested_cloze_calls(&child, child_off, out);
+        child_off += child.len();
+    }
+}
+
+/// Build the `ClozeMatch` for a single `#cl[…]` `FuncCall` node.
+///
+/// `start_match` — range of the hash + ident + `[` (or `(`) opening the call,
+///   i.e. the same bytes the original scanner consumed when it saw `#cl[`.
+///
+/// For a one-arg call `#cl[body]`:
+///   `end_match`       = range of the closing `]`
+///   `settings_match`  = empty (default Range)
+///
+/// For a two-arg call `#cl[body][settings]`:
+///   `end_match`       = range from `]` of first arg through `]` of second arg
+///                       (i.e. `][settings]` as one range, matching original)
+///   `settings_match`  = content inside second `[…]` (exclusive of brackets)
+///
+/// Edge case — empty second arg `#cl[body][]`:
+///   `settings_match` = default (empty) Range, matching original parser.
+fn build_cloze_match(call: &LinkedNode<'_>, call_offset: usize) -> Option<ClozeMatch> {
+    // ── locate Ident and Args ─────────────────────────────────────────────────
+    let mut call_child_off = call_offset;
+    let mut ident_range: Option<Range<usize>> = None;
+    let mut args_range: Option<(LinkedNode<'_>, usize)> = None;
+
+    for child in call.children() {
+        let len = child.len();
+        match child.kind() {
+            SyntaxKind::Ident => {
+                ident_range = Some(call_child_off..call_child_off + len);
+            }
+            SyntaxKind::Args => {
+                args_range = Some((child.clone(), call_child_off));
+            }
+            _ => {}
+        }
+        call_child_off += len;
+    }
+
+    let ident_range = ident_range?;
+    let (args_node, args_off) = args_range?;
+
+    // ── find content blocks inside Args ──────────────────────────────────────
+    // We expect 1 or 2 ContentBlock children. Anything else (e.g. a paren
+    // argument list) is treated as having no content blocks.
+    let mut blocks: Vec<(ContentBlockInfo, usize)> = Vec::new();
+    let mut args_child_off = args_off;
+
+    for child in args_node.children() {
+        let len = child.len();
+        if child.kind() == SyntaxKind::ContentBlock
+            && let Some(info) = parse_content_block(&child, args_child_off)
+        {
+            blocks.push((info, args_child_off));
+        }
+        args_child_off += len;
+    }
+
+    if blocks.is_empty() {
+        return None;
+    }
+
+    // `start_match` mirrors the original: `#cl[` (hash at call_offset, then
+    // ident, then the `[` opening the first content block).
+    // The original scanner set start = cursor_start (the `#`) ..
+    // self.s.cursor() after eating `[`. That means it includes `#cl[`.
+    // In Typst's CST the `#` sigil is a sibling node immediately before the
+    // FuncCall, so `call_offset` points to the ident (`c` in `cl`). Subtract
+    // 1 to recover the `#` position and match the original scanner's contract.
+    let start_match = call_offset.saturating_sub(1)..blocks[0].0.open_bracket.end;
+
+    // ── single-arg form ───────────────────────────────────────────────────────
+    if blocks.len() == 1 {
+        let close = &blocks[0].0.close_bracket;
+        return Some(ClozeMatch {
+            start_match,
+            end_match: close.clone(),
+            settings_match: Range::default(),
+        });
+    }
+
+    // ── two-arg form ──────────────────────────────────────────────────────────
+    // end_match  = first-block's `]` start .. second-block's `]` end
+    //            = the span `][settings]` (inclusive of both brackets).
+    let first_close = &blocks[0].0.close_bracket;
+    let second_open = &blocks[1].0.open_bracket;
+    let second_close = &blocks[1].0.close_bracket;
+    let second_content = &blocks[1].0.content_range;
+
+    let end_match = first_close.start..second_close.end;
+    let settings_match = if second_content.is_empty() {
+        Range::default()
+    } else {
+        second_content.clone()
+    };
+
+    Some(ClozeMatch {
+        start_match,
+        end_match,
+        settings_match,
+    })
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+struct IdentInfo {
+    text: String,
+}
+
+struct ContentBlockInfo {
+    open_bracket: Range<usize>,
+    close_bracket: Range<usize>,
+    content_range: Range<usize>,
+}
+
+/// Return the function name from a `FuncCall` node (the Ident child).
+fn func_name(call: &LinkedNode<'_>, call_offset: usize) -> Option<IdentInfo> {
+    let mut child_off = call_offset;
+    for child in call.children() {
+        let len = child.len();
+        if child.kind() == SyntaxKind::Ident {
+            return Some(IdentInfo {
+                text: child.text().to_string(),
+            });
+        }
+        child_off += len;
+    }
+    None
+}
+
+/// Return the (Args child, its byte offset) for a `FuncCall` node.
+fn args_child<'a>(call: &'a LinkedNode<'a>, call_offset: usize) -> Option<(LinkedNode<'a>, usize)> {
+    let mut child_off = call_offset;
+    for child in call.children() {
+        let len = child.len();
+        if child.kind() == SyntaxKind::Args {
+            return Some((child, child_off));
+        }
+        child_off += len;
+    }
+    None
+}
+
+/// Parse open/close bracket positions and content range from a `ContentBlock`.
+fn parse_content_block(block: &LinkedNode<'_>, block_offset: usize) -> Option<ContentBlockInfo> {
+    let mut open: Option<Range<usize>> = None;
+    let mut close: Option<Range<usize>> = None;
+    let mut child_off = block_offset;
+
+    for child in block.children() {
+        let len = child.len();
+        match child.kind() {
+            SyntaxKind::LeftBracket => open = Some(child_off..child_off + len),
+            SyntaxKind::RightBracket => close = Some(child_off..child_off + len),
+            _ => {}
+        }
+        child_off += len;
+    }
+
+    let open = open?;
+    let close = close?;
+    let content_range = open.end..close.start;
+
+    Some(ContentBlockInfo {
+        open_bracket: open,
+        close_bracket: close,
+        content_range,
+    })
+}
+
+/// Return the content range (inside `[…]`) of the *first* `ContentBlock` arg of
+/// a function call. Used for `#lin`, `#se`, `#key`.
+fn first_content_block_range(call: &LinkedNode<'_>, call_offset: usize) -> Option<Range<usize>> {
+    let (args, args_off) = args_child(call, call_offset)?;
+    let mut child_off = args_off;
+    for child in args.children() {
+        let len = child.len();
+        if child.kind() == SyntaxKind::ContentBlock {
+            let info = parse_content_block(&child, child_off)?;
+            return Some(info.content_range);
+        }
+        child_off += len;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -266,79 +372,51 @@ mod tests {
     #[test]
     fn test_basic_setting() {
         let input = "Test #se[basic] asd";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_settings = Vec::new();
-        while let Some(setting) = parser.next_setting() {
-            all_settings.push(setting);
-        }
-        assert_eq!(all_settings, vec![9..14],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.settings, vec![9..14]);
     }
 
     #[test]
     fn test_basic_linked_note() {
         let input = "Test #lin[basic] #test[p]asd";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_linked_notes = Vec::new();
-        while let Some(linked_note) = parser.next_linked_note() {
-            all_linked_notes.push(linked_note);
-        }
-        assert_eq!(all_linked_notes, vec![10..15],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.linked_notes, vec![10..15]);
     }
 
     #[test]
     fn test_advanced_linked_note() {
         let input = "Test #lin[basic [a] b] #test[p]asd";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_linked_notes = Vec::new();
-        while let Some(linked_note) = parser.next_linked_note() {
-            all_linked_notes.push(linked_note);
-        }
-        assert_eq!(all_linked_notes, vec![10..21],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.linked_notes, vec![10..21]);
     }
 
     #[test]
     fn test_linked_note_in_math() {
         let input = "Test $ a &= b #[(bc of #lin[Rule A])] \\ b &=c $";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_linked_notes = Vec::new();
-        while let Some(linked_note) = parser.next_linked_note() {
-            all_linked_notes.push(linked_note);
-        }
-        assert_eq!(all_linked_notes, vec![28..34],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.linked_notes, vec![28..34]);
     }
 
     #[test]
     fn test_basic_keyword() {
         let input = "Test #key[basic] #test[p]asd";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_keywords = Vec::new();
-        while let Some(linked_note) = parser.next_keyword() {
-            all_keywords.push(linked_note);
-        }
-        assert_eq!(all_keywords, vec![10..15],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.keywords, vec![10..15]);
     }
 
     #[test]
     fn test_setting_with_cloze() {
         let input = "Test #se[basic] asd #cl[test] #se[key]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_settings = Vec::new();
-        while let Some(setting) = parser.next_setting() {
-            all_settings.push(setting);
-        }
-        assert_eq!(all_settings, vec![9..14, 34..37],);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.settings, vec![9..14, 34..37]);
     }
 
     #[test]
     fn test_basic_cloze() {
         let input = "Test #cl[basic] asd";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 5..9,
                 end_match: 14..15,
@@ -350,13 +428,9 @@ mod tests {
     #[test]
     fn test_empty_settings() {
         let input = "Test #cl[basic][] cloze";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 5..9,
                 end_match: 14..17,
@@ -368,25 +442,17 @@ mod tests {
     #[test]
     fn test_escaped_character() {
         let input = "Test \\#cl[basic] cloze";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         let expected: Vec<Vec<ClozeMatch>> = vec![];
-        assert_eq!(all_clozes, expected);
+        assert_eq!(parser.clozes, expected);
     }
 
     #[test]
     fn test_commented() {
         let input = "// Test #cl[basic] cloze\n #cl[b]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 26..30,
                 end_match: 31..32,
@@ -398,25 +464,17 @@ mod tests {
     #[test]
     fn test_unmatched_open() {
         let input = "Test #cl[ test";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         let expected: Vec<Vec<ClozeMatch>> = vec![];
-        assert_eq!(all_clozes, expected);
+        assert_eq!(parser.clozes, expected);
     }
 
     #[test]
     fn test_math_mode() {
         let input = "test #cl[$\n( b]\n\n$][g:1] test";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 5..9,
                 end_match: 18..24,
@@ -428,13 +486,9 @@ mod tests {
     #[test]
     fn test_code_mode() {
         let input = "test #cl[#(let a = 2)][g:1] test";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 5..9,
                 end_match: 21..27,
@@ -446,13 +500,9 @@ mod tests {
     #[test]
     fn test_cloze_in_math_1() {
         let input = "Test $ a &= b #[(bc of #cl[Rule A])] \\ b &=c #cl[a][g:1] $";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![
                 vec![ClozeMatch {
                     start_match: 23..27,
@@ -471,13 +521,9 @@ mod tests {
     #[test]
     fn test_cloze_in_math_2_with_settings() {
         let input = "Test $ a &= b #[(bc of #cl[Rule A][g:[1]])] \\ b &=c #cl[a][g:1] $";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![
                 vec![ClozeMatch {
                     start_match: 23..27,
@@ -496,69 +542,44 @@ mod tests {
     #[test]
     fn test_cloze_in_math_with_code() {
         let input = "#cl[ $ #table() $ ]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 0..4,
                 end_match: 18..19,
                 settings_match: Range::default(),
-            }],]
+            }]]
         );
     }
 
     #[test]
     fn test_cloze_in_math_with_code_2() {
         let input = "#cl[ $ #let a = b \\ $ ]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
-        assert_eq!(all_clozes.len(), 1);
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.clozes.len(), 1);
     }
 
     #[test]
     fn test_cloze_in_command() {
         let input = "#strong[bc of #cl[Rule A])]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 14..18,
                 end_match: 24..25,
                 settings_match: Range::default(),
-            }],]
+            }]]
         );
     }
 
     #[test]
     fn test_nested_cloze() {
         let input = "test #cl[#cl[b][g:1]#cl[$a s (d)$]][g:1] test";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
-        // for clozes_group in &all_clozes {
-        //     for cloze in clozes_group {
-        //         dbg!(&cloze);
-        //         dbg!(&input[cloze.start_match_range.clone()]);
-        //         dbg!(&input[cloze.end_match_range.clone()]);
-        //         dbg!(&input[cloze.settings_match_range.clone()]);
-        //         println!("---");
-        //     }
-        // }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![
                 ClozeMatch {
                     start_match: 5..9,
@@ -582,131 +603,56 @@ mod tests {
     #[test]
     fn test_empty_cloze() {
         let input = "Test #cl[] end";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 5..9,
                 end_match: 9..10,
                 settings_match: Range::default(),
-            },]]
+            }]]
         );
     }
 
     #[test]
     fn test_other_func_in_cloze_1() {
         let input = indoc! { r#"#cl[ - mnemonic: #strong[c]url = #strong[c]ross product ]"# };
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 0..4,
                 end_match: 56..57,
                 settings_match: Range::default(),
-            },]]
+            }]]
         );
     }
 
     #[test]
     fn test_other_func_in_cloze_2() {
         let input = indoc! { r#"#cl[ #lin[upper envelope] test ][o:1] "# };
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 0..4,
                 end_match: 31..37,
                 settings_match: 33..36,
-            },]]
+            }]]
         );
     }
 
     #[test]
     fn test_comment_in_code_mode_within_cloze() {
         let input = "#cl[test ```py\n m.sample() # equal probability\n  ```\n]";
-        let mut parser = TypstDataParser::new(input);
-        let mut all_clozes = Vec::new();
-        while let Some(cloze) = parser.next_cloze() {
-            all_clozes.push(cloze);
-        }
+        let parser = TypstDataParser::new(input);
         assert_eq!(
-            all_clozes,
+            parser.clozes,
             vec![vec![ClozeMatch {
                 start_match: 0..4,
                 end_match: 53..54,
                 settings_match: Range::default(),
-            },]]
+            }]]
         );
     }
-
-    // #[test]
-    // fn test_typst_as_library() {
-    //     // TODO: Look into: https://github.com/tfachmann/typst-as-library
-    //     use typst_syntax::ast::FuncCall;
-    //     use typst_syntax::{SyntaxKind, parse};
-    //     use typst_syntax::ast::{AstNode, Expr, Ident};
-    //     // use typst::syntax::ast::FuncCall;
-    //     // use typst::syntax::{SyntaxKind, parse};
-    //     // use typst::{
-    //     //     WorldExt,
-    //     //     syntax::{
-    //     //         Source,
-    //     //         ast::{AstNode, Expr},
-    //     //     },
-    //     // };
-    //     let input = "test #cl[#cl[b][g:1]#cl[$a s (d)$]][g:1] test";
-    //     let a = parse(input);
-    //     dbg!(&a);
-    //     // let source = Source::detached(input);
-    //     // dbg!(&source);
-    //     let b = &a
-    //         .children()
-    //         .filter(|x| matches!(x.kind(), SyntaxKind::FuncCall))
-    //         .map(|x| x.cast::<FuncCall>().unwrap())
-    //         .filter_map(|x| {
-    //             if let Expr::Ident(ident) = x.callee()
-    //                 && ident.as_str() == CLOZE_FUNC_NAME
-    //             {
-    //                 return Some(x);
-    //             }
-    //             None
-    //         })
-    //         .map(|y| {
-    //             let a = &y.args().items().map(|x| x).collect::<Vec<_>>();
-    //             dbg!(&a);
-    //             // dbg!(&x.span());
-    //             // dbg!(x.span().range());
-    //             // let res = x.span().into_raw();
-    //             // dbg!(&res);
-    //             // if let Expr::Ident(e) = x.callee() {
-    //             //     dbg!(&e);
-    //             //     if e.as_str() == "cl" {
-    //             //         let span = e.span().range();
-    //             //         dbg!(&span);
-    //             //     }
-    //             // }
-    //             // let c = x.args().items();
-    //             // dbg!(&c);
-    //         })
-    //         // .map(|x| x.clone().into_text())
-    //         // .map(|x|
-    //         //     dbg!(&x);
-    //         //     x.kind()
-    //         // })
-    //         .collect::<Vec<_>>();
-    //     dbg!(&b);
-    //     assert!(false);
-    // }
 }
