@@ -15,7 +15,7 @@ function complete_tags()
   -- local current_word_start, current_word_end = current_line:sub(1, cursor_col):find("%w+$")
   -- local current_word = current_word_start and current_line:sub(current_word_start, current_word_end) or ""
   local current_word = string.match(current_line:sub(1, cursor_col), "%w+$") or ""
-  local job = vim.fn.jobstart('spares_cli list tag', {
+  local job = vim.fn.jobstart('spares list tag', {
     stdout_buffered = true,
     on_stdout = function(_, data)
       if data then
@@ -36,11 +36,11 @@ function complete_tags()
     end,
     on_stderr = function(_, data)
       if data then
-        vim.notify("Error running spares_cli: " .. table.concat(data, "\n"), vim.log.levels.ERROR)
+        vim.notify("Error running spares: " .. table.concat(data, "\n"), vim.log.levels.ERROR)
       end
     end,
   })
   if job <= 0 then
-    vim.notify("Failed to start spares_cli job", vim.log.levels.ERROR)
+    vim.notify("Failed to start spares job", vim.log.levels.ERROR)
   end
 end

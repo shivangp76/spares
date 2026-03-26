@@ -3591,7 +3591,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "spares"
+name = "spares_cli"
+version = "0.0.1-alpha.1"
+dependencies = [
+ "chrono",
+ "clap",
+ "clap_complete_command",
+ "colored",
+ "copy_dir",
+ "env_logger",
+ "indexmap 2.13.0",
+ "indicatif",
+ "inquire",
+ "itertools",
+ "log",
+ "miette",
+ "open",
+ "petgraph",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha256",
+ "spares_core",
+ "sqlx",
+ "strum",
+ "strum_macros",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "spares_core"
 version = "0.0.1-alpha.1"
 dependencies = [
  "async-trait",
@@ -3631,37 +3662,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spares_cli"
-version = "0.0.1-alpha.1"
-dependencies = [
- "chrono",
- "clap",
- "clap_complete_command",
- "colored",
- "copy_dir",
- "env_logger",
- "indexmap 2.13.0",
- "indicatif",
- "inquire",
- "itertools",
- "log",
- "miette",
- "open",
- "petgraph",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "sha256",
- "spares",
- "sqlx",
- "strum",
- "strum_macros",
- "tokio",
- "walkdir",
-]
-
-[[package]]
 name = "spares_io"
 version = "0.0.1-alpha.1"
 
@@ -3675,7 +3675,7 @@ dependencies = [
  "env_logger",
  "log",
  "serde_json",
- "spares",
+ "spares_core",
  "sqlx",
  "tokio",
  "tower-http",

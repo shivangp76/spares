@@ -4,16 +4,16 @@ use clap::Args;
 use inquire::{MultiSelect, Select};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
-use spares::config::read_external_config;
-use spares::model::{NoteId, RatingId, TagId};
-use spares::parsers::{find_parser, get_all_parsers};
-use spares::schema::note::{NotesSelector, RenderNotesRequest};
-use spares::schema::review::{
+use spares_core::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
+use spares_core::config::read_external_config;
+use spares_core::model::{NoteId, RatingId, TagId};
+use spares_core::parsers::{find_parser, get_all_parsers};
+use spares_core::schema::note::{NotesSelector, RenderNotesRequest};
+use spares_core::schema::review::{
     CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
     RatingSubmission, StatisticsRequest, StatisticsResponse,
 };
-use spares::schema::tag::TagResponse;
+use spares_core::schema::tag::TagResponse;
 use std::path::PathBuf;
 use std::process::Child;
 use std::time::{Duration, Instant};
@@ -29,8 +29,8 @@ use utils::{
 mod utils;
 use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_prompt};
 use crate::utils::undo_event;
-use spares::schema::card::CardResponse;
-use spares::schema::undo::UndoEventRequest;
+use spares_core::schema::card::CardResponse;
+use spares_core::schema::undo::UndoEventRequest;
 pub(crate) use utils::forget_card;
 
 #[derive(Args, Debug)]
@@ -203,7 +203,7 @@ async fn get_review_card(
 }
 
 async fn get_review_card_by_id(
-    card_id: spares::model::CardId,
+    card_id: spares_core::model::CardId,
     base_url: &str,
     client: &Client,
 ) -> Result<Option<GetReviewCardResponse>, String> {

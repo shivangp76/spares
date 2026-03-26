@@ -200,7 +200,7 @@ pub trait SrsScheduler: Send + Sync {
 
 fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
     // NOTE: Add scheduler here
-    // Also run: `spares_cli add scheduler --name="NAME"`
+    // Also run: `spares add scheduler --name="NAME"`
     let all_schedulers: Vec<fn() -> Box<dyn SrsScheduler>> = vec![|| Box::<fsrs::FSRS>::default()];
     all_schedulers
 }

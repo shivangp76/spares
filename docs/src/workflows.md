@@ -8,13 +8,13 @@ Using snippets, such as through [LuaSnip](https://github.com/L3MON4D3/LuaSnip), 
 
 For example,
 ```sh
-spares_cli import --to-parser="markdown" 0001.tex 0002.tex
+spares import --to-parser="markdown" 0001.tex 0002.tex
 ```
 
 ## Unbury cards matching query
 
 ```sh
-spares_cli edit card -q 'QUERY and c.user_buried' --special-state none
+spares edit card -q 'QUERY and c.user_buried' --special-state none
 ```
 where QUERY is replaced with your query
 
@@ -24,8 +24,8 @@ spares ships with fzf support which can be used to perform bulk note actions, su
 
 Examples:
 ```sh
-spares_cli edit note --tags-to-add tag1 tag2 --files 0001.tex 0002.tex
-spares_cli edit note --tags-to-remove tag1 tag2 --files 0001.tex 0002.tex
+spares edit note --tags-to-add tag1 tag2 --files 0001.tex 0002.tex
+spares edit note --tags-to-remove tag1 tag2 --files 0001.tex 0002.tex
 ```
 
 ## Getting notes created `n` days before a note
@@ -39,7 +39,7 @@ get_notes_before() {
   local days_before=${2:-5}
 
   # Get the creation date of the input note
-  local note_date=$(spares_cli get note "$note_id" | jq -r '.created_at')
+  local note_date=$(spares get note "$note_id" | jq -r '.created_at')
 
   # Check if we successfully got a date
   if [[ -z "$note_date" || "$note_date" == "null" ]]; then
@@ -51,7 +51,7 @@ get_notes_before() {
   local start_date=$(date -j -v-${days_before}d -f "%Y-%m-%dT%H:%M:%SZ" "$note_date" "+%Y-%m-%dT%H:%M:%SZ")
 
   # Search for notes in the date range
-  spares_cli search "created_at<=$note_date and created_at>=$start_date"
+  spares search "created_at<=$note_date and created_at>=$start_date"
 }
 ```
 
@@ -59,12 +59,12 @@ get_notes_before() {
 
 Print tags as a tree:
 ```sh
-spares_cli list tag --limit=9999 --tree
+spares list tag --limit=9999 --tree
 ```
 
 Print notes as graph:
 ```sh
-spares_cli list note --limit=9999 --graph
+spares list note --limit=9999 --graph
 ```
 
 ## Syncing notes between sources
@@ -76,7 +76,7 @@ Available sources:
 
 ### Option 1: Interactive Mode
 ```sh
-spares_cli sync interactive --from {source1} --to {source2} --dry-run
+spares sync interactive --from {source1} --to {source2} --dry-run
 ```
 where `{source1}` and `{source2}` are from the list above.
 
@@ -84,13 +84,13 @@ This will walk you through syncing notes between these sources
 
 ### Option 2: Render Diffs
 ```sh
-spares_cli sync render-diffs --from {source1} --to {source2}
+spares sync render-diffs --from {source1} --to {source2}
 ```
 where `{source1}` and `{source2}` are from the list above.
 
 This will:
-- Render notes in `/tmp/spares_cli/{from_source}/notes/{parser_name}/` and `/tmp/spares_cli/{to_source}/notes/{parser_name}/`.
-- Render diffs in `/tmp/spares_cli/{from_source}/diffs/{parser_name}/`.
+- Render notes in `/tmp/spares/{from_source}/notes/{parser_name}/` and `/tmp/spares/{to_source}/notes/{parser_name}/`.
+- Render diffs in `/tmp/spares/{from_source}/diffs/{parser_name}/`.
 - Output the path to the directory containing the diffs.
 
 A suggested workflow is to use `fzf` to select diffs from the outputted path and use `sed` to transform them into the corresponding note path. For example:
@@ -110,10 +110,10 @@ zle -N diff-selector-widget
 bindkey -M viins '^d' diff-selector-widget
 ```
 Thus, the final workflow to sync from spares-local-files to spares looks like:
-1. Run `cd $(spares_cli sync render-diffs --from spares --to spares-local-files) | diff-selector-widget`
+1. Run `cd $(spares sync render-diffs --from spares --to spares-local-files) | diff-selector-widget`
 1. Press `Ctrl+D`
 1. Select the notes you would like to sync
-1. Run `spares_cli import --adapter spares-local-files --dry-run {FILES}` where `{FILES}` is the selected notes
+1. Run `spares import --adapter spares-local-files --dry-run {FILES}` where `{FILES}` is the selected notes
 
 ## Latex
 

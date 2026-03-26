@@ -1,7 +1,7 @@
 use clap::Args;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::{
+use spares_core::{
     adapters::{SrsAdapter, impls::anki::AnkiAdapter, migration::MigrationData},
     parsers::{NotePart, find_parser, get_all_parsers, get_cards},
     schema::note::{NotesSelector, RenderNotesRequest},

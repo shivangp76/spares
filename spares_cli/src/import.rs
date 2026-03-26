@@ -2,17 +2,17 @@ use chrono::Utc;
 use clap::Args;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressIterator};
-use spares::adapters::SrsAdapter;
-use spares::config::read_external_config;
-use spares::parsers::{NoteSettings, Parseable, get_all_parsers, get_notes};
-use spares::{Error, LibraryError, ParserErrorKind};
+use spares_core::adapters::SrsAdapter;
+use spares_core::config::read_external_config;
+use spares_core::parsers::{NoteSettings, Parseable, get_all_parsers, get_notes};
+use spares_core::{Error, LibraryError, ParserErrorKind};
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
-    // NOTE: To import to spares-local-files, refer to `spares_cli generate`
+    // NOTE: To import to spares-local-files, refer to `spares generate`
     #[arg(short, long, default_value = "spares")]
     pub(crate) adapter: String,
 

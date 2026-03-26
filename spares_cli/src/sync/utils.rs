@@ -2,7 +2,7 @@ use super::SyncSource;
 use crate::sync::SyncImportAction;
 use indexmap::IndexMap;
 use inquire::Select;
-use spares::{
+use spares_core::{
     config::get_cache_dir,
     model::NoteId,
     parsers::{NoteSettingsKeys, Parseable},

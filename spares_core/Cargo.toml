@@ -1,5 +1,5 @@
 [package]
-name = "spares"
+name = "spares_core"
 description = "A spaced repetition system written in Rust"
 version = "0.0.1-alpha.1"
 authors.workspace = true

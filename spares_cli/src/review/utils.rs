@@ -3,12 +3,12 @@ use chrono::{DateTime, Utc};
 use inquire::DateSelect;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use spares::model::{CardId, NoteId};
-use spares::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest};
-use spares::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
-use spares::schema::card::{ForgetCardResponse, UpdateCardsResponse};
-use spares::schema::note::UpdateNotesResponse;
-use spares::schema::review::{
+use spares_core::model::{CardId, NoteId};
+use spares_core::schema::card::{CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest};
+use spares_core::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
+use spares_core::schema::card::{ForgetCardResponse, UpdateCardsResponse};
+use spares_core::schema::note::UpdateNotesResponse;
+use spares_core::schema::review::{
     Rating, RatingSubmission, StatisticsResponse, StudyAction, SubmitStudyActionRequest,
     SubmitStudyActionResponse,
 };

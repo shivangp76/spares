@@ -6,13 +6,13 @@ use crate::{
 };
 use chrono::{DateTime, Local, Utc};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
-use spares::{
+use spares_core::{
     api::tag::DEFAULT_TAG_AUTO_DELETE,
     config::Environment,
     model::{CardId, NoteId, Score},
 };
-use spares::parsers::get_note_info_from_filepath;
-use spares::schema::note::NotesSelector;
+use spares_core::parsers::get_note_info_from_filepath;
+use spares_core::schema::note::NotesSelector;
 use std::path::PathBuf;
 
 pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
@@ -61,7 +61,7 @@ pub(crate) enum Commands {
     ///
     /// The `render-diffs` subcommand is non-interactive: it writes diffs to a directory so you
     /// can use a tool like `fzf` to select which diffs to apply, then import them with
-    /// `spares_cli import`. See the workflows documentation for a more detailed example.
+    /// `spares import`. See the workflows documentation for a more detailed example.
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),

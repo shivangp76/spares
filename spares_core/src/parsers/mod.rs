@@ -307,7 +307,7 @@ pub fn validate_parser(parser: &dyn Parseable) -> Option<String> {
 
 pub fn get_all_parsers() -> Vec<fn() -> Box<dyn Parseable>> {
     // NOTE: Add parser here
-    // Also run: `spares_cli add parser --name="NAME"`
+    // Also run: `spares add parser --name="NAME"`
     let all_parsers: Vec<fn() -> Box<dyn Parseable>> = vec![
         || Box::new(impls::latex::LatexParserExerciseSolution::new()),
         || Box::new(impls::latex::LatexParserNote::new()),

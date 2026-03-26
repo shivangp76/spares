@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use spares::{
+use spares_core::{
     api::tag::{
         create_tag, delete_tag, get_tag, get_tag_by_name, list_tags, rebuild_tag, update_tag,
     },

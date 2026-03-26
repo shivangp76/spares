@@ -5,7 +5,7 @@ use crate::route::create_router;
 use axum::http::{Method, header::CONTENT_TYPE};
 use clap::Parser;
 use log::{info, warn};
-use spares::config::{Environment, get_data_dir, get_env_config};
+use spares_core::config::{Environment, get_data_dir, get_env_config};
 use sqlx::{
     Sqlite,
     migrate::{MigrateDatabase, Migrator},

@@ -1,6 +1,6 @@
 use crate::{AppState, handlers::error_to_response};
 use axum::{Json, extract::Path, http::StatusCode, response::IntoResponse};
-use spares::api::scheduler::get_scheduler_ratings;
+use spares_core::api::scheduler::get_scheduler_ratings;
 use std::sync::Arc;
 
 pub(crate) async fn get_scheduler_ratings_handler(

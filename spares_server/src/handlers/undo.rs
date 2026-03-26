@@ -1,6 +1,6 @@
 use crate::{AppState, handlers::error_to_response};
 use axum::{Json, http::StatusCode, response::IntoResponse};
-use spares::{
+use spares_core::{
     api::undo::undo_event,
     schema::undo::{UndoEventRequest, UndoEventResponse},
 };
