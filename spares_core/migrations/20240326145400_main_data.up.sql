@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS event (
     payload TEXT NOT NULL -- JSON string <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html#json>
 );
 
+-- Stores internal runtime state
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+);
+
 -- Add indexes to optimize JOIN operations in note rendering queries
 
 -- Index on note.parser_id for faster parser joins
