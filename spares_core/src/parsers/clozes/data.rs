@@ -8,6 +8,15 @@ use std::ops::Range;
 pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ClozeMatch {
+    // Both `start_match_range` and `end_match_range` are needed. We can't do just `range: (start_match_range.start..end_match_range.end)`. This is because when parsing cards, we create `NotePart::ClozeStart` and `NotePart::ClozeEnd`.
+    pub start_match: Range<usize>,
+    pub end_match: Range<usize>,
+    /// This must be contained within either `start_match` or `end_match`.
+    pub settings_match: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClozeData {
     /// Original order the cloze appeared in the note.
     pub index: usize,

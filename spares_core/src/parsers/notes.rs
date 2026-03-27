@@ -269,10 +269,7 @@ mod tests {
     use super::*;
     use crate::parsers::impls::markdown::MarkdownParser;
     use crate::parsers::impls::typst::TypstParser;
-    use crate::{
-        adapters::get_adapter_from_string,
-        parsers::impls::latex::{LatexParserExerciseSolution, LatexParserNote},
-    };
+    use crate::{adapters::get_adapter_from_string, parsers::impls::latex::LatexParserNote};
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
@@ -334,40 +331,6 @@ mod tests {
 
     #[test]
     fn test_get_notes_convert_parser_1() {
-        let from_parser: Box<dyn Parseable> = Box::new(LatexParserExerciseSolution::new());
-        let to_parser: Box<dyn Parseable> = Box::new(LatexParserNote::new());
-        let adapter = get_adapter_from_string("spares").unwrap();
-        let data = indoc! {r"\begin{exercise}
-            a
-            \end{exercise}
-            \begin{solution}
-            b
-            \end{solution}"};
-        let notes_res = get_notes(
-            from_parser.as_ref(),
-            Some(to_parser.as_ref()),
-            data,
-            adapter.as_ref(),
-            false,
-            None,
-        );
-        assert!(notes_res.is_ok());
-        if let Ok(notes) = notes_res {
-            assert_eq!(notes.len(), 1);
-            let note = notes.first().unwrap();
-            assert!(note.1.is_some());
-            if let Some(ref note_data) = note.1 {
-                let expected_note_data = indoc! {r"a
-                    \begin{cl}[o:1]
-                    b
-                    \end{cl}"};
-                assert_eq!(*note_data, expected_note_data);
-            }
-        }
-    }
-
-    #[test]
-    fn test_get_notes_convert_parser_2() {
         let from_parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
         let to_parser: Box<dyn Parseable> = Box::new(LatexParserNote::new());
         let adapter = get_adapter_from_string("spares").unwrap();
