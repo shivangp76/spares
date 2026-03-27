@@ -22,6 +22,11 @@ pub fn get_config_dir() -> PathBuf {
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
     }
+    if let Ok(p) = std::env::var("SPARES_CONFIG_DIR") {
+        let path = PathBuf::from(p);
+        create_dir_all(&path).unwrap();
+        return path;
+    }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
         author: SPARES.to_string(),
@@ -42,6 +47,11 @@ pub fn get_cache_dir() -> PathBuf {
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
     }
+    if let Ok(p) = std::env::var("SPARES_CACHE_DIR") {
+        let path = PathBuf::from(p);
+        create_dir_all(&path).unwrap();
+        return path;
+    }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
         author: SPARES.to_string(),
@@ -61,6 +71,11 @@ pub fn get_data_dir() -> PathBuf {
         tmp_dir.push("data");
         create_dir_all(&tmp_dir).unwrap();
         return tmp_dir;
+    }
+    if let Ok(p) = std::env::var("SPARES_DATA_DIR") {
+        let path = PathBuf::from(p);
+        create_dir_all(&path).unwrap();
+        return path;
     }
     let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
         top_level_domain: "org".to_string(),
