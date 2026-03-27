@@ -168,14 +168,8 @@ fn complete_note(
         ),
         overlapper,
     )?;
-    // dbg!(&cards);
     validate_cards(&cards)?;
     local_settings.cards_count = Some(cards.len());
-    // let card = cards
-    //     .first()
-    //     .ok_or(LibraryError::Card(CardErrorKind::NotFound {
-    //         src: note_data,
-    //     }))?;
     let output_parser = to_parser_opt.unwrap_or(parser);
     let new_data = if let Some(first_card) = cards.first() {
         first_card

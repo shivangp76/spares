@@ -195,15 +195,6 @@ mod tests {
         while let Some(cloze) = parser.next_cloze() {
             all_clozes.push(cloze);
         }
-        // for clozes_group in &all_clozes {
-        //     for cloze in clozes_group {
-        //         dbg!(&cloze);
-        //         dbg!(&input[cloze.start_match_range.clone()]);
-        //         dbg!(&input[cloze.end_match_range.clone()]);
-        //         dbg!(&input[cloze.settings_match_range.clone()]);
-        //         println!("---");
-        //     }
-        // }
         assert_eq!(
             all_clozes,
             vec![vec![

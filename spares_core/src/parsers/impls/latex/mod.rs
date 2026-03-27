@@ -102,10 +102,6 @@ impl Parseable for LatexParserExerciseSolution {
         (cloze_start, cloze_end)
     }
 
-    // fn cloze_settings_side(&self) -> ClozeSettingsSide {
-    //     ClozeSettingsSide::Start
-    // }
-
     fn construct_setting(&self, data: &str) -> String {
         construct_setting(data)
     }
@@ -242,10 +238,6 @@ impl Parseable for LatexParserNote {
         let cloze_end = r"\end{cl}".to_string();
         (cloze_start, cloze_end)
     }
-
-    // fn cloze_settings_side(&self) -> ClozeSettingsSide {
-    //     ClozeSettingsSide::Start
-    // }
 
     fn construct_setting(&self, data: &str) -> String {
         construct_setting(data)
@@ -411,13 +403,6 @@ fn construct_comment(data: &str) -> String {
 fn extract_comment(data: &str) -> &str {
     data.strip_prefix("%").map_or(data, |x| x.trim())
 }
-
-// #[allow(clippy::unnecessary_wraps, reason = "Match trait function signature")]
-// fn comment_regex() -> Option<Regex> {
-//     // Keep comments
-//     None
-//     // Some(Regex::new(r"(?m)(?<!\\)%.*$").unwrap())
-// }
 
 #[allow(clippy::let_and_return, reason = "Make note vs card data explicit")]
 #[allow(clippy::too_many_lines, reason = "File data is long")]

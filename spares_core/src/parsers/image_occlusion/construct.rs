@@ -47,12 +47,6 @@ pub fn construct_image_occlusion_from_image(
 
             let image_occlusion_data_toml = toml_edit::ser::to_string_pretty(&image_occlusion_data)
                 .expect("SAFETY: The underlying struct is validated to be serializable.");
-            // .map_err(|e| {
-            //     LibraryError::InvalidConfig(format!(
-            //         "Failed to serialize image occlusion data: {}",
-            //         e
-            //     ))
-            // })?;
             let image_occlusion_settings_str = image_occlusion_data_toml
                 .split('\n')
                 .filter(|x| !x.is_empty())
@@ -74,7 +68,6 @@ pub fn construct_image_occlusion_from_image(
             image_occlusion_order,
         } => {
             let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
-            // parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
             output_rendered_filepath.push(
                 parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
             );

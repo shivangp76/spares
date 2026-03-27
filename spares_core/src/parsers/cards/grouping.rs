@@ -13,7 +13,6 @@ use std::ops::Range;
 
 #[allow(clippy::type_complexity, reason = "avoid creating extra struct")]
 #[allow(clippy::ptr_arg)]
-#[expect(clippy::too_many_lines, reason = "off by 1")]
 pub(super) fn group_clozes(
     all_clozes: &mut Vec<(ClozeData, Vec<ClozeGroupingSettings>)>,
     data: &str,
@@ -95,7 +94,6 @@ pub(super) fn group_clozes(
             .tuple_windows()
             .find(|(cur, next)| cur > next);
         if let Some((cur, next)) = not_increasing {
-            dbg!(&flattened_matches);
             debug_assert!(!(*cur < 3 || *next + 3 >= data.len()));
             return Err(LibraryError::Card(
                 CardErrorKind::SameGroupingNestedClozes {

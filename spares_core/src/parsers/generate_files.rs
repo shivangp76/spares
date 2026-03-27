@@ -391,12 +391,12 @@ fn create_raw_and_rendered_file(
         )?;
 
         if !output_rendered_filepath.exists() {
-            dbg!(&output);
             return Err(Error::Io {
                 description: format!(
-                    "[Note Id: {}] Failed to read {}",
+                    "[Note Id: {}] Failed to read {}: {:?}",
                     note_id,
-                    output_rendered_filepath.display()
+                    output_rendered_filepath.display(),
+                    output
                 ),
                 source: std::io::Error::new(
                     std::io::ErrorKind::NotFound,

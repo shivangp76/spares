@@ -77,16 +77,6 @@ impl Parseable for MarkdownParser {
             all_clozes.push(cloze.clone());
         }
         Ok(all_clozes.into_iter().flatten().collect::<Vec<_>>())
-        // let (cloze_start_regex, settings_capture_group_index) =
-        //     (Regex::new(r"(?s)(\{\{)(?:(\[)([^\n\]]*)(\]))?").unwrap(), 3);
-        // let cloze_end_regex = Regex::new(r"(?s)\}\}").unwrap();
-        // get_matched_clozes(
-        //     data,
-        //     &cloze_start_regex,
-        //     settings_capture_group_index,
-        //     &cloze_end_regex,
-        //     &ClozeSettingsSide::Start,
-        // )
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
@@ -99,10 +89,6 @@ impl Parseable for MarkdownParser {
         let cloze_end = "}}".to_string();
         (cloze_start, cloze_end)
     }
-
-    // fn cloze_settings_side(&self) -> ClozeSettingsSide {
-    //     ClozeSettingsSide::Start
-    // }
 
     fn construct_setting(&self, data: &str) -> String {
         format!("<!--- # {data} --->\n")
@@ -428,7 +414,6 @@ pub mod tests {
         let note_data = "Third {{[o:1] Cloze here, linking to [keyword 1][li], [keyword 1.5][li], and [keyword 2][li] }}";
         let linked_notes_res = parser.get_linked_notes(note_data);
         assert!(linked_notes_res.is_ok());
-        dbg!(&linked_notes_res);
         assert_eq!(linked_notes_res.unwrap().len(), 3);
     }
 
