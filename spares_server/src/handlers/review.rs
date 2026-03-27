@@ -5,7 +5,9 @@ use spares_core::api::review::{get_review_card, get_review_card_by_id, submit_st
 use spares_core::api::statistics::get_statistics;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
-use spares_core::schema::review::{GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest};
+use spares_core::schema::review::{
+    GetReviewCardRequest, StatisticsRequest, SubmitStudyActionRequest,
+};
 use std::sync::Arc;
 
 pub(crate) async fn get_review_card_handler(

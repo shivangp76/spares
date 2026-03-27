@@ -58,7 +58,9 @@ pub(crate) async fn delete_tag_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_tag(&data.db, id, true).await.map_err(error_to_response)?;
+    delete_tag(&data.db, id, true)
+        .await
+        .map_err(error_to_response)?;
     Ok(StatusCode::OK)
 }
 

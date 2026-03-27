@@ -33,10 +33,7 @@ use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
-use std::{
-    collections::HashSet,
-    path::Path,
-};
+use std::{collections::HashSet, path::Path};
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
     if cfg!(test) {
@@ -202,9 +199,15 @@ pub async fn delete_notes(
         let mut snapshots = Vec::with_capacity(rows.len());
         for row in &rows {
             let created_at = DateTime::from_timestamp(row.created_at, 0).unwrap_or_default();
-            let snapshot =
-                fetch_note_snapshot(db, row.id, &row.data, created_at, row.parser_id, &row.custom_data)
-                    .await?;
+            let snapshot = fetch_note_snapshot(
+                db,
+                row.id,
+                &row.data,
+                created_at,
+                row.parser_id,
+                &row.custom_data,
+            )
+            .await?;
             snapshots.push(snapshot);
         }
         snapshots
@@ -226,8 +229,7 @@ pub async fn delete_notes(
         let parser_response = get_parser(db, parser_id).await?;
         let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
         for (note_id, note_data, card_snapshots) in notes {
-            let card_orders: Vec<usize> =
-                card_snapshots.iter().map(|c| c.order as usize).collect();
+            let card_orders: Vec<usize> = card_snapshots.iter().map(|c| c.order as usize).collect();
             delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
         }
     }

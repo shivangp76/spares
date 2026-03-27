@@ -22,13 +22,11 @@ impl<'a> LatexDataParser<'a> {
     }
 
     pub fn next_setting(&mut self) -> Option<Range<usize>> {
-        self.find_command(SETTINGS_CMD)
-            .map(|(_, capture)| capture)
+        self.find_command(SETTINGS_CMD).map(|(_, capture)| capture)
     }
 
     pub fn next_keyword(&mut self) -> Option<Range<usize>> {
-        self.find_command(KEYWORD_CMD)
-            .map(|(_, capture)| capture)
+        self.find_command(KEYWORD_CMD).map(|(_, capture)| capture)
     }
 
     /// Consume a `{...}` block (with nested brace tracking), starting after the opening `{` has

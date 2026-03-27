@@ -1,18 +1,13 @@
-use crate::{
-    import::ImportArgs,
-    migrate::MigrateArgs,
-    review::ReviewArgs,
-    sync::SyncArgs,
-};
+use crate::{import::ImportArgs, migrate::MigrateArgs, review::ReviewArgs, sync::SyncArgs};
 use chrono::{DateTime, Local, Utc};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
+use spares_core::parsers::get_note_info_from_filepath;
+use spares_core::schema::note::NotesSelector;
 use spares_core::{
     api::tag::DEFAULT_TAG_AUTO_DELETE,
     config::Environment,
     model::{CardId, NoteId, Score},
 };
-use spares_core::parsers::get_note_info_from_filepath;
-use spares_core::schema::note::NotesSelector;
 use std::path::PathBuf;
 
 pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {

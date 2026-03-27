@@ -6,17 +6,23 @@ use crate::{
         parser::get_parser_name,
         undo::{
             create_event_group, insert_events,
-            payloads::{CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload},
+            payloads::{
+                CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload,
+            },
         },
     },
     config::{read_external_config, read_internal_config, write_internal_config},
     model::{EventType, Note, NoteId},
     parsers::{
         CardData, Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
-        generate_files::{GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk},
+        generate_files::{
+            GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
+        },
         get_cards,
     },
-    schema::note::{NoteResponse, NotesSelector, UpdateNotesRequest, UpdateNotesResponse, UpdateTags},
+    schema::note::{
+        NoteResponse, NotesSelector, UpdateNotesRequest, UpdateNotesResponse, UpdateTags,
+    },
 };
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
@@ -286,7 +292,11 @@ pub async fn update_notes(
                 &updated_note.custom_data,
             )
             .await?;
-            update_note_payloads.push(build_update_note_payload(*note_id, &before, &after_snapshot));
+            update_note_payloads.push(build_update_note_payload(
+                *note_id,
+                &before,
+                &after_snapshot,
+            ));
         }
     }
 

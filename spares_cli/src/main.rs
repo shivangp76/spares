@@ -7,9 +7,14 @@ mod sync;
 mod tree;
 mod utils;
 
-use args::{Cli, Commands, AddCommands, EditCommands, SpecialStateLocal, DeleteCommands, GetCommands, ListCommands, GenerateArgs, StatisticsArgs, KeywordArgs, KeywordCommands, SearchArgs, OutputItemType, OutputFormat, ScheduleArgs, ScheduleCommands, ForgetCardArgs, AdvanceArgs, PostponeArgs, UndoArgs};
-use clap::{CommandFactory, Parser};
 use crate::tree::{build_tree, tree_to_string};
+use args::{
+    AddCommands, AdvanceArgs, Cli, Commands, DeleteCommands, EditCommands, ForgetCardArgs,
+    GenerateArgs, GetCommands, KeywordArgs, KeywordCommands, ListCommands, OutputFormat,
+    OutputItemType, PostponeArgs, ScheduleArgs, ScheduleCommands, SearchArgs, SpecialStateLocal,
+    StatisticsArgs, UndoArgs,
+};
+use clap::{CommandFactory, Parser};
 use graph::chart;
 use import::import_from_files;
 use inquire::Confirm;
@@ -22,15 +27,11 @@ use spares_core::{
     adapters::get_adapter_from_string,
     config::get_env_config,
     model::NoteLink,
-    parsers::{
-        find_parser,
-        generate_files::CardSide,
-        get_all_parsers, get_output_raw_dir,
-    },
+    parsers::{find_parser, generate_files::CardSide, get_all_parsers, get_output_raw_dir},
     schema::{
         card::{
-            CardResponse, CardsSelector, GetLeechesRequest, UnburyRequest,
-            UpdateCardsRequest, UpdateCardsResponse,
+            CardResponse, CardsSelector, GetLeechesRequest, UnburyRequest, UpdateCardsRequest,
+            UpdateCardsResponse,
         },
         note::{
             CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest,
@@ -293,8 +294,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     unreachable!("by clap conflicts_with")
                 };
                 let special_state = special_state_local.map(|x| match x {
-                    SpecialStateLocal::Suspended => Some(spares_core::schema::card::SpecialStateUpdate::Suspended),
-                    SpecialStateLocal::Buried => Some(spares_core::schema::card::SpecialStateUpdate::Buried),
+                    SpecialStateLocal::Suspended => {
+                        Some(spares_core::schema::card::SpecialStateUpdate::Suspended)
+                    }
+                    SpecialStateLocal::Buried => {
+                        Some(spares_core::schema::card::SpecialStateUpdate::Buried)
+                    }
                     SpecialStateLocal::None => None,
                 });
                 let request = UpdateCardsRequest {
@@ -646,7 +651,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let response = ensure_ok(response).await?;
                 let response: Vec<MatchedKeywordResponse> =
                     response.json().await.map_err(|e| miette!("{}", e))?;
-                println!("{}", serde_json::to_string_pretty(&response.first()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&response.first()).unwrap()
+                );
             }
             KeywordCommands::Ranking { keyword } => {
                 let request = SearchKeywordRequest { keyword };
@@ -705,8 +713,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                                 println!("{}", note_raw_path.display());
                             }
                             OutputFormat::RenderedFilepath => {
-                                let mut note_rendered_path = parser
-                                    .get_output_rendered_dir(spares_core::parsers::RenderOutputDirectoryType::Note);
+                                let mut note_rendered_path = parser.get_output_rendered_dir(
+                                    spares_core::parsers::RenderOutputDirectoryType::Note,
+                                );
                                 note_rendered_path.push(parser.get_output_filename(
                                     spares_core::parsers::generate_files::RenderOutputType::Note,
                                     note_response.id,
@@ -740,8 +749,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                                 println!("{}", card_raw_path.display());
                             }
                             OutputFormat::RenderedFilepath => {
-                                let mut card_rendered_path = parser
-                                    .get_output_rendered_dir(spares_core::parsers::RenderOutputDirectoryType::Card);
+                                let mut card_rendered_path = parser.get_output_rendered_dir(
+                                    spares_core::parsers::RenderOutputDirectoryType::Card,
+                                );
                                 card_rendered_path.push(parser.get_output_filename(
                                     spares_core::parsers::generate_files::RenderOutputType::Card(
                                         card_response.order as usize,
@@ -921,7 +931,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 let _ = ensure_ok(response).await?;
                 println!("Postponed {} cards.", count);
             }
-        }
+        },
         Commands::Undo(UndoArgs {
             event_id,
             undo_group,

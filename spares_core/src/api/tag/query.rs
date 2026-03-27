@@ -121,7 +121,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone(), create_note_request_2.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
 
         // Create a filtered tag
@@ -207,7 +208,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone(), create_note_request_2.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes = create_notes_res.unwrap();
 
@@ -290,7 +292,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_1.clone(), create_note_request_2.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response = create_notes_res.unwrap();
 
@@ -332,7 +335,8 @@ mod tests {
             parser_id: parser.id,
             requests: vec![create_note_request_3.clone()],
         };
-        let create_notes_res = create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let create_notes_res =
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let create_notes_response_2 = create_notes_res.unwrap();
         let cards_2: Vec<Card> = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ?")

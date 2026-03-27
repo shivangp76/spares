@@ -144,10 +144,9 @@ pub fn get_center_of_shape(shape_type: SvgClozeType, element: &Element) -> (f64,
         }
         SvgClozeType::Group => {
             // Find the center of the bounding box that encloses all child shapes.
-            get_bounding_box_of_group(element)
-                .map_or((0.0, 0.0), |(min_x, min_y, max_x, max_y)| {
-                    (f64::midpoint(min_x, max_x), f64::midpoint(min_y, max_y))
-                })
+            get_bounding_box_of_group(element).map_or((0.0, 0.0), |(min_x, min_y, max_x, max_y)| {
+                (f64::midpoint(min_x, max_x), f64::midpoint(min_y, max_y))
+            })
         }
     }
 }
@@ -172,7 +171,10 @@ fn get_bounding_box_of_group(group: &Element) -> Option<(f64, f64, f64, f64)> {
 /// Returns `(min_x, min_y, max_x, max_y)` for a single primitive shape.
 /// Returns `None` for shapes whose bounds cannot be determined analytically
 /// (currently `Path`).
-fn get_bounding_box_of_shape(shape_type: SvgClozeType, element: &Element) -> Option<(f64, f64, f64, f64)> {
+fn get_bounding_box_of_shape(
+    shape_type: SvgClozeType,
+    element: &Element,
+) -> Option<(f64, f64, f64, f64)> {
     let attr = |key: &str| -> f64 {
         element
             .attributes
@@ -207,14 +209,24 @@ fn get_bounding_box_of_shape(shape_type: SvgClozeType, element: &Element) -> Opt
             let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
             for point in points_str.split(' ') {
                 let mut parts = point.split(',');
-                let x: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or_default();
-                let y: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or_default();
+                let x: f64 = parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_default();
+                let y: f64 = parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_default();
                 min_x = min_x.min(x);
                 min_y = min_y.min(y);
                 max_x = max_x.max(x);
                 max_y = max_y.max(y);
             }
-            if min_x.is_finite() { Some((min_x, min_y, max_x, max_y)) } else { None }
+            if min_x.is_finite() {
+                Some((min_x, min_y, max_x, max_y))
+            } else {
+                None
+            }
         }
         // Path bounds require parsing path data — not attempted here.
         SvgClozeType::Path | SvgClozeType::Group => None,

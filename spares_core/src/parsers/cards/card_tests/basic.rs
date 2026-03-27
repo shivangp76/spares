@@ -1,7 +1,6 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards,
-    impls::markdown::MarkdownParser,
+    Parseable, get_cards, impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 

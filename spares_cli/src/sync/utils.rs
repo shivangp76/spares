@@ -149,4 +149,3 @@ pub(super) fn save_hash_index(index: &HashIndex) {
         let _ = fs::write(&path, json);
     }
 }
-

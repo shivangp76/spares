@@ -138,8 +138,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
         EventType::CreateTag => {
             // Undoing CreateTag will delete the tag (cascade-deleting note/card associations).
             // Block if any associations exist to prevent silent data loss.
-            let payload: CreateTagPayload =
-                serde_json::from_value(event.payload.clone()).unwrap();
+            let payload: CreateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
             if let Some(id) = payload.id {
                 let note_tag_count: i64 =
                     sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE tag_id = ?")

@@ -153,7 +153,14 @@ where
                 .map(|c| c.unwrap().get(1).unwrap().as_str())
                 .collect::<Vec<_>>();
             for block in blocks {
-                let notes = get_notes(*parser, to_parser_opt, block, adapter, !dry_run, external_config.as_ref().map(|c| &c.overlapper))?;
+                let notes = get_notes(
+                    *parser,
+                    to_parser_opt,
+                    block,
+                    adapter,
+                    !dry_run,
+                    external_config.as_ref().map(|c| &c.overlapper),
+                )?;
                 all_notes.extend(notes);
             }
             if !all_notes.is_empty() {
