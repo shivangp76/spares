@@ -66,6 +66,12 @@ impl Default for ImageOcclusionConfig {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ImageOcclusionMatch {
+    pub range: Range<usize>,
+    pub settings_range: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ImageOcclusionCloze {
     pub index: ImageOcclusionClozeIndex,
     pub data: Arc<ImageOcclusionData>,
@@ -209,9 +215,11 @@ pub fn parse_image_occlusion_data(
         .into_iter()
         .map(|range| {
             let settings = image_occlusion_settings_regex
-                .captures_iter(&data[range.capture_range.start..range.capture_range.end])
+                .captures_iter(&data[range.settings_range.start..range.settings_range.end])
                 .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap())
-                .map(|r| (r.start + range.capture_range.start)..(r.end + range.capture_range.start))
+                .map(|r| {
+                    (r.start + range.settings_range.start)..(r.end + range.settings_range.start)
+                })
                 .collect::<Vec<_>>();
             (range, settings)
         })
@@ -221,7 +229,7 @@ pub fn parse_image_occlusion_data(
         let image_occlusion_data = read_image_occlusion_data(
             data,
             &setting_ranges,
-            image_occlusion_range.capture_range,
+            image_occlusion_range.settings_range,
             move_files,
         )?;
         let clozes_file_contents =
@@ -233,7 +241,7 @@ pub fn parse_image_occlusion_data(
                     ),
                     advice: None,
                     src: data.to_string(),
-                    at: image_occlusion_range.match_range.clone().into(),
+                    at: image_occlusion_range.range.clone().into(),
                 })
             })?;
         let parsed_clozes = get_clozes_from_svg_str(
@@ -245,10 +253,8 @@ pub fn parse_image_occlusion_data(
         )?;
         clozes.push(ParsedImageOcclusionData {
             image_occlusion: image_occlusion_data,
-            start_delim: (image_occlusion_range.match_range.start
-                ..image_occlusion_range.match_range.start + 1),
-            end_delim: (image_occlusion_range.match_range.end - 1
-                ..image_occlusion_range.match_range.end),
+            start_delim: (image_occlusion_range.range.start..image_occlusion_range.range.start + 1),
+            end_delim: (image_occlusion_range.range.end - 1..image_occlusion_range.range.end),
             clozes: parsed_clozes,
         });
     }

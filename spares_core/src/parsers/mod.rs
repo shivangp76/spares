@@ -4,7 +4,7 @@ use crate::model::{CustomData, NoteId};
 use crate::{Error, LibraryError, ParserErrorKind};
 use fancy_regex::Regex;
 use generate_files::{CardSide, GenerateNoteFilesRequest, RenderOutputType};
-use image_occlusion::{ConstructImageOcclusionType, ImageOcclusionData};
+use image_occlusion::{ConstructImageOcclusionType, ImageOcclusionData, ImageOcclusionMatch};
 use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -118,7 +118,7 @@ pub trait Parseable: Send + Sync {
 
     fn extract_comment<'a>(&self, data: &'a str) -> &'a str;
 
-    fn get_image_occlusions(&self, data: &str) -> Result<Vec<RegexMatch>, LibraryError> {
+    fn get_image_occlusions(&self, data: &str) -> Result<Vec<ImageOcclusionMatch>, LibraryError> {
         let start = self.construct_comment("spares: image occlusion start");
         let end = self.construct_comment("spares: image occlusion end");
         let regex_string = format!("(?s){}(.*?)\n{}?", start, end);
@@ -132,9 +132,9 @@ pub trait Parseable: Send + Sync {
                     .captures_iter(data)
                     .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap()),
             )
-            .map(|(match_range, capture_range)| RegexMatch {
-                match_range,
-                capture_range,
+            .map(|(range, settings_range)| ImageOcclusionMatch {
+                range,
+                settings_range,
             })
             .collect::<Vec<_>>();
         Ok(image_occlusions)
