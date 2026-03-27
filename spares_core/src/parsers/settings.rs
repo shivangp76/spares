@@ -139,12 +139,6 @@ impl Default for NoteSettingsKeys {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct RegexMatch {
-    pub match_range: Range<usize>,
-    pub capture_range: Range<usize>,
-}
-
 pub fn get_adapter_note_id_key(adapter_name: &str) -> String {
     let default_adapter =
         adapter_name == SparesAdapter::new(SparesRequestProcessor::Server).get_adapter_name();
