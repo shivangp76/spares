@@ -907,7 +907,6 @@ mod tests {
             date: now,
         };
         let statistics_res = get_statistics(&pool, request).await;
-        dbg!(&statistics_res);
         assert!(statistics_res.is_ok());
         let statistics_response = statistics_res.unwrap();
         assert_eq!(

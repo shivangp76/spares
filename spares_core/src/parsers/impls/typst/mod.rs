@@ -82,10 +82,6 @@ impl Parseable for TypstParser {
         (cloze_start, cloze_end)
     }
 
-    // fn cloze_settings_side(&self) -> ClozeSettingsSide {
-    //     ClozeSettingsSide::End
-    // }
-
     fn construct_setting(&self, data: &str) -> String {
         format!("#se[{}]\n", data)
     }
@@ -351,16 +347,6 @@ fn get_linked_notes_string(
     linked_notes_opt: Option<&Vec<LinkedNote>>,
 ) -> (String, String) {
     if let Some(linked_notes) = linked_notes_opt {
-        // Order all linked notes in `note_data` sequentially
-        // let mut count = 0;
-
-        // let mut all_linked_notes = Vec::new();
-        // let mut data_parser = TypstDataParser::new(note_data);
-        // while let Some(linked_note) = data_parser.next_linked_note() {
-        //     all_linked_notes.push(linked_note);
-        // }
-        // let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
-
         let linked_notes_string = linked_notes
             .iter()
             .map(|linked_note_request| {
@@ -371,11 +357,7 @@ fn get_linked_notes_string(
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
-                    (None, None) => format!(
-                        "+ {} $->$ (no match found)",
-                        // i + 1,
-                        searched_keyword,
-                    ),
+                    (None, None) => format!("+ {} $->$ (no match found)", searched_keyword,),
                     (Some(linked_note_id), Some(matched_keyword)) => {
                         let mut note_raw_path = get_output_raw_dir(
                             parser.get_parser_name(),
@@ -388,7 +370,6 @@ fn get_linked_notes_string(
                         note_raw_path.set_extension(parser.file_extension());
                         format!(
                             "+ {} $->$ #link(\"{}\")[{}]",
-                            // i + 1,
                             searched_keyword,
                             note_raw_path.display(),
                             matched_keyword,
@@ -402,7 +383,7 @@ fn get_linked_notes_string(
         (note_data.to_string(), linked_notes_string)
 
         // // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        // // NOTE: This doesn't match the paren version, only the bracket version.
+        // // TODO: This doesn't match the paren version, only the bracket version.
         // let mut all_linked_notes = Vec::new();
         // let mut data_parser = TypstDataParser::new(note_data);
         // while let Some(linked_note) = data_parser.next_linked_note() {
@@ -480,9 +461,6 @@ pub mod tests {
         assert!(cloze_matches_res.is_ok());
         let cloze_matches = cloze_matches_res.unwrap();
         assert_eq!(cloze_matches.len(), 1);
-        dbg!(&note_data[cloze_matches[0].start_match.clone()]);
-        dbg!(&note_data[cloze_matches[0].end_match.clone()]);
-        dbg!(&note_data[cloze_matches[0].settings_match.clone()]);
         assert_eq!(
             cloze_matches[0],
             ClozeMatch {

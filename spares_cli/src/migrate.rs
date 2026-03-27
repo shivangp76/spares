@@ -98,11 +98,10 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
         let status = response.status();
         if status != StatusCode::OK {
             let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
-            dbg!(&body);
             return Err(body.to_string());
         }
     } else {
-        dbg!(&request);
+        println!("{:?}", &request);
     }
     let duration = start.elapsed();
     println!("Notes render duration: {:?}", duration);

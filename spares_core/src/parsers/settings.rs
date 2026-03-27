@@ -464,11 +464,11 @@ pub fn get_settings_pairs<'a>(
         })
         .map(|parts: Vec<&str>| {
             if parts.len() != 2 {
-                dbg!(&parts);
                 return Err((
                     format!(
-                        "Found {} parts when processing settings. Expected 2 parts.",
+                        "Found {} parts in `{:?}` when processing settings. Expected 2 parts.",
                         parts.len(),
+                        parts,
                     ),
                     settings_indices.clone(),
                 ));

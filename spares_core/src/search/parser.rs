@@ -291,8 +291,6 @@ mod tests {
         for input in inputs {
             let parser = Parser::new(input);
             let token_tree = parser.parse_expression();
-            // println!("{}", &token_tree.as_ref().unwrap());
-            dbg!(&token_tree);
             assert!(token_tree.is_ok());
         }
     }
@@ -302,7 +300,6 @@ mod tests {
         let input = r#"dog and tag~"math\" test" or -c.special_state=scheduler_buried"#;
         let parser = Parser::new(input);
         let token_tree_res = parser.parse_expression();
-        dbg!(&token_tree_res);
         assert!(token_tree_res.is_ok());
         let token_tree = token_tree_res.unwrap();
         assert_eq!(
@@ -349,7 +346,6 @@ mod tests {
         let input = r#"-tag=how-a-car-works parser_name=markdown"#;
         let parser = Parser::new(input);
         let token_tree_res = parser.parse_expression();
-        dbg!(&token_tree_res);
         assert!(token_tree_res.is_ok());
         let token_tree = token_tree_res.unwrap();
         assert_eq!(
@@ -384,7 +380,6 @@ mod tests {
         let input = r#"custom_data:"$.array[0].key">=1"#;
         let parser = Parser::new(input);
         let token_tree_res = parser.parse_expression();
-        dbg!(&token_tree_res);
         assert!(token_tree_res.is_ok());
         let token_tree = token_tree_res.unwrap();
         assert_eq!(
