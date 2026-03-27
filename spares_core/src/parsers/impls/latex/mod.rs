@@ -69,14 +69,12 @@ impl Parseable for LatexParserNote {
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
-        let cloze_settings_string_with_delim = if cloze_settings_string.is_empty() {
-            cloze_settings_string.to_string()
+        let cloze_start = if cloze_settings_string.is_empty() {
+            "\\begin{cl}".to_string()
         } else {
-            format!("[{}]", cloze_settings_string)
+            format!("\\begin{{cl}}[{}]", cloze_settings_string)
         };
-        let cloze_start = format!("\\begin{{cl}}{}", cloze_settings_string_with_delim);
-        let cloze_end = r"\end{cl}".to_string();
-        (cloze_start, cloze_end)
+        (cloze_start, r"\end{cl}".to_string())
     }
 
     fn construct_setting(&self, data: &str) -> String {
