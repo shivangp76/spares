@@ -181,7 +181,13 @@ impl SrsAdapter for AnkiAdapter {
                 })?;
             println!("Modifying cards and review log...");
             let start = Instant::now();
-            populate_reviews(dry_run, spares_and_anki_note_ids, spares_pool, &anki_db_path).await?;
+            populate_reviews(
+                dry_run,
+                spares_and_anki_note_ids,
+                spares_pool,
+                &anki_db_path,
+            )
+            .await?;
             let duration = start.elapsed();
             println!("Add Anki's review log duration: {:?}", duration);
         }

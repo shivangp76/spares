@@ -1,7 +1,6 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards,
-    impls::markdown::MarkdownParser,
+    Parseable, get_cards, impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 
@@ -37,9 +36,9 @@ fn test_get_cards_reverse_1() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(1),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,

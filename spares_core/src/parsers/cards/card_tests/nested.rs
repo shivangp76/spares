@@ -1,7 +1,6 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards,
-    impls::markdown::MarkdownParser,
+    Parseable, get_cards, impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 
@@ -37,9 +36,9 @@ fn test_get_cards_nested_1() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -92,9 +91,9 @@ fn test_get_cards_nested_1_reverse() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(1),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(1),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -116,9 +115,9 @@ fn test_get_cards_nested_1_reverse() {
                 ],
             },
             CardData {
-            order: Some(3),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(3),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -183,9 +182,9 @@ fn test_get_cards_nested_siblings() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -204,9 +203,9 @@ fn test_get_cards_nested_siblings() {
                 ],
             },
             CardData {
-            order: Some(3),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(3),
+                order: Some(3),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(3),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,

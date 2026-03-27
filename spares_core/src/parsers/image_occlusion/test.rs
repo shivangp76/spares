@@ -931,7 +931,10 @@ fn test_grouped_shapes_accepted_by_get_clozes_from_svg() {
 
     assert_eq!(clozes.len(), 2, "one group + one primitive = 2 clozes");
     assert_eq!(clozes[0].name, "g", "first cloze is the group");
-    assert_eq!(clozes[1].name, "rect", "second cloze is the standalone rect");
+    assert_eq!(
+        clozes[1].name, "rect",
+        "second cloze is the standalone rect"
+    );
 }
 
 /// `modify_clozes_for_card` with a group cloze (front, `ToAnswer + hint`) should:
@@ -952,7 +955,12 @@ fn test_grouped_shapes_modify_card_to_answer() {
 
     let config = ImageOcclusionConfig::default();
     modify_clozes_for_card(
-        &[(0, ClozeHiddenReplacement::ToAnswer { hint: Some("label".to_string()) })],
+        &[(
+            0,
+            ClozeHiddenReplacement::ToAnswer {
+                hint: Some("label".to_string()),
+            },
+        )],
         &mut clozes,
         FrontConceal::OnlyGrouping,
         BackReveal::FullNote,
@@ -964,7 +972,11 @@ fn test_grouped_shapes_modify_card_to_answer() {
     // add_text_to_cloze wraps the group in a new <g> and adds a <text> sibling.
     let wrapper = &clozes[0];
     assert_eq!(wrapper.name, "g");
-    assert_eq!(wrapper.children.len(), 2, "wrapper must have inner group + text");
+    assert_eq!(
+        wrapper.children.len(),
+        2,
+        "wrapper must have inner group + text"
+    );
 
     // ── inner group ──────────────────────────────────────────────────────────
     let inner = match &wrapper.children[0] {
@@ -972,7 +984,10 @@ fn test_grouped_shapes_modify_card_to_answer() {
         other => panic!("expected Element, got {:?}", other),
     };
     assert_eq!(inner.name, "g");
-    assert_eq!(inner.attributes.get("id").map(String::as_str), Some("group_1"));
+    assert_eq!(
+        inner.attributes.get("id").map(String::as_str),
+        Some("group_1")
+    );
 
     // Fill must have been applied recursively to every shape child, not just
     // inherited — explicit child fills override SVG inheritance.
@@ -986,7 +1001,9 @@ fn test_grouped_shapes_modify_card_to_answer() {
         .collect();
     assert_eq!(shapes.len(), 2);
     assert!(
-        shapes.iter().all(|s| s.attributes.get("fill").map(String::as_str) == Some("#FF7E7E")),
+        shapes
+            .iter()
+            .all(|s| s.attributes.get("fill").map(String::as_str) == Some("#FF7E7E")),
         "answer colour must be set on every child shape"
     );
 

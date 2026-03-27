@@ -1,7 +1,6 @@
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, ReadableCardIdentifier, get_cards,
-    impls::markdown::MarkdownParser,
+    Parseable, ReadableCardIdentifier, get_cards, impls::markdown::MarkdownParser,
 };
 use pretty_assertions::assert_eq;
 
@@ -39,9 +38,9 @@ fn test_get_cards_front_conceal_1() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -60,9 +59,9 @@ fn test_get_cards_front_conceal_1() {
                 ],
             },
             CardData {
-            order: Some(3),
-            previous_order: None,
-            grouping: ClozeGrouping::Custom("1".to_string()),
+                order: Some(3),
+                previous_order: None,
+                grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::FullNote,
@@ -134,9 +133,9 @@ fn test_get_cards_front_conceal_2() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -155,9 +154,9 @@ fn test_get_cards_front_conceal_2() {
                 ],
             },
             CardData {
-            order: Some(3),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(3),
+                order: Some(3),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(3),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -244,9 +243,9 @@ fn test_get_cards_back_reveal_2() {
                 ],
             },
             CardData {
-            order: Some(2),
-            previous_order: None,
-            grouping: ClozeGrouping::Auto(2),
+                order: Some(2),
+                previous_order: None,
+                grouping: ClozeGrouping::Auto(2),
                 is_suspended: None,
                 front_conceal: FrontConceal::OnlyGrouping,
                 back_reveal: BackReveal::FullNote,
@@ -265,9 +264,9 @@ fn test_get_cards_back_reveal_2() {
                 ],
             },
             CardData {
-            order: Some(3),
-            previous_order: None,
-            grouping: ClozeGrouping::Custom("1".to_string()),
+                order: Some(3),
+                previous_order: None,
+                grouping: ClozeGrouping::Custom("1".to_string()),
                 is_suspended: None,
                 front_conceal: FrontConceal::AllGroupings,
                 back_reveal: BackReveal::OnlyAnswered,
@@ -693,7 +692,10 @@ fn test_get_cards_inherit_invalid_note_id() {
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_err());
     let err = cards_res.unwrap_err().to_string();
-    assert!(err.contains("inh:"), "expected error mentioning `inh:`, got: {err}");
+    assert!(
+        err.contains("inh:"),
+        "expected error mentioning `inh:`, got: {err}"
+    );
 }
 
 #[test]
@@ -704,7 +706,10 @@ fn test_get_cards_inherit_invalid_order() {
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_err());
     let err = cards_res.unwrap_err().to_string();
-    assert!(err.contains("inh:"), "expected error mentioning `inh:`, got: {err}");
+    assert!(
+        err.contains("inh:"),
+        "expected error mentioning `inh:`, got: {err}"
+    );
 }
 
 #[test]

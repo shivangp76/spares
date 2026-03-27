@@ -1,4 +1,4 @@
-use super::super::{delete_empty_tags};
+use super::super::delete_empty_tags;
 use crate::{
     Error, LibraryError, TagErrorKind,
     api::{
@@ -205,8 +205,9 @@ pub(super) async fn update_tags(
 
     if let Some(tags_to_add) = tags_to_add {
         let tags_to_add = remove_ancestor_tags(tags_to_add);
-        new_tag_payloads
-            .extend(add_tags_to_note(db, note_id, &tags_to_add, &existing_filtered_tags_names).await?);
+        new_tag_payloads.extend(
+            add_tags_to_note(db, note_id, &tags_to_add, &existing_filtered_tags_names).await?,
+        );
     }
     Ok(new_tag_payloads)
 }

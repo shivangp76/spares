@@ -1,10 +1,10 @@
-use crate::parsers::cards::overlapper::OverlapperConfig;
 use crate::parsers::cards::get_cards_main;
+use crate::parsers::cards::overlapper::OverlapperConfig;
+use crate::parsers::impls::markdown::MarkdownParser;
 use crate::parsers::{
     BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
     Parseable,
 };
-use crate::parsers::impls::markdown::MarkdownParser;
 use pretty_assertions::assert_eq;
 
 const MOVE_FILES: bool = false;
@@ -65,7 +65,10 @@ fn ce(s: &str) -> NotePart {
     NotePart::ClozeEnd(s.to_string())
 }
 fn to_answer(text: &str) -> NotePart {
-    NotePart::ClozeData(text.to_string(), ClozeHiddenReplacement::ToAnswer { hint: None })
+    NotePart::ClozeData(
+        text.to_string(),
+        ClozeHiddenReplacement::ToAnswer { hint: None },
+    )
 }
 fn not_to_answer(text: &str) -> NotePart {
     NotePart::ClozeData(text.to_string(), ClozeHiddenReplacement::NotToAnswer)
@@ -180,7 +183,13 @@ fn test_overlapper_order_written_back() {
     let first_cloze_start = cards[0]
         .data
         .iter()
-        .find_map(|p| if let NotePart::ClozeStart(s) = p { Some(s.as_str()) } else { None })
+        .find_map(|p| {
+            if let NotePart::ClozeStart(s) = p {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
         .unwrap();
     assert!(
         first_cloze_start.contains("o:1"),
@@ -193,7 +202,13 @@ fn test_overlapper_order_written_back() {
     let card1_first_cloze_start = cards[1]
         .data
         .iter()
-        .find_map(|p| if let NotePart::ClozeStart(s) = p { Some(s.as_str()) } else { None })
+        .find_map(|p| {
+            if let NotePart::ClozeStart(s) = p {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
         .unwrap();
     // Card 1 starts with SurroundingData (context a), so first ClozeStart is item b (o:2)
     assert!(
@@ -289,7 +304,11 @@ fn test_overlapper_no_cues_for_first_item() {
     // Card 0 (prompt=a): with no_cues_for_first_item, even though CB=2 the first card
     // has cb_actual=0. So ALL non-prompt items are hidden (no SurroundingData prefix).
     let card0_data = &cards[0].data;
-    assert!(!card0_data.iter().any(|p| matches!(p, NotePart::SurroundingData(_))));
+    assert!(
+        !card0_data
+            .iter()
+            .any(|p| matches!(p, NotePart::SurroundingData(_)))
+    );
     assert!(card0_data.contains(&to_answer("a")));
     assert!(card0_data.contains(&not_to_answer("b")));
     assert!(card0_data.contains(&not_to_answer("c")));
@@ -299,9 +318,9 @@ fn test_overlapper_no_cues_for_first_item() {
     let card1_data = &cards[1].data;
     // a is context → SurroundingData (no hidden b entry for a)
     assert!(!card1_data.contains(&not_to_answer("a")));
-    let has_surrounding_a = card1_data.iter().any(|p| {
-        matches!(p, NotePart::SurroundingData(s) if s.contains("{{[ov:]a}}"))
-    });
+    let has_surrounding_a = card1_data
+        .iter()
+        .any(|p| matches!(p, NotePart::SurroundingData(s) if s.contains("{{[ov:]a}}")));
     assert!(has_surrounding_a, "card 1 should have a as SurroundingData");
 }
 
@@ -338,7 +357,11 @@ fn test_overlapper_no_cues_for_last_item() {
     assert!(card3_data.contains(&not_to_answer("b")));
     // c would have been context before (cb=0 here anyway since context_before_item=0)
     // just verify d is the prompt
-    assert!(!card3_data.iter().any(|p| matches!(p, NotePart::SurroundingData(_))));
+    assert!(
+        !card3_data
+            .iter()
+            .any(|p| matches!(p, NotePart::SurroundingData(_)))
+    );
 }
 
 /// start_and_end_gradually with P=2: generates 2*(P-1)=2 extra cards.
@@ -525,7 +548,10 @@ fn test_overlapper_ignores_reverse_flag() {
     // All cards are forward cards (no backward cards)
     // A backward card would have SurroundingData where the forward prompt is
     // We can verify by checking that all ToAnswer entries correspond to the expected prompts
-    let asks_a = cards.iter().filter(|c| c.data.contains(&to_answer("a"))).count();
+    let asks_a = cards
+        .iter()
+        .filter(|c| c.data.contains(&to_answer("a")))
+        .count();
     assert_eq!(asks_a, 1, "a should be a prompt in exactly 1 card");
 }
 
@@ -543,7 +569,10 @@ fn test_overlapper_ignores_reverse_only_flag() {
 
     // Only 3 forward overlapper cards
     assert_eq!(cards.len(), 3);
-    let asks_a = cards.iter().filter(|c| c.data.contains(&to_answer("a"))).count();
+    let asks_a = cards
+        .iter()
+        .filter(|c| c.data.contains(&to_answer("a")))
+        .count();
     assert_eq!(asks_a, 1);
 }
 
@@ -582,7 +611,8 @@ fn test_overlapper_coexists_with_reverse_cloze() {
 fn test_overlapper_order_round_trip() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let result = crate::parsers::add_order_to_note_data(parser.as_ref(), data, Some(&default_config()));
+    let result =
+        crate::parsers::add_order_to_note_data(parser.as_ref(), data, Some(&default_config()));
     assert!(result.is_ok());
     let (note_data, cards) = result.unwrap();
 
@@ -590,13 +620,19 @@ fn test_overlapper_order_round_trip() {
     assert_eq!(cards.len(), 3);
 
     // The returned note_data should contain ov: markers and o:1, o:2, o:3
-    assert!(note_data.contains("ov:"), "note data should still contain ov:");
+    assert!(
+        note_data.contains("ov:"),
+        "note data should still contain ov:"
+    );
     assert!(note_data.contains("o:1"), "note data should contain o:1");
     assert!(note_data.contains("o:2"), "note data should contain o:2");
     assert!(note_data.contains("o:3"), "note data should contain o:3");
 
     // Should NOT contain explicit group numbers (Auto groups are not serialized)
-    assert!(!note_data.contains("g:"), "auto groups should not be written to note data");
+    assert!(
+        !note_data.contains("g:"),
+        "auto groups should not be written to note data"
+    );
 }
 
 /// No overlapper config provided → ov: marker is parsed but no overlapper cards generated.

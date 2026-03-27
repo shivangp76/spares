@@ -3,8 +3,8 @@ use crate::{
     Error,
     api::undo::payloads::{
         CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
-        DeleteParserPayload, DeleteTagPayload, RateCardPayload, UpdateCardPayload, UpdateNotePayload,
-        UpdateNotesPayload, UpdateParserPayload, UpdateTagPayload,
+        DeleteParserPayload, DeleteTagPayload, RateCardPayload, UpdateCardPayload,
+        UpdateNotePayload, UpdateNotesPayload, UpdateParserPayload, UpdateTagPayload,
     },
     model::{Event, EventType},
 };
@@ -178,8 +178,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             Ok(serde_json::to_value(create_payload).unwrap())
         }
         EventType::RateCard => {
-            let payload: RateCardPayload =
-                serde_json::from_value(event.payload.clone()).unwrap();
+            let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
             sqlx::query(r"DELETE FROM review_log WHERE id = ?")
                 .bind(payload.review_log_id)
                 .execute(db)

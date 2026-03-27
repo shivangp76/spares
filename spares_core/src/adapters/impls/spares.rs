@@ -106,7 +106,8 @@ impl SparesAdapter {
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
                     let _notes_res =
-                        update_notes(pool, update_note_request, at, &get_all_parsers(), false).await?;
+                        update_notes(pool, update_note_request, at, &get_all_parsers(), false)
+                            .await?;
                 }
             }
         }
@@ -214,9 +215,14 @@ impl SrsAdapter for SparesAdapter {
                                 self.handle_response(response).await?;
                             }
                             SparesRequestProcessorInternal::Database { pool } => {
-                                let _notes_res =
-                                    update_notes(pool, update_note_request, at, &get_all_parsers(), false)
-                                        .await?;
+                                let _notes_res = update_notes(
+                                    pool,
+                                    update_note_request,
+                                    at,
+                                    &get_all_parsers(),
+                                    false,
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -276,7 +282,8 @@ impl SrsAdapter for SparesAdapter {
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
                     let notes_res =
-                        create_notes(pool, create_notes_request, at, &get_all_parsers(), false).await?;
+                        create_notes(pool, create_notes_request, at, &get_all_parsers(), false)
+                            .await?;
                     notes_res
                         .notes
                         .into_iter()

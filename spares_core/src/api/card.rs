@@ -186,7 +186,11 @@ pub async fn update_cards(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         if log {
-            card_payloads.push(build_update_card_payload(card_id, &existing_card, &final_card));
+            card_payloads.push(build_update_card_payload(
+                card_id,
+                &existing_card,
+                &final_card,
+            ));
         }
         card_responses.push(CardResponse::new(&final_card));
     }
@@ -599,7 +603,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(card.special_state, Some(SpecialState::BuriedUntilLaterToday));
+        assert_eq!(
+            card.special_state,
+            Some(SpecialState::BuriedUntilLaterToday)
+        );
         assert_eq!(card.due.timestamp(), now.timestamp());
     }
 
@@ -645,7 +652,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(card.special_state, Some(SpecialState::BuriedUntilLaterToday));
+        assert_eq!(
+            card.special_state,
+            Some(SpecialState::BuriedUntilLaterToday)
+        );
         assert_eq!(card.due.timestamp(), t2.timestamp());
     }
 
@@ -677,6 +687,9 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(card.special_state, None, "unbury_cards should clear BuriedUntilLaterToday");
+        assert_eq!(
+            card.special_state, None,
+            "unbury_cards should clear BuriedUntilLaterToday"
+        );
     }
 }
