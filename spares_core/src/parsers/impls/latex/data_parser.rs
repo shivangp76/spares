@@ -1,9 +1,21 @@
 use std::ops::Range;
 use unscanny::Scanner;
 
+use crate::parsers::ClozeMatch;
+
 const LINKED_NOTE_CMD: &str = "li";
 const SETTINGS_CMD: &str = "se";
 const KEYWORD_CMD: &str = "key";
+
+enum ClMarker {
+    Begin {
+        match_range: Range<usize>,
+        settings_match: Range<usize>,
+    },
+    End {
+        match_range: Range<usize>,
+    },
+}
 
 pub struct LatexDataParser<'de> {
     s: Scanner<'de>,
@@ -58,6 +70,129 @@ impl<'a> LatexDataParser<'a> {
                 }
                 Some(_) => {}
                 None => return None, // unmatched opening brace
+            }
+        }
+    }
+
+    /// Returns the next top-level `\begin{cl}…\end{cl}` group (with all nested clozes in the
+    /// same `Vec`, sorted by `start_match.start`). Call repeatedly to iterate over all groups.
+    pub fn next_cloze(&mut self) -> Option<Vec<ClozeMatch>> {
+        // Find the first \begin{cl}, skipping any stray \end{cl}.
+        let (first_start, first_settings) = loop {
+            match self.find_next_cl_marker()? {
+                ClMarker::Begin {
+                    match_range,
+                    settings_match,
+                } => break (match_range, settings_match),
+                ClMarker::End { .. } => {}
+            }
+        };
+
+        let mut stack: Vec<(Range<usize>, Range<usize>)> = vec![(first_start, first_settings)];
+        let mut results: Vec<ClozeMatch> = Vec::new();
+
+        loop {
+            match self.find_next_cl_marker() {
+                Some(ClMarker::Begin {
+                    match_range,
+                    settings_match,
+                }) => {
+                    stack.push((match_range, settings_match));
+                }
+                Some(ClMarker::End {
+                    match_range: end_match,
+                }) => {
+                    if let Some((start_match, settings_match)) = stack.pop() {
+                        results.push(ClozeMatch {
+                            start_match,
+                            end_match,
+                            settings_match,
+                        });
+                    }
+                    if stack.is_empty() {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+
+        if results.is_empty() {
+            None
+        } else {
+            results.sort_by_key(|c| c.start_match.start);
+            Some(results)
+        }
+    }
+
+    /// Scan forward for the next `\begin{cl}` or `\end{cl}` marker, skipping comments and
+    /// escape sequences.
+    fn find_next_cl_marker(&mut self) -> Option<ClMarker> {
+        loop {
+            let cursor = self.s.cursor();
+            match self.s.eat() {
+                Some('%') => {
+                    self.s.eat_until('\n');
+                }
+                Some('\\') => {
+                    if self.s.peek().is_some_and(|c| c.is_alphabetic()) {
+                        let cmd = self.s.eat_while(char::is_alphabetic);
+                        match cmd {
+                            "begin" => {
+                                if self.s.eat_if("{cl}") {
+                                    let (settings_match, match_end) =
+                                        self.eat_optional_bracketed_settings();
+                                    return Some(ClMarker::Begin {
+                                        match_range: cursor..match_end,
+                                        settings_match,
+                                    });
+                                }
+                            }
+                            "end" => {
+                                if self.s.eat_if("{cl}") {
+                                    return Some(ClMarker::End {
+                                        match_range: cursor..self.s.cursor(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        self.s.eat();
+                    }
+                }
+                Some(_) => {}
+                None => return None,
+            }
+        }
+    }
+
+    /// Optionally consume a `[…]` block with nested-bracket tracking. Must be called when the
+    /// cursor is positioned at the potential `[`.
+    ///
+    /// Returns `(settings_match, match_end)`:
+    /// - `settings_match` is the range of content inside the outer `[…]` (or `Range::default()`
+    ///   when no `[` is present).
+    /// - `match_end` is the cursor position after the closing `]` (or the current position when
+    ///   no `[` was found).
+    fn eat_optional_bracketed_settings(&mut self) -> (Range<usize>, usize) {
+        if !self.s.eat_if('[') {
+            return (Range::default(), self.s.cursor());
+        }
+        let settings_start = self.s.cursor();
+        let mut depth = 0u32;
+        loop {
+            match self.s.eat() {
+                Some('[') => depth += 1,
+                Some(']') => {
+                    if depth == 0 {
+                        let settings_end = self.s.cursor() - ']'.len_utf8();
+                        return (settings_start..settings_end, self.s.cursor());
+                    }
+                    depth -= 1;
+                }
+                Some(_) => {}
+                None => return (settings_start..self.s.cursor(), self.s.cursor()),
             }
         }
     }
@@ -259,6 +394,100 @@ mod tests {
         assert_eq!(&input[parser.next_keyword().unwrap()], "foo");
         assert_eq!(&input[parser.next_keyword().unwrap()], "bar");
         assert!(parser.next_keyword().is_none());
+    }
+
+    // ── clozes ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_basic_cloze() {
+        let input = r"\begin{cl}content\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 1);
+        assert_eq!(&input[group[0].start_match.clone()], r"\begin{cl}");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
+        assert!(group[0].settings_match.is_empty());
+        assert!(parser.next_cloze().is_none());
+    }
+
+    #[test]
+    fn test_cloze_with_settings() {
+        // \begin{cl}[o:1]content\end{cl}
+        // start_match covers \begin{cl}[o:1], settings_match covers o:1
+        let input = r"\begin{cl}[o:1]content\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 1);
+        assert_eq!(&input[group[0].start_match.clone()], r"\begin{cl}[o:1]");
+        assert_eq!(&input[group[0].settings_match.clone()], "o:1");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
+    }
+
+    #[test]
+    fn test_cloze_with_nested_bracket_settings() {
+        let input = r"\begin{cl}[g:[1,2]]content\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 1);
+        assert_eq!(&input[group[0].settings_match.clone()], "g:[1,2]");
+        assert_eq!(&input[group[0].start_match.clone()], r"\begin{cl}[g:[1,2]]");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
+    }
+
+    #[test]
+    fn test_cloze_not_in_comment() {
+        let input = "% \\begin{cl}ignored\\end{cl}\n\\begin{cl}real\\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 1);
+        // The matched start should be the non-commented \begin{cl}
+        assert_eq!(&input[group[0].start_match.clone()], r"\begin{cl}");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
+        assert!(parser.next_cloze().is_none());
+    }
+
+    #[test]
+    fn test_nested_cloze() {
+        let input = r"\begin{cl}[o:1]outer \begin{cl}inner\end{cl}\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 2);
+        // Sorted by start: outer first, then inner.
+        assert_eq!(&input[group[0].settings_match.clone()], "o:1");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
+        assert_eq!(&input[group[1].start_match.clone()], r"\begin{cl}");
+        assert_eq!(&input[group[1].end_match.clone()], r"\end{cl}");
+        assert!(parser.next_cloze().is_none());
+    }
+
+    #[test]
+    fn test_multiple_sequential_clozes() {
+        let input = r"\begin{cl}first\end{cl} \begin{cl}second\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let g1 = parser.next_cloze().unwrap();
+        assert_eq!(g1.len(), 1);
+        assert_eq!(&input[g1[0].start_match.clone()], r"\begin{cl}");
+        let g2 = parser.next_cloze().unwrap();
+        assert_eq!(g2.len(), 1);
+        assert_eq!(&input[g2[0].start_match.clone()], r"\begin{cl}");
+        assert!(parser.next_cloze().is_none());
+    }
+
+    #[test]
+    fn test_unmatched_begin_returns_none() {
+        let input = r"\begin{cl}unclosed";
+        let mut parser = LatexDataParser::new(input);
+        assert!(parser.next_cloze().is_none());
+    }
+
+    #[test]
+    fn test_other_environment_does_not_interfere() {
+        let input = r"\begin{equation}E=mc^2\end{equation}\begin{cl}content\end{cl}";
+        let mut parser = LatexDataParser::new(input);
+        let group = parser.next_cloze().unwrap();
+        assert_eq!(group.len(), 1);
+        assert_eq!(&input[group[0].start_match.clone()], r"\begin{cl}");
+        assert_eq!(&input[group[0].end_match.clone()], r"\end{cl}");
     }
 
     // ── mixed / edge cases ────────────────────────────────────────────────────
