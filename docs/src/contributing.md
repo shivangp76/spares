@@ -1,32 +1,6 @@
 # Contributing to Spares
 
-Thank you for your interest in contributing to Spares! We welcome all forms of contributions, including:
-
-- Bug reports
-- Feature requests
-- Documentation improvements
-- Code contributions
-- Testing and feedback
-
-## Getting Started
-
-1. Fork the repository
-2. Clone your fork:
-   ```sh
-   git clone https://github.com/your-username/spares.git
-   cd spares
-   ```
-3. Create a new branch for your changes:
-   ```sh
-   git checkout -b your-branch-name
-   ```
-
 ## Development Environment
-
-### Create database
-```sh
-mkdir -p ~/.local/share/spares && export DATABASE_URL="sqlite://$XDG_DATA_HOME/spares/spares-main.sqlite" && cd ~/spares/spares && sqlx database create && sqlx migrate run && cd ~/spares
-```
 
 ### Code Coverage
 ```sh

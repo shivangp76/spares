@@ -10,9 +10,9 @@ export PATH="$PATH:~/spares/target/release"
 
 ## Creating a parser (optional)
 
-Spares ships with 2 main parsers: "markdown" and "latex-note".
+Spares ships with 3 main parsers: "markdown", "typst", and "latex-note".
 
-The "markdown" parser serves as a guide for a basic parser, while the "latex-note" parser is more advanced. If you are creating your own parser, it is probably best to copy one of these as your starting template. The full specifications of these parsers can be found in the code documentation.
+The "markdown" parser serves as a guide for a basic parser, while the "latex-note" parser is more advanced. The "typst" parser is a middle ground. If you are creating your own parser, it is probably best to copy one of these as your starting template. The full specifications of these parsers can be found in the code documentation.
 
 Note that creating or modifying the parsers will require recompiling the package.
 
@@ -25,7 +25,7 @@ spares_server
 
 ### Migration (optional)
 
-Spares ships with a script to migrate data from Anki. See `spares_migrate --help`.
+Spares ships with a script to migrate data from Anki. See `spares migrate --help`.
 
 ## Adding notes
 
@@ -86,7 +86,7 @@ You can render notes with the following command. This will create the following 
     - The card's rendered file. For the markdown parser, this is a pdf file.
 
 ```sh
-spares generate --include-linked-notes --include-cards --render
+spares generate --render
 ```
 
 The note's text file will also contain the linked notes. The exact syntax of these files can be modified in the parser.
