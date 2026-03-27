@@ -1,7 +1,6 @@
 mod data_parser;
 
 use crate::config::get_cache_dir;
-use crate::helpers::{find_pair, is_monotonic_increasing};
 use crate::model::NoteId;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::image_occlusion::{
@@ -9,11 +8,11 @@ use crate::parsers::image_occlusion::{
 };
 use crate::parsers::{
     ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ClozeSettingsSide, ConstructFileDataType,
-    GenerateNoteFilesRequest, NoteImportAction, NotePart, NoteSettingsKeys, Parseable, RegexMatch,
+    GenerateNoteFilesRequest, NoteImportAction, NotePart, NoteSettingsKeys, Parseable,
     RenderOutputDirectoryType, RenderOutputType, get_matched_clozes, get_output_raw_dir,
 };
 use crate::schema::note::LinkedNote;
-use crate::{DelimiterErrorKind, Error, LibraryError};
+use crate::{Error, LibraryError};
 use data_parser::LatexDataParser;
 use fancy_regex::Regex;
 use std::ffi::OsString;
@@ -205,27 +204,12 @@ impl Parseable for LatexParserNote {
 
     // <https://tex.stackexchange.com/questions/8373/why-does-latex-make-a-distinction-between-commands-and-environments>
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
-        let (cloze_start_regex, settings_capture_group_index) = (
-            // Removed final newline in Regex. No more newlines
-            Regex::new(r"(?s)(\\begin\{cl\})(?:(\[)([^\n\]]*)(\]))?").unwrap(),
-            // Removed initial newline in Regex. The optional newline is only after the cloze start now.
-            // Regex::new(r"(?s)(\\begin\{cl\})(?:(\[)([^\n]*)(\]))?((?:\n)?)").unwrap(),
-            // Regex::new(r"(?s)((?:\n)?\\begin\{cl\})(?:(\[)([^\n]*)(\]))?((?:\n)?)").unwrap(),
-            3,
-        );
-        let cloze_end_regex =
-        // Removed final newline in Regex. No more newlines
-        Regex::new(r"(?s)\\end\{cl\}").unwrap();
-        // Removed ending newline in Regex. The optional newline is only before the cloze end now.
-        // Regex::new(r"(?s)(?:\n)?\\end\{cl\}(?:\n)?").unwrap()
-        // Regex::new(r"(?s)\\end\{cl\}(?:\n)?").unwrap()
-        get_matched_clozes(
-            data,
-            &cloze_start_regex,
-            settings_capture_group_index,
-            &cloze_end_regex,
-            &ClozeSettingsSide::Start,
-        )
+        let mut parser = LatexDataParser::new(data);
+        let mut clozes = Vec::new();
+        while let Some(group) = parser.next_cloze() {
+            clozes.extend(group);
+        }
+        Ok(clozes)
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
@@ -309,56 +293,6 @@ impl Parseable for LatexParserNote {
             output_rendered_filepath,
         )
     }
-}
-
-// Generic latex functions
-// NOTE: This does NOT handle nested commands since generally LaTeX commands are not nested, only LaTeX environments might be.
-fn get_latex_command(
-    data: &str,
-    start_regex: &Regex,
-) -> Result<Vec<RegexMatch>, DelimiterErrorKind> {
-    let start_matches = start_regex
-        .find_iter(data)
-        .map(|m| m.unwrap())
-        .map(|m| m.start()..m.end())
-        .collect::<Vec<_>>();
-    let end_matches = start_matches
-        .iter()
-        .map(|start_range| {
-            let e = start_range.end;
-            let end = find_pair(&data[e..], '{', '}')?;
-            Ok(e + end..e + end + 1)
-        })
-        .collect::<Result<Vec<_>, DelimiterErrorKind>>()?;
-    assert_eq!(start_matches.len(), end_matches.len());
-    let all_matches: Vec<(Range<usize>, Range<usize>)> = start_matches
-        .into_iter()
-        .zip(end_matches)
-        .collect::<Vec<_>>();
-    let flattened_matches: Vec<usize> = all_matches
-        .iter()
-        .flat_map(|(start_range, end_range)| {
-            [
-                start_range.start,
-                start_range.end,
-                end_range.start,
-                end_range.end,
-            ]
-        })
-        .collect::<Vec<_>>();
-    if !is_monotonic_increasing(&flattened_matches) {
-        return Err(DelimiterErrorKind::UnequalMatches {
-            src: data.to_string(),
-        });
-    }
-    let result = all_matches
-        .into_iter()
-        .map(|(start_range, end_range)| RegexMatch {
-            match_range: (start_range.start..end_range.end),
-            capture_range: (start_range.end..end_range.start),
-        })
-        .collect::<Vec<_>>();
-    Ok(result)
 }
 
 #[allow(clippy::unnecessary_wraps)]
