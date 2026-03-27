@@ -676,7 +676,9 @@ async fn add_note_tags(
 mod tests {
     use super::*;
     use crate::{
-        api::{note::create_notes, parser::tests::create_parser_helper, review::submit_study_action},
+        api::{
+            note::create_notes, parser::tests::create_parser_helper, review::submit_study_action,
+        },
         model::Card,
         parsers::get_all_parsers,
         schema::{
@@ -739,12 +741,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let src_card_after_review: Card =
-            sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
-                .bind(src_card.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let src_card_after_review: Card = sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
+            .bind(src_card.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         // Sanity-check: the review must have changed the SRS fields.
         assert_ne!(src_card_after_review.stability, src_card.stability);
 
@@ -780,9 +781,15 @@ mod tests {
                 .unwrap();
         assert_eq!(dst_card.stability, src_card_after_review.stability);
         assert_eq!(dst_card.difficulty, src_card_after_review.difficulty);
-        assert_eq!(dst_card.desired_retention, src_card_after_review.desired_retention);
+        assert_eq!(
+            dst_card.desired_retention,
+            src_card_after_review.desired_retention
+        );
         assert_eq!(dst_card.state, src_card_after_review.state);
-        assert_eq!(dst_card.due.timestamp(), src_card_after_review.due.timestamp());
+        assert_eq!(
+            dst_card.due.timestamp(),
+            src_card_after_review.due.timestamp()
+        );
         assert_eq!(dst_card.special_state, src_card_after_review.special_state);
     }
 

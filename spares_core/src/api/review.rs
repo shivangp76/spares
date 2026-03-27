@@ -1013,7 +1013,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(card_a.special_state, Some(SpecialState::BuriedUntilLaterToday));
+        assert_eq!(
+            card_a.special_state,
+            Some(SpecialState::BuriedUntilLaterToday)
+        );
     }
 
     #[sqlx::test]
@@ -1258,6 +1261,9 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(still_buried_count, 0, "All BuriedUntilLaterToday cards should be unburied at next-day rollover");
+        assert_eq!(
+            still_buried_count, 0,
+            "All BuriedUntilLaterToday cards should be unburied at next-day rollover"
+        );
     }
 }

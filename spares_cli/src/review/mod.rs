@@ -406,9 +406,13 @@ pub(crate) async fn review_cards(
     let set_card_due_date_duration = config.set_card_due_date_duration;
     let set_card_due_date_duration_str = format_duration(set_card_due_date_duration);
 
-    let all_options =
-        build_review_actions(scheduler_name, set_card_due_date_duration_str, base_url, client)
-            .await?;
+    let all_options = build_review_actions(
+        scheduler_name,
+        set_card_due_date_duration_str,
+        base_url,
+        client,
+    )
+    .await?;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<NoteId, String>>();
 

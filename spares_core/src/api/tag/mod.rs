@@ -20,7 +20,11 @@ pub use query::*;
 const TAG_DEFAULT_LIMIT: usize = 100;
 pub const DEFAULT_TAG_AUTO_DELETE: bool = true;
 
-pub async fn create_tag(db: &SqlitePool, body: CreateTagRequest, log: bool) -> Result<TagResponse, Error> {
+pub async fn create_tag(
+    db: &SqlitePool,
+    body: CreateTagRequest,
+    log: bool,
+) -> Result<TagResponse, Error> {
     let payload = CreateTagPayload {
         id: None,
         name: body.name,
@@ -160,7 +164,11 @@ pub async fn update_tag_event(
     update_tag(db, body, log).await
 }
 
-pub async fn update_tag(db: &SqlitePool, body: UpdateTagRequest, log: bool) -> Result<TagResponse, Error> {
+pub async fn update_tag(
+    db: &SqlitePool,
+    body: UpdateTagRequest,
+    log: bool,
+) -> Result<TagResponse, Error> {
     let id = tag_selector_to_id(db, body.tag_to_modify).await?;
     let existing_tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
@@ -326,7 +334,11 @@ pub async fn list_tags(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<TagRe
 pub(crate) mod tests {
     use super::*;
 
-    pub async fn create_tag_helper(pool: &SqlitePool, name: &str, description: &str) -> TagResponse {
+    pub async fn create_tag_helper(
+        pool: &SqlitePool,
+        name: &str,
+        description: &str,
+    ) -> TagResponse {
         let request = CreateTagRequest {
             name: name.to_string(),
             description: description.to_string(),
@@ -577,6 +589,10 @@ pub(crate) mod tests {
             auto_delete: tag.auto_delete,
         };
         delete_tag_event(&pool, payload, false).await.unwrap();
-        assert_eq!(event_count(&pool).await, n_before, "apply_event path must not log");
+        assert_eq!(
+            event_count(&pool).await,
+            n_before,
+            "apply_event path must not log"
+        );
     }
 }
