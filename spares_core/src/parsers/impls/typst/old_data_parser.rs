@@ -99,8 +99,6 @@ impl<'a> TypstDataParser<'a> {
 
         loop {
             let cursor_start = self.s.cursor();
-            // dbg!(&self.s.peek());
-            // dbg!(&self.s.string()[cursor_start..]);
             match self.s.eat() {
                 // Comments
                 Some('/') if self.s.eat_if('/') => {

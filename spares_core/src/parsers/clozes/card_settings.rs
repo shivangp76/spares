@@ -376,11 +376,6 @@ fn parse_grouping_settings(
     Ok(current_grouping_settings)
 }
 
-// These don't work because a closure may capture variables that are not necessarily cloneable.
-// type ModifyDefaultsFn = Option<fn(&mut ClozeGroupingSettings)>;
-// type ModifyDefaultsFn = Option<impl Fn(&mut ClozeGroupingSettings)>;
-// type ModifyDefaultsFn = Option<Arc<dyn Fn(&mut ClozeGroupingSettings)>>;
-
 pub fn parse_card_settings(
     data: &str,
     card_settings_indices: &Range<usize>,
@@ -507,4 +502,67 @@ pub fn parse_card_settings(
     }
 
     Ok((settings, all_grouping_settings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsers::{NoteSettingsKeys, Parseable, impls::markdown::MarkdownParser};
+
+    #[test]
+    fn test_construct_cloze_string_1() {
+        let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+        let mut global_settings = ClozeSettings::default();
+        global_settings.hint = Some("Test".to_string());
+
+        let mut grouping_setting = ClozeGroupingSettings::default(&mut 1, None);
+        grouping_setting.orders = Some(vec![1]);
+        let all_grouping_settings = vec![grouping_setting];
+        let NoteSettingsKeys {
+            settings_delim,
+            settings_key_value_delim,
+            groupings_all,
+            ..
+        } = parser.note_settings_keys();
+        let cloze_settings_keys = parser.cloze_settings_keys();
+        let result = construct_cloze_string(
+            &global_settings,
+            &all_grouping_settings,
+            &cloze_settings_keys,
+            settings_delim,
+            settings_key_value_delim,
+            None,
+            groupings_all,
+        );
+        let expected_result = "h:Test;o:1";
+        assert_eq!(result, expected_result.to_string());
+    }
+
+    #[test]
+    fn test_construct_cloze_string_2() {
+        let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+        let mut global_settings = ClozeSettings::default();
+        global_settings.hint = Some("Test".to_string());
+
+        let grouping_setting = ClozeGroupingSettings::default(&mut 1, None);
+        let all_grouping_settings = vec![grouping_setting];
+        let NoteSettingsKeys {
+            settings_delim,
+            settings_key_value_delim,
+            groupings_all,
+            ..
+        } = parser.note_settings_keys();
+        let cloze_settings_keys = parser.cloze_settings_keys();
+        let result = construct_cloze_string(
+            &global_settings,
+            &all_grouping_settings,
+            &cloze_settings_keys,
+            settings_delim,
+            settings_key_value_delim,
+            None,
+            groupings_all,
+        );
+        let expected_result = "h:Test";
+        assert_eq!(result, expected_result.to_string());
+    }
 }

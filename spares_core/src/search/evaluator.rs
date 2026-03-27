@@ -207,7 +207,6 @@ impl Field {
             "keyword" => Ok(Field::Note(NoteField::Keyword)),
             "custom_data" => {
                 // if input.len() != 2 {
-                //     dbg!(&input);
                 //     return Err(miette!("Custom data expects 2 inputs"));
                 // }
                 Ok(Field::Note(NoteField::CustomData(

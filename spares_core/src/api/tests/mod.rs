@@ -339,7 +339,6 @@ async fn simulate_reviews(
     let mut advanced_once = false;
     let mut postponed_once = false;
     for day_offset in 0..=(num_days_to_simulate - 1) {
-        dbg!(&day_offset);
         let requested_date = start_date + Duration::days(day_offset);
 
         // Get statistics at the start of the day

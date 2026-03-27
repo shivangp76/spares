@@ -60,8 +60,6 @@ pub fn get_matched_clozes(
         })
         .collect::<Vec<_>>();
     if start_matches.len() != end_matches.len() {
-        dbg!(&start_matches);
-        dbg!(&end_matches);
         return Err(LibraryError::Delimiter(
             DelimiterErrorKind::UnequalMatches {
                 src: data.to_string(),
