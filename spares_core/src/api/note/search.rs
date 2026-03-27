@@ -44,7 +44,7 @@ pub async fn search_notes(
         crate::search::QueryReturnItemType::Notes => {
             let notes = evaluator.get_notes(db).await?;
             let mut note_responses = Vec::new();
-            let config = read_internal_config()?;
+            let config = read_internal_config(db).await?;
             for (note, parser_name) in notes {
                 note_responses.push((
                     enrich_note(db, &note, config.linked_notes_generated).await?,
@@ -80,7 +80,7 @@ pub async fn search_keyword(
 pub async fn get_unmatched_keywords(
     db: &SqlitePool,
 ) -> Result<Vec<UnmatchedKeywordResponse>, Error> {
-    let config = read_internal_config()?;
+    let config = read_internal_config(db).await?;
     if !config.linked_notes_generated {
         return Err(crate::LibraryError::InvalidConfig(
             "Linked notes have not been generated yet. Run the link generation step first."

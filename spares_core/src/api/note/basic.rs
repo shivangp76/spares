@@ -45,7 +45,7 @@ pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, 
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    let config = read_internal_config()?;
+    let config = read_internal_config(db).await?;
     enrich_note(db, &note, config.linked_notes_generated).await
 }
 
@@ -189,7 +189,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    let config = read_internal_config()?;
+    let config = read_internal_config(db).await?;
     let mut responses = Vec::new();
     for ListNotesRow {
         note,

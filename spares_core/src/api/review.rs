@@ -152,7 +152,7 @@ fn build_review_card_response(
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
-    let mut config = read_internal_config()?;
+    let mut config = read_internal_config(db).await?;
     let now = Utc::now();
     // Compare dates in local timezone to determine if cards should be unburied.
     // This ensures that cards are unburied when the calendar date changes in the user's timezone,
@@ -175,7 +175,7 @@ async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
 
         // Update config
         config.last_unburied = now;
-        write_internal_config(&config)?;
+        write_internal_config(db, &config).await?;
     }
     Ok(())
 }

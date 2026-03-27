@@ -292,9 +292,9 @@ pub async fn create_notes(
     // Update config — only invalidate linked-note cache if any note has keywords or note links
     let has_keywords = note_keyword_entries.iter().any(|(_, ks)| !ks.is_empty());
     if has_keywords || !note_link_entries.is_empty() {
-        let mut config = read_internal_config()?;
+        let mut config = read_internal_config(db).await?;
         config.linked_notes_generated = false;
-        write_internal_config(&config)?;
+        write_internal_config(db, &config).await?;
     }
 
     // Log event
