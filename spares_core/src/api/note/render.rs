@@ -220,9 +220,9 @@ pub async fn render_notes(
     }
 
     // Update config
-    let mut config = read_internal_config()?;
+    let mut config = read_internal_config(db).await?;
     config.linked_notes_generated = true;
-    write_internal_config(&config)?;
+    write_internal_config(db, &config).await?;
 
     // Get requested note ids
     let mut requested_note_ids = match generate_files_note_ids {

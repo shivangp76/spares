@@ -6,6 +6,7 @@ use crate::{Error, LibraryError};
 use chrono::{DateTime, Duration, NaiveDate, Utc, Weekday};
 use etcetera::{AppStrategy, AppStrategyArgs, choose_app_strategy};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, write};
 use std::path::PathBuf;
@@ -313,49 +314,62 @@ impl SparesExternalConfig {
     }
 }
 
-fn get_internal_config_file() -> PathBuf {
-    // Not stored in config directory, since this file will be changed frequently by spares.
-    let mut config_file_path = get_data_dir();
-    config_file_path.push("internal_config.toml");
-    config_file_path
-}
+pub(crate) async fn read_internal_config(pool: &SqlitePool) -> Result<SparesInternalConfig, Error> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM app_state WHERE key IN ('last_unburied', 'linked_notes_generated')",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
 
-pub(crate) fn read_internal_config() -> Result<SparesInternalConfig, Error> {
-    let config_file_path = get_internal_config_file();
-    if !config_file_path.exists() {
-        let config = SparesInternalConfig::default();
-        write_internal_config(&config)?;
-        return Ok(config);
+    let defaults = SparesInternalConfig::default();
+    let mut last_unburied = defaults.last_unburied;
+    let mut linked_notes_generated = defaults.linked_notes_generated;
+
+    for (key, value) in rows {
+        match key.as_str() {
+            "last_unburied" => {
+                if let Ok(dt) = value.parse::<DateTime<Utc>>() {
+                    last_unburied = dt;
+                }
+            }
+            "linked_notes_generated" => {
+                if let Ok(b) = value.parse::<bool>() {
+                    linked_notes_generated = b;
+                }
+            }
+            _ => {}
+        }
     }
-    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}.", &config_file_path.display()),
-        source: e,
-    })?;
-    let doc = file_contents
-        .parse::<DocumentMut>()
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
-    let config: SparesInternalConfig = toml_edit::de::from_document(doc)
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
 
-    // let config: SparesInternalConfig = confy::load_path(config_file_path)
-    //     .map_err(|e| format!("Failed to deserialize config: {}", e))?;
-    Ok(config)
+    Ok(SparesInternalConfig {
+        last_unburied,
+        linked_notes_generated,
+    })
 }
 
-pub(crate) fn write_internal_config(config: &SparesInternalConfig) -> Result<(), Error> {
-    let config_file_path = get_internal_config_file();
-    let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
-        Error::Library(LibraryError::InvalidConfig(format!(
-            "Failed to serialize config: {}",
-            e
-        )))
-    })?;
-    write(&config_file_path, config_string).map_err(|e| Error::Io {
-        description: "Failed to write config".to_string(),
-        source: e,
-    })?;
-    // confy::store_path(config_file_path, config)
-    //     .map_err(|e| format!("Failed to write config: {}", e))?;
+pub(crate) async fn write_internal_config(
+    pool: &SqlitePool,
+    config: &SparesInternalConfig,
+) -> Result<(), Error> {
+    let last_unburied = config.last_unburied.to_rfc3339();
+    let linked_notes_generated = config.linked_notes_generated.to_string();
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES ('last_unburied', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(last_unburied)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES ('linked_notes_generated', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(linked_notes_generated)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
     Ok(())
 }
 
@@ -382,9 +396,6 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
         .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
     let mut config: SparesExternalConfig = toml_edit::de::from_document(doc)
         .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
-
-    // let config: SparesExternalConfig = confy::load_path(config_file_path)
-    //     .map_err(|e| format!("Failed to deserialize config: {}", e))?;
     let () = &mut config
         .validate()
         .map_err(|x| Error::Library(LibraryError::InvalidConfig(x)))?;
@@ -403,7 +414,5 @@ pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(),
         description: "Failed to write config".to_string(),
         source: e,
     })?;
-    // confy::store_path(config_file_path, config)
-    //     .map_err(|e| format!("Failed to write config: {}", e))?;
     Ok(())
 }

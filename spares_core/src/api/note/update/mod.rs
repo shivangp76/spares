@@ -326,9 +326,9 @@ pub async fn update_notes(
     }
 
     // Update config
-    let mut config = read_internal_config()?;
+    let mut config = read_internal_config(db).await?;
     config.linked_notes_generated = false;
-    write_internal_config(&config)?;
+    write_internal_config(db, &config).await?;
 
     // Log event
     let event_id = if log && !update_note_payloads.is_empty() {
