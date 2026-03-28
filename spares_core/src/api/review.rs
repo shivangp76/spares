@@ -33,7 +33,14 @@ use itertools::Itertools;
 use log::info;
 use serde_json::{Value, to_value};
 use sqlx::{FromRow, sqlite::SqlitePool};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
+fn maybe_relativize(path: PathBuf) -> PathBuf {
+    if let Ok(base) = std::env::var("SPARES_FILES_DIR") {
+        path.strip_prefix(&base).unwrap_or(&path).to_path_buf()
+    } else {
+        path
+    }
+}
 
 #[derive(Clone, Debug, Default, FromRow)]
 struct ReviewCard {
@@ -82,7 +89,7 @@ async fn get_linked_notes_for_review(
             searched_keyword: row.searched_keyword,
             note_id: row.linked_note_id,
             matched_keyword: row.matched_keyword,
-            note_raw_path,
+            note_raw_path: maybe_relativize(note_raw_path),
         });
     }
     Ok(linked_notes)
@@ -110,18 +117,20 @@ fn build_review_card_response(
         RenderOutputType::Card(card_order as usize, CardSide::Front),
         note_id,
     ));
+    let card_front_rendered_path = maybe_relativize(card_front_rendered_path);
 
     let mut note_raw_path =
         get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
     note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
     note_raw_path.set_extension(parser.file_extension());
+    let note_raw_path = maybe_relativize(note_raw_path);
 
     let card_back_rendered_path = match card_back_type {
         BackType::NoteFilePath => {
             let mut note_rendered_path =
                 parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
             note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-            CardBackRenderedPath::Note(note_rendered_path)
+            CardBackRenderedPath::Note(maybe_relativize(note_rendered_path))
         }
         BackType::CardFilePath => {
             let mut card_back_rendered_path =
@@ -130,7 +139,7 @@ fn build_review_card_response(
                 RenderOutputType::Card(card_order as usize, CardSide::Back),
                 note_id,
             ));
-            CardBackRenderedPath::CardBack(card_back_rendered_path)
+            CardBackRenderedPath::CardBack(maybe_relativize(card_back_rendered_path))
         }
     };
 

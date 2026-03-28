@@ -2,23 +2,30 @@ mod handlers;
 mod route;
 
 use crate::route::create_router;
-use axum::http::{Method, header::CONTENT_TYPE};
+use axum::http::{
+    Method,
+    header::{AUTHORIZATION, CONTENT_TYPE},
+};
 use clap::Parser;
 use log::{info, warn};
 use spares_core::config::{Environment, get_data_dir, get_env_config};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use std::{str::FromStr, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Debug)]
 struct AppState {
     pub(crate) db: SqlitePool,
+    pub(crate) api_key: Option<String>,
 }
 
 async fn start_server(args: Args) -> Result<(), String> {
     // Ensure default data directory exists (no-op when DATABASE_URL is set explicitly)
     let _ = get_data_dir();
+    let api_key = std::env::var("SPARES_API_KEY").ok();
+    let files_dir: PathBuf =
+        std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_data_dir(), PathBuf::from);
 
     let env_config = get_env_config(args.environment);
 
@@ -41,10 +48,17 @@ async fn start_server(args: Args) -> Result<(), String> {
     info!("Migration successful.");
 
     let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_origin(Any)
-        .allow_headers([CONTENT_TYPE]);
-    let app = create_router(Arc::new(AppState { db: pool.clone() })).layer(cors);
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+    let app = create_router(
+        Arc::new(AppState {
+            db: pool.clone(),
+            api_key,
+        }),
+        files_dir,
+    )
+    .layer(cors);
     let listener = match TcpListener::bind(&env_config.socket_address).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
