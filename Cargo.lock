@@ -3704,8 +3704,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "spares_io"
+name = "spares_frontend"
 version = "0.0.1-alpha.1"
+dependencies = [
+ "clap",
+]
 
 [[package]]
 name = "spares_server"
