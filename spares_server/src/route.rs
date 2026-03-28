@@ -34,9 +34,13 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use std::{path::PathBuf, sync::Arc};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
-pub(crate) fn create_router(app_state: Arc<AppState>, files_dir: PathBuf) -> Router {
+pub(crate) fn create_router(
+    app_state: Arc<AppState>,
+    files_dir: PathBuf,
+    frontend_dir: Option<PathBuf>,
+) -> Router {
     let protected = Router::new()
         // Parser
         .route("/api/parsers", post(create_parser_handler))
@@ -98,9 +102,18 @@ pub(crate) fn create_router(app_state: Arc<AppState>, files_dir: PathBuf) -> Rou
             require_api_key,
         ));
 
-    Router::new()
+    let mut router = Router::new()
         .route("/api/healthcheck", get(health_check_handler))
         .merge(protected)
         .nest_service("/files", ServeDir::new(files_dir))
-        .with_state(app_state)
+        .with_state(app_state);
+
+    if let Some(dir) = frontend_dir {
+        // Serve the SPA: known static files are served directly, all other paths
+        // fall back to index.html so React Router handles client-side navigation.
+        router = router
+            .fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html"))));
+    }
+
+    router
 }
