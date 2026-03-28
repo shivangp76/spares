@@ -435,16 +435,25 @@ pub mod review {
         pub note_raw_path: PathBuf,
     }
 
+    /// Response for a review card.
+    ///
+    /// All `PathBuf` fields are absolute paths when `SPARES_FILES_DIR` is unset.
+    /// When `SPARES_FILES_DIR` is set (e.g. in `spares_server`), paths are returned
+    /// relative to that directory so a web client can construct
+    /// `{server_url}/files/{path}` directly.
     #[serde_with::serde_as]
     #[derive(Debug, Deserialize, Serialize)]
     pub struct GetReviewCardResponse {
         pub note_id: NoteId, // To suspend all cards within the note
         pub card_order: u32,
-        pub card_id: CardId,                   // For submitting a rating
-        pub card_state: StateId,               // For showing to the user
-        pub card_front_rendered_path: PathBuf, // To show card
-        pub card_back_rendered_path: CardBackRenderedPath, // To allow the user to see the answer after rating the card
-        pub note_raw_path: PathBuf, // To allow the user to edit the note if they find an error while reviewing the card
+        pub card_id: CardId,     // For submitting a rating
+        pub card_state: StateId, // For showing to the user
+        /// Path to the rendered card front. Relative to `SPARES_FILES_DIR` when set.
+        pub card_front_rendered_path: PathBuf,
+        /// Path(s) to the rendered card back. Relative to `SPARES_FILES_DIR` when set.
+        pub card_back_rendered_path: CardBackRenderedPath,
+        /// Path to the raw note source file. Relative to `SPARES_FILES_DIR` when set.
+        pub note_raw_path: PathBuf,
         pub parser_name: String,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]

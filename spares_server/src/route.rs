@@ -1,5 +1,6 @@
 use crate::{
     AppState,
+    handlers::require_api_key,
     handlers::{
         card::{
             forget_card_handler, get_card_handler, get_cards_handler, get_leeches_handler,
@@ -29,14 +30,14 @@ use crate::{
     },
 };
 use axum::{
-    Router,
+    Router, middleware,
     routing::{delete, get, patch, post},
 };
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+use tower_http::services::ServeDir;
 
-pub(crate) fn create_router(app_state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/api/healthcheck", get(health_check_handler))
+pub(crate) fn create_router(app_state: Arc<AppState>, files_dir: PathBuf) -> Router {
+    let protected = Router::new()
         // Parser
         .route("/api/parsers", post(create_parser_handler))
         .route("/api/parsers/{id}", get(get_parser_handler))
@@ -92,5 +93,14 @@ pub(crate) fn create_router(app_state: Arc<AppState>) -> Router {
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))
+        .route_layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            require_api_key,
+        ));
+
+    Router::new()
+        .route("/api/healthcheck", get(health_check_handler))
+        .merge(protected)
+        .nest_service("/files", ServeDir::new(files_dir))
         .with_state(app_state)
 }
