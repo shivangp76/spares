@@ -3,7 +3,7 @@ members = [
     "spares_core",
     "spares_cli",
     "spares_server",
-    "spares_io",
+    "spares_frontend",
 ]
 resolver = "2"
 
