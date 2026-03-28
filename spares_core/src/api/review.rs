@@ -119,6 +119,18 @@ fn build_review_card_response(
     ));
     let card_front_rendered_path = maybe_relativize(card_front_rendered_path);
 
+    let mut card_front_raw_path = get_output_raw_dir(
+        parser.get_parser_name(),
+        RenderOutputType::Card(card_order as usize, CardSide::Front),
+        None,
+    );
+    card_front_raw_path.push(parser.get_output_filename(
+        RenderOutputType::Card(card_order as usize, CardSide::Front),
+        note_id,
+    ));
+    card_front_raw_path.set_extension(parser.file_extension());
+    let card_front_raw_path = maybe_relativize(card_front_raw_path);
+
     let mut note_raw_path =
         get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
     note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
@@ -143,6 +155,29 @@ fn build_review_card_response(
         }
     };
 
+    let card_back_raw_path = match card_back_type {
+        BackType::NoteFilePath => {
+            let mut path =
+                get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
+            path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
+            path.set_extension(parser.file_extension());
+            CardBackRenderedPath::Note(maybe_relativize(path))
+        }
+        BackType::CardFilePath => {
+            let mut path = get_output_raw_dir(
+                parser.get_parser_name(),
+                RenderOutputType::Card(card_order as usize, CardSide::Back),
+                None,
+            );
+            path.push(parser.get_output_filename(
+                RenderOutputType::Card(card_order as usize, CardSide::Back),
+                note_id,
+            ));
+            path.set_extension(parser.file_extension());
+            CardBackRenderedPath::CardBack(maybe_relativize(path))
+        }
+    };
+
     Ok(GetReviewCardResponse {
         note_id,
         card_order,
@@ -150,6 +185,8 @@ fn build_review_card_response(
         card_state,
         card_front_rendered_path,
         card_back_rendered_path,
+        card_front_raw_path,
+        card_back_raw_path,
         note_raw_path,
         parser_name,
         cards_left_by_state,

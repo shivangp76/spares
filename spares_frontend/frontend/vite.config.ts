@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import wasm from 'vite-plugin-wasm'
+import topLevelAwait from 'vite-plugin-top-level-await'
 
 export default defineConfig({
+  optimizeDeps: {
+    exclude: ['@myriaddreamin/typst.ts', '@myriaddreamin/typst-ts-renderer'],
+  },
   assetsInclude: [
     'svgedit/src/editor/panels/*.html',
     'svgedit/src/editor/templates/*.html',
@@ -8,10 +14,10 @@ export default defineConfig({
     'svgedit/src/editor/extensions/*/*.html',
   ],
   server: {
-    open: '/svgedit/src/editor/index.html?storagePrompt=false',
+    open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [{
+  plugins: [react(), wasm(), topLevelAwait(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files

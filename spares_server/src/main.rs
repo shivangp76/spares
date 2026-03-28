@@ -26,6 +26,8 @@ async fn start_server(args: Args) -> Result<(), String> {
     let api_key = std::env::var("SPARES_API_KEY").ok();
     let files_dir: PathBuf =
         std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_data_dir(), PathBuf::from);
+    let frontend_dir: Option<PathBuf> =
+        std::env::var("SPARES_FRONTEND_DIR").ok().map(PathBuf::from);
 
     let env_config = get_env_config(args.environment);
 
@@ -57,6 +59,7 @@ async fn start_server(args: Args) -> Result<(), String> {
             api_key,
         }),
         files_dir,
+        frontend_dir,
     )
     .layer(cors);
     let listener = match TcpListener::bind(&env_config.socket_address).await {

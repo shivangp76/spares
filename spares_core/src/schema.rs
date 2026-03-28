@@ -452,6 +452,10 @@ pub mod review {
         pub card_front_rendered_path: PathBuf,
         /// Path(s) to the rendered card back. Relative to `SPARES_FILES_DIR` when set.
         pub card_back_rendered_path: CardBackRenderedPath,
+        /// Path to the raw card front source file. Relative to `SPARES_FILES_DIR` when set.
+        pub card_front_raw_path: PathBuf,
+        /// Path(s) to the raw card back source file. Relative to `SPARES_FILES_DIR` when set.
+        pub card_back_raw_path: CardBackRenderedPath,
         /// Path to the raw note source file. Relative to `SPARES_FILES_DIR` when set.
         pub note_raw_path: PathBuf,
         pub parser_name: String,
