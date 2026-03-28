@@ -1,3 +1,4 @@
+mod cloud;
 mod interactive;
 mod render_diffs;
 mod utils;
@@ -80,6 +81,11 @@ pub(crate) enum SyncSubcommand {
         #[arg(short, long, default_value = "spares")]
         to: SyncSource,
     },
+    /// Push local DB and files to a remote server via rsync.
+    ///
+    /// Reads `remote_host` from config.toml (e.g. "user@myserver.com").
+    /// Runs two rsync passes: `SQLite` DB first, then all other files.
+    Cloud,
 }
 
 /// Follows the hub-spoke model, where [`SyncSource::default()`] is the hub.
@@ -294,6 +300,7 @@ pub(crate) async fn sync_notes(
 
             Ok(())
         }
+        Some(SyncSubcommand::Cloud) => cloud::sync_cloud(),
         None => {
             let sync_mode = if sync_args.individual {
                 SyncMode::Individual
