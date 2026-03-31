@@ -259,7 +259,7 @@ pub async fn get_review_card(
         )
     } else {
         format!(
-            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str}{card_id_query_str})\n    OR (c.special_state = {buried_state}{card_id_query_str}))"
+            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}"
         )
     };
     // Sort by `n.created_at` after `c.due` so cards from older notes are shown first. This ensures that notes that depend on previous knowledge are shown in the right order.
