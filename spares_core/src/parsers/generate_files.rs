@@ -10,7 +10,8 @@ use crate::schema::note::LinkedNote;
 use indicatif::{ParallelProgressIterator, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
-use std::fs::{create_dir_all, read_to_string, write};
+use std::fs::{File, create_dir_all, read_to_string, write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -62,22 +63,58 @@ pub fn file_in_cache(
         && output_raw_filepath.exists()
         && (!render || output_rendered_filepath.exists())
     {
-        let current_raw_string = read_to_string(output_raw_filepath).map_err(|e| Error::Io {
-            description: format!("Failed to read {}", &output_raw_filepath.display()),
-            source: e,
-        })?;
-        let current_raw_lines = current_raw_string.lines().collect::<Vec<_>>();
-        let current_rendered_hash_opt = current_raw_lines.last().and_then(|x| line_to_hash(x));
+        // Read only the tail of the file to extract the last line's hash,
+        // avoiding a full multi-MB read for the common cache-miss path.
+        let current_rendered_hash_opt = {
+            let mut file = File::open(output_raw_filepath).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", output_raw_filepath.display()),
+                source: e,
+            })?;
+            let file_len = file
+                .metadata()
+                .map_err(|e| Error::Io {
+                    description: format!(
+                        "Failed to read metadata for {}",
+                        output_raw_filepath.display()
+                    ),
+                    source: e,
+                })?
+                .len();
+            file.seek(SeekFrom::Start(file_len.saturating_sub(512)))
+                .map_err(|e| Error::Io {
+                    description: format!("Failed to seek in {}", output_raw_filepath.display()),
+                    source: e,
+                })?;
+            let mut tail_bytes = Vec::new();
+            file.read_to_end(&mut tail_bytes).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", output_raw_filepath.display()),
+                source: e,
+            })?;
+            // Get the last non-empty line, handling any trailing newlines.
+            tail_bytes
+                .rsplit(|&b| b == b'\n')
+                .find(|line| !line.is_empty())
+                .and_then(|line_bytes| std::str::from_utf8(line_bytes).ok())
+                .and_then(line_to_hash)
+        };
+
         if let Some(current_rendered_hash) = current_rendered_hash_opt {
             let new_note_data_hash = sha256::digest(note_file_data);
             if current_rendered_hash == new_note_data_hash {
                 // Also check that the current note data has the correct hash. This is because locally editing the notes file will cause the data to change, but not the hash. This ensures that syncing local files to the database rerenders the file if it was updated.
-                // Remove last line to get current note file data
-                let current_note_file_data = format!(
-                    "{}\n",
-                    current_raw_lines[..current_raw_lines.len().saturating_sub(1)].join("\n")
-                );
-                let current_note_data_hash = sha256::digest(current_note_file_data);
+                // Full read only happens here, on the rare path where hashes match.
+                let current_raw_string =
+                    read_to_string(output_raw_filepath).map_err(|e| Error::Io {
+                        description: format!("Failed to read {}", &output_raw_filepath.display()),
+                        source: e,
+                    })?;
+                // Use rfind to locate the last line boundary without collecting all lines
+                // into a Vec or allocating a join buffer.
+                let content_end = current_raw_string
+                    .trim_end_matches('\n')
+                    .rfind('\n')
+                    .map_or(0, |i| i + 1);
+                let current_note_data_hash = sha256::digest(&current_raw_string[..content_end]);
                 if current_rendered_hash == current_note_data_hash {
                     info!(
                         "[Note Id: {}] Existing file is up to date. Skipping.",
