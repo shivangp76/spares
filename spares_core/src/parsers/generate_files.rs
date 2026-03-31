@@ -15,6 +15,10 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+fn blake3_hex(data: impl AsRef<[u8]>) -> String {
+    blake3::hash(data.as_ref()).to_hex().to_string()
+}
+
 #[derive(Clone, Debug)]
 pub struct GenerateNoteFilesRequest {
     pub note_id: NoteId,
@@ -99,7 +103,7 @@ pub fn file_in_cache(
         };
 
         if let Some(current_rendered_hash) = current_rendered_hash_opt {
-            let new_note_data_hash = sha256::digest(note_file_data);
+            let new_note_data_hash = blake3_hex(note_file_data);
             if current_rendered_hash == new_note_data_hash {
                 // Also check that the current note data has the correct hash. This is because locally editing the notes file will cause the data to change, but not the hash. This ensures that syncing local files to the database rerenders the file if it was updated.
                 // Full read only happens here, on the rare path where hashes match.
@@ -114,7 +118,7 @@ pub fn file_in_cache(
                     .trim_end_matches('\n')
                     .rfind('\n')
                     .map_or(0, |i| i + 1);
-                let current_note_data_hash = sha256::digest(&current_raw_string[..content_end]);
+                let current_note_data_hash = blake3_hex(&current_raw_string[..content_end]);
                 if current_rendered_hash == current_note_data_hash {
                     info!(
                         "[Note Id: {}] Existing file is up to date. Skipping.",
@@ -312,7 +316,7 @@ fn create_note_files(
         // - it is a note
         // - the note was rendered OR the note was created somewhere else for comparison purposes
         if render || overridden_output_raw_dir.is_some() {
-            let file_contents_hash = sha256::digest(&file_contents);
+            let file_contents_hash = blake3_hex(&file_contents);
             let file_contents_hash_str = format!("hash: {}", file_contents_hash);
             let hash_line = parser.construct_comment(&file_contents_hash_str);
             file_contents.push_str(hash_line.as_str());

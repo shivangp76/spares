@@ -16,6 +16,7 @@ name = "spares"
 path = "src/main.rs"
 
 [dependencies]
+blake3 = "1.8.4"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.0", features = ["derive", "cargo", "env"] }
 clap_complete_command = "0.6.1"
@@ -33,7 +34,6 @@ petgraph = "0.8.3"
 rayon = "1.11.0"
 reqwest = { version = "0.13.2", features = ["json", "query"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sha256 = "1.6.0"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 spares_core = { path = "../spares_core" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }

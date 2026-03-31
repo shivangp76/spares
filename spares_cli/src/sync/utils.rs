@@ -125,7 +125,11 @@ pub(super) fn build_file_map(base_dir: &Path) -> Result<HashMap<PathBuf, PathBuf
     Ok(file_map)
 }
 
-/// Persistent mtime+hash cache keyed by absolute path string → (`mtime_secs`, `sha256_hex`).
+pub(super) fn blake3_hex(data: impl AsRef<[u8]>) -> String {
+    blake3::hash(data.as_ref()).to_hex().to_string()
+}
+
+/// Persistent mtime+hash cache keyed by absolute path string → (`mtime_secs`, `blake3_hex`).
 type HashIndex = HashMap<String, (u64, String)>;
 
 fn hash_index_path() -> PathBuf {
