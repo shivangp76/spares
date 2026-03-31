@@ -5,7 +5,9 @@ mod utils;
 
 use crate::{
     import::import_from_files,
-    sync::utils::{build_file_map, clear_dir, load_hash_index, replace_action, save_hash_index},
+    sync::utils::{
+        blake3_hex, build_file_map, clear_dir, load_hash_index, replace_action, save_hash_index,
+    },
 };
 use clap::{Args, Subcommand, ValueEnum};
 use interactive::{SyncMode, sync_notes_interactive};
@@ -321,7 +323,7 @@ pub(crate) async fn sync_notes(
     }
 }
 
-/// Compute SHA256 hashes for all paths, reusing mtime-based cached hashes where possible.
+/// Compute hashes for all paths, reusing mtime-based cached hashes where possible.
 /// Loads and saves the persistent hash index.
 fn compute_file_hashes(all_paths: &[PathBuf]) -> Result<HashMap<PathBuf, String>, String> {
     // Collect mtimes (sequential metadata reads)
@@ -353,7 +355,7 @@ fn compute_file_hashes(all_paths: &[PathBuf]) -> Result<HashMap<PathBuf, String>
         .map(|(p, mtime)| {
             let contents =
                 fs::read(p).map_err(|e| format!("Failed to read {}: {}", p.display(), e))?;
-            let hash = sha256::digest(contents.as_slice());
+            let hash = blake3_hex(contents.as_slice());
             Ok((p.clone(), *mtime, hash))
         })
         .collect::<Result<_, String>>()?;
