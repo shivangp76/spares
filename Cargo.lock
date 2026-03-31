@@ -414,6 +414,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d2d5991425dfd0785aed03aedcf0b321d61975c9b5b3689c774a2610ae0b51e"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.0",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -650,6 +664,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "convert_case"
@@ -3492,19 +3512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha256"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f880fc8562bdeb709793f00eb42a2ad0e672c4f883bbe59122b926eca935c8f6"
-dependencies = [
- "async-trait",
- "bytes",
- "hex",
- "sha2",
- "tokio",
-]
-
-[[package]]
 name = "shellexpand"
 version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3628,6 +3635,7 @@ dependencies = [
 name = "spares_cli"
 version = "0.0.1-alpha.1"
 dependencies = [
+ "blake3",
  "chrono",
  "clap",
  "clap_complete_command",
@@ -3646,7 +3654,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha256",
  "spares_core",
  "sqlx",
  "strum",
@@ -3660,6 +3667,7 @@ name = "spares_core"
 version = "0.0.1-alpha.1"
 dependencies = [
  "async-trait",
+ "blake3",
  "chrono",
  "etcetera 0.11.0",
  "fancy-regex",
@@ -3681,7 +3689,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "sha256",
  "shellexpand",
  "sqlx",
  "strum",
