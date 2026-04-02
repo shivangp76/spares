@@ -298,7 +298,7 @@ pub async fn create_notes(
     }
 
     // Log event
-    if log {
+    if log && !note_responses.is_empty() {
         let mut snapshots = Vec::with_capacity(note_responses.len());
         for note_response in &note_responses {
             let snapshot = fetch_note_snapshot(
