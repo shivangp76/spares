@@ -162,6 +162,17 @@ pub struct UpdateNotePayload {
     pub cards: Option<Transition<Vec<CardSnapshot>>>,
 }
 
+impl UpdateNotePayload {
+    pub fn has_changes(&self) -> bool {
+        self.data.is_some()
+            || self.parser_id.is_some()
+            || self.keywords.is_some()
+            || self.tags.is_some()
+            || self.custom_data.is_some()
+            || self.cards.is_some()
+    }
+}
+
 /// Payload for `UpdateNotes` event
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdateNotesPayload {
