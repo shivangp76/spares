@@ -292,11 +292,10 @@ pub async fn update_notes(
                 &updated_note.custom_data,
             )
             .await?;
-            update_note_payloads.push(build_update_note_payload(
-                *note_id,
-                &before,
-                &after_snapshot,
-            ));
+            let payload = build_update_note_payload(*note_id, &before, &after_snapshot);
+            if payload.has_changes() {
+                update_note_payloads.push(payload);
+            }
         }
     }
 
