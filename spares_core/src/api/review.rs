@@ -717,13 +717,13 @@ pub async fn bury_card(
                     SchedulerErrorKind::Suspended,
                 )));
             }
-            SpecialState::UserBuried
-            | SpecialState::SchedulerBuried
-            | SpecialState::BuriedUntilLaterToday => {
+            SpecialState::UserBuried | SpecialState::SchedulerBuried => {
                 return Err(Error::Library(LibraryError::Scheduler(
                     SchedulerErrorKind::AlreadyBuried,
                 )));
             }
+            // Exclude `SpecialState::BuriedUntilLaterToday` since this can be overriden to buried
+            SpecialState::BuriedUntilLaterToday => {}
         }
     }
 
