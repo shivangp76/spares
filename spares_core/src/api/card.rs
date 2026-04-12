@@ -131,13 +131,13 @@ pub async fn update_cards(
                         SchedulerErrorKind::Suspended,
                     )));
                 }
-                SpecialState::UserBuried
-                | SpecialState::SchedulerBuried
-                | SpecialState::BuriedUntilLaterToday => {
+                SpecialState::UserBuried | SpecialState::SchedulerBuried => {
                     return Err(Error::Library(LibraryError::Scheduler(
                         SchedulerErrorKind::AlreadyBuried,
                     )));
                 }
+                // Exclude `SpecialState::BuriedUntilLaterToday` since this can be overriden to buried
+                SpecialState::BuriedUntilLaterToday => {}
             }
         }
         let updated_at: i64 =
