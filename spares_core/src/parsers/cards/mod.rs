@@ -1,17 +1,30 @@
-use super::{BackReveal, BackType, FrontConceal};
-use crate::helpers::merge_by_key;
-use crate::parsers::image_occlusion::{
-    ImageOcclusionCloze, ImageOcclusionClozeIndex, ParsedImageOcclusionCloze,
-    ParsedImageOcclusionData, combine_image_occlusion_clozes, parse_image_occlusion_data,
-};
-use crate::parsers::{
-    ClozeData, ClozeGrouping, ClozeGroupingSettings, ClozeHiddenReplacement, ClozeSettings,
-    NotePart, NoteSettingsKeys, Parseable, image_occlusion::ConstructImageOcclusionType,
-    parse_card_settings,
-};
-use crate::{Error, LibraryError};
-use overlapper::{OverlapperConfig, apply_overlapper_groupings};
 use std::sync::Arc;
+
+use overlapper::OverlapperConfig;
+use overlapper::apply_overlapper_groupings;
+
+use super::BackReveal;
+use super::BackType;
+use super::FrontConceal;
+use crate::Error;
+use crate::LibraryError;
+use crate::helpers::merge_by_key;
+use crate::parsers::ClozeData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeGroupingSettings;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeSettings;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::parsers::image_occlusion::ImageOcclusionCloze;
+use crate::parsers::image_occlusion::ImageOcclusionClozeIndex;
+use crate::parsers::image_occlusion::ParsedImageOcclusionCloze;
+use crate::parsers::image_occlusion::ParsedImageOcclusionData;
+use crate::parsers::image_occlusion::combine_image_occlusion_clozes;
+use crate::parsers::image_occlusion::parse_image_occlusion_data;
+use crate::parsers::parse_card_settings;
 
 #[cfg(test)]
 mod card_tests;
@@ -22,12 +35,15 @@ pub mod overlapper;
 mod validation;
 
 pub use data::*;
+use grouping::apply_conceal_and_reveal;
+use grouping::group_clozes;
+use grouping::modify_card_settings;
 pub use match_cards::*;
 pub use validation::*;
 
 use crate::model::NoteId;
-use crate::parsers::{DEFAULT_BACK_EMPHASIS, ReadableCardIdentifier};
-use grouping::{apply_conceal_and_reveal, group_clozes, modify_card_settings};
+use crate::parsers::DEFAULT_BACK_EMPHASIS;
+use crate::parsers::ReadableCardIdentifier;
 
 #[derive(Clone, Copy)]
 enum Direction {
@@ -399,6 +415,100 @@ pub fn get_cards_main(
         }
     }
     Ok(cards)
+}
+
+/// Returns the note data substring for the cloze group corresponding to `card_order` (1-based),
+/// prefixed with up to `CONTEXT_CHARS` bytes of preceding note data.
+///
+/// The prefix allows callers to match patterns that appear just before the cloze (e.g.
+/// `#proof[\n\s+#cl[`). Returns `None` when `card_order` is 0 or out of range.
+pub(crate) fn get_cloze_context_for_card_order(
+    parser: &dyn Parseable,
+    data: &str,
+    card_order: u32,
+) -> Result<Option<String>, LibraryError> {
+    const CONTEXT_CHARS: usize = 500;
+
+    if card_order == 0 {
+        return Ok(None);
+    }
+
+    let cloze_matches = parser.get_clozes(data)?;
+    if cloze_matches.is_empty() {
+        return Ok(None);
+    }
+
+    let note_settings_keys = parser.note_settings_keys();
+    let cloze_settings_keys = parser.cloze_settings_keys();
+    let mut current_grouping_number = 1u32;
+
+    // Parse settings for each non-empty cloze and build ClozeData
+    let mut all_clozes: Vec<(ClozeData, Vec<ClozeGroupingSettings>)> = cloze_matches
+        .into_iter()
+        .filter(|m| !(m.start_match.end..m.end_match.start).is_empty())
+        .enumerate()
+        .map(|(i, cloze_match)| {
+            let (card_settings, grouping_settings) = parse_card_settings(
+                data,
+                &cloze_match.settings_match,
+                &mut current_grouping_number,
+                &note_settings_keys,
+                &cloze_settings_keys,
+                None,
+            )?;
+            Ok((
+                ClozeData {
+                    index: i,
+                    start_delim: cloze_match.start_match,
+                    end_delim: cloze_match.end_match,
+                    settings: card_settings,
+                    image_occlusion: None,
+                },
+                grouping_settings,
+            ))
+        })
+        .collect::<Result<Vec<_>, LibraryError>>()?;
+
+    let (cards_raw, _) = group_clozes(&mut all_clozes, data)?;
+
+    let card_order_usize = card_order as usize;
+
+    // Prefer matching by stored `[o:N]` annotations; fall back to sequential index.
+    let card_clozes = cards_raw
+        .iter()
+        .find(|clozes| {
+            clozes
+                .iter()
+                .find(|(_, gs)| !gs.skip_serialization)
+                .and_then(|(_, gs)| gs.orders.as_ref())
+                .is_some_and(|orders| orders.contains(&card_order_usize))
+        })
+        .or_else(|| cards_raw.get(card_order_usize - 1));
+
+    let Some(card_clozes) = card_clozes else {
+        return Ok(None);
+    };
+
+    let cloze_start = card_clozes
+        .iter()
+        .filter(|(_, gs)| !gs.skip_serialization)
+        .map(|(cd, _)| cd.start_delim.start)
+        .min()
+        .unwrap_or(0);
+    let cloze_end = card_clozes
+        .iter()
+        .filter(|(_, gs)| !gs.skip_serialization)
+        .map(|(cd, _)| cd.end_delim.end)
+        .max()
+        .unwrap_or(data.len());
+
+    // Subtract context bytes and snap forward to a UTF-8 char boundary.
+    let mut context_start = cloze_start.saturating_sub(CONTEXT_CHARS);
+    while context_start < data.len() && !data.is_char_boundary(context_start) {
+        context_start += 1;
+    }
+
+    Ok(Some(data[context_start..cloze_end].to_string()))
 }
 
 pub fn add_order_to_note_data(
