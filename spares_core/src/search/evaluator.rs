@@ -1,11 +1,26 @@
-use crate::{
-    LibraryError,
-    model::{Card, CardId, Note, NoteId},
-    search::{Atom, Op, TokenTree, parser::Parser},
-};
+use std::collections::HashSet;
+
+use fancy_regex::Regex;
 use log::info;
-use miette::{Error, Report, miette};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use miette::Error;
+use miette::Report;
+use miette::miette;
+use sqlx::QueryBuilder;
+use sqlx::Sqlite;
+use sqlx::SqlitePool;
+
+use crate::LibraryError;
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::parsers::find_parser;
+use crate::parsers::get_all_parsers;
+use crate::parsers::get_cloze_context_for_card_order;
+use crate::search::Atom;
+use crate::search::Op;
+use crate::search::TokenTree;
+use crate::search::parser::Parser;
 
 pub(crate) struct Evaluator<'de> {
     // whole: &'de str,
@@ -22,20 +37,19 @@ impl<'de> Evaluator<'de> {
 
     fn evaluate(self, internal_output_type: EvaluatorReturnItemType) -> Result<String, Report> {
         let token_tree = self.parser.parse_expression()?;
-        let mut context = EvaluationContext::new();
-        context.root_context = true;
-        token_tree.evaluate(&mut context)?;
-        Ok(context.build_query(internal_output_type))
+        Self::build_query_from_tree(&token_tree, internal_output_type, false)
     }
 
-    fn evaluate_with_parser(
-        self,
+    fn build_query_from_tree(
+        token_tree: &TokenTree,
         internal_output_type: EvaluatorReturnItemType,
+        needs_parser: bool,
     ) -> Result<String, Report> {
-        let token_tree = self.parser.parse_expression()?;
         let mut context = EvaluationContext::new();
         context.root_context = true;
-        context.table_requirements.needs_parser = true;
+        if needs_parser {
+            context.table_requirements.needs_parser = true;
+        }
         token_tree.evaluate(&mut context)?;
         Ok(context.build_query(internal_output_type))
     }
@@ -51,9 +65,13 @@ impl<'de> Evaluator<'de> {
             #[sqlx(rename = "name")]
             parser_name: String,
         }
-        let query_str = self
-            .evaluate_with_parser(EvaluatorReturnItemType::Notes)
+        let token_tree = self
+            .parser
+            .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        let query_str =
+            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Notes, true)
+                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", &query_str);
         let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -89,9 +107,19 @@ impl<'de> Evaluator<'de> {
             #[sqlx(rename = "name")]
             parser_name: String,
         }
-        let query_str = self
-            .evaluate_with_parser(EvaluatorReturnItemType::Cards)
+
+        let token_tree = self
+            .parser
+            .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+
+        if has_cloze_field(&token_tree) {
+            return Self::get_cards_cloze_path(&token_tree, db).await;
+        }
+
+        let query_str =
+            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Cards, true)
+                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", &query_str);
         let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -105,15 +133,105 @@ impl<'de> Evaluator<'de> {
     }
 
     pub(crate) async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
-        let query_str = self
-            .evaluate(EvaluatorReturnItemType::CardIds)
+        let token_tree = self
+            .parser
+            .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+
+        if has_cloze_field(&token_tree) {
+            return Ok(Self::get_cards_cloze_path(&token_tree, db)
+                .await?
+                .into_iter()
+                .map(|(card, _)| card.id)
+                .collect());
+        }
+
+        let query_str =
+            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::CardIds, false)
+                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", &query_str);
         let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
         Ok(card_ids)
+    }
+
+    /// Cloze path: convert the query tree to DNF, then for each disjunct run SQL +
+    /// optional in-memory cloze filtering, and union the results.
+    async fn get_cards_cloze_path(
+        token_tree: &TokenTree<'_>,
+        db: &SqlitePool,
+    ) -> Result<Vec<(Card, String)>, crate::Error> {
+        #[derive(sqlx::FromRow)]
+        struct EnrichedCardWithNoteData {
+            #[sqlx(flatten)]
+            card: Card,
+            #[sqlx(rename = "name")]
+            parser_name: String,
+            note_data: String,
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct EnrichedCard {
+            #[sqlx(flatten)]
+            card: Card,
+            #[sqlx(rename = "name")]
+            parser_name: String,
+        }
+
+        let disjuncts = to_dnf(token_tree.clone());
+        let mut seen_ids: HashSet<CardId> = HashSet::new();
+        let mut result: Vec<(Card, String)> = Vec::new();
+
+        for disjunct in &disjuncts {
+            if has_cloze_field(disjunct) {
+                // Cloze disjunct: fetch with note_data, then post-filter in memory.
+                let cloze_patterns = extract_cloze_patterns(disjunct);
+                let query_str =
+                    Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
+                        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                info!("{}", &query_str);
+                let candidates: Vec<EnrichedCardWithNoteData> = sqlx::query_as(&query_str)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| crate::Error::Sqlx { source: e })?;
+                let all_parsers = get_all_parsers();
+                for candidate in candidates {
+                    if seen_ids.contains(&candidate.card.id) {
+                        continue;
+                    }
+                    let parser = find_parser(&candidate.parser_name, &all_parsers)?;
+                    if let Some(ctx) = get_cloze_context_for_card_order(
+                        parser.as_ref(),
+                        &candidate.note_data,
+                        candidate.card.order,
+                    )
+                    .map_err(crate::Error::Library)?
+                        && cloze_patterns.iter().all(|p| p.matches(&ctx))
+                    {
+                        seen_ids.insert(candidate.card.id);
+                        result.push((candidate.card, candidate.parser_name));
+                    }
+                }
+            } else {
+                // No cloze in this disjunct — pure SQL path, no note_data needed.
+                let query_str =
+                    Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
+                        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                info!("{}", &query_str);
+                let cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| crate::Error::Sqlx { source: e })?;
+                for c in cards {
+                    if seen_ids.insert(c.card.id) {
+                        result.push((c.card, c.parser_name));
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -163,6 +281,7 @@ enum CardField {
     CustomData(String),
     Rated,
     Count,
+    Cloze,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,6 +356,7 @@ impl Field {
             }
             "c.rated" => Ok(Field::Card(CardField::Rated)),
             "c.count" => Ok(Field::Card(CardField::Count)),
+            "c.cloze" => Ok(Field::Card(CardField::Cloze)),
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
             "sort_by_desc" => Ok(Field::SortDesc(String::new())),
             "limit" => Ok(Field::Limit),
@@ -322,6 +442,11 @@ impl Field {
                 CardField::Count => {
                     with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
                 }
+                CardField::Cloze => {
+                    // Cannot be evaluated in SQL — matched in memory after SQL fetch.
+                    // Return a tautology so other SQL conditions still apply.
+                    "1".to_string()
+                }
             },
             Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => String::new(),
         }
@@ -350,6 +475,7 @@ impl Field {
                     FieldType::Boolean
                 }
                 CardField::CustomData(_) => FieldType::Json,
+                CardField::Cloze => FieldType::String,
             },
             Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => FieldType::Integer,
         }
@@ -402,7 +528,8 @@ impl Field {
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
-                | CardField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
+                | CardField::CustomData(_)
+                | CardField::Cloze => Err(miette!("Cannot sort by field `{:?}`", field)),
             },
             Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => Err(miette!("Cannot sort by sort field `{:?}`", field)),
         }
@@ -417,6 +544,9 @@ struct TableRequirements {
     needs_card: bool,
     needs_review_log: bool,
     needs_note_link: bool,
+    /// Set when a `c.cloze` condition is present; causes `build_query` to include
+    /// `n.data AS note_data` in the `Cards` SELECT for in-memory cloze filtering.
+    needs_note_data: bool,
 }
 
 impl TableRequirements {
@@ -430,8 +560,11 @@ impl TableRequirements {
                 NoteField::LinkedTo => req.needs_note_link = true,
                 _ => {}
             },
-            Field::Card(_card_field) => {
+            Field::Card(card_field) => {
                 req.needs_card = true;
+                if matches!(card_field, CardField::Cloze) {
+                    req.needs_note_data = true;
+                }
             }
             // Sort fields don't have requirements until we know the target field name,
             // which is determined during evaluation, not parsing
@@ -446,6 +579,7 @@ impl TableRequirements {
         self.needs_card |= other.needs_card;
         self.needs_review_log |= other.needs_review_log;
         self.needs_note_link |= other.needs_note_link;
+        self.needs_note_data |= other.needs_note_data;
     }
 }
 
@@ -495,8 +629,13 @@ impl EvaluationContext<'_> {
                 self.query_builder.push("SELECT DISTINCT n.id FROM note n");
             }
             EvaluatorReturnItemType::Cards => {
-                self.query_builder
-                    .push("SELECT DISTINCT c.*, p.name FROM card c");
+                if self.table_requirements.needs_note_data {
+                    self.query_builder
+                        .push("SELECT DISTINCT c.*, p.name, n.data AS note_data FROM card c");
+                } else {
+                    self.query_builder
+                        .push("SELECT DISTINCT c.*, p.name FROM card c");
+                }
                 self.query_builder
                     .push(" LEFT JOIN note n ON n.id = c.note_id");
             }
@@ -921,6 +1060,118 @@ fn evaluate_field_value(
     Ok(())
 }
 
+/// A pattern extracted from a `c.cloze ~ ...` condition for in-memory matching.
+struct ClozePattern {
+    is_regex: bool,
+    value: String,
+}
+
+impl ClozePattern {
+    fn matches(&self, text: &str) -> bool {
+        if self.is_regex {
+            Regex::new(&self.value)
+                .ok()
+                .and_then(|re| re.is_match(text).ok())
+                .unwrap_or(false)
+        } else {
+            text.to_lowercase().contains(&self.value.to_lowercase())
+        }
+    }
+}
+
+/// Converts a `TokenTree` to Disjunctive Normal Form (a `Vec` of conjunctions).
+///
+/// Each element of the returned `Vec` is an AND-conjunction (a tree whose top-level
+/// operator is `And` or a single literal). The union of all conjunctions is
+/// semantically equivalent to the original tree.
+///
+/// This is used so that `c.cloze` post-filtering can be applied per-conjunction,
+/// preserving correct AND/OR semantics across compound queries.
+fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
+    match tree {
+        TokenTree::Cons(Op::Or, children) => {
+            // Each child is its own set of disjuncts — collect them all.
+            children.into_iter().flat_map(to_dnf).collect()
+        }
+        TokenTree::Cons(Op::And | Op::Group, children) => {
+            // Distribute AND over the disjuncts of each child (cross-product).
+            let mut conjuncts: Vec<Vec<TokenTree<'_>>> = vec![vec![]];
+            for child in children {
+                let child_disjuncts = to_dnf(child);
+                conjuncts = conjuncts
+                    .into_iter()
+                    .flat_map(|conj| {
+                        child_disjuncts.iter().map(move |cd| {
+                            let mut new_conj = conj.clone();
+                            new_conj.push(cd.clone());
+                            new_conj
+                        })
+                    })
+                    .collect();
+            }
+            conjuncts
+                .into_iter()
+                .map(|mut conj| {
+                    if conj.len() == 1 {
+                        conj.remove(0)
+                    } else {
+                        TokenTree::Cons(Op::And, conj)
+                    }
+                })
+                .collect()
+        }
+        // Atoms and all other Cons nodes (comparisons, Minus) are literals.
+        other => vec![other],
+    }
+}
+
+/// Returns true if the token tree contains a `c.cloze` field reference.
+fn has_cloze_field(tree: &TokenTree) -> bool {
+    match tree {
+        TokenTree::Atom(Atom::Field(f)) => Field::from_str(&[f])
+            .ok()
+            .is_some_and(|f| matches!(f, Field::Card(CardField::Cloze))),
+        TokenTree::Cons(_, children) => children.iter().any(has_cloze_field),
+        TokenTree::Atom(_) => false,
+    }
+}
+
+/// Recursively extracts all `c.cloze ~ value` patterns from the token tree.
+fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
+    match tree {
+        TokenTree::Cons(Op::Tilde, children) if children.len() == 2 => {
+            let is_cloze = matches!(
+                &children[0],
+                TokenTree::Atom(Atom::Field(f))
+                if Field::from_str(&[f])
+                    .ok()
+                    .is_some_and(|f| matches!(f, Field::Card(CardField::Cloze)))
+            );
+            if is_cloze {
+                return match &children[1] {
+                    TokenTree::Atom(Atom::Regex(r)) => {
+                        vec![ClozePattern {
+                            is_regex: true,
+                            value: r.to_string(),
+                        }]
+                    }
+                    TokenTree::Atom(Atom::String(s)) => {
+                        vec![ClozePattern {
+                            is_regex: false,
+                            value: s.to_string(),
+                        }]
+                    }
+                    _ => vec![],
+                };
+            }
+            // Not a cloze field — recurse into children
+            children.iter().flat_map(extract_cloze_patterns).collect()
+        }
+        TokenTree::Cons(_, children) => children.iter().flat_map(extract_cloze_patterns).collect(),
+        TokenTree::Atom(_) => vec![],
+    }
+}
+
 impl Evaluate for Atom<'_> {
     fn evaluate(&self, context: &mut EvaluationContext) -> Result<(), Error> {
         match self {
@@ -1316,5 +1567,149 @@ mod tests {
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_cloze_field_sql_generation() {
+        // c.cloze conditions emit 1 (tautology) in SQL; other conditions still apply.
+        // The parser join is needed when fetching cards for cloze filtering.
+        let inputs = vec![
+            (
+                r#"c.cloze~"proof""#,
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE 1",
+            ),
+            (
+                r#"c.cloze~"proof" AND c.suspended=false"#,
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (1 AND (c.special_state IS NULL OR c.special_state != 1))",
+            ),
+        ];
+        for (input, expected_sql) in inputs {
+            let evaluator = Evaluator::new(input);
+            let query_str = evaluator
+                .evaluate(EvaluatorReturnItemType::CardIds)
+                .unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_has_cloze_field() {
+        let tree = Evaluator::new(r#"c.cloze~"test""#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        assert!(has_cloze_field(&tree));
+
+        let tree = Evaluator::new("c.stability>=2")
+            .parser
+            .parse_expression()
+            .unwrap();
+        assert!(!has_cloze_field(&tree));
+    }
+
+    #[test]
+    fn test_extract_cloze_patterns() {
+        let tree = Evaluator::new(r#"c.cloze~"proof""#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let patterns = extract_cloze_patterns(&tree);
+        assert_eq!(patterns.len(), 1);
+        assert!(!patterns[0].is_regex);
+        assert_eq!(patterns[0].value, "proof");
+        assert!(patterns[0].matches("a proof of X"));
+        assert!(!patterns[0].matches("a lemma"));
+
+        let tree = Evaluator::new(r#"c.cloze~re:"^#cl\[""#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let patterns = extract_cloze_patterns(&tree);
+        assert_eq!(patterns.len(), 1);
+        assert!(patterns[0].is_regex);
+        assert!(patterns[0].matches("#cl[hidden]"));
+        assert!(!patterns[0].matches("not a cloze"));
+    }
+
+    #[test]
+    fn test_to_dnf() {
+        // Simple literal — stays as one disjunct.
+        let tree = Evaluator::new(r#"c.cloze~"proof""#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let disjuncts = to_dnf(tree);
+        assert_eq!(disjuncts.len(), 1);
+
+        // AND — stays as one conjunction, not split.
+        let tree = Evaluator::new(r#"c.cloze~"proof" AND c.suspended=false"#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let disjuncts = to_dnf(tree);
+        assert_eq!(disjuncts.len(), 1);
+
+        // OR — two disjuncts.
+        let tree = Evaluator::new(r#"c.cloze~"a" OR c.cloze~"b""#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let disjuncts = to_dnf(tree);
+        assert_eq!(disjuncts.len(), 2);
+
+        // (A AND c.cloze~b) OR C — two disjuncts.
+        let tree = Evaluator::new(r#"(c.stability>=2 AND c.cloze~"proof") OR c.suspended=false"#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let disjuncts = to_dnf(tree);
+        assert_eq!(disjuncts.len(), 2);
+        // First disjunct contains cloze, second does not.
+        assert!(has_cloze_field(&disjuncts[0]));
+        assert!(!has_cloze_field(&disjuncts[1]));
+    }
+
+    #[test]
+    fn test_cloze_sql_per_disjunct() {
+        // Verify that each DNF disjunct produces the expected SQL.
+        // OR query: each branch should generate its own SQL.
+        let tree = Evaluator::new(r#"(c.stability>=2 AND c.cloze~"proof") OR c.suspended=false"#)
+            .parser
+            .parse_expression()
+            .unwrap();
+        let disjuncts = to_dnf(tree);
+        assert_eq!(disjuncts.len(), 2);
+
+        let sql0 = Evaluator::build_query_from_tree(
+            &disjuncts[0],
+            EvaluatorReturnItemType::CardIds,
+            false,
+        )
+        .unwrap();
+        // Cloze becomes "1", stability condition stays.
+        assert!(
+            sql0.contains("c.stability"),
+            "Expected stability in SQL: {sql0}"
+        );
+        assert!(
+            !sql0.contains("proof"),
+            "Cloze value must not appear in SQL: {sql0}"
+        );
+
+        let sql1 = Evaluator::build_query_from_tree(
+            &disjuncts[1],
+            EvaluatorReturnItemType::CardIds,
+            false,
+        )
+        .unwrap();
+        // Second disjunct is c.suspended=false — no cloze tautology at the WHERE level.
+        assert!(
+            sql1.contains("special_state"),
+            "Expected suspended check in SQL: {sql1}"
+        );
+        assert!(
+            !sql1.contains("WHERE 1"),
+            "No bare tautology expected in cloze-free disjunct: {sql1}"
+        );
     }
 }

@@ -25,6 +25,7 @@
 | linked_to           | i64      |
 | c.rated             | u32      |
 | c.count             | u32      |
+| c.cloze             | String   |
 
 ## Types
 

@@ -1,8 +1,17 @@
-use crate::parsers::{
-    BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards, impls::markdown::MarkdownParser,
-};
 use pretty_assertions::assert_eq;
+
+use crate::parsers::BackReveal;
+use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::FrontConceal;
+use crate::parsers::NotePart;
+use crate::parsers::Parseable;
+use crate::parsers::get_cards;
+use crate::parsers::get_cloze_context_for_card_order;
+use crate::parsers::impls::markdown::MarkdownParser;
+use crate::parsers::impls::typst::TypstParser;
 
 const MOVE_FILES: bool = false;
 
@@ -332,4 +341,94 @@ fn test_get_cards_no_clozes() {
     if let Ok(cards) = cards_res {
         assert!(cards.is_empty());
     }
+}
+
+#[test]
+fn test_get_cloze_context_for_card_order_markdown_basic() {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+
+    // Single card — should include preceding text in context
+    let data = "intro {{ hidden }} outro";
+    let ctx = get_cloze_context_for_card_order(parser.as_ref(), data, 1)
+        .unwrap()
+        .unwrap();
+    assert!(
+        ctx.contains("intro "),
+        "context should include preceding text"
+    );
+    assert!(ctx.contains("{{"), "context should include cloze start");
+    assert!(
+        ctx.contains("hidden"),
+        "context should include cloze content"
+    );
+
+    // Order out of range
+    assert!(
+        get_cloze_context_for_card_order(parser.as_ref(), data, 2)
+            .unwrap()
+            .is_none()
+    );
+
+    // Order 0 is always None
+    assert!(
+        get_cloze_context_for_card_order(parser.as_ref(), data, 0)
+            .unwrap()
+            .is_none()
+    );
+
+    // No clozes
+    let data_no_cloze = "just plain text";
+    assert!(
+        get_cloze_context_for_card_order(parser.as_ref(), data_no_cloze, 1)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn test_get_cloze_context_for_card_order_two_cards() {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+
+    // Two independent clozes → two cards; each context should contain its own cloze
+    let data = "prefix1 {{ card1 }} middle {{ card2 }} suffix";
+    let ctx1 = get_cloze_context_for_card_order(parser.as_ref(), data, 1)
+        .unwrap()
+        .unwrap();
+    let ctx2 = get_cloze_context_for_card_order(parser.as_ref(), data, 2)
+        .unwrap()
+        .unwrap();
+
+    assert!(ctx1.contains("card1"), "ctx1 should include card1 content");
+    assert!(ctx2.contains("card2"), "ctx2 should include card2 content");
+    // ctx1 should NOT extend past its own cloze end
+    assert!(
+        !ctx1.contains("card2"),
+        "ctx1 should not include card2 content"
+    );
+}
+
+#[test]
+fn test_get_cloze_context_for_card_order_typst_proof() {
+    let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
+
+    // Simulate the user's pattern: a cloze inside a #proof block and one outside
+    let data = "#proof[\n  #cl[theorem][g:1]\n]\n#cl[outside][g:2]";
+    let ctx1 = get_cloze_context_for_card_order(parser.as_ref(), data, 1)
+        .unwrap()
+        .unwrap();
+    let ctx2 = get_cloze_context_for_card_order(parser.as_ref(), data, 2)
+        .unwrap()
+        .unwrap();
+
+    // The context for card1 should include "#proof[" because it appears just before the cloze
+    assert!(
+        ctx1.contains("#proof["),
+        "ctx1 should include surrounding #proof block: {ctx1}"
+    );
+    // The context for card2 should NOT start with "#proof[" since it's 500+ chars away
+    // (in this short example they're close, so just check card2's content is right)
+    assert!(
+        ctx2.contains("#cl[outside]"),
+        "ctx2 should include outside cloze: {ctx2}"
+    );
 }
