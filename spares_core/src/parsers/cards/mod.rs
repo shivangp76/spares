@@ -70,11 +70,13 @@ pub fn get_cards(
             DEFAULT_BACK_EMPHASIS,
         ),
         None,
+        false,
     )
 }
 
 // The order of the returned cards matters here and is used to reference cards in the database. Cloze number cannot be used in the database because 1 card can have multiple clozes (grouped clozes).
 #[expect(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn get_cards_main(
     parser: &dyn Parseable,
     to_parser: Option<&dyn Parseable>,
@@ -83,6 +85,7 @@ pub fn get_cards_main(
     move_files: bool,
     defaults: (FrontConceal, BackReveal, bool),
     overlapper: Option<&OverlapperConfig>,
+    serialize_ephemeral: bool,
 ) -> Result<Vec<CardData>, LibraryError> {
     let mut data = data;
     let cloze_matches = parser.get_clozes(&data)?;
@@ -236,7 +239,14 @@ pub fn get_cards_main(
         .collect::<Vec<_>>();
 
     // Modify card settings
-    modify_card_settings(&mut cards_raw, &mut data, parser, to_parser, add_order)?;
+    modify_card_settings(
+        &mut cards_raw,
+        &mut data,
+        parser,
+        to_parser,
+        add_order,
+        serialize_ephemeral,
+    )?;
 
     // Combine image occlusions
     // This is done in place since image occlusions containing grouped clozes are a relatively rare type of card. This means that it is rare that combining image occlusion clozes will change the data.
@@ -528,6 +538,7 @@ pub fn add_order_to_note_data(
             DEFAULT_BACK_EMPHASIS,
         ),
         overlapper,
+        false,
     )?;
     let note_data = card_datas
         .first()

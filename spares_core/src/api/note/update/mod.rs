@@ -1,33 +1,44 @@
-use super::{AUTOMATIC_REBUILD, create_note_keywords, delete_note_files};
-use crate::{
-    Error, LibraryError, ParserErrorKind,
-    api::{
-        note::basic::fetch_note_snapshot,
-        parser::get_parser_name,
-        undo::{
-            create_event_group, insert_events,
-            payloads::{
-                CreateTagPayload, NoteSnapshot, Transition, UpdateNotePayload, UpdateNotesPayload,
-            },
-        },
-    },
-    config::{read_external_config, read_internal_config, write_internal_config},
-    model::{EventType, Note, NoteId},
-    parsers::{
-        CardData, Parseable, add_order_to_note_data, extract_and_combine_keywords, find_parser,
-        generate_files::{
-            GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
-        },
-        get_cards,
-    },
-    schema::note::{
-        NoteResponse, NotesSelector, UpdateNotesRequest, UpdateNotesResponse, UpdateTags,
-    },
-};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
+
+use super::AUTOMATIC_REBUILD;
+use super::create_note_keywords;
+use super::delete_note_files;
+use crate::Error;
+use crate::LibraryError;
+use crate::ParserErrorKind;
+use crate::api::note::basic::fetch_note_snapshot;
+use crate::api::parser::get_parser_name;
+use crate::api::undo::create_event_group;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::NoteSnapshot;
+use crate::api::undo::payloads::Transition;
+use crate::api::undo::payloads::UpdateNotePayload;
+use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::config::read_external_config;
+use crate::config::read_internal_config;
+use crate::config::write_internal_config;
+use crate::model::EventType;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::parsers::CardData;
+use crate::parsers::Parseable;
+use crate::parsers::add_order_to_note_data;
+use crate::parsers::extract_and_combine_keywords;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::generate_files::GenerateNoteFilesRequests;
+use crate::parsers::generate_files::create_note_files_bulk;
+use crate::parsers::get_cards;
+use crate::schema::note::NoteResponse;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateNotesResponse;
+use crate::schema::note::UpdateTags;
 
 mod cards;
 mod event;
@@ -362,26 +373,30 @@ pub async fn update_notes(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        api::{
-            note::{create_notes, update_notes},
-            parser::tests::create_parser_helper,
-            review::submit_study_action,
-        },
-        model::{Card, SpecialState},
-        parsers::{BackType, get_all_parsers},
-        schema::{
-            note::{
-                CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest,
-                UpdateNotesResponse, UpdateTags,
-            },
-            review::{RatingSubmission, StudyAction, SubmitStudyActionRequest},
-        },
-    };
-    use chrono::{Duration, Utc};
+    use chrono::Duration;
+    use chrono::Utc;
     use indoc::indoc;
-    use serde_json::{Map, Value};
+    use serde_json::Map;
+    use serde_json::Value;
     use sqlx::SqlitePool;
+
+    use crate::api::note::create_notes;
+    use crate::api::note::update_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::review::submit_study_action;
+    use crate::model::Card;
+    use crate::model::SpecialState;
+    use crate::parsers::BackType;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::UpdateNotesRequest;
+    use crate::schema::note::UpdateNotesResponse;
+    use crate::schema::note::UpdateTags;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StudyAction;
+    use crate::schema::review::SubmitStudyActionRequest;
 
     #[sqlx::test]
     async fn test_update_note_match_cards(pool: SqlitePool) -> () {
@@ -717,5 +732,131 @@ mod tests {
         // Card 3: suspended — updated_at must be bumped
         assert_eq!(new_cards[2].special_state, Some(SpecialState::Suspended));
         assert_ne!(new_cards[2].updated_at, old_cards[2].updated_at);
+    }
+
+    /// `inh:NOTE_ID/ORDER` on a card added via note update copies SRS fields from the source card,
+    /// and the stored note data must not contain `inh:` after the update.
+    #[sqlx::test]
+    async fn test_update_note_inherit_copies_srs_data(pool: SqlitePool) {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        // Step 1: Create source note with one card and rate it so it has non-default SRS data.
+        let create_res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{ source card }}".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let src_note_id = create_res.notes[0].id;
+        let src_card: Card =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = 1"#)
+                .bind(src_note_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id: src_card.id,
+                    rating: 4,
+                    recall_duration: chrono::Duration::seconds(5),
+                    rate_duration: chrono::Duration::seconds(2),
+                    tag_id: None,
+                }),
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        let src_card_after_review: Card = sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
+            .bind(src_card.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(src_card_after_review.stability, src_card.stability);
+
+        // Step 2: Create the destination note with one card.
+        let dst_create_res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{ destination card 1 }}".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let dst_note_id = dst_create_res.notes[0].id;
+
+        // Step 3: Update the destination note to add a second cloze with `inh:`.
+        let new_data = format!(
+            "{{{{[o:1] destination card 1 }}}}{{{{[inh:{src_note_id}/1] destination card 2 }}}}"
+        );
+        let update_res = update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![dst_note_id]),
+                data: Some(new_data),
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::None,
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Step 4: Verify stored note data does NOT contain `inh:`.
+        let stored_data = &update_res.notes[0].data;
+        assert!(
+            !stored_data.contains("inh:"),
+            "stored note data must not contain `inh:`, got: {stored_data}"
+        );
+
+        // Step 5: Verify the new card's SRS fields match the source card's.
+        let dst_card2: Card =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = 2"#)
+                .bind(dst_note_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(dst_card2.stability, src_card_after_review.stability);
+        assert_eq!(dst_card2.difficulty, src_card_after_review.difficulty);
+        assert_eq!(
+            dst_card2.desired_retention,
+            src_card_after_review.desired_retention
+        );
+        assert_eq!(dst_card2.state, src_card_after_review.state);
+        assert_eq!(
+            dst_card2.due.timestamp(),
+            src_card_after_review.due.timestamp()
+        );
+        assert_eq!(dst_card2.special_state, src_card_after_review.special_state);
     }
 }

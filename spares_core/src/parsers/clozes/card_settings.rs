@@ -1,13 +1,22 @@
-use super::data::{
-    BackReveal, BackType, ClozeGrouping, ClozeGroupingSettings, ClozeSettings, FrontConceal,
-    ModifyDefaultsFn, ReadableCardIdentifier,
-};
-use crate::helpers::{GroupByInsertion, split_inclusive_following};
-use crate::parsers::{NoteSettingsKeys, get_settings_pairs};
-use crate::{CardErrorKind, LibraryError};
-use indexmap::IndexMap;
 use std::ops::Range;
 use std::str::FromStr;
+
+use indexmap::IndexMap;
+
+use super::data::BackReveal;
+use super::data::BackType;
+use super::data::ClozeGrouping;
+use super::data::ClozeGroupingSettings;
+use super::data::ClozeSettings;
+use super::data::FrontConceal;
+use super::data::ModifyDefaultsFn;
+use super::data::ReadableCardIdentifier;
+use crate::CardErrorKind;
+use crate::LibraryError;
+use crate::helpers::GroupByInsertion;
+use crate::helpers::split_inclusive_following;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::get_settings_pairs;
 
 #[derive(Clone, Debug)]
 pub struct ClozeSettingsKeys {
@@ -46,6 +55,7 @@ impl Default for ClozeSettingsKeys {
 }
 
 #[expect(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn construct_cloze_string(
     global_settings: &ClozeSettings,
     grouping_settings: &[ClozeGroupingSettings],
@@ -54,6 +64,7 @@ pub fn construct_cloze_string(
     settings_key_value_delim: &str,
     modify_defaults_fn: ModifyDefaultsFn,
     groupings_all: &str,
+    serialize_ephemeral: bool,
 ) -> String {
     // Global settings
     let mut parts: Vec<String> = Vec::new();
@@ -86,7 +97,7 @@ pub fn construct_cloze_string(
         i,
         ClozeGroupingSettings {
             grouping,
-            inherit: _,
+            inherit,
             orders,
             include_forward_card,
             include_backward_card,
@@ -164,6 +175,15 @@ pub fn construct_cloze_string(
             grouping_parts.push(format!(
                 "{}{}{}",
                 cloze_settings_keys.back_emphasis, settings_key_value_delim, back_emphasis
+            ));
+        }
+        if serialize_ephemeral && let Some(identifier) = inherit {
+            grouping_parts.push(format!(
+                "{}{}{}/{}",
+                cloze_settings_keys.inherit,
+                settings_key_value_delim,
+                identifier.note_id,
+                identifier.order,
             ));
         }
 
@@ -507,7 +527,9 @@ pub fn parse_card_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsers::{NoteSettingsKeys, Parseable, impls::markdown::MarkdownParser};
+    use crate::parsers::NoteSettingsKeys;
+    use crate::parsers::Parseable;
+    use crate::parsers::impls::markdown::MarkdownParser;
 
     #[test]
     fn test_construct_cloze_string_1() {
@@ -533,6 +555,7 @@ mod tests {
             settings_key_value_delim,
             None,
             groupings_all,
+            false,
         );
         let expected_result = "h:Test;o:1";
         assert_eq!(result, expected_result.to_string());
@@ -561,6 +584,7 @@ mod tests {
             settings_key_value_delim,
             None,
             groupings_all,
+            false,
         );
         let expected_result = "h:Test";
         assert_eq!(result, expected_result.to_string());

@@ -1,11 +1,16 @@
+use pretty_assertions::assert_eq;
+
+use crate::parsers::BackReveal;
+use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::FrontConceal;
+use crate::parsers::NotePart;
+use crate::parsers::Parseable;
 use crate::parsers::cards::get_cards_main;
 use crate::parsers::cards::overlapper::OverlapperConfig;
 use crate::parsers::impls::markdown::MarkdownParser;
-use crate::parsers::{
-    BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable,
-};
-use pretty_assertions::assert_eq;
 
 const MOVE_FILES: bool = false;
 
@@ -23,6 +28,7 @@ fn make_cards(data: &str, config: OverlapperConfig) -> Vec<CardData> {
         MOVE_FILES,
         (FrontConceal::default(), BackReveal::default(), false),
         Some(&config),
+        false,
     )
     .unwrap()
 }
@@ -37,6 +43,7 @@ fn make_cards_with_order(data: &str, config: OverlapperConfig) -> Vec<CardData> 
         MOVE_FILES,
         (FrontConceal::default(), BackReveal::default(), false),
         Some(&config),
+        false,
     )
     .unwrap()
 }
@@ -650,6 +657,7 @@ fn test_overlapper_no_config_fallback() {
         MOVE_FILES,
         (FrontConceal::default(), BackReveal::default(), false),
         None,
+        false,
     )
     .unwrap();
 

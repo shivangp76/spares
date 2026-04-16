@@ -1,14 +1,22 @@
-use super::generate_files::CardSide;
-use super::get_cards_main;
-use crate::parsers::cards::overlapper::OverlapperConfig;
-use crate::parsers::image_occlusion::{ConstructImageOcclusionType, ImageOcclusionData};
-use crate::parsers::{
-    CardData, NoteImportAction, NoteSettings, Parseable, SrsAdapter, parse_note_settings,
-    validate_cards,
-};
-use crate::{CardErrorKind, Error, LibraryError, NoteErrorKind};
 use std::ops::Range;
 use std::sync::Arc;
+
+use super::generate_files::CardSide;
+use super::get_cards_main;
+use crate::CardErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::NoteErrorKind;
+use crate::parsers::CardData;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NoteSettings;
+use crate::parsers::Parseable;
+use crate::parsers::SrsAdapter;
+use crate::parsers::cards::overlapper::OverlapperConfig;
+use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::parse_note_settings;
+use crate::parsers::validate_cards;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClozeHiddenReplacement {
@@ -167,6 +175,7 @@ fn complete_note(
             local_settings.back_emphasis,
         ),
         overlapper,
+        true,
     )?;
     validate_cards(&cards)?;
     local_settings.cards_count = Some(cards.len());
@@ -266,12 +275,14 @@ pub fn combine_keywords_without_duplicates(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::parsers::impls::markdown::MarkdownParser;
-    use crate::parsers::impls::typst::TypstParser;
-    use crate::{adapters::get_adapter_from_string, parsers::impls::latex::LatexParserNote};
     use indoc::indoc;
     use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::adapters::get_adapter_from_string;
+    use crate::parsers::impls::latex::LatexParserNote;
+    use crate::parsers::impls::markdown::MarkdownParser;
+    use crate::parsers::impls::typst::TypstParser;
 
     #[test]
     fn test_get_notes_basic_1() {
@@ -429,11 +440,11 @@ mod tests {
         // - Multiple image occlusions to make sure the offset is correct and the surrounding data is properly parser
         // - Reimporting image occlusions (image occlusions that contain the rendered image so the user can preview it)
 
-        use crate::parsers::{
-            BackReveal, FrontConceal,
-            image_occlusion::get_image_occlusion_directory,
-            impls::{latex::LatexParserNote, markdown::MarkdownParser},
-        };
+        use crate::parsers::BackReveal;
+        use crate::parsers::FrontConceal;
+        use crate::parsers::image_occlusion::get_image_occlusion_directory;
+        use crate::parsers::impls::latex::LatexParserNote;
+        use crate::parsers::impls::markdown::MarkdownParser;
         let from_parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
         let to_parser: Box<dyn Parseable> = Box::new(LatexParserNote::new());
         let adapter = get_adapter_from_string("spares").unwrap();
