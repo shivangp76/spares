@@ -1,15 +1,23 @@
-use crate::helpers::GroupByInsertion;
-use crate::parsers::image_occlusion::{
-    ConstructImageOcclusionType, ImageOcclusionClozeIndex, update_cloze_settings,
-};
-use crate::parsers::{
-    BackReveal, ClozeData, ClozeGrouping, ClozeGroupingSettings, FrontConceal, NoteSettingsKeys,
-    Parseable, construct_cloze_string,
-};
-use crate::{CardErrorKind, LibraryError};
-use itertools::Itertools;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ops::Range;
+
+use itertools::Itertools;
+
+use crate::CardErrorKind;
+use crate::LibraryError;
+use crate::helpers::GroupByInsertion;
+use crate::parsers::BackReveal;
+use crate::parsers::ClozeData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeGroupingSettings;
+use crate::parsers::FrontConceal;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::construct_cloze_string;
+use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::parsers::image_occlusion::ImageOcclusionClozeIndex;
+use crate::parsers::image_occlusion::update_cloze_settings;
 
 #[allow(clippy::type_complexity, reason = "avoid creating extra struct")]
 #[allow(clippy::ptr_arg)]
@@ -331,6 +339,7 @@ pub(super) fn modify_card_settings(
     parser: &dyn Parseable,
     to_parser: Option<&dyn Parseable>,
     add_order: bool,
+    serialize_ephemeral: bool,
 ) -> Result<(), LibraryError> {
     let output_parser = to_parser.unwrap_or(parser);
 
@@ -391,6 +400,7 @@ pub(super) fn modify_card_settings(
                 settings_key_value_delim,
                 modify_defaults,
                 groupings_all,
+                serialize_ephemeral,
             );
 
             if let Some(ref image_occlusion_cloze) = cloze_data.image_occlusion {

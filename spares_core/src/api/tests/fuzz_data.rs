@@ -1,30 +1,41 @@
-use super::{ClozeEntry, MAX_TAGS};
-use crate::{
-    api::{
-        note::create_notes,
-        parser::tests::create_parser_helper,
-        tests::{GenerateNotesRequest, NUM_DAYS_TO_SIMULATE_KEY, START_DATE_KEY, SimulatedReview},
-    },
-    model::{Card, ReviewLog},
-    parsers::{
-        BackReveal, ClozeGrouping, ClozeGroupingSettings, ClozeSettings, FrontConceal,
-        NoteSettingsKeys, Parseable, construct_cloze_string, find_parser, get_all_parsers,
-    },
-    schedulers::{SrsScheduler, get_scheduler_from_string},
-    schema::note::{CreateNoteRequest, CreateNotesRequest, NotesResponse},
-};
-use rand::{
-    Rng, RngExt,
-    rngs::ThreadRng,
-    seq::{IndexedRandom, SliceRandom},
-};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
+use std::rc::Weak;
+
+use rand::Rng;
+use rand::RngExt;
+use rand::rngs::ThreadRng;
+use rand::seq::IndexedRandom;
+use rand::seq::SliceRandom;
 use serde_json::Map;
 use sqlx::SqlitePool;
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    rc::{Rc, Weak},
-};
+
+use super::ClozeEntry;
+use super::MAX_TAGS;
+use crate::api::note::create_notes;
+use crate::api::parser::tests::create_parser_helper;
+use crate::api::tests::GenerateNotesRequest;
+use crate::api::tests::NUM_DAYS_TO_SIMULATE_KEY;
+use crate::api::tests::START_DATE_KEY;
+use crate::api::tests::SimulatedReview;
+use crate::model::Card;
+use crate::model::ReviewLog;
+use crate::parsers::BackReveal;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeGroupingSettings;
+use crate::parsers::ClozeSettings;
+use crate::parsers::FrontConceal;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::construct_cloze_string;
+use crate::parsers::find_parser;
+use crate::parsers::get_all_parsers;
+use crate::schedulers::SrsScheduler;
+use crate::schedulers::get_scheduler_from_string;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::NotesResponse;
 
 fn generate_next_cloze_options(mut input: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     input.sort();
@@ -264,6 +275,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
         settings_key_value_delim,
         None,
         groupings_all,
+        false,
     );
 
     let mut cloze_body = String::new();
