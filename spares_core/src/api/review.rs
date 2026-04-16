@@ -1,39 +1,64 @@
-use super::note::delete_empty_tags;
-use crate::{
-    ALLOWED_F64_ERROR, Error, LibraryError, SchedulerErrorKind, TagErrorKind,
-    api::{
-        card::{delete_card_tags, unbury_cards},
-        undo::{
-            insert_events,
-            payloads::{RateCardPayload, Transition, UpdateCardPayload},
-        },
-    },
-    config::{read_external_config, read_internal_config, write_internal_config},
-    helpers::get_start_end_local_date,
-    model::{
-        Card, CardId, EventType, NEW_CARD_STATE, NoteId, RatingId, ReviewLog, SpecialState,
-        StateId, Tag,
-    },
-    parsers::{
-        BackType, Parseable, RenderOutputDirectoryType, find_parser,
-        generate_files::{CardSide, RenderOutputType},
-        get_output_raw_dir,
-    },
-    schedulers::{SrsScheduler, get_scheduler_from_string},
-    schema::review::{
-        CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest,
-        GetReviewCardResponse, RatingSubmission, ReviewLinkedNote, StudyAction,
-        SubmitStudyActionRequest, SubmitStudyActionResponse,
-    },
-    search::evaluator::Evaluator,
-};
-use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Local;
+use chrono::NaiveDate;
+use chrono::Utc;
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
-use serde_json::{Value, to_value};
-use sqlx::{FromRow, sqlite::SqlitePool};
-use std::{collections::HashMap, path::PathBuf};
+use serde_json::Value;
+use serde_json::to_value;
+use sqlx::FromRow;
+use sqlx::sqlite::SqlitePool;
+
+use super::note::delete_empty_tags;
+use crate::ALLOWED_F64_ERROR;
+use crate::Error;
+use crate::LibraryError;
+use crate::SchedulerErrorKind;
+use crate::TagErrorKind;
+use crate::api::card::delete_card_tags;
+use crate::api::card::unbury_cards;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::Transition;
+use crate::api::undo::payloads::UpdateCardPayload;
+use crate::config::read_external_config;
+use crate::config::read_internal_config;
+use crate::config::write_internal_config;
+use crate::helpers::get_start_end_local_date;
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::EventType;
+use crate::model::NEW_CARD_STATE;
+use crate::model::NoteId;
+use crate::model::RatingId;
+use crate::model::ReviewLog;
+use crate::model::SpecialState;
+use crate::model::StateId;
+use crate::model::Tag;
+use crate::parsers::BackType;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::generate_files::RenderOutputType;
+use crate::parsers::get_output_raw_dir;
+use crate::schedulers::SrsScheduler;
+use crate::schedulers::get_scheduler_from_string;
+use crate::schema::review::CardBackRenderedPath;
+use crate::schema::review::GetReviewCardFilterRequest;
+use crate::schema::review::GetReviewCardRequest;
+use crate::schema::review::GetReviewCardResponse;
+use crate::schema::review::RatingSubmission;
+use crate::schema::review::ReviewLinkedNote;
+use crate::schema::review::StudyAction;
+use crate::schema::review::SubmitStudyActionRequest;
+use crate::schema::review::SubmitStudyActionResponse;
+use crate::search::evaluator::Evaluator;
 fn maybe_relativize(path: PathBuf) -> PathBuf {
     if let Ok(base) = std::env::var("SPARES_FILES_DIR") {
         path.strip_prefix(&base).unwrap_or(&path).to_path_buf()
@@ -637,12 +662,14 @@ pub async fn rate_card(
             .map_err(|e| Error::Sqlx { source: e })?;
 
     // Update card with all new properties from updated_card
+    // special_state is explicitly set to None to clear any burial state (e.g. BuriedUntilLaterToday)
     let _update_card_result = sqlx::query(
-        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, state = ?, updated_at = ?, custom_data = ? WHERE id = ?",
+        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ?, custom_data = ? WHERE id = ?",
     )
     .bind(updated_card.due.timestamp())
     .bind(updated_card.stability)
     .bind(updated_card.difficulty)
+    .bind(Option::<SpecialState>::None)
     .bind(updated_card.state)
     .bind(updated_card.updated_at.timestamp())
     .bind(updated_card.custom_data.clone())
@@ -671,7 +698,10 @@ pub async fn rate_card(
                     after: updated_card.difficulty,
                 }),
                 desired_retention: None,
-                special_state: None,
+                special_state: before_card.special_state.map(|state| Transition {
+                    before: Some(state),
+                    after: None,
+                }),
                 state: Some(Transition {
                     before: before_card.state,
                     after: updated_card.state,
@@ -881,12 +911,12 @@ pub async fn submit_study_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        api::{note::tests::tests::create_note_helper, statistics::get_statistics},
-        model::Card,
-        parsers::get_all_parsers,
-        schema::{note::NoteResponse, review::StatisticsRequest},
-    };
+    use crate::api::note::tests::tests::create_note_helper;
+    use crate::api::statistics::get_statistics;
+    use crate::model::Card;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::NoteResponse;
+    use crate::schema::review::StatisticsRequest;
 
     async fn create_note(pool: &sqlx::SqlitePool) -> (NoteResponse, Vec<Card>) {
         // Create note
