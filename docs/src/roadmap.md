@@ -1,15 +1,12 @@
 # Roadmap
 
-- Find a way to integrate: <https://ankiweb.net/shared/info/1491702369>
 - Add FSRS optimizer: <https://github.com/open-spaced-repetition/fsrs-rs>
     - `optimal_retention::simulate()`
     - `training.compute_parameters()`
     - Optimizing parameters improves performance by ~40% <https://github.com/open-spaced-repetition/go-fsrs/issues/19#issuecomment-2414421494>
     - <https://github.com/open-spaced-repetition/fsrs-browser>
-- Improve code coverage
 - Improve documentation coverage
 - Todos in code
-- Implement some version of <https://github.com/Arthur-Milchior/anki-trigger-action-on-note?tab=readme-ov-file>. This is similar to <https://trane-project.github.io/faq.html#why-not-anki-or-another-existing-software> which suggests "defining arbitrary dependencies between subsets of flashcards and having the algorithm use those dependencies to select the flashcards to present is not supported". I can try to use the hierarchy provided by `tags` to somehow mimic this.
 - Frontend: Tauri and React
     - ProseMirror for editor
     - <https://github.com/wojtekmaj/react-pdf> for displaying cards in the GUI
