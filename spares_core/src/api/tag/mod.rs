@@ -194,6 +194,59 @@ pub async fn update_tag_event(
     update_tag(db, body, log).await
 }
 
+async fn merge_tag_into(
+    db: &SqlitePool,
+    source_id: TagId,
+    source_tag: &Tag,
+    target_id: TagId,
+    log: bool,
+) -> Result<TagResponse, Error> {
+    // Create new note tag associations using previous note tag associations
+    sqlx::query(
+        r"INSERT OR IGNORE INTO note_tag (note_id, tag_id) SELECT note_id, ? FROM note_tag WHERE tag_id = ?",
+    )
+    .bind(target_id)
+    .bind(source_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    sqlx::query(
+        r"INSERT OR IGNORE INTO card_tag (card_id, tag_id) SELECT card_id, ? FROM card_tag WHERE tag_id = ?",
+    )
+    .bind(target_id)
+    .bind(source_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
+    let note_ids: Vec<NoteId> =
+        sqlx::query_scalar(r"SELECT note_id FROM note_tag WHERE tag_id = ?")
+            .bind(source_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let card_ids: Vec<CardId> =
+        sqlx::query_scalar(r"SELECT card_id FROM card_tag WHERE tag_id = ?")
+            .bind(source_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+    // Delete old tag (and respective note tag associations)
+    let delete_payload = DeleteTagPayload {
+        id: Some(source_id),
+        name: source_tag.name.clone(),
+        description: source_tag.description.clone(),
+        query: source_tag.query.clone(),
+        auto_delete: source_tag.auto_delete,
+        note_ids,
+        card_ids,
+    };
+    delete_tag_event(db, delete_payload, log).await?;
+
+    get_tag(db, target_id).await
+}
+
 pub async fn update_tag(
     db: &SqlitePool,
     body: UpdateTagRequest,
@@ -220,15 +273,15 @@ pub async fn update_tag(
         .unwrap_or_else(|| existing_tag.query.clone());
     let new_auto_delete = body.auto_delete.unwrap_or(existing_tag.auto_delete);
     if let Some(ref name) = body.name {
-        let existing_tag: Option<i64> = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
+        let tag_with_name: Option<i64> = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
             .bind(name)
             .fetch_optional(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        if existing_tag.is_some() {
-            return Err(Error::Library(LibraryError::Tag(
-                TagErrorKind::InvalidInput("A tag with this name already exists.".to_string()),
-            )));
+        if let Some(target_id) = tag_with_name
+            && target_id != id
+        {
+            return merge_tag_into(db, id, &existing_tag, target_id, log).await;
         }
     }
 
@@ -487,7 +540,7 @@ pub(crate) mod tests {
             assert_eq!(tag.description, "Child tag description");
         }
 
-        // Updating tag with a duplicate name
+        // Renaming to an existing tag's name merges the source into the target
         let request = UpdateTagRequest {
             tag_to_modify: TagSelector::Id(tag.id),
             name: Some("Parent tag name".to_string()),
@@ -496,7 +549,19 @@ pub(crate) mod tests {
             auto_delete: None,
         };
         let tag_res = update_tag(&pool, request, false).await;
-        assert!(tag_res.is_err());
+        assert!(tag_res.is_ok());
+        if let Ok(merged_tag) = tag_res {
+            assert_eq!(merged_tag.name, "Parent tag name");
+            assert_eq!(merged_tag.id, parent_tag_id);
+        }
+
+        // Source tag should no longer exist
+        let source_gone: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
+            .bind(tag.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(source_gone.is_none());
     }
 
     #[sqlx::test]
@@ -542,6 +607,159 @@ pub(crate) mod tests {
             assert_eq!(tags.first().unwrap().name, "Tag 1 name");
             assert_eq!(tags.last().unwrap().name, "Tag 2 name");
         }
+    }
+
+    #[sqlx::test]
+    async fn test_merge_tag_logs_delete_event(pool: SqlitePool) {
+        let source = create_tag_helper(&pool, "source", "desc").await;
+        let _target = create_tag_helper(&pool, "target", "desc").await;
+        let n_before = event_count(&pool).await;
+        let _ = update_tag(
+            &pool,
+            UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(source.id),
+                name: Some("target".to_string()),
+                description: None,
+                query: None,
+                auto_delete: None,
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(event_count(&pool).await, n_before + 1);
+    }
+
+    #[sqlx::test]
+    async fn test_merge_tag_returns_target_response(pool: SqlitePool) {
+        let source = create_tag_helper(&pool, "source", "desc").await;
+        let target = create_tag_helper(&pool, "target", "desc").await;
+
+        let result = update_tag(
+            &pool,
+            UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(source.id),
+                name: Some("target".to_string()),
+                description: None,
+                query: None,
+                auto_delete: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.id, target.id);
+        assert_eq!(result.name, "target");
+    }
+
+    #[sqlx::test]
+    async fn test_merge_tag_transfers_note_tags(pool: SqlitePool) {
+        let ts = Utc::now().timestamp();
+        let parser = crate::api::parser::tests::create_parser_helper(&pool, "markdown").await;
+        let note_id: i64 = sqlx::query_scalar(
+            r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind("n1")
+        .bind(ts)
+        .bind(ts)
+        .bind(parser.id)
+        .bind(serde_json::json!({}).to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let source = create_tag_helper(&pool, "source", "desc").await;
+        let target = create_tag_helper(&pool, "target", "desc").await;
+
+        sqlx::query(r"INSERT INTO note_tag (note_id, tag_id) VALUES (?, ?)")
+            .bind(note_id)
+            .bind(source.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let _ = update_tag(
+            &pool,
+            UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(source.id),
+                name: Some("target".to_string()),
+                description: None,
+                query: None,
+                auto_delete: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let target_note_count: i64 =
+            sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE note_id = ? AND tag_id = ?")
+                .bind(note_id)
+                .bind(target.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            target_note_count, 1,
+            "target should have the note after merge"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_merge_tag_with_overlapping_note_tags(pool: SqlitePool) {
+        let ts = Utc::now().timestamp();
+        let parser = crate::api::parser::tests::create_parser_helper(&pool, "markdown").await;
+        let note_id: i64 = sqlx::query_scalar(
+            r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind("n1")
+        .bind(ts)
+        .bind(ts)
+        .bind(parser.id)
+        .bind(serde_json::json!({}).to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let source = create_tag_helper(&pool, "source", "desc").await;
+        let target = create_tag_helper(&pool, "target", "desc").await;
+
+        sqlx::query(r"INSERT INTO note_tag (note_id, tag_id) VALUES (?, ?)")
+            .bind(note_id)
+            .bind(source.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(r"INSERT INTO note_tag (note_id, tag_id) VALUES (?, ?)")
+            .bind(note_id)
+            .bind(target.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let _ = update_tag(
+            &pool,
+            UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(source.id),
+                name: Some("target".to_string()),
+                description: None,
+                query: None,
+                auto_delete: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let target_note_count: i64 =
+            sqlx::query_scalar(r"SELECT COUNT(*) FROM note_tag WHERE note_id = ? AND tag_id = ?")
+                .bind(note_id)
+                .bind(target.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(target_note_count, 1, "no duplicate note_tag after merge");
     }
 
     async fn event_count(pool: &SqlitePool) -> i64 {
