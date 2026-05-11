@@ -36,6 +36,7 @@ use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
+use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::parsers::Parseable;
@@ -568,8 +569,8 @@ pub async fn create_note_tags(
     .await
 }
 
-/// After newly created cards have been inserted into the database, copy SRS fields from a source
-/// card to each card that carried an `inh:NOTE_ID/ORDER` cloze setting.
+/// After newly created cards have been inserted into the database, copy SRS fields and review
+/// history from a source card to each card that carried an `inh:NOTE_ID/ORDER` cloze setting.
 ///
 /// `inherit_entries` is a list of `(dst_note_id, dst_order, src_note_id, src_order)`.
 pub(super) async fn apply_srs_inheritance(
@@ -591,6 +592,20 @@ pub(super) async fn apply_srs_inheritance(
             ))))
         })?;
 
+        let dst_card_id: Option<CardId> =
+            sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? AND "order" = ?"#)
+                .bind(dst_note_id)
+                .bind(dst_order)
+                .fetch_optional(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+
+        let dst_card_id = dst_card_id.ok_or_else(|| {
+            Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
+                "`inh:` destination card not found: note_id={dst_note_id}, order={dst_order}"
+            ))))
+        })?;
+
         sqlx::query(
             r#"UPDATE card SET stability = ?, difficulty = ?, desired_retention = ?,
                state = ?, due = ?, special_state = ?
@@ -607,6 +622,36 @@ pub(super) async fn apply_srs_inheritance(
         .execute(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+
+        // Copy review history from the source card to the destination card so that if the
+        // card's scheduling params are ever manually computed from the review logs, they will
+        // be correct.
+        let review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
+                .bind(src_card.id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+
+        for log in &review_logs {
+            sqlx::query(
+                r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
+                   scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(dst_card_id)
+            .bind(log.reviewed_at.timestamp())
+            .bind(log.rating)
+            .bind(&log.scheduler_name)
+            .bind(log.scheduled_time)
+            .bind(log.recall_duration)
+            .bind(log.rate_duration)
+            .bind(log.previous_state)
+            .bind(&log.custom_data)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        }
     }
     Ok(())
 }
@@ -813,6 +858,39 @@ mod tests {
             src_card_after_review.due.timestamp()
         );
         assert_eq!(dst_card.special_state, src_card_after_review.special_state);
+
+        // Step 4: Verify the review history was also inherited.
+        let src_review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+                .bind(src_card.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let dst_review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+                .bind(dst_card.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            src_review_logs.len(),
+            dst_review_logs.len(),
+            "review log count mismatch"
+        );
+        for (src_log, dst_log) in src_review_logs.iter().zip(dst_review_logs.iter()) {
+            assert_eq!(dst_log.card_id, dst_card.id);
+            assert_eq!(
+                dst_log.reviewed_at.timestamp(),
+                src_log.reviewed_at.timestamp()
+            );
+            assert_eq!(dst_log.rating, src_log.rating);
+            assert_eq!(dst_log.scheduler_name, src_log.scheduler_name);
+            assert_eq!(dst_log.scheduled_time, src_log.scheduled_time);
+            assert_eq!(dst_log.recall_duration, src_log.recall_duration);
+            assert_eq!(dst_log.rate_duration, src_log.rate_duration);
+            assert_eq!(dst_log.previous_state, src_log.previous_state);
+            assert_eq!(dst_log.custom_data, src_log.custom_data);
+        }
     }
 
     /// `inh:` referencing a non-existent card returns an error.
