@@ -1,22 +1,36 @@
-use super::ReviewAction;
-use chrono::{DateTime, Utc};
-use inquire::DateSelect;
-use reqwest::{Client, StatusCode};
-use serde_json::Value;
-use spares_core::model::{CardId, NoteId};
-use spares_core::schema::card::{
-    CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest,
-};
-use spares_core::schema::card::{ForgetCardResponse, UpdateCardsResponse};
-use spares_core::schema::note::UpdateNotesResponse;
-use spares_core::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
-use spares_core::schema::review::{
-    Rating, RatingSubmission, StatisticsResponse, StudyAction, SubmitStudyActionRequest,
-    SubmitStudyActionResponse,
-};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Child;
+use std::process::Command;
+use std::process::Stdio;
+use std::time::Duration;
+use std::time::Instant;
+
+use chrono::DateTime;
+use chrono::Utc;
+use inquire::DateSelect;
+use reqwest::Client;
+use reqwest::StatusCode;
+use serde_json::Value;
+use spares_core::model::CardId;
+use spares_core::model::NoteId;
+use spares_core::schema::card::CardResponse;
+use spares_core::schema::card::CardsSelector;
+use spares_core::schema::card::ForgetCardResponse;
+use spares_core::schema::card::SpecialStateUpdate;
+use spares_core::schema::card::UpdateCardsRequest;
+use spares_core::schema::card::UpdateCardsResponse;
+use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::UpdateNotesRequest;
+use spares_core::schema::note::UpdateNotesResponse;
+use spares_core::schema::note::UpdateTags;
+use spares_core::schema::review::Rating;
+use spares_core::schema::review::RatingSubmission;
+use spares_core::schema::review::StatisticsResponse;
+use spares_core::schema::review::StudyAction;
+use spares_core::schema::review::SubmitStudyActionRequest;
+use spares_core::schema::review::SubmitStudyActionResponse;
+
+use super::ReviewAction;
 
 pub(super) fn open_rendered_file(
     file_path: &Path,

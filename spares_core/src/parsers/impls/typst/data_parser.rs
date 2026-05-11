@@ -1,6 +1,10 @@
-use crate::parsers::ClozeMatch;
 use std::ops::Range;
-use typst_syntax::{LinkedNode, SyntaxKind, parse};
+
+use typst_syntax::LinkedNode;
+use typst_syntax::SyntaxKind;
+use typst_syntax::parse;
+
+use crate::parsers::ClozeMatch;
 
 const CLOZE_FUNC_NAME: &str = "cl";
 const LINKED_NOTE_FUNC_NAME: &str = "lin";
@@ -365,9 +369,11 @@ fn first_content_block_range(call: &LinkedNode<'_>, call_offset: usize) -> Optio
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use indoc::indoc;
     use std::ops::Range;
+
+    use indoc::indoc;
+
+    use super::*;
 
     #[test]
     fn test_basic_setting() {

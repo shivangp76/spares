@@ -1,41 +1,46 @@
-use crate::{
-    Error,
-    api::{
-        execute_batched_query, fetch_batched_query,
-        parser::get_parser,
-        placeholders,
-        undo::{
-            insert_events,
-            payloads::{CardSnapshot, DeleteNotesPayload, NoteSnapshot},
-        },
-    },
-    config::{read_internal_config, write_internal_config},
-    helpers::value_to_string_vec,
-    model::{Card, EventType, Note, NoteId, NoteLink, TagId},
-    parsers::{
-        Parseable, RenderOutputDirectoryType, find_parser,
-        generate_files::{CardSide, RenderOutputType},
-        get_output_raw_dir,
-        image_occlusion::{
-            get_image_occlusion_card_filepath, get_image_occlusion_rendered_directory,
-            parse_image_occlusion_data,
-        },
-    },
-    schema::{
-        FilterOptions,
-        note::{DeleteNotesRequest, LinkedNote, NoteResponse, NotesSelector},
-    },
-    search::evaluator::Evaluator,
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
+
 use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+
+use crate::Error;
+use crate::api::execute_batched_query;
+use crate::api::fetch_batched_query;
+use crate::api::parser::get_parser;
+use crate::api::placeholders;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CardSnapshot;
+use crate::api::undo::payloads::DeleteNotesPayload;
+use crate::api::undo::payloads::NoteSnapshot;
+use crate::config::read_internal_config;
+use crate::config::write_internal_config;
+use crate::helpers::value_to_string_vec;
+use crate::model::Card;
+use crate::model::EventType;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::model::NoteLink;
+use crate::model::TagId;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::generate_files::RenderOutputType;
+use crate::parsers::get_output_raw_dir;
+use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
+use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
+use crate::parsers::image_occlusion::parse_image_occlusion_data;
+use crate::schema::FilterOptions;
+use crate::schema::note::DeleteNotesRequest;
+use crate::schema::note::LinkedNote;
+use crate::schema::note::NoteResponse;
+use crate::schema::note::NotesSelector;
+use crate::search::evaluator::Evaluator;
 
 pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, Error> {
     // Get note
@@ -231,17 +236,22 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
-    use crate::api::note::{create_notes, delete_notes, update_notes};
-    use crate::api::parser::tests::create_parser_helper;
-    use crate::parsers::get_all_parsers;
-    use crate::schema::note::{NotesSelector, UpdateNotesResponse, UpdateTags};
-    use crate::{
-        model::NoteTag,
-        schema::note::{CreateNoteRequest, CreateNotesRequest, UpdateNotesRequest},
-    };
     use chrono::Utc;
     use serde_json::Map;
+
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::note::delete_notes;
+    use crate::api::note::update_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::model::NoteTag;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::UpdateNotesRequest;
+    use crate::schema::note::UpdateNotesResponse;
+    use crate::schema::note::UpdateTags;
 
     fn contain_same_elements<T>(vec1: &[T], vec2: &[T]) -> bool
     where

@@ -15,29 +15,38 @@
 //! - Schema for payload changes
 //!   - Handled by `version` field
 
-use crate::api::undo::invert_payload::create_undo_event;
-use crate::{
-    Error, LibraryError,
-    api::{
-        fetch_batched_query, placeholders, placeholders_2d,
-        undo::payloads::{
-            CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
-            DeleteParserPayload, DeleteTagPayload, UpdateCardPayload, UpdateNotesPayload,
-            UpdateParserPayload, UpdateTagPayload,
-        },
-    },
-    model::{Event, EventType},
-    schema::undo::{UndoEventRequest, UndoEventResponse},
-};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::SqlitePool;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::api::fetch_batched_query;
+use crate::api::placeholders;
+use crate::api::placeholders_2d;
+use crate::api::undo::invert_payload::create_undo_event;
+use crate::api::undo::payloads::CreateNotesPayload;
+use crate::api::undo::payloads::CreateParserPayload;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::DeleteNotesPayload;
+use crate::api::undo::payloads::DeleteParserPayload;
+use crate::api::undo::payloads::DeleteTagPayload;
+use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::api::undo::payloads::UpdateParserPayload;
+use crate::api::undo::payloads::UpdateTagPayload;
+use crate::model::Event;
+use crate::model::EventType;
+use crate::schema::undo::UndoEventRequest;
+use crate::schema::undo::UndoEventResponse;
 
 const EVENT_VERSION: i64 = 1;
 
 mod event_actions;
 mod invert_payload;
-pub use event_actions::{create_event_group, insert_events};
+pub use event_actions::create_event_group;
+pub use event_actions::insert_events;
 pub(crate) mod payloads;
 
 #[cfg(test)]
@@ -185,9 +194,15 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
 
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     use crate::api::card::update_card_event;
-    use crate::api::note::{create_notes_event, delete_notes_event, update_notes_event};
-    use crate::api::parser::{create_parser_event, delete_parser_event, update_parser_event};
-    use crate::api::tag::{create_tag_event, delete_tag_event, update_tag_event};
+    use crate::api::note::create_notes_event;
+    use crate::api::note::delete_notes_event;
+    use crate::api::note::update_notes_event;
+    use crate::api::parser::create_parser_event;
+    use crate::api::parser::delete_parser_event;
+    use crate::api::parser::update_parser_event;
+    use crate::api::tag::create_tag_event;
+    use crate::api::tag::delete_tag_event;
+    use crate::api::tag::update_tag_event;
 
     match event.kind {
         EventType::CreateParser => {

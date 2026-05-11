@@ -1,7 +1,20 @@
-use crate::search::{Atom, Op, Token, TokenKind, TokenTree, lexer::Lexer};
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-use miette::{Error, LabeledSpan, WrapErr, miette};
 use std::borrow::Cow;
+
+use chrono::DateTime;
+use chrono::NaiveDate;
+use chrono::TimeZone;
+use chrono::Utc;
+use miette::Error;
+use miette::LabeledSpan;
+use miette::WrapErr;
+use miette::miette;
+
+use crate::search::Atom;
+use crate::search::Op;
+use crate::search::Token;
+use crate::search::TokenKind;
+use crate::search::TokenTree;
+use crate::search::lexer::Lexer;
 
 fn parse_date(date_str: &str) -> Result<DateTime<Utc>, Error> {
     // Try parsing as NaiveDate (YYYY-MM-DD)
@@ -276,8 +289,9 @@ fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::borrow::Cow;
+
+    use super::*;
 
     #[test]
     fn test_parser_basic() {

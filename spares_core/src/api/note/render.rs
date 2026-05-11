@@ -1,29 +1,35 @@
-use crate::{
-    Error,
-    api::{
-        execute_batched_query,
-        note::{create_note_links, get_keywords, keyword_distance::weighted_levenshtein},
-        placeholders, placeholders_2d,
-    },
-    config::{read_internal_config, write_internal_config},
-    helpers::value_to_string_vec,
-    model::{NoteId, NoteLink},
-    parsers::{
-        Parseable, find_parser,
-        generate_files::{
-            GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
-        },
-    },
-    schema::note::{LinkedNote, MatchedKeywordResponse, NotesSelector, RenderNotesRequest},
-    search::evaluator::Evaluator,
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+
 // use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde_json::Value;
 use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
-use std::collections::{HashMap, HashSet};
+
+use crate::Error;
+use crate::api::execute_batched_query;
+use crate::api::note::create_note_links;
+use crate::api::note::get_keywords;
+use crate::api::note::keyword_distance::weighted_levenshtein;
+use crate::api::placeholders;
+use crate::api::placeholders_2d;
+use crate::config::read_internal_config;
+use crate::config::write_internal_config;
+use crate::helpers::value_to_string_vec;
+use crate::model::NoteId;
+use crate::model::NoteLink;
+use crate::parsers::Parseable;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::generate_files::GenerateNoteFilesRequests;
+use crate::parsers::generate_files::create_note_files_bulk;
+use crate::schema::note::LinkedNote;
+use crate::schema::note::MatchedKeywordResponse;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::RenderNotesRequest;
+use crate::search::evaluator::Evaluator;
 
 #[derive(Debug, FromRow)]
 pub struct RenderNoteData {
@@ -372,13 +378,14 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        api::note::{basic::tests::create_note_helper, render_notes},
-        model::NoteLink,
-        parsers::get_all_parsers,
-        schema::note::{NotesSelector, RenderNotesRequest},
-    };
     use sqlx::SqlitePool;
+
+    use crate::api::note::basic::tests::create_note_helper;
+    use crate::api::note::render_notes;
+    use crate::model::NoteLink;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::RenderNotesRequest;
 
     #[sqlx::test]
     async fn test_render_note(pool: SqlitePool) -> () {

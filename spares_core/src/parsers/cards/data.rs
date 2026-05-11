@@ -1,5 +1,10 @@
-use super::{BackReveal, BackType, FrontConceal};
-use crate::parsers::{ClozeGrouping, ClozeHiddenReplacement, NotePart, ReadableCardIdentifier};
+use super::BackReveal;
+use super::BackType;
+use super::FrontConceal;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::NotePart;
+use crate::parsers::ReadableCardIdentifier;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CardData {

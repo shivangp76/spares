@@ -1,24 +1,44 @@
-use crate::adapters::impls::anki::types::{DbCardRow, DbNoteRow, DbRevLogRow};
+use std::fs;
+use std::path::Path;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
+use indicatif::ProgressIterator;
+use log::info;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Map;
+use serde_json::Value;
+use sqlx::FromRow;
+use sqlx::SqlitePool;
+
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::adapters::impls::anki::ANKI_ADAPTER_NAME;
+use crate::adapters::impls::anki::AnkiAdapter;
+use crate::adapters::impls::anki::types::DbCardRow;
+use crate::adapters::impls::anki::types::DbNoteRow;
+use crate::adapters::impls::anki::types::DbRevLogRow;
 use crate::adapters::impls::anki::utils::format_side;
-use crate::adapters::impls::anki::{ANKI_ADAPTER_NAME, AnkiAdapter};
-use crate::adapters::migration::{MigrationData, MigrationFunc};
+use crate::adapters::migration::MigrationData;
+use crate::adapters::migration::MigrationFunc;
 use crate::api::card::update_cards;
 use crate::api::review::submit_study_action;
 use crate::config::get_data_dir;
 use crate::helpers::parse_list;
-use crate::model::{Card, DEFAULT_DESIRED_RETENTION, NOTE_ID_KEY, NoteId, RatingId};
+use crate::model::Card;
+use crate::model::DEFAULT_DESIRED_RETENTION;
+use crate::model::NOTE_ID_KEY;
+use crate::model::NoteId;
+use crate::model::RatingId;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
-use crate::schema::card::{CardsSelector, UpdateCardsRequest};
-use crate::schema::review::{RatingSubmission, StudyAction, SubmitStudyActionRequest};
-use crate::{AdapterErrorKind, Error, LibraryError};
-use chrono::{DateTime, Duration, Utc};
-use indicatif::ProgressIterator;
-use log::info;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use sqlx::{FromRow, SqlitePool};
-use std::fs;
-use std::path::Path;
+use crate::schema::card::CardsSelector;
+use crate::schema::card::UpdateCardsRequest;
+use crate::schema::review::RatingSubmission;
+use crate::schema::review::StudyAction;
+use crate::schema::review::SubmitStudyActionRequest;
 
 pub fn parse_anki_revlog_rows(
     review_log_rows: &[DbRevLogRow],

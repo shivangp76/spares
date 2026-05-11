@@ -1,19 +1,22 @@
-use super::super::{create_note_keywords, create_note_tags, delete_empty_tags};
-use crate::{
-    Error,
-    api::{
-        execute_batched_query, placeholders_2d,
-        tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
-        undo::{
-            insert_events,
-            payloads::{UpdateNotePayload, UpdateNotesPayload},
-        },
-    },
-    model::{EventType, Note, NoteId, TagId},
-    schema::tag::CreateTagRequest,
-};
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
+
+use super::super::create_note_keywords;
+use super::super::create_note_tags;
+use super::super::delete_empty_tags;
+use crate::Error;
+use crate::api::execute_batched_query;
+use crate::api::placeholders_2d;
+use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
+use crate::api::tag::create_tag;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::UpdateNotePayload;
+use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::model::EventType;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::model::TagId;
+use crate::schema::tag::CreateTagRequest;
 
 /// Apply an `UpdateNotes` event payload (used when undoing `UpdateNotes`).
 /// For each note, applies the `after` field values from each transition.

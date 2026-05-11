@@ -1,13 +1,26 @@
-use super::super::{apply_srs_inheritance, create_cards};
-use crate::{
-    CardErrorKind, Error, LibraryError,
-    api::{execute_batched_query, fetch_batched_query, placeholders},
-    model::{Card, CardId, NoteId, SpecialState},
-    parsers::{CardData, MatchCardsResult, ReadableCardIdentifier, match_cards},
-};
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+use chrono::DateTime;
+use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
-use std::collections::{HashMap, HashSet};
+
+use super::super::apply_srs_inheritance;
+use super::super::create_cards;
+use crate::CardErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::api::execute_batched_query;
+use crate::api::fetch_batched_query;
+use crate::api::placeholders;
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::NoteId;
+use crate::model::SpecialState;
+use crate::parsers::CardData;
+use crate::parsers::MatchCardsResult;
+use crate::parsers::ReadableCardIdentifier;
+use crate::parsers::match_cards;
 
 #[expect(clippy::too_many_lines)]
 pub(super) async fn update_cards(

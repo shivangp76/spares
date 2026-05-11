@@ -1,4 +1,5 @@
-use std::{collections::HashMap, fmt::Write};
+use std::collections::HashMap;
+use std::fmt::Write;
 
 #[derive(Default)]
 pub(crate) struct TreeNode {

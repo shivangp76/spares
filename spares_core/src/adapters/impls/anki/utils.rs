@@ -1,18 +1,27 @@
-use crate::adapters::SrsAdapter;
-use crate::adapters::impls::anki::api::execute_requests;
-use crate::adapters::impls::anki::types::{
-    ApiAction, ApiRequest, ApiRequestParams, ModelName, NoteFields, UpdateNoteApiRequestData,
-    UpdateNoteApiRequestNoteData,
-};
-use crate::adapters::impls::anki::{ANKI_ADAPTER_NAME, AnkiAdapter};
-use crate::parsers::{
-    NoteImportAction, NotePart, Parseable, get_adapter_note_id_key,
-    image_occlusion::ConstructImageOcclusionType,
-};
-use crate::schema::note::{NoteResponse, NotesResponse};
-use crate::{AdapterErrorKind, Error, LibraryError};
 use inquire::Select;
 use reqwest::Client;
+
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::adapters::SrsAdapter;
+use crate::adapters::impls::anki::ANKI_ADAPTER_NAME;
+use crate::adapters::impls::anki::AnkiAdapter;
+use crate::adapters::impls::anki::api::execute_requests;
+use crate::adapters::impls::anki::types::ApiAction;
+use crate::adapters::impls::anki::types::ApiRequest;
+use crate::adapters::impls::anki::types::ApiRequestParams;
+use crate::adapters::impls::anki::types::ModelName;
+use crate::adapters::impls::anki::types::NoteFields;
+use crate::adapters::impls::anki::types::UpdateNoteApiRequestData;
+use crate::adapters::impls::anki::types::UpdateNoteApiRequestNoteData;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NotePart;
+use crate::parsers::Parseable;
+use crate::parsers::get_adapter_note_id_key;
+use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::schema::note::NoteResponse;
+use crate::schema::note::NotesResponse;
 
 pub fn note_action_to_anki(note_action: NoteImportAction) -> ApiAction {
     match note_action {

@@ -1,6 +1,10 @@
-use crate::{CardErrorKind, Error, LibraryError};
-use itertools::Itertools;
 use std::collections::HashSet;
+
+use itertools::Itertools;
+
+use crate::CardErrorKind;
+use crate::Error;
+use crate::LibraryError;
 
 #[derive(Debug)]
 pub struct MatchCardsResult {

@@ -1,8 +1,16 @@
-use super::{SyncImportAction, get_import_data, replace_action, utils::clear_dir};
-use spares_core::parsers::{find_parser, generate_files::RenderOutputType, get_all_parsers};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
+
+use spares_core::parsers::find_parser;
+use spares_core::parsers::generate_files::RenderOutputType;
+use spares_core::parsers::get_all_parsers;
+
+use super::SyncImportAction;
+use super::get_import_data;
+use super::replace_action;
+use super::utils::clear_dir;
 
 // Render diffs in `/tmp/spares/{from_source_name}/diffs`
 //   - `from_output_dir` is `/tmp/spares/{from_source_name}/notes/`

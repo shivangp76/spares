@@ -18,21 +18,25 @@ pub use update::*;
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::api::note::{create_notes, delete_notes, update_notes};
-    use crate::api::parser::tests::create_parser_helper;
-    use crate::api::tag::create_tag;
-    use crate::parsers::get_all_parsers;
-    use crate::schema::note::{
-        CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesSelector,
-        UpdateNotesRequest, UpdateTags,
-    };
-    use crate::schema::tag::CreateTagRequest;
     use chrono::Utc;
     use serde_json::Map;
     use sqlx::SqlitePool;
 
     pub use super::basic::*;
+    use crate::api::note::create_notes;
+    use crate::api::note::delete_notes;
+    use crate::api::note::update_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::tag::create_tag;
     use crate::model::Tag;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::DeleteNotesRequest;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::UpdateNotesRequest;
+    use crate::schema::note::UpdateTags;
+    use crate::schema::tag::CreateTagRequest;
 
     #[sqlx::test]
     async fn test_create_note_filtered_tag_error(pool: SqlitePool) -> () {

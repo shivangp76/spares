@@ -1,16 +1,21 @@
-use crate::api::undo::EVENT_VERSION;
-use crate::{
-    Error, LibraryError,
-    api::{
-        fetch_batched_query, placeholders, placeholders_2d,
-        undo::payloads::{CreateParserPayload, DeleteParserPayload, UpdateParserPayload},
-    },
-    model::{Event, EventType},
-    schema::undo::{UndoEventRequest, UndoEventResponse},
-};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::SqlitePool;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::api::fetch_batched_query;
+use crate::api::placeholders;
+use crate::api::placeholders_2d;
+use crate::api::undo::EVENT_VERSION;
+use crate::api::undo::payloads::CreateParserPayload;
+use crate::api::undo::payloads::DeleteParserPayload;
+use crate::api::undo::payloads::UpdateParserPayload;
+use crate::model::Event;
+use crate::model::EventType;
+use crate::schema::undo::UndoEventRequest;
+use crate::schema::undo::UndoEventResponse;
 
 pub async fn insert_events(
     db: &SqlitePool,
@@ -74,11 +79,12 @@ pub async fn create_event_group(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::EventType;
     use chrono::Utc;
     use serde_json::json;
     use sqlx::SqlitePool;
+
+    use super::*;
+    use crate::model::EventType;
 
     #[sqlx::test]
     async fn insert_events_returns_ids_in_order(pool: SqlitePool) {

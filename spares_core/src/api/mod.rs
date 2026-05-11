@@ -11,11 +11,16 @@ pub mod undo;
 
 const MAX_ROWS_IN_QUERY: usize = 200;
 
-use crate::Error;
-pub use card::{
-    create_card_tags, delete_card_tags, forget_card, get_card, get_cards, get_leeches, update_cards,
-};
+pub use card::create_card_tags;
+pub use card::delete_card_tags;
+pub use card::forget_card;
+pub use card::get_card;
+pub use card::get_cards;
+pub use card::get_leeches;
+pub use card::update_cards;
 use sqlx::SqlitePool;
+
+use crate::Error;
 
 pub(crate) fn placeholders(rows: usize) -> String {
     std::iter::repeat_n("?", rows)

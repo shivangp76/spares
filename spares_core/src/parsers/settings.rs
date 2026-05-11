@@ -1,17 +1,22 @@
-use super::{BackReveal, FrontConceal};
-use crate::helpers::parse_list;
-use crate::model::{CustomData, NOTE_ID_KEY, NoteId};
-use crate::parsers::{DEFAULT_BACK_EMPHASIS, Parseable};
-use crate::{
-    LibraryError, NoteErrorKind,
-    adapters::{
-        SrsAdapter,
-        impls::spares::{SparesAdapter, SparesRequestProcessor},
-    },
-};
-use serde_json::{Map, Value};
 use std::ops::Range;
 use std::str::FromStr;
+
+use serde_json::Map;
+use serde_json::Value;
+
+use super::BackReveal;
+use super::FrontConceal;
+use crate::LibraryError;
+use crate::NoteErrorKind;
+use crate::adapters::SrsAdapter;
+use crate::adapters::impls::spares::SparesAdapter;
+use crate::adapters::impls::spares::SparesRequestProcessor;
+use crate::helpers::parse_list;
+use crate::model::CustomData;
+use crate::model::NOTE_ID_KEY;
+use crate::model::NoteId;
+use crate::parsers::DEFAULT_BACK_EMPHASIS;
+use crate::parsers::Parseable;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum NoteImportAction {

@@ -1,19 +1,34 @@
+use std::fs::File;
+use std::fs::create_dir_all;
+use std::fs::read_to_string;
+use std::fs::write;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use indicatif::ParallelProgressIterator;
+use indicatif::ProgressStyle;
+use log::debug;
+use log::info;
+use rayon::prelude::*;
+
 use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::model::NoteId;
+use crate::parsers::BackType;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::CustomData;
+use crate::parsers::NoteImportAction;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::TemplateType;
+use crate::parsers::get_cards;
+use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
-use crate::parsers::{
-    BackType, ConstructFileDataType, CustomData, NoteImportAction, Parseable,
-    RenderOutputDirectoryType, TemplateType, get_cards, get_output_raw_dir,
-};
 use crate::schema::note::LinkedNote;
-use indicatif::{ParallelProgressIterator, ProgressStyle};
-use log::{debug, info};
-use rayon::prelude::*;
-use std::fs::{File, create_dir_all, read_to_string, write};
-use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 fn blake3_hex(data: impl AsRef<[u8]>) -> String {
     blake3::hash(data.as_ref()).to_hex().to_string()

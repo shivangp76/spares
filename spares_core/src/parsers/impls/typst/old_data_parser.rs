@@ -1,6 +1,8 @@
-use crate::parsers::ClozeMatch;
 use std::ops::Range;
+
 use unscanny::Scanner;
+
+use crate::parsers::ClozeMatch;
 
 const CLOZE_FUNC_NAME: &str = "cl";
 const LINKED_NOTE_FUNC_NAME: &str = "lin";
@@ -257,9 +259,11 @@ impl<'a> TypstDataParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use indoc::indoc;
     use std::ops::Range;
+
+    use indoc::indoc;
+
+    use super::*;
 
     #[test]
     fn test_basic_setting() {

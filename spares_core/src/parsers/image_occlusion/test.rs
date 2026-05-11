@@ -1,19 +1,31 @@
-use crate::parsers::generate_files::CardSide;
-use crate::parsers::{
-    BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards,
-    image_occlusion::{
-        ImageOcclusionConfig, ImageOcclusionData,
-        construct::{get_clozes_from_svg, modify_clozes_for_card},
-        create_image_occlusion_cards, get_image_occlusion_directory,
-        get_image_occlusion_rendered_directory,
-    },
-    impls::markdown::MarkdownParser,
-};
+use std::fs::read_to_string;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
+
 use indoc::indoc;
 use pretty_assertions::assert_eq;
-use std::{fs::read_to_string, path::PathBuf, sync::Arc, time::Instant};
-use xmltree::{Element, EmitterConfig};
+use xmltree::Element;
+use xmltree::EmitterConfig;
+
+use crate::parsers::BackReveal;
+use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::FrontConceal;
+use crate::parsers::NotePart;
+use crate::parsers::Parseable;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::get_cards;
+use crate::parsers::image_occlusion::ImageOcclusionConfig;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::construct::get_clozes_from_svg;
+use crate::parsers::image_occlusion::construct::modify_clozes_for_card;
+use crate::parsers::image_occlusion::create_image_occlusion_cards;
+use crate::parsers::image_occlusion::get_image_occlusion_directory;
+use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
+use crate::parsers::impls::markdown::MarkdownParser;
 
 const MOVE_FILES: bool = false;
 
@@ -755,7 +767,8 @@ fn test_image_occlusion_parallel_performance() {
         original_image_filepath.push(format!("{}.png", file_stem));
 
         // Create a simple PNG image (400x400 orange rectangle)
-        use image::{Rgba, RgbaImage};
+        use image::Rgba;
+        use image::RgbaImage;
         let mut img = RgbaImage::new(400, 400);
         for pixel in img.pixels_mut() {
             *pixel = Rgba([249, 115, 22, 255]); // Orange color

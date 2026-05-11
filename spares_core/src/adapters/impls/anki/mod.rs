@@ -1,25 +1,50 @@
-use super::spares::{SparesAdapter, SparesRequestProcessor};
-use crate::adapters::SrsAdapter;
-use crate::adapters::impls::anki::api::{create_field, execute_request, execute_requests};
-use crate::adapters::impls::anki::database::populate_reviews;
-use crate::adapters::impls::anki::types::{
-    AddNoteApiRequestData, AddNoteApiRequestNoteData, AddNoteApiRequestOptions, ApiAction,
-    ApiRequest, ApiRequestParams, DeleteNoteApiRequestData, FindCardsApiRequestData,
-    GetModelFieldNamesApiRequestData, ModelName, NoteFields, SuspendApiRequestData,
-    UpdateNoteApiRequestData, UpdateNoteApiRequestNoteData,
-};
-use crate::adapters::impls::anki::utils::{get_note_id, note_action_to_anki, to_anki_html};
-use crate::adapters::migration::{MigrationFunc, create_notes};
-use crate::model::{CustomData, NOTE_ID_KEY, NoteId};
-use crate::parsers::{NoteImportAction, NotePart, NoteSettings, Parseable, get_cards};
-use crate::{AdapterErrorKind, Error, LibraryError};
+use std::path::PathBuf;
+use std::time::Instant;
+
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use reqwest::Client;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use std::path::PathBuf;
-use std::time::Instant;
+
+use super::spares::SparesAdapter;
+use super::spares::SparesRequestProcessor;
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::adapters::SrsAdapter;
+use crate::adapters::impls::anki::api::create_field;
+use crate::adapters::impls::anki::api::execute_request;
+use crate::adapters::impls::anki::api::execute_requests;
+use crate::adapters::impls::anki::database::populate_reviews;
+use crate::adapters::impls::anki::types::AddNoteApiRequestData;
+use crate::adapters::impls::anki::types::AddNoteApiRequestNoteData;
+use crate::adapters::impls::anki::types::AddNoteApiRequestOptions;
+use crate::adapters::impls::anki::types::ApiAction;
+use crate::adapters::impls::anki::types::ApiRequest;
+use crate::adapters::impls::anki::types::ApiRequestParams;
+use crate::adapters::impls::anki::types::DeleteNoteApiRequestData;
+use crate::adapters::impls::anki::types::FindCardsApiRequestData;
+use crate::adapters::impls::anki::types::GetModelFieldNamesApiRequestData;
+use crate::adapters::impls::anki::types::ModelName;
+use crate::adapters::impls::anki::types::NoteFields;
+use crate::adapters::impls::anki::types::SuspendApiRequestData;
+use crate::adapters::impls::anki::types::UpdateNoteApiRequestData;
+use crate::adapters::impls::anki::types::UpdateNoteApiRequestNoteData;
+use crate::adapters::impls::anki::utils::get_note_id;
+use crate::adapters::impls::anki::utils::note_action_to_anki;
+use crate::adapters::impls::anki::utils::to_anki_html;
+use crate::adapters::migration::MigrationFunc;
+use crate::adapters::migration::create_notes;
+use crate::model::CustomData;
+use crate::model::NOTE_ID_KEY;
+use crate::model::NoteId;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettings;
+use crate::parsers::Parseable;
+use crate::parsers::get_cards;
 
 mod api;
 mod database;

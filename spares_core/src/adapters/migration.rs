@@ -1,15 +1,19 @@
-use crate::{
-    parsers::generate_files::GenerateNoteFilesRequest,
-    schema::{
-        note::{CreateNoteRequest, CreateNotesRequest, NoteResponse, NotesResponse},
-        parser::{CreateParserRequest, ParserResponse},
-    },
-};
+use std::collections::HashMap;
+use std::time::Instant;
+
 use chrono::Utc;
 use itertools::Itertools;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
+use reqwest::StatusCode;
 use serde_json::Value;
-use std::{collections::HashMap, time::Instant};
+
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::NoteResponse;
+use crate::schema::note::NotesResponse;
+use crate::schema::parser::CreateParserRequest;
+use crate::schema::parser::ParserResponse;
 
 #[derive(Debug, Clone)]
 pub struct MigrationData {

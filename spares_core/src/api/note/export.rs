@@ -1,13 +1,20 @@
-use crate::{
-    Error, LibraryError, NoteErrorKind,
-    api::note::{get_render_note_data, render_note_data_to_generate_files_request},
-    parsers::{ConstructFileDataType, NoteImportAction, Parseable, TemplateType, find_parser},
-    schema::note::ExportNotesRequest,
-    search::evaluator::Evaluator,
-};
+use std::collections::HashMap;
+
 use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::NoteErrorKind;
+use crate::api::note::get_render_note_data;
+use crate::api::note::render_note_data_to_generate_files_request;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::NoteImportAction;
+use crate::parsers::Parseable;
+use crate::parsers::TemplateType;
+use crate::parsers::find_parser;
+use crate::schema::note::ExportNotesRequest;
+use crate::search::evaluator::Evaluator;
 
 pub async fn export_notes(
     db: &SqlitePool,

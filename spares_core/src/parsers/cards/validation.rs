@@ -1,6 +1,7 @@
 use super::data::CardData;
+use crate::CardErrorKind;
+use crate::LibraryError;
 use crate::parsers::NotePart;
-use crate::{CardErrorKind, LibraryError};
 
 pub fn validate_cards(cards: &[CardData]) -> Result<(), LibraryError> {
     if cards.iter().any(|cd| cd.data.is_empty()) {

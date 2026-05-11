@@ -1,10 +1,15 @@
 //! This file should match with the migrations file. These types should follow <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
 
-use crate::parsers::BackType;
-use chrono::{DateTime, Utc, serde::ts_seconds};
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use chrono::DateTime;
+use chrono::Utc;
+use chrono::serde::ts_seconds;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Map;
+use serde_json::Value;
 use sqlx::FromRow;
+
+use crate::parsers::BackType;
 
 pub type NoteId = i64;
 pub type CardId = i64;

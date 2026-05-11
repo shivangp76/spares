@@ -1,13 +1,16 @@
-use crate::{
-    helpers::FractionalDays,
-    model::{Card, ReviewLog},
-};
-use chrono::{DateTime, Duration, Utc};
+use std::cmp;
+use std::ops;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
 use itertools::Itertools;
 use log::info;
-use std::{cmp, ops};
 
 use super::utils::get_fuzz_range;
+use crate::helpers::FractionalDays;
+use crate::model::Card;
+use crate::model::ReviewLog;
 
 // DB is used to:
 // 1. get siblings of cards
@@ -348,13 +351,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use chrono::TimeZone;
+    use chrono::Utc;
+    use rand::Rng;
+    use rand::RngExt;
+
     use super::*;
     use crate::api::tests::generate_review_logs;
     use crate::config::read_external_config;
     use crate::schedulers::get_scheduler_from_string;
-    use chrono::{TimeZone, Utc};
-    use rand::{Rng, RngExt};
-    use std::collections::HashMap;
 
     #[test]
     fn test_disperse_siblings_distance() {

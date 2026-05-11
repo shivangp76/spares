@@ -1,5 +1,9 @@
-use crate::parsers::{ClozeData, ClozeGrouping, ClozeGroupingSettings};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
+
+use crate::parsers::ClozeData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeGroupingSettings;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]

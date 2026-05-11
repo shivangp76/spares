@@ -1,19 +1,19 @@
-use super::SyncSource;
-use crate::sync::SyncImportAction;
+use std::collections::HashMap;
+use std::fs;
+use std::hash::Hash;
+use std::path::Path;
+use std::path::PathBuf;
+
 use indexmap::IndexMap;
 use inquire::Select;
-use spares_core::{
-    config::get_cache_dir,
-    model::NoteId,
-    parsers::{NoteSettingsKeys, Parseable},
-};
-use std::{
-    collections::HashMap,
-    fs,
-    hash::Hash,
-    path::{Path, PathBuf},
-};
+use spares_core::config::get_cache_dir;
+use spares_core::model::NoteId;
+use spares_core::parsers::NoteSettingsKeys;
+use spares_core::parsers::Parseable;
 use walkdir::WalkDir;
+
+use super::SyncSource;
+use crate::sync::SyncImportAction;
 
 pub(super) trait GroupByInsertion<A, B> {
     /// Groups the provided elements by A, sorted by the first presence of A. Thus, this is deterministic. Essentially, this is `.into_group_map()` provided by `itertools` if it were to return an `IndexMap` (from the `indexmap` crate) instead of a `HashMap`.

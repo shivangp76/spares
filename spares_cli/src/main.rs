@@ -7,49 +7,94 @@ mod sync;
 mod tree;
 mod utils;
 
-use crate::tree::{build_tree, tree_to_string};
-use args::{
-    AddCommands, AdvanceArgs, Cli, Commands, DeleteCommands, EditCommands, ForgetCardArgs,
-    GenerateArgs, GetCommands, KeywordArgs, KeywordCommands, ListCommands, OutputFormat,
-    OutputItemType, PostponeArgs, ScheduleArgs, ScheduleCommands, SearchArgs, SpecialStateLocal,
-    StatisticsArgs, UndoArgs,
-};
-use clap::{CommandFactory, Parser};
+use std::io;
+use std::str::FromStr;
+
+use args::AddCommands;
+use args::AdvanceArgs;
+use args::Cli;
+use args::Commands;
+use args::DeleteCommands;
+use args::EditCommands;
+use args::ForgetCardArgs;
+use args::GenerateArgs;
+use args::GetCommands;
+use args::KeywordArgs;
+use args::KeywordCommands;
+use args::ListCommands;
+use args::OutputFormat;
+use args::OutputItemType;
+use args::PostponeArgs;
+use args::ScheduleArgs;
+use args::ScheduleCommands;
+use args::SearchArgs;
+use args::SpecialStateLocal;
+use args::StatisticsArgs;
+use args::UndoArgs;
+use clap::CommandFactory;
+use clap::Parser;
 use graph::chart;
 use import::import_from_files;
 use inquire::Confirm;
-use miette::{Error, IntoDiagnostic, miette};
+use miette::Error;
+use miette::IntoDiagnostic;
+use miette::miette;
 use migrate::migrate_from_adapter;
 use reqwest::Client;
-use review::{forget_card, review_cards};
+use review::forget_card;
+use review::review_cards;
 use serde_json::Map;
-use spares_core::{
-    adapters::get_adapter_from_string,
-    config::get_env_config,
-    model::NoteLink,
-    parsers::{find_parser, generate_files::CardSide, get_all_parsers, get_output_raw_dir},
-    schema::{
-        card::{
-            CardResponse, CardsSelector, GetLeechesRequest, UnburyRequest, UpdateCardsRequest,
-            UpdateCardsResponse,
-        },
-        note::{
-            CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, ExportNotesRequest,
-            MatchedKeywordResponse, NoteLinksRequest, NoteResponse, NotesResponse, NotesSelector,
-            RenderNotesRequest, SearchKeywordRequest, SearchNotesRequest, SearchNotesResponse,
-            UnmatchedKeywordResponse, UpdateNotesRequest, UpdateNotesResponse, UpdateTags,
-        },
-        parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
-        review::{StatisticsRequest, StatisticsResponse, StudyAction, SubmitStudyActionRequest},
-        tag::{CreateTagRequest, TagResponse, TagSelector, UpdateTagRequest},
-        undo::UndoEventRequest,
-    },
-    search::QueryReturnItemType,
-};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{io, str::FromStr};
+use spares_core::adapters::get_adapter_from_string;
+use spares_core::config::get_env_config;
+use spares_core::model::NoteLink;
+use spares_core::parsers::find_parser;
+use spares_core::parsers::generate_files::CardSide;
+use spares_core::parsers::get_all_parsers;
+use spares_core::parsers::get_output_raw_dir;
+use spares_core::schema::card::CardResponse;
+use spares_core::schema::card::CardsSelector;
+use spares_core::schema::card::GetLeechesRequest;
+use spares_core::schema::card::UnburyRequest;
+use spares_core::schema::card::UpdateCardsRequest;
+use spares_core::schema::card::UpdateCardsResponse;
+use spares_core::schema::note::CreateNoteRequest;
+use spares_core::schema::note::CreateNotesRequest;
+use spares_core::schema::note::DeleteNotesRequest;
+use spares_core::schema::note::ExportNotesRequest;
+use spares_core::schema::note::MatchedKeywordResponse;
+use spares_core::schema::note::NoteLinksRequest;
+use spares_core::schema::note::NoteResponse;
+use spares_core::schema::note::NotesResponse;
+use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::RenderNotesRequest;
+use spares_core::schema::note::SearchKeywordRequest;
+use spares_core::schema::note::SearchNotesRequest;
+use spares_core::schema::note::SearchNotesResponse;
+use spares_core::schema::note::UnmatchedKeywordResponse;
+use spares_core::schema::note::UpdateNotesRequest;
+use spares_core::schema::note::UpdateNotesResponse;
+use spares_core::schema::note::UpdateTags;
+use spares_core::schema::parser::CreateParserRequest;
+use spares_core::schema::parser::ParserResponse;
+use spares_core::schema::parser::UpdateParserRequest;
+use spares_core::schema::review::StatisticsRequest;
+use spares_core::schema::review::StatisticsResponse;
+use spares_core::schema::review::StudyAction;
+use spares_core::schema::review::SubmitStudyActionRequest;
+use spares_core::schema::tag::CreateTagRequest;
+use spares_core::schema::tag::TagResponse;
+use spares_core::schema::tag::TagSelector;
+use spares_core::schema::tag::UpdateTagRequest;
+use spares_core::schema::undo::UndoEventRequest;
+use spares_core::search::QueryReturnItemType;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::sqlite::SqlitePoolOptions;
 use sync::sync_notes;
-use utils::{ensure_ok, undo_event};
+use utils::ensure_ok;
+use utils::undo_event;
+
+use crate::tree::build_tree;
+use crate::tree::tree_to_string;
 
 async fn list_parsers(
     page: Option<usize>,

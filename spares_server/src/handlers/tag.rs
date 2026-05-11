@@ -1,20 +1,23 @@
-use crate::{AppState, handlers::error_to_response};
-use axum::{
-    Json,
-    extract::{Path, Query},
-    http::StatusCode,
-    response::IntoResponse,
-};
-use spares_core::{
-    api::tag::{
-        create_tag, delete_tag, get_tag, get_tag_by_name, list_tags, rebuild_tag, update_tag,
-    },
-    schema::{
-        FilterOptions,
-        tag::{CreateTagRequest, UpdateTagRequest},
-    },
-};
 use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::Path;
+use axum::extract::Query;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use spares_core::api::tag::create_tag;
+use spares_core::api::tag::delete_tag;
+use spares_core::api::tag::get_tag;
+use spares_core::api::tag::get_tag_by_name;
+use spares_core::api::tag::list_tags;
+use spares_core::api::tag::rebuild_tag;
+use spares_core::api::tag::update_tag;
+use spares_core::schema::FilterOptions;
+use spares_core::schema::tag::CreateTagRequest;
+use spares_core::schema::tag::UpdateTagRequest;
+
+use crate::AppState;
+use crate::handlers::error_to_response;
 
 pub(crate) async fn create_tag_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,

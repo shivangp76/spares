@@ -1,13 +1,24 @@
-use crate::adapters::SrsAdapter;
-use crate::config::{get_cache_dir, get_config_dir};
-use crate::model::{CustomData, NoteId};
-use crate::{Error, LibraryError, ParserErrorKind};
-use fancy_regex::Regex;
-use generate_files::{CardSide, GenerateNoteFilesRequest, RenderOutputType};
-use image_occlusion::{ConstructImageOcclusionType, ImageOcclusionData, ImageOcclusionMatch};
 use std::fs::read_to_string;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
+
+use fancy_regex::Regex;
+use generate_files::CardSide;
+use generate_files::GenerateNoteFilesRequest;
+use generate_files::RenderOutputType;
+use image_occlusion::ConstructImageOcclusionType;
+use image_occlusion::ImageOcclusionData;
+use image_occlusion::ImageOcclusionMatch;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::ParserErrorKind;
+use crate::adapters::SrsAdapter;
+use crate::config::get_cache_dir;
+use crate::config::get_config_dir;
+use crate::model::CustomData;
+use crate::model::NoteId;
 
 mod cards;
 mod clozes;
