@@ -822,7 +822,10 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
                 | Op::LessThan
                 | Op::LessThanEqual
                 | Op::Equal
-                | Op::Tilde,
+                | Op::Tilde
+                | Op::Group
+                | Op::And
+                | Op::Or,
             _
         )
     ) {
@@ -1300,8 +1303,24 @@ mod tests {
                 "tag~re:\"^math\"",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name REGEXP '^math' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name REGEXP '^math')",
             ),
+            // Negated groups
+            (
+                "-(dog or cat)",
+                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data LIKE '%dog%' OR n.data LIKE '%cat%'))",
+            ),
+            (
+                "-(tag=math or dog)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') OR n.data LIKE '%dog%'))",
+            ),
+            (
+                "-(tag=math and data~foo)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND n.data LIKE '%foo%'))",
+            ),
+            (
+                "tag=math and -(data~re:\"20[0-9][0-9]-(fall|winter)-[0-9]+\" or data~re:\"fall[0-9][0-9]-sol[0-9]-[0-9]+\")",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND NOT ((n.data REGEXP '20[0-9][0-9]-(fall|winter)-[0-9]+' OR n.data REGEXP 'fall[0-9][0-9]-sol[0-9]-[0-9]+')))",
+            ),
         ];
-
         for (input, expected_sql) in inputs {
             let evaluator = Evaluator::new(input);
             let query_str = evaluator
