@@ -1,18 +1,25 @@
-use crate::{
-    Error, LibraryError, TagErrorKind,
-    api::undo::{
-        insert_events,
-        payloads::{CreateTagPayload, DeleteTagPayload, Transition, UpdateTagPayload},
-    },
-    model::{EventType, Tag, TagId},
-    schema::{
-        FilterOptions,
-        tag::{CreateTagRequest, TagResponse, TagSelector, UpdateTagRequest},
-    },
-};
 use chrono::Utc;
 use serde_json::to_value;
 use sqlx::sqlite::SqlitePool;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::TagErrorKind;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::DeleteTagPayload;
+use crate::api::undo::payloads::Transition;
+use crate::api::undo::payloads::UpdateTagPayload;
+use crate::model::CardId;
+use crate::model::EventType;
+use crate::model::NoteId;
+use crate::model::Tag;
+use crate::model::TagId;
+use crate::schema::FilterOptions;
+use crate::schema::tag::CreateTagRequest;
+use crate::schema::tag::TagResponse;
+use crate::schema::tag::TagSelector;
+use crate::schema::tag::UpdateTagRequest;
 
 mod query;
 pub use query::*;
@@ -31,6 +38,8 @@ pub async fn create_tag(
         description: body.description,
         query: body.query,
         auto_delete: body.auto_delete,
+        note_ids: vec![],
+        card_ids: vec![],
     };
     create_tag_event(db, payload, log).await
 }
@@ -95,6 +104,25 @@ pub async fn create_tag_event(
         tag_cards_from_query(db, query, tag.id).await?;
     }
 
+    // Restore note_tag associations (for undo of DeleteTag)
+    for note_id in &payload.note_ids {
+        sqlx::query(r"INSERT OR IGNORE INTO note_tag (note_id, tag_id) VALUES (?, ?)")
+            .bind(note_id)
+            .bind(tag.id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    // Restore card_tag associations (for undo of DeleteTag)
+    for card_id in &payload.card_ids {
+        sqlx::query(r"INSERT OR IGNORE INTO card_tag (card_id, tag_id) VALUES (?, ?)")
+            .bind(card_id)
+            .bind(tag.id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+
     // Log event
     if log {
         let log_payload = CreateTagPayload {
@@ -103,6 +131,8 @@ pub async fn create_tag_event(
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            note_ids: payload.note_ids.clone(),
+            card_ids: payload.card_ids.clone(),
         };
         let _event_id = insert_events(
             db,
@@ -275,12 +305,28 @@ pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+
+    let note_ids: Vec<NoteId> =
+        sqlx::query_scalar(r"SELECT note_id FROM note_tag WHERE tag_id = ?")
+            .bind(id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let card_ids: Vec<CardId> =
+        sqlx::query_scalar(r"SELECT card_id FROM card_tag WHERE tag_id = ?")
+            .bind(id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
     let payload = DeleteTagPayload {
         id: Some(tag.id),
         name: tag.name,
         description: tag.description,
         query: tag.query,
         auto_delete: tag.auto_delete,
+        note_ids,
+        card_ids,
     };
     delete_tag_event(db, payload, log).await
 }
@@ -587,6 +633,8 @@ pub(crate) mod tests {
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            note_ids: vec![],
+            card_ids: vec![],
         };
         delete_tag_event(&pool, payload, false).await.unwrap();
         assert_eq!(
