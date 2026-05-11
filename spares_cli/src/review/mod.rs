@@ -1,37 +1,65 @@
-use crate::import::import_from_files;
-use chrono::{Local, Utc};
-use clap::Args;
-use inquire::{MultiSelect, Select};
-use reqwest::{Client, StatusCode};
-use serde_json::Value;
-use spares_core::adapters::impls::spares::{SparesAdapter, SparesRequestProcessor};
-use spares_core::config::read_external_config;
-use spares_core::model::{NoteId, RatingId, TagId};
-use spares_core::parsers::{find_parser, get_all_parsers};
-use spares_core::schema::note::{NotesSelector, RenderNotesRequest};
-use spares_core::schema::review::{
-    CardBackRenderedPath, GetReviewCardFilterRequest, GetReviewCardRequest, GetReviewCardResponse,
-    RatingSubmission, StatisticsRequest, StatisticsResponse,
-};
-use spares_core::schema::tag::TagResponse;
 use std::path::PathBuf;
 use std::process::Child;
-use std::time::{Duration, Instant};
-use strum::{EnumIter, IntoEnumIterator};
-use strum_macros::{Display, EnumString};
+use std::time::Duration;
+use std::time::Instant;
+
+use chrono::Local;
+use chrono::Utc;
+use clap::Args;
+use inquire::MultiSelect;
+use inquire::Select;
+use reqwest::Client;
+use reqwest::StatusCode;
+use serde_json::Value;
+use spares_core::adapters::impls::spares::SparesAdapter;
+use spares_core::adapters::impls::spares::SparesRequestProcessor;
+use spares_core::config::read_external_config;
+use spares_core::model::NoteId;
+use spares_core::model::RatingId;
+use spares_core::model::TagId;
+use spares_core::parsers::find_parser;
+use spares_core::parsers::get_all_parsers;
+use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::RenderNotesRequest;
+use spares_core::schema::review::CardBackRenderedPath;
+use spares_core::schema::review::GetReviewCardFilterRequest;
+use spares_core::schema::review::GetReviewCardRequest;
+use spares_core::schema::review::GetReviewCardResponse;
+use spares_core::schema::review::RatingSubmission;
+use spares_core::schema::review::StatisticsRequest;
+use spares_core::schema::review::StatisticsResponse;
+use spares_core::schema::tag::TagResponse;
+use strum::EnumIter;
+use strum::IntoEnumIterator;
+use strum_macros::Display;
+use strum_macros::EnumString;
 use tokio::sync::mpsc;
-use utils::{
-    bury_card, bury_note, bury_until_later_today, close_rendered_file, format_duration,
-    get_scheduler_ratings, open_rendered_file, print_rate_duration, print_recall_duration,
-    print_summary, submit_rating, suspend_cards, suspend_note, tag_note,
-};
+use utils::bury_card;
+use utils::bury_note;
+use utils::bury_until_later_today;
+use utils::close_rendered_file;
+use utils::format_duration;
+use utils::get_scheduler_ratings;
+use utils::open_rendered_file;
+use utils::print_rate_duration;
+use utils::print_recall_duration;
+use utils::print_summary;
+use utils::submit_rating;
+use utils::suspend_cards;
+use utils::suspend_note;
+use utils::tag_note;
+
+use crate::import::import_from_files;
 
 mod utils;
-use crate::review::utils::{note_id_to_cards, set_due_date, set_due_date_with_prompt};
-use crate::utils::undo_event;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::undo::UndoEventRequest;
 pub(crate) use utils::forget_card;
+
+use crate::review::utils::note_id_to_cards;
+use crate::review::utils::set_due_date;
+use crate::review::utils::set_due_date_with_prompt;
+use crate::utils::undo_event;
 
 #[derive(Args, Debug)]
 pub(crate) struct ReviewArgs {
@@ -861,7 +889,8 @@ pub(crate) async fn review_cards(
                         {
                             Ok(Some(new_response)) => {
                                 println!(
-                                    "Current card refreshed after sync (card order may have changed)."
+                                    "[Note Id: {}] Current card refreshed after sync (card order may have changed).",
+                                    synced_note_id
                                 );
                                 if card_flipped {
                                     if let Some(mut child) = card_back_rendered_child.take() {
@@ -889,7 +918,8 @@ pub(crate) async fn review_cards(
                             }
                             Ok(None) => {
                                 println!(
-                                    "Current card was deleted during sync. Advancing to next card."
+                                    "[Note Id: {}] Current card was deleted during sync. Advancing to next card.",
+                                    synced_note_id
                                 );
                                 if card_flipped {
                                     if let Some(mut child) = card_back_rendered_child.take() {
@@ -906,7 +936,10 @@ pub(crate) async fn review_cards(
                                 sync_advance_needed = true;
                             }
                             Err(e) => {
-                                println!("Failed to refresh card after sync: {}", e);
+                                println!(
+                                    "[Note Id: {}] Failed to refresh card after sync: {}",
+                                    synced_note_id, e
+                                );
                             }
                         }
                     }
