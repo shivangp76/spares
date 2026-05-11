@@ -1,11 +1,14 @@
-use crate::{
-    AdapterErrorKind, Error, LibraryError,
-    parsers::{NoteSettings, Parseable},
-};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use migration::MigrationFunc;
 use sqlx::SqlitePool;
+
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::parsers::NoteSettings;
+use crate::parsers::Parseable;
 
 pub mod impls;
 pub mod migration;
@@ -64,8 +67,9 @@ pub fn get_all_adapters() -> Vec<fn() -> Box<dyn SrsAdapter>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use itertools::Itertools;
+
+    use super::*;
 
     #[test]
     fn test_adapters_validation() {

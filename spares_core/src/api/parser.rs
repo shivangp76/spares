@@ -1,18 +1,21 @@
-use crate::{
-    Error, LibraryError,
-    api::undo::{
-        insert_events,
-        payloads::{CreateParserPayload, DeleteParserPayload, Transition, UpdateParserPayload},
-    },
-    model::{EventType, NoteId, Parser},
-    schema::{
-        FilterOptions,
-        parser::{CreateParserRequest, ParserResponse, UpdateParserRequest},
-    },
-};
 use chrono::Utc;
 use serde_json::to_value;
 use sqlx::sqlite::SqlitePool;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateParserPayload;
+use crate::api::undo::payloads::DeleteParserPayload;
+use crate::api::undo::payloads::Transition;
+use crate::api::undo::payloads::UpdateParserPayload;
+use crate::model::EventType;
+use crate::model::NoteId;
+use crate::model::Parser;
+use crate::schema::FilterOptions;
+use crate::schema::parser::CreateParserRequest;
+use crate::schema::parser::ParserResponse;
+use crate::schema::parser::UpdateParserRequest;
 
 const PARSERS_DEFAULT_LIMIT: usize = 100;
 

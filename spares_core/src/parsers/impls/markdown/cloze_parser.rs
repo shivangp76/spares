@@ -1,5 +1,6 @@
-use crate::parsers::ClozeMatch;
 use unscanny::Scanner;
+
+use crate::parsers::ClozeMatch;
 
 pub struct ClozeParser<'de> {
     s: Scanner<'de>,
@@ -94,8 +95,9 @@ impl<'a> ClozeParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::ops::Range;
+
+    use super::*;
 
     #[test]
     fn test_basic_cloze() {

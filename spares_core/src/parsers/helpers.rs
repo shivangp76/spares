@@ -1,6 +1,9 @@
+use std::path::Path;
+use std::path::PathBuf;
+
+use crate::config::get_data_dir;
+use crate::model::NoteId;
 use crate::parsers::RenderOutputType;
-use crate::{config::get_data_dir, model::NoteId};
-use std::path::{Path, PathBuf};
 
 /// This cannot be overridden since [`get_note_info_from_filepath`] needs to be deterministic.
 pub fn get_output_raw_dir(

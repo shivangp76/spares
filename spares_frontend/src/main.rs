@@ -1,6 +1,8 @@
-use clap::Parser;
 use std::path::PathBuf;
-use std::process::{Command, exit};
+use std::process::Command;
+use std::process::exit;
+
+use clap::Parser;
 
 #[derive(Parser)]
 struct Args {

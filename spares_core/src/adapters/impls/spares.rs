@@ -1,27 +1,41 @@
-use crate::adapters::SrsAdapter;
-use crate::adapters::migration::MigrationFunc;
-use crate::api::note::render_notes;
-use crate::api::{
-    note::{create_notes, delete_notes, update_notes},
-    parser::list_parsers,
-};
-use crate::config::{Environment, get_env_config};
-use crate::model::CustomData;
-use crate::parsers::{NoteImportAction, NoteSettings, Parseable, get_all_parsers};
-use crate::schema::FilterOptions;
-use crate::schema::note::{
-    CreateNoteRequest, CreateNotesRequest, DeleteNotesRequest, NotesResponse, NotesSelector,
-    RenderNotesRequest, UpdateNotesRequest, UpdateTags,
-};
-use crate::schema::parser::ParserResponse;
-use crate::{AdapterErrorKind, Error, LibraryError, ParserErrorKind};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use log::info;
+use reqwest::Client;
+use reqwest::Response;
 use reqwest::StatusCode;
-use reqwest::{Client, Response};
 use serde_json::Value;
 use sqlx::SqlitePool;
+
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::ParserErrorKind;
+use crate::adapters::SrsAdapter;
+use crate::adapters::migration::MigrationFunc;
+use crate::api::note::create_notes;
+use crate::api::note::delete_notes;
+use crate::api::note::render_notes;
+use crate::api::note::update_notes;
+use crate::api::parser::list_parsers;
+use crate::config::Environment;
+use crate::config::get_env_config;
+use crate::model::CustomData;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NoteSettings;
+use crate::parsers::Parseable;
+use crate::parsers::get_all_parsers;
+use crate::schema::FilterOptions;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::DeleteNotesRequest;
+use crate::schema::note::NotesResponse;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::RenderNotesRequest;
+use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateTags;
+use crate::schema::parser::ParserResponse;
 
 #[derive(Debug)]
 pub struct SparesAdapter {

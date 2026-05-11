@@ -1,15 +1,16 @@
-use crate::{
-    Error,
-    api::{
-        card::{create_card_tags, delete_card_tags},
-        fetch_batched_query, placeholders,
-    },
-    model::{CardId, TagId},
-    schema::note::NoteResponse,
-    search::evaluator::Evaluator,
-};
-use sqlx::sqlite::SqlitePool;
 use std::collections::HashSet;
+
+use sqlx::sqlite::SqlitePool;
+
+use crate::Error;
+use crate::api::card::create_card_tags;
+use crate::api::card::delete_card_tags;
+use crate::api::fetch_batched_query;
+use crate::api::placeholders;
+use crate::model::CardId;
+use crate::model::TagId;
+use crate::schema::note::NoteResponse;
+use crate::search::evaluator::Evaluator;
 
 /// Re-evaluates all filtered-tag queries against the given notes' cards, adding or removing
 /// card-tag associations as appropriate.  Must be called after cards and manual tags are committed.

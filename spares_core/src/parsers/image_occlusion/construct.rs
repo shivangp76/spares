@@ -1,29 +1,49 @@
-use super::utils::{
-    append_to_stem, get_center_of_shape, get_image_occlusion_card_filepath,
-    get_image_occlusion_directory, get_image_occlusion_rendered_directory,
-};
-use super::{
-    CLOZE_SETTINGS_KEY, CLOZES_GROUP_ID, ConstructImageOcclusionType, FrontConceal,
-    ImageOcclusionClozeIndex, ImageOcclusionConfig, ImageOcclusionData, ParsedImageOcclusionCloze,
-    SvgClozeType,
-};
-use crate::config::read_external_config;
-use crate::helpers::to_title_case;
-use crate::parsers::generate_files::{CardSide, RenderOutputType};
-use crate::parsers::image_occlusion::utils::render_svg_to_rgba;
-use crate::parsers::{
-    BackReveal, CardData, ClozeData, ClozeGroupingSettings, ClozeHiddenReplacement, ClozeSettings,
-    ClozeSettingsKeys, NotePart, NoteSettingsKeys, Parseable, parse_card_settings,
-};
-use crate::{Error, LibraryError, NoteErrorKind};
-use image::{ImageFormat, imageops};
-use rayon::prelude::*;
-use std::fs::{self, read_to_string};
+use std::fs::read_to_string;
+use std::fs::{self};
 use std::ops::Range;
 use std::path::Path;
+
+use image::ImageFormat;
+use image::imageops;
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use toml_edit::DocumentMut;
-use xmltree::{Element, EmitterConfig};
+use xmltree::Element;
+use xmltree::EmitterConfig;
+
+use super::CLOZE_SETTINGS_KEY;
+use super::CLOZES_GROUP_ID;
+use super::ConstructImageOcclusionType;
+use super::FrontConceal;
+use super::ImageOcclusionClozeIndex;
+use super::ImageOcclusionConfig;
+use super::ImageOcclusionData;
+use super::ParsedImageOcclusionCloze;
+use super::SvgClozeType;
+use super::utils::append_to_stem;
+use super::utils::get_center_of_shape;
+use super::utils::get_image_occlusion_card_filepath;
+use super::utils::get_image_occlusion_directory;
+use super::utils::get_image_occlusion_rendered_directory;
+use crate::Error;
+use crate::LibraryError;
+use crate::NoteErrorKind;
+use crate::config::read_external_config;
+use crate::helpers::to_title_case;
+use crate::parsers::BackReveal;
+use crate::parsers::CardData;
+use crate::parsers::ClozeData;
+use crate::parsers::ClozeGroupingSettings;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeSettings;
+use crate::parsers::ClozeSettingsKeys;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::generate_files::RenderOutputType;
+use crate::parsers::image_occlusion::utils::render_svg_to_rgba;
+use crate::parsers::parse_card_settings;
 
 const CLOZE_NOT_TO_ANSWER_TEXT: &str = "(no answer)";
 

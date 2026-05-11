@@ -1,40 +1,54 @@
-use crate::{
-    AppState,
-    handlers::require_api_key,
-    handlers::{
-        card::{
-            forget_card_handler, get_card_handler, get_cards_handler, get_leeches_handler,
-            unbury_cards_handler, update_cards_handler,
-        },
-        health_check_handler,
-        note::{
-            create_notes_handler, delete_notes_handler, export_notes_handler,
-            generate_note_files_handler, get_duplicate_keywords_handler, get_note_handler,
-            get_note_links_handler, get_unmatched_keywords_handler, list_notes_handler,
-            search_keyword_handler, search_notes_handler, update_notes_handler,
-        },
-        parser::{
-            create_parser_handler, delete_parser_handler, get_parser_handler, list_parsers_handler,
-            update_parser_handler,
-        },
-        review::{
-            get_review_card_by_id_handler, get_review_card_handler, get_statistics_handler,
-            submit_study_action_handler,
-        },
-        scheduler::get_scheduler_ratings_handler,
-        tag::{
-            create_tag_handler, delete_tag_handler, get_tag_by_name_handler, get_tag_handler,
-            list_tags_handler, rebuild_tag_handler, update_tag_handler,
-        },
-        undo::undo_event_handler,
-    },
-};
-use axum::{
-    Router, middleware,
-    routing::{delete, get, patch, post},
-};
-use std::{path::PathBuf, sync::Arc};
-use tower_http::services::{ServeDir, ServeFile};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::Router;
+use axum::middleware;
+use axum::routing::delete;
+use axum::routing::get;
+use axum::routing::patch;
+use axum::routing::post;
+use tower_http::services::ServeDir;
+use tower_http::services::ServeFile;
+
+use crate::AppState;
+use crate::handlers::card::forget_card_handler;
+use crate::handlers::card::get_card_handler;
+use crate::handlers::card::get_cards_handler;
+use crate::handlers::card::get_leeches_handler;
+use crate::handlers::card::unbury_cards_handler;
+use crate::handlers::card::update_cards_handler;
+use crate::handlers::health_check_handler;
+use crate::handlers::note::create_notes_handler;
+use crate::handlers::note::delete_notes_handler;
+use crate::handlers::note::export_notes_handler;
+use crate::handlers::note::generate_note_files_handler;
+use crate::handlers::note::get_duplicate_keywords_handler;
+use crate::handlers::note::get_note_handler;
+use crate::handlers::note::get_note_links_handler;
+use crate::handlers::note::get_unmatched_keywords_handler;
+use crate::handlers::note::list_notes_handler;
+use crate::handlers::note::search_keyword_handler;
+use crate::handlers::note::search_notes_handler;
+use crate::handlers::note::update_notes_handler;
+use crate::handlers::parser::create_parser_handler;
+use crate::handlers::parser::delete_parser_handler;
+use crate::handlers::parser::get_parser_handler;
+use crate::handlers::parser::list_parsers_handler;
+use crate::handlers::parser::update_parser_handler;
+use crate::handlers::require_api_key;
+use crate::handlers::review::get_review_card_by_id_handler;
+use crate::handlers::review::get_review_card_handler;
+use crate::handlers::review::get_statistics_handler;
+use crate::handlers::review::submit_study_action_handler;
+use crate::handlers::scheduler::get_scheduler_ratings_handler;
+use crate::handlers::tag::create_tag_handler;
+use crate::handlers::tag::delete_tag_handler;
+use crate::handlers::tag::get_tag_by_name_handler;
+use crate::handlers::tag::get_tag_handler;
+use crate::handlers::tag::list_tags_handler;
+use crate::handlers::tag::rebuild_tag_handler;
+use crate::handlers::tag::update_tag_handler;
+use crate::handlers::undo::undo_event_handler;
 
 pub(crate) fn create_router(
     app_state: Arc<AppState>,

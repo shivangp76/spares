@@ -1,20 +1,21 @@
-use super::enrich_note;
-use crate::{
-    Error,
-    api::note::match_keyword,
-    config::read_internal_config,
-    model::{NoteId, NoteLink},
-    schema::{
-        card::CardResponse,
-        note::{
-            MatchedKeywordResponse, NoteLinksRequest, SearchKeywordRequest, SearchNotesRequest,
-            SearchNotesResponse, UnmatchedKeywordResponse,
-        },
-    },
-    search::evaluator::Evaluator,
-};
-use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
+
+use sqlx::sqlite::SqlitePool;
+
+use super::enrich_note;
+use crate::Error;
+use crate::api::note::match_keyword;
+use crate::config::read_internal_config;
+use crate::model::NoteId;
+use crate::model::NoteLink;
+use crate::schema::card::CardResponse;
+use crate::schema::note::MatchedKeywordResponse;
+use crate::schema::note::NoteLinksRequest;
+use crate::schema::note::SearchKeywordRequest;
+use crate::schema::note::SearchNotesRequest;
+use crate::schema::note::SearchNotesResponse;
+use crate::schema::note::UnmatchedKeywordResponse;
+use crate::search::evaluator::Evaluator;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
     let keywords_data: Vec<(NoteId, String)> =

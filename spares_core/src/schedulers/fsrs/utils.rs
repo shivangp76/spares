@@ -1,11 +1,16 @@
-use crate::{
-    helpers::FractionalDays,
-    model::{Card, RatingId, ReviewLog, StateId},
-};
-use chrono::{DateTime, Duration, Utc};
+use std::cmp;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
 use rs_fsrs::State;
 use serde_json::Map;
-use std::cmp;
+
+use crate::helpers::FractionalDays;
+use crate::model::Card;
+use crate::model::RatingId;
+use crate::model::ReviewLog;
+use crate::model::StateId;
 
 pub fn number_to_rating(num: RatingId) -> Option<rs_fsrs::Rating> {
     match num {

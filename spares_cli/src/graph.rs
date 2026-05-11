@@ -1,8 +1,11 @@
-use petgraph::Graph;
-use petgraph::dot::{Config, Dot};
-use petgraph::graph::NodeIndex;
-use spares_core::schema::note::{LinkedNote, NoteResponse};
 use std::collections::HashMap;
+
+use petgraph::Graph;
+use petgraph::dot::Config;
+use petgraph::dot::Dot;
+use petgraph::graph::NodeIndex;
+use spares_core::schema::note::LinkedNote;
+use spares_core::schema::note::NoteResponse;
 
 /// Usage: Paste output into <https://dreampuf.github.io/GraphvizOnline/> with engine set to `osage`.
 pub(crate) fn chart(note_responses: Vec<NoteResponse>) {

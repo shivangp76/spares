@@ -1,22 +1,28 @@
 // ── Note undo tests ───────────────────────────────────────────────────────────
 
-use crate::api::note::{create_notes, update_notes};
-use crate::api::parser::tests::create_parser_helper;
-use crate::api::tag::tests::create_tag_helper;
-use crate::api::undo::undo_event;
-use crate::parsers::get_all_parsers;
-use crate::schema::note::{
-    CreateNoteRequest, CreateNotesRequest, NotesSelector, UpdateNotesRequest, UpdateTags,
-};
-use crate::schema::undo::UndoEventRequest;
 use chrono::Utc;
 use serde_json::Map;
 use sqlx::SqlitePool;
 
+use crate::api::note::create_notes;
+use crate::api::note::update_notes;
+use crate::api::parser::tests::create_parser_helper;
+use crate::api::tag::tests::create_tag_helper;
+use crate::api::undo::undo_event;
+use crate::parsers::get_all_parsers;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateTags;
+use crate::schema::undo::UndoEventRequest;
+
 #[sqlx::test]
 async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
-    use crate::api::note::{create_notes, delete_notes};
-    use crate::schema::note::{DeleteNotesRequest, NotesSelector};
+    use crate::api::note::create_notes;
+    use crate::api::note::delete_notes;
+    use crate::schema::note::DeleteNotesRequest;
+    use crate::schema::note::NotesSelector;
 
     let parser = create_parser_helper(&pool, "markdown").await;
     let request = CreateNotesRequest {
@@ -71,8 +77,10 @@ async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
-    use crate::api::note::{create_notes, delete_notes};
-    use crate::schema::note::{DeleteNotesRequest, NotesSelector};
+    use crate::api::note::create_notes;
+    use crate::api::note::delete_notes;
+    use crate::schema::note::DeleteNotesRequest;
+    use crate::schema::note::NotesSelector;
 
     let parser = create_parser_helper(&pool, "markdown").await;
     let request = CreateNotesRequest {
@@ -153,8 +161,11 @@ async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn e2e_undo_update_notes_restores_data(pool: SqlitePool) {
-    use crate::api::note::{create_notes, update_notes};
-    use crate::schema::note::{NotesSelector, UpdateNotesRequest, UpdateTags};
+    use crate::api::note::create_notes;
+    use crate::api::note::update_notes;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::UpdateNotesRequest;
+    use crate::schema::note::UpdateTags;
 
     let parser = create_parser_helper(&pool, "markdown").await;
     let request = CreateNotesRequest {

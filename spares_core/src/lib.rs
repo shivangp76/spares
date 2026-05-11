@@ -9,8 +9,10 @@ pub mod schedulers;
 pub mod schema;
 pub mod search;
 
-use miette::{Diagnostic, SourceSpan};
-use model::{RatingId, StateId};
+use miette::Diagnostic;
+use miette::SourceSpan;
+use model::RatingId;
+use model::StateId;
 use thiserror::Error;
 
 pub(crate) const ALLOWED_F64_ERROR: f64 = 0.000_001;

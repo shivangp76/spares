@@ -1,11 +1,16 @@
-use crate::adapters::impls::anki::ANKI_ADAPTER_NAME;
-use crate::adapters::impls::anki::types::{
-    AddFieldToModelApiRequestData, ApiAction, ApiRequest, ApiRequestParams, ModelName,
-};
-use crate::{AdapterErrorKind, Error, LibraryError};
 use indicatif::ProgressIterator;
 use reqwest::Client;
 use serde_json::Value;
+
+use crate::AdapterErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::adapters::impls::anki::ANKI_ADAPTER_NAME;
+use crate::adapters::impls::anki::types::AddFieldToModelApiRequestData;
+use crate::adapters::impls::anki::types::ApiAction;
+use crate::adapters::impls::anki::types::ApiRequest;
+use crate::adapters::impls::anki::types::ApiRequestParams;
+use crate::adapters::impls::anki::types::ModelName;
 
 pub async fn execute_request(request: &ApiRequest, client: &Client) -> Result<Value, Error> {
     let api_url = "http://localhost:8765";

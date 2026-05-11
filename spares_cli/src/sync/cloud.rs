@@ -1,5 +1,7 @@
-use spares_core::config::{get_data_dir, read_external_config};
 use std::process::Command;
+
+use spares_core::config::get_data_dir;
+use spares_core::config::read_external_config;
 
 pub(crate) fn sync_cloud() -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;

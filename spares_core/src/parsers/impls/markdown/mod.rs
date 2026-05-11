@@ -1,24 +1,35 @@
-use crate::{
-    Error, LibraryError,
-    config::{get_cache_dir, read_external_config},
-    parsers::{
-        ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ConstructFileDataType,
-        ConstructImageOcclusionType, GenerateNoteFilesRequest, NoteImportAction, NotePart,
-        NoteSettingsKeys, Parseable, RenderOutputDirectoryType, RenderOutputType,
-        generate_files::CardSide,
-        get_output_raw_dir,
-        image_occlusion::{ImageOcclusionData, construct_image_occlusion_from_image},
-    },
-    schema::note::LinkedNote,
-};
+use std::ops::Range;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+
 use cloze_parser::ClozeParser;
-use fancy_regex::{Captures, Regex};
-use serde::{Deserialize, Serialize};
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use fancy_regex::Captures;
+use fancy_regex::Regex;
+use serde::Deserialize;
+use serde::Serialize;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::config::get_cache_dir;
+use crate::config::read_external_config;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeMatch;
+use crate::parsers::ClozeReplacement;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::ConstructImageOcclusionType;
+use crate::parsers::GenerateNoteFilesRequest;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::RenderOutputType;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::get_output_raw_dir;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
 
@@ -401,12 +412,11 @@ fn get_linked_notes_string(
 
 #[cfg(test)]
 pub mod tests {
-    use crate::{
-        parsers::{ClozeMatch, Parseable, impls::markdown::MarkdownParser},
-        schema::note::LinkedNote,
-    };
-
     use super::get_linked_notes_string;
+    use crate::parsers::ClozeMatch;
+    use crate::parsers::Parseable;
+    use crate::parsers::impls::markdown::MarkdownParser;
+    use crate::schema::note::LinkedNote;
 
     #[test]
     fn test_markdown_linked_notes() {

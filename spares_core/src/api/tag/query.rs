@@ -1,10 +1,12 @@
-use crate::{
-    Error, LibraryError, TagErrorKind,
-    api::card::create_card_tags,
-    model::TagId,
-    search::{evaluator::Evaluator, lexer::Lexer},
-};
 use sqlx::sqlite::SqlitePool;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::TagErrorKind;
+use crate::api::card::create_card_tags;
+use crate::model::TagId;
+use crate::search::evaluator::Evaluator;
+use crate::search::lexer::Lexer;
 
 pub async fn verify_filtered_tag_query(db: &SqlitePool, query: &str) -> Result<(), Error> {
     let mut lexer = Lexer::new(query);
@@ -78,22 +80,23 @@ pub async fn rebuild_tag(db: &SqlitePool, id: i64) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        api::{
-            note::create_notes,
-            parser::tests::create_parser_helper,
-            tag::{create_tag, update_tag},
-        },
-        model::{Card, CardTag, Tag},
-        parsers::get_all_parsers,
-        schema::{
-            note::{CreateNoteRequest, CreateNotesRequest},
-            tag::{CreateTagRequest, TagSelector, UpdateTagRequest},
-        },
-    };
     use chrono::Utc;
     use serde_json::Map;
+
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::tag::create_tag;
+    use crate::api::tag::update_tag;
+    use crate::model::Card;
+    use crate::model::CardTag;
+    use crate::model::Tag;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::tag::CreateTagRequest;
+    use crate::schema::tag::TagSelector;
+    use crate::schema::tag::UpdateTagRequest;
 
     #[sqlx::test]
     async fn test_create_filtered_tag(pool: SqlitePool) -> () {
