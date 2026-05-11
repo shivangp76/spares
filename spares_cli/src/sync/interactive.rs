@@ -1,23 +1,34 @@
-use super::{SyncImportAction, SyncImportData, replace_action};
-use crate::sync::{
-    SyncSource, UpdateDirection, generate_notes, get_import_data, hub_spoke_error, update_changes,
-    utils::apply_select_settings,
-};
+use std::fs;
+use std::io::Write;
+use std::io::{self};
+use std::process::Command;
+
 use colored::Colorize;
 use inquire::Select;
 use log::info;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
+use reqwest::StatusCode;
 use serde_json::Value;
-use spares_core::{
-    model::NoteId,
-    parsers::{find_parser, get_all_parsers},
-    schema::note::{NotesSelector, RenderNotesRequest},
-};
-use std::fs;
-use std::io::{self, Write};
-use std::process::Command;
+use spares_core::model::NoteId;
+use spares_core::parsers::find_parser;
+use spares_core::parsers::get_all_parsers;
+use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::RenderNotesRequest;
 use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter, EnumString};
+use strum_macros::Display;
+use strum_macros::EnumIter;
+use strum_macros::EnumString;
+
+use super::SyncImportAction;
+use super::SyncImportData;
+use super::replace_action;
+use crate::sync::SyncSource;
+use crate::sync::UpdateDirection;
+use crate::sync::generate_notes;
+use crate::sync::get_import_data;
+use crate::sync::hub_spoke_error;
+use crate::sync::update_changes;
+use crate::sync::utils::apply_select_settings;
 
 #[derive(Debug, Display, EnumIter, EnumString, PartialEq)]
 enum SyncAction {

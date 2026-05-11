@@ -1,8 +1,11 @@
+use std::ops::Range;
+
+use serde::Deserialize;
+use serde::Serialize;
+
 use super::DEFAULT_BACK_EMPHASIS;
 use crate::model::NoteId;
 use crate::parsers::image_occlusion::ImageOcclusionCloze;
-use serde::{Deserialize, Serialize};
-use std::ops::Range;
 
 /// See [`ClozeGroupingSettings`] for documentation.
 pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;

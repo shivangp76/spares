@@ -1,14 +1,25 @@
-use crate::{import::ImportArgs, migrate::MigrateArgs, review::ReviewArgs, sync::SyncArgs};
-use chrono::{DateTime, Local, Utc};
-use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+
+use chrono::DateTime;
+use chrono::Local;
+use chrono::Utc;
+use clap::ArgGroup;
+use clap::Args;
+use clap::Parser;
+use clap::Subcommand;
+use clap::ValueEnum;
+use spares_core::api::tag::DEFAULT_TAG_AUTO_DELETE;
+use spares_core::config::Environment;
+use spares_core::model::CardId;
+use spares_core::model::NoteId;
+use spares_core::model::Score;
 use spares_core::parsers::get_note_info_from_filepath;
 use spares_core::schema::note::NotesSelector;
-use spares_core::{
-    api::tag::DEFAULT_TAG_AUTO_DELETE,
-    config::Environment,
-    model::{CardId, NoteId, Score},
-};
-use std::path::PathBuf;
+
+use crate::import::ImportArgs;
+use crate::migrate::MigrateArgs;
+use crate::review::ReviewArgs;
+use crate::sync::SyncArgs;
 
 pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
     let local_time = Local::now();

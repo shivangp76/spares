@@ -1,24 +1,37 @@
 mod data_parser;
 
-use crate::config::get_cache_dir;
-use crate::model::NoteId;
-use crate::parsers::generate_files::CardSide;
-use crate::parsers::image_occlusion::{
-    ConstructImageOcclusionType, ImageOcclusionData, construct_image_occlusion_from_image,
-};
-use crate::parsers::{
-    ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ClozeSettingsSide, ConstructFileDataType,
-    GenerateNoteFilesRequest, NoteImportAction, NotePart, NoteSettingsKeys, Parseable,
-    RenderOutputDirectoryType, RenderOutputType, get_output_raw_dir,
-};
-use crate::schema::note::LinkedNote;
-use crate::{Error, LibraryError};
-use data_parser::LatexDataParser;
-use fancy_regex::Regex;
 use std::ffi::OsString;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Output;
+
+use data_parser::LatexDataParser;
+use fancy_regex::Regex;
+
+use crate::Error;
+use crate::LibraryError;
+use crate::config::get_cache_dir;
+use crate::model::NoteId;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeMatch;
+use crate::parsers::ClozeReplacement;
+use crate::parsers::ClozeSettingsSide;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::GenerateNoteFilesRequest;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::RenderOutputType;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::get_output_raw_dir;
+use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::schema::note::LinkedNote;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LatexParserNote {}
@@ -513,16 +526,22 @@ fn render_file(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        adapters::get_adapter_from_string,
-        parsers::{
-            BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal,
-            NoteImportAction, NotePart, Parseable, get_cards, get_notes,
-            impls::latex::LatexParserNote,
-        },
-    };
     use indoc::indoc;
     use serde_json::Number;
+
+    use crate::adapters::get_adapter_from_string;
+    use crate::parsers::BackReveal;
+    use crate::parsers::BackType;
+    use crate::parsers::CardData;
+    use crate::parsers::ClozeGrouping;
+    use crate::parsers::ClozeHiddenReplacement;
+    use crate::parsers::FrontConceal;
+    use crate::parsers::NoteImportAction;
+    use crate::parsers::NotePart;
+    use crate::parsers::Parseable;
+    use crate::parsers::get_cards;
+    use crate::parsers::get_notes;
+    use crate::parsers::impls::latex::LatexParserNote;
 
     #[test]
     fn test_get_cards_basic_1_latex() {

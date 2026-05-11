@@ -1,15 +1,21 @@
 //! End-to-end undo tests: create/update/delete parser flows, with and without groups,
 //! including dependency error paths. Also covers apply_event for parser events (via undo flow).
 
-use crate::api::parser::tests::create_parser_helper;
-use crate::api::parser::{create_parser, create_parser_event, delete_parser, update_parser};
-use crate::api::undo::payloads::CreateParserPayload;
-use crate::api::undo::{create_event_group, insert_events, undo_event};
-use crate::model::EventType;
-use crate::schema::undo::UndoEventRequest;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::SqlitePool;
+
+use crate::api::parser::create_parser;
+use crate::api::parser::create_parser_event;
+use crate::api::parser::delete_parser;
+use crate::api::parser::tests::create_parser_helper;
+use crate::api::parser::update_parser;
+use crate::api::undo::create_event_group;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateParserPayload;
+use crate::api::undo::undo_event;
+use crate::model::EventType;
+use crate::schema::undo::UndoEventRequest;
 
 #[sqlx::test]
 async fn e2e_undo_create_parser_restores_state(pool: SqlitePool) {

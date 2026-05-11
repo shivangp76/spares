@@ -1,18 +1,27 @@
 mod handlers;
 mod route;
 
-use crate::route::create_router;
-use axum::http::{
-    Method,
-    header::{AUTHORIZATION, CONTENT_TYPE},
-};
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
+
+use axum::http::Method;
+use axum::http::header::AUTHORIZATION;
+use axum::http::header::CONTENT_TYPE;
 use clap::Parser;
-use log::{info, warn};
-use spares_core::config::{Environment, get_data_dir, get_env_config};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use log::info;
+use log::warn;
+use spares_core::config::Environment;
+use spares_core::config::get_data_dir;
+use spares_core::config::get_env_config;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use tokio::net::TcpListener;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::Any;
+use tower_http::cors::CorsLayer;
+
+use crate::route::create_router;
 
 #[derive(Debug)]
 struct AppState {

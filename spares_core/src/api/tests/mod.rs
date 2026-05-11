@@ -1,46 +1,55 @@
-use crate::{
-    Error,
-    adapters::{
-        SrsAdapter,
-        impls::spares::{SparesAdapter, SparesRequestProcessor},
-    },
-    api::{
-        parser::{get_parser, tests::create_parser_helper},
-        review::{get_review_card, submit_study_action},
-        statistics::get_statistics,
-        tag::create_tag,
-    },
-    config::read_external_config,
-    model::{Card, NEW_CARD_STATE, RatingId, Tag},
-    parsers::{
-        ConstructFileDataType, NoteImportAction, TemplateType, find_parser,
-        generate_files::GenerateNoteFilesRequest, get_all_parsers, get_notes,
-    },
-    schema::{
-        FilterOptions,
-        note::NotesResponse,
-        review::{
-            GetReviewCardFilterRequest, GetReviewCardRequest, RatingSubmission, StatisticsRequest,
-            StudyAction, SubmitStudyActionRequest,
-        },
-        tag::CreateTagRequest,
-    },
-    search::evaluator::Evaluator,
-};
-use chrono::{DateTime, Duration, Utc};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs::create_dir_all;
+use std::fs::read_to_string;
+use std::path::Path;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::rc::Weak;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
+use fuzz_data::generate_notes;
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use sqlx::SqlitePool;
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    fs::{create_dir_all, read_to_string},
-    path::{Path, PathBuf},
-    rc::{Rc, Weak},
-};
 
 use super::note::list_notes;
-use fuzz_data::generate_notes;
+use crate::Error;
+use crate::adapters::SrsAdapter;
+use crate::adapters::impls::spares::SparesAdapter;
+use crate::adapters::impls::spares::SparesRequestProcessor;
+use crate::api::parser::get_parser;
+use crate::api::parser::tests::create_parser_helper;
+use crate::api::review::get_review_card;
+use crate::api::review::submit_study_action;
+use crate::api::statistics::get_statistics;
+use crate::api::tag::create_tag;
+use crate::config::read_external_config;
+use crate::model::Card;
+use crate::model::NEW_CARD_STATE;
+use crate::model::RatingId;
+use crate::model::Tag;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::NoteImportAction;
+use crate::parsers::TemplateType;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::get_all_parsers;
+use crate::parsers::get_notes;
+use crate::schema::FilterOptions;
+use crate::schema::note::NotesResponse;
+use crate::schema::review::GetReviewCardFilterRequest;
+use crate::schema::review::GetReviewCardRequest;
+use crate::schema::review::RatingSubmission;
+use crate::schema::review::StatisticsRequest;
+use crate::schema::review::StudyAction;
+use crate::schema::review::SubmitStudyActionRequest;
+use crate::schema::tag::CreateTagRequest;
+use crate::search::evaluator::Evaluator;
 
 mod fuzz_data;
 pub use fuzz_data::generate_review_logs;

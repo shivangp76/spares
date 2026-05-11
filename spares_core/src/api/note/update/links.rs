@@ -1,11 +1,12 @@
-use super::super::create_note_links;
-use crate::{
-    Error,
-    model::{NoteId, NoteLink},
-    parsers::Parseable,
-};
-use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
+
+use sqlx::sqlite::SqlitePool;
+
+use super::super::create_note_links;
+use crate::Error;
+use crate::model::NoteId;
+use crate::model::NoteLink;
+use crate::parsers::Parseable;
 
 pub(super) async fn update_note_links(
     db: &SqlitePool,

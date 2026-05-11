@@ -1,8 +1,13 @@
 #![allow(unused)]
-use crate::search::{Token, TokenKind};
-use miette::{Diagnostic, Error, LabeledSpan, SourceSpan};
+use miette::Diagnostic;
+use miette::Error;
+use miette::LabeledSpan;
+use miette::SourceSpan;
 use thiserror::Error;
 use unscanny::Scanner;
+
+use crate::search::Token;
+use crate::search::TokenKind;
 
 pub(crate) struct Lexer<'de> {
     /// The scanner: contains the underlying string and location as a "cursor".

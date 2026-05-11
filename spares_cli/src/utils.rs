@@ -1,7 +1,10 @@
-use miette::{Error, miette};
-use reqwest::{Client, StatusCode};
+use miette::Error;
+use miette::miette;
+use reqwest::Client;
+use reqwest::StatusCode;
 use serde_json::Value;
-use spares_core::schema::undo::{UndoEventRequest, UndoEventResponse};
+use spares_core::schema::undo::UndoEventRequest;
+use spares_core::schema::undo::UndoEventResponse;
 
 pub(crate) async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Response, Error> {
     let status = response.status();

@@ -13,30 +13,41 @@
 //! - `roxmltree`: Not writable.
 //! - `svg`: No DOM-style reading support. See <https://github.com/bodoni/svg/issues/41>.
 
-use super::generate_files::CardSide;
-use super::{BackReveal, FrontConceal};
-use crate::model::NoteId;
-use crate::parsers::{ClozeGroupingSettings, ClozeHiddenReplacement, ClozeSettings, Parseable};
-use crate::{LibraryError, NoteErrorKind};
-use construct::{get_clozes_from_svg_str, read_image_occlusion_data};
-use fancy_regex::Regex;
-use serde::{Deserialize, Deserializer, Serialize};
-use shellexpand;
 use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use construct::get_clozes_from_svg_str;
+use construct::read_image_occlusion_data;
+use fancy_regex::Regex;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use shellexpand;
 use strum::EnumString;
 use strum_macros::EnumIter;
 
+use super::BackReveal;
+use super::FrontConceal;
+use super::generate_files::CardSide;
+use crate::LibraryError;
+use crate::NoteErrorKind;
+use crate::model::NoteId;
+use crate::parsers::ClozeGroupingSettings;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeSettings;
+use crate::parsers::Parseable;
+
 mod construct;
 mod utils;
-pub use construct::{
-    combine_image_occlusion_clozes, construct_image_occlusion_from_image,
-    create_image_occlusion_cards, update_cloze_settings,
-};
+pub use construct::combine_image_occlusion_clozes;
+pub use construct::construct_image_occlusion_from_image;
+pub use construct::create_image_occlusion_cards;
+pub use construct::update_cloze_settings;
+pub use utils::get_image_occlusion_card_filepath;
 pub use utils::get_image_occlusion_directory;
-pub use utils::{get_image_occlusion_card_filepath, get_image_occlusion_rendered_directory};
+pub use utils::get_image_occlusion_rendered_directory;
 
 #[cfg(test)]
 mod test;

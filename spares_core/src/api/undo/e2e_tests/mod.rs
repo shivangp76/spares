@@ -3,14 +3,16 @@ mod note;
 mod parser;
 mod tag;
 
+use chrono::Utc;
+use serde_json::Map;
+use sqlx::SqlitePool;
+
 use crate::api::note::create_notes;
 use crate::api::parser::tests::create_parser_helper;
 use crate::model::CardId;
 use crate::parsers::get_all_parsers;
-use crate::schema::note::{CreateNoteRequest, CreateNotesRequest};
-use chrono::Utc;
-use serde_json::Map;
-use sqlx::SqlitePool;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
 
 /// Creates a single note with one cloze card and returns the card id.
 pub(super) async fn create_card_helper(pool: &SqlitePool) -> CardId {

@@ -1,16 +1,29 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs::create_dir_all;
+use std::fs::read_to_string;
+use std::fs::write;
+use std::path::PathBuf;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::NaiveDate;
+use chrono::Utc;
+use chrono::Weekday;
+use etcetera::AppStrategy;
+use etcetera::AppStrategyArgs;
+use etcetera::choose_app_strategy;
+use serde::Deserialize;
+use serde::Serialize;
+use sqlx::SqlitePool;
+use toml_edit::DocumentMut;
+
 use crate::ALLOWED_F64_ERROR;
+use crate::Error;
+use crate::LibraryError;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
-use crate::{Error, LibraryError};
-use chrono::{DateTime, Duration, NaiveDate, Utc, Weekday};
-use etcetera::{AppStrategy, AppStrategyArgs, choose_app_strategy};
-use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
-use std::collections::{HashMap, HashSet};
-use std::fs::{create_dir_all, read_to_string, write};
-use std::path::PathBuf;
-use toml_edit::DocumentMut;
 
 const SPARES: &str = "spares";
 

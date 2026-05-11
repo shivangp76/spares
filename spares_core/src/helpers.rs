@@ -1,9 +1,16 @@
-use crate::DelimiterErrorKind;
-use chrono::{DateTime, Duration, Local, TimeZone, Utc};
+use std::collections::HashSet;
+use std::hash::Hash;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Local;
+use chrono::TimeZone;
+use chrono::Utc;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde_json::Value;
-use std::{collections::HashSet, hash::Hash};
+
+use crate::DelimiterErrorKind;
 
 /// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
 /// Returns an empty vector if the value is not an array or if any elements are not strings.

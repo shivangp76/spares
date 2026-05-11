@@ -1,8 +1,15 @@
-use crate::parsers::{
-    BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, FrontConceal, NotePart,
-    Parseable, get_cards, impls::markdown::MarkdownParser,
-};
 use pretty_assertions::assert_eq;
+
+use crate::parsers::BackReveal;
+use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeGrouping;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::FrontConceal;
+use crate::parsers::NotePart;
+use crate::parsers::Parseable;
+use crate::parsers::get_cards;
+use crate::parsers::impls::markdown::MarkdownParser;
 
 const MOVE_FILES: bool = false;
 

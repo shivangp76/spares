@@ -1,15 +1,22 @@
-use crate::{
-    Error,
-    config::read_external_config,
-    helpers::get_start_end_local_date,
-    model::{Card, CardId, NEW_CARD_STATE, SpecialState, StateId},
-    schedulers::get_scheduler_from_string,
-    schema::review::{StatisticsRequest, StatisticsResponse},
-};
-use chrono::{Duration, Local, Utc};
+use std::collections::HashMap;
+
+use chrono::Duration;
+use chrono::Local;
+use chrono::Utc;
 use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
+
+use crate::Error;
+use crate::config::read_external_config;
+use crate::helpers::get_start_end_local_date;
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::NEW_CARD_STATE;
+use crate::model::SpecialState;
+use crate::model::StateId;
+use crate::schedulers::get_scheduler_from_string;
+use crate::schema::review::StatisticsRequest;
+use crate::schema::review::StatisticsResponse;
 
 #[allow(clippy::cast_possible_wrap)]
 #[expect(clippy::too_many_lines)]

@@ -1,17 +1,21 @@
-use crate::{
-    Error,
-    api::{
-        get_card,
-        undo::payloads::{Transition, UpdateCardPayload},
-    },
-    helpers::{FractionalDays, mean},
-    model::{Card, ReviewLog},
-    schedulers::MoveCardsResult,
-};
-use chrono::{DateTime, Duration, Utc};
-use rand::{Rng, RngExt};
-use sqlx::SqlitePool;
 use std::cmp;
+
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
+use rand::Rng;
+use rand::RngExt;
+use sqlx::SqlitePool;
+
+use crate::Error;
+use crate::api::get_card;
+use crate::api::undo::payloads::Transition;
+use crate::api::undo::payloads::UpdateCardPayload;
+use crate::helpers::FractionalDays;
+use crate::helpers::mean;
+use crate::model::Card;
+use crate::model::ReviewLog;
+use crate::schedulers::MoveCardsResult;
 
 #[derive(Debug)]
 pub struct CardInternal<'a> {

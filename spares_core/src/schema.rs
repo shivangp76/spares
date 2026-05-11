@@ -1,4 +1,6 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct FilterOptions {
@@ -16,8 +18,10 @@ where
 }
 
 pub mod parser {
+    use serde::Deserialize;
+    use serde::Serialize;
+
     use crate::model::Parser;
-    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct CreateParserRequest {
@@ -47,9 +51,12 @@ pub mod parser {
 }
 
 pub mod tag {
-    use crate::model::{Tag, TagId};
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    use crate::model::Tag;
+    use crate::model::TagId;
     use crate::schema::some_option;
-    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct CreateTagRequest {
@@ -101,16 +108,23 @@ pub mod tag {
 }
 
 pub mod note {
-    use super::card::CardResponse;
-    use crate::{
-        Error,
-        model::{CustomData, Note, NoteId, NoteLink, Score},
-        search::{QueryReturnItemType, evaluator::Evaluator},
-    };
-    use chrono::{DateTime, Utc};
-    use serde::{Deserialize, Serialize};
-    use sqlx::SqlitePool;
     use std::path::PathBuf;
+
+    use chrono::DateTime;
+    use chrono::Utc;
+    use serde::Deserialize;
+    use serde::Serialize;
+    use sqlx::SqlitePool;
+
+    use super::card::CardResponse;
+    use crate::Error;
+    use crate::model::CustomData;
+    use crate::model::Note;
+    use crate::model::NoteId;
+    use crate::model::NoteLink;
+    use crate::model::Score;
+    use crate::search::QueryReturnItemType;
+    use crate::search::evaluator::Evaluator;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ExportNotesRequest {
@@ -314,11 +328,18 @@ pub mod note {
 }
 
 pub mod card {
-    use crate::model::{Card, CardId, NoteId, SpecialState, StateId};
-    use crate::schema::some_option;
-    use chrono::{DateTime, Utc};
-    use serde::{Deserialize, Serialize};
+    use chrono::DateTime;
+    use chrono::Utc;
+    use serde::Deserialize;
+    use serde::Serialize;
     use serde_json::Value;
+
+    use crate::model::Card;
+    use crate::model::CardId;
+    use crate::model::NoteId;
+    use crate::model::SpecialState;
+    use crate::model::StateId;
+    use crate::schema::some_option;
 
     #[derive(Debug, Deserialize, Serialize, Clone)]
     pub struct CardResponse {
@@ -403,12 +424,22 @@ pub mod card {
 }
 
 pub mod review {
-    use chrono::{DateTime, Duration, NaiveDate, Utc};
-    use serde::{Deserialize, Serialize};
-    use serde_with;
-    use std::{collections::HashMap, path::PathBuf};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
-    use crate::model::{CardId, NoteId, RatingId, StateId, TagId};
+    use chrono::DateTime;
+    use chrono::Duration;
+    use chrono::NaiveDate;
+    use chrono::Utc;
+    use serde::Deserialize;
+    use serde::Serialize;
+    use serde_with;
+
+    use crate::model::CardId;
+    use crate::model::NoteId;
+    use crate::model::RatingId;
+    use crate::model::StateId;
+    use crate::model::TagId;
 
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct GetReviewCardRequest {
@@ -549,7 +580,8 @@ pub mod review {
 }
 
 pub mod undo {
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
+    use serde::Serialize;
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UndoEventRequest {
