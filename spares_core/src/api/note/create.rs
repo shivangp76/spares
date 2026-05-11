@@ -1,38 +1,58 @@
-use super::{AUTOMATIC_REBUILD, BULK_REQUEST_THRESHOLD};
-use crate::{
-    CardErrorKind, Error, LibraryError, TagErrorKind,
-    api::{
-        card::create_card_tags,
-        execute_batched_query, fetch_batched_query,
-        note::basic::fetch_note_snapshot,
-        parser::get_parser_name,
-        placeholders, placeholders_2d,
-        tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
-        undo::{
-            create_event_group, insert_events,
-            payloads::{CreateNotesPayload, CreateTagPayload, NoteSnapshot},
-        },
-    },
-    config::{read_external_config, read_internal_config, write_internal_config},
-    helpers::{intersect, remove_ancestor_tags},
-    model::{Card, CardId, EventType, Note, NoteId, NoteLink, SpecialState, TagId},
-    parsers::{
-        Parseable, ReadableCardIdentifier, add_order_to_note_data, extract_and_combine_keywords,
-        find_parser,
-        generate_files::{
-            GenerateNoteFilesRequest, GenerateNoteFilesRequests, create_note_files_bulk,
-        },
-    },
-    schema::{
-        note::{self, CreateNoteRequest, CreateNotesRequest, NoteResponse, NotesResponse},
-        tag::CreateTagRequest,
-    },
-    search::evaluator::Evaluator,
-};
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+
+use chrono::DateTime;
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
+
+use super::AUTOMATIC_REBUILD;
+use super::BULK_REQUEST_THRESHOLD;
+use crate::CardErrorKind;
+use crate::Error;
+use crate::LibraryError;
+use crate::TagErrorKind;
+use crate::api::card::create_card_tags;
+use crate::api::execute_batched_query;
+use crate::api::fetch_batched_query;
+use crate::api::note::basic::fetch_note_snapshot;
+use crate::api::parser::get_parser_name;
+use crate::api::placeholders;
+use crate::api::placeholders_2d;
+use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
+use crate::api::tag::create_tag;
+use crate::api::undo::create_event_group;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateNotesPayload;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::NoteSnapshot;
+use crate::config::read_external_config;
+use crate::config::read_internal_config;
+use crate::config::write_internal_config;
+use crate::helpers::intersect;
+use crate::helpers::remove_ancestor_tags;
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::EventType;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::model::NoteLink;
+use crate::model::SpecialState;
+use crate::model::TagId;
+use crate::parsers::Parseable;
+use crate::parsers::ReadableCardIdentifier;
+use crate::parsers::add_order_to_note_data;
+use crate::parsers::extract_and_combine_keywords;
+use crate::parsers::find_parser;
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::generate_files::GenerateNoteFilesRequests;
+use crate::parsers::generate_files::create_note_files_bulk;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::NoteResponse;
+use crate::schema::note::NotesResponse;
+use crate::schema::note::{self};
+use crate::schema::tag::CreateTagRequest;
+use crate::search::evaluator::Evaluator;
 
 async fn rebuild_filtered_tags_for_created_notes(
     db: &SqlitePool,
@@ -661,6 +681,8 @@ async fn add_note_tags(
                 description: String::new(),
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                note_ids: vec![],
+                card_ids: vec![],
             });
 
             // Add to tag_map for following create note requests
@@ -674,21 +696,21 @@ async fn add_note_tags(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        api::{
-            note::create_notes, parser::tests::create_parser_helper, review::submit_study_action,
-        },
-        model::Card,
-        parsers::get_all_parsers,
-        schema::{
-            note::{CreateNoteRequest, CreateNotesRequest},
-            review::{RatingSubmission, StudyAction, SubmitStudyActionRequest},
-        },
-    };
     use chrono::Utc;
     use serde_json::Map;
     use sqlx::SqlitePool;
+
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::review::submit_study_action;
+    use crate::model::Card;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StudyAction;
+    use crate::schema::review::SubmitStudyActionRequest;
 
     /// Creates a note with a single cloze and returns `(note_id, card)`.
     async fn create_single_cloze_note(pool: &SqlitePool, data: &str) -> (NoteId, Card) {

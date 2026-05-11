@@ -1,10 +1,21 @@
-use crate::{
-    model::{Card, CardId, Note, NoteId, Parser, ReviewLog, SpecialState, StateId, Tag, TagId},
-    parsers::BackType,
-};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
 use serde_json::Value;
+
+use crate::model::Card;
+use crate::model::CardId;
+use crate::model::Note;
+use crate::model::NoteId;
+use crate::model::Parser;
+use crate::model::ReviewLog;
+use crate::model::SpecialState;
+use crate::model::StateId;
+use crate::model::Tag;
+use crate::model::TagId;
+use crate::parsers::BackType;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateTagPayload {
@@ -13,6 +24,10 @@ pub struct CreateTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
+    #[serde(default)]
+    pub note_ids: Vec<NoteId>,
+    #[serde(default)]
+    pub card_ids: Vec<CardId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -35,6 +50,10 @@ pub struct DeleteTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
+    #[serde(default)]
+    pub note_ids: Vec<NoteId>,
+    #[serde(default)]
+    pub card_ids: Vec<CardId>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

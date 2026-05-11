@@ -1,18 +1,24 @@
-use super::super::delete_empty_tags;
-use crate::{
-    Error, LibraryError, TagErrorKind,
-    api::{
-        execute_batched_query, fetch_batched_query, placeholders, placeholders_2d,
-        tag::{DEFAULT_TAG_AUTO_DELETE, create_tag},
-        undo::payloads::CreateTagPayload,
-    },
-    helpers::remove_ancestor_tags,
-    model::{NoteId, TagId},
-    schema::{note::UpdateTags, tag::CreateTagRequest},
-};
+use std::collections::HashSet;
+
 use futures::future::try_join_all;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashSet;
+
+use super::super::delete_empty_tags;
+use crate::Error;
+use crate::LibraryError;
+use crate::TagErrorKind;
+use crate::api::execute_batched_query;
+use crate::api::fetch_batched_query;
+use crate::api::placeholders;
+use crate::api::placeholders_2d;
+use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
+use crate::api::tag::create_tag;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::helpers::remove_ancestor_tags;
+use crate::model::NoteId;
+use crate::model::TagId;
+use crate::schema::note::UpdateTags;
+use crate::schema::tag::CreateTagRequest;
 
 /// Validates that none of the tags are filtered tags, creates any missing tags, and inserts
 /// note-tag rows for all of them.  Returns payloads for any newly created tags.
@@ -85,6 +91,8 @@ pub(super) async fn add_tags_to_note(
             description: String::new(),
             query: None,
             auto_delete: DEFAULT_TAG_AUTO_DELETE,
+            note_ids: vec![],
+            card_ids: vec![],
         },
     ));
     new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
