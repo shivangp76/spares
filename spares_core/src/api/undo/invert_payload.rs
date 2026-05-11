@@ -1,17 +1,25 @@
-use crate::api::undo::insert_events;
-use crate::{
-    Error,
-    api::undo::payloads::{
-        CreateNotesPayload, CreateParserPayload, CreateTagPayload, DeleteNotesPayload,
-        DeleteParserPayload, DeleteTagPayload, RateCardPayload, UpdateCardPayload,
-        UpdateNotePayload, UpdateNotesPayload, UpdateParserPayload, UpdateTagPayload,
-    },
-    model::{Event, EventType},
-};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use serde_json::Value;
 use serde_json::json;
 use sqlx::SqlitePool;
+
+use crate::Error;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CreateNotesPayload;
+use crate::api::undo::payloads::CreateParserPayload;
+use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::DeleteNotesPayload;
+use crate::api::undo::payloads::DeleteParserPayload;
+use crate::api::undo::payloads::DeleteTagPayload;
+use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateNotePayload;
+use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::api::undo::payloads::UpdateParserPayload;
+use crate::api::undo::payloads::UpdateTagPayload;
+use crate::model::Event;
+use crate::model::EventType;
 
 pub async fn create_undo_event(
     db: &SqlitePool,
@@ -104,6 +112,25 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::CreateTag => {
             let payload: CreateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            // Capture current note/card associations before deleting the tag
+            let note_ids: Vec<i64> = if let Some(id) = payload.id {
+                sqlx::query_scalar(r"SELECT note_id FROM note_tag WHERE tag_id = ?")
+                    .bind(id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?
+            } else {
+                vec![]
+            };
+            let card_ids: Vec<i64> = if let Some(id) = payload.id {
+                sqlx::query_scalar(r"SELECT card_id FROM card_tag WHERE tag_id = ?")
+                    .bind(id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?
+            } else {
+                vec![]
+            };
             // To undo CreateTag, we need DeleteTag with the tag info
             let delete_payload = DeleteTagPayload {
                 id: payload.id,
@@ -111,6 +138,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                note_ids,
+                card_ids,
             };
             Ok(serde_json::to_value(delete_payload).unwrap())
         }
@@ -128,13 +157,15 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::DeleteTag => {
             let payload: DeleteTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            // To undo DeleteTag, we create the tag again
+            // To undo DeleteTag, we create the tag again and restore its associations
             let create_payload = CreateTagPayload {
                 id: payload.id,
                 name: payload.name,
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                note_ids: payload.note_ids,
+                card_ids: payload.card_ids,
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }
