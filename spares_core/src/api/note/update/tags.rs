@@ -116,6 +116,7 @@ pub(super) async fn add_tags_to_note(
     Ok(new_tag_payloads)
 }
 
+#[expect(clippy::too_many_lines)]
 pub(super) async fn update_tags(
     db: &SqlitePool,
     tags: &UpdateTags,
@@ -212,7 +213,23 @@ pub(super) async fn update_tags(
     delete_empty_tags(db, &tags_to_check).await?;
 
     if let Some(tags_to_add) = tags_to_add {
-        let tags_to_add = remove_ancestor_tags(tags_to_add);
+        let mut tags_to_add = remove_ancestor_tags(tags_to_add);
+        if !tags_to_add.is_empty() {
+            let existing_note_tag_names: Vec<String> =
+                sqlx::query_scalar(
+                    "SELECT t.name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ?",
+                )
+                .bind(note_id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            tags_to_add.retain(|tag| {
+                let prefix = format!("{}:", tag);
+                !existing_note_tag_names
+                    .iter()
+                    .any(|existing| existing.starts_with(&prefix))
+            });
+        }
         new_tag_payloads.extend(
             add_tags_to_note(db, note_id, &tags_to_add, &existing_filtered_tags_names).await?,
         );
