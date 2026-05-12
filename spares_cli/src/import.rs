@@ -1,14 +1,22 @@
+use std::collections::HashMap;
+use std::fs::read_to_string;
+use std::path::Path;
+use std::path::PathBuf;
+
 use chrono::Utc;
 use clap::Args;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressIterator};
+use indicatif::ProgressBar;
+use indicatif::ProgressIterator;
+use spares_core::Error;
+use spares_core::LibraryError;
+use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
 use spares_core::config::read_external_config;
-use spares_core::parsers::{NoteSettings, Parseable, get_all_parsers, get_notes};
-use spares_core::{Error, LibraryError, ParserErrorKind};
-use std::collections::HashMap;
-use std::fs::read_to_string;
-use std::path::{Path, PathBuf};
+use spares_core::parsers::NoteSettings;
+use spares_core::parsers::Parseable;
+use spares_core::parsers::get_all_parsers;
+use spares_core::parsers::get_notes;
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
@@ -55,7 +63,7 @@ fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: b
             println!("Keywords:     {:?}", local_settings.keywords);
             println!("Linked Notes: {:?}", local_settings.linked_notes);
             if local_settings.is_suspended {
-                println!("{}", "Will Suspend Cards".purple(),);
+                println!("{}", "Will Suspend Cards".purple());
             }
             if !local_settings.custom_data.is_empty() {
                 println!("Custom Data: ");

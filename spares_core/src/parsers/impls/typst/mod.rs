@@ -1,23 +1,32 @@
-use crate::{
-    Error, LibraryError, ParserErrorKind,
-    config::get_cache_dir,
-    parsers::{
-        ClozeHiddenReplacement, ClozeMatch, ClozeReplacement, ConstructFileDataType,
-        ConstructImageOcclusionType, GenerateNoteFilesRequest, NoteImportAction, NotePart,
-        NoteSettingsKeys, Parseable, RenderOutputDirectoryType, RenderOutputType,
-        generate_files::CardSide,
-        get_output_raw_dir,
-        image_occlusion::{ImageOcclusionData, construct_image_occlusion_from_image},
-    },
-    schema::note::LinkedNote,
-};
+use std::ops::Range;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+
 use data_parser::TypstDataParser;
 use indoc::indoc;
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-    process::Command,
-};
+
+use crate::Error;
+use crate::LibraryError;
+use crate::ParserErrorKind;
+use crate::config::get_cache_dir;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeMatch;
+use crate::parsers::ClozeReplacement;
+use crate::parsers::ConstructFileDataType;
+use crate::parsers::ConstructImageOcclusionType;
+use crate::parsers::GenerateNoteFilesRequest;
+use crate::parsers::NoteImportAction;
+use crate::parsers::NotePart;
+use crate::parsers::NoteSettingsKeys;
+use crate::parsers::Parseable;
+use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::RenderOutputType;
+use crate::parsers::generate_files::CardSide;
+use crate::parsers::get_output_raw_dir;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::schema::note::LinkedNote;
 
 mod data_parser;
 mod old_data_parser;
@@ -357,7 +366,7 @@ fn get_linked_notes_string(
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
-                    (None, None) => format!("+ {} $->$ (no match found)", searched_keyword,),
+                    (None, None) => format!("+ {} $->$ (no match found)", searched_keyword),
                     (Some(linked_note_id), Some(matched_keyword)) => {
                         let mut note_raw_path = get_output_raw_dir(
                             parser.get_parser_name(),
@@ -442,16 +451,21 @@ fn get_linked_notes_string(
 
 #[cfg(test)]
 pub mod tests {
-    use crate::{
-        parsers::{
-            BackReveal, BackType, CardData, ClozeGrouping, ClozeHiddenReplacement, ClozeMatch,
-            FrontConceal, NotePart, Parseable, get_cards, impls::typst::TypstParser,
-        },
-        schema::note::LinkedNote,
-    };
+    use std::ops::Range;
 
     use super::get_linked_notes_string;
-    use std::ops::Range;
+    use crate::parsers::BackReveal;
+    use crate::parsers::BackType;
+    use crate::parsers::CardData;
+    use crate::parsers::ClozeGrouping;
+    use crate::parsers::ClozeHiddenReplacement;
+    use crate::parsers::ClozeMatch;
+    use crate::parsers::FrontConceal;
+    use crate::parsers::NotePart;
+    use crate::parsers::Parseable;
+    use crate::parsers::get_cards;
+    use crate::parsers::impls::typst::TypstParser;
+    use crate::schema::note::LinkedNote;
 
     #[test]
     fn test_typst_get_clozes() {

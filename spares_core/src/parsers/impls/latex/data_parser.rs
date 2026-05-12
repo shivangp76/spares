@@ -1,4 +1,5 @@
 use std::ops::Range;
+
 use unscanny::Scanner;
 
 use crate::parsers::ClozeMatch;
@@ -138,22 +139,18 @@ impl<'a> LatexDataParser<'a> {
                     if self.s.peek().is_some_and(|c| c.is_alphabetic()) {
                         let cmd = self.s.eat_while(char::is_alphabetic);
                         match cmd {
-                            "begin" => {
-                                if self.s.eat_if("{cl}") {
-                                    let (settings_match, match_end) =
-                                        self.eat_optional_bracketed_settings();
-                                    return Some(ClMarker::Begin {
-                                        match_range: cursor..match_end,
-                                        settings_match,
-                                    });
-                                }
+                            "begin" if self.s.eat_if("{cl}") => {
+                                let (settings_match, match_end) =
+                                    self.eat_optional_bracketed_settings();
+                                return Some(ClMarker::Begin {
+                                    match_range: cursor..match_end,
+                                    settings_match,
+                                });
                             }
-                            "end" => {
-                                if self.s.eat_if("{cl}") {
-                                    return Some(ClMarker::End {
-                                        match_range: cursor..self.s.cursor(),
-                                    });
-                                }
+                            "end" if self.s.eat_if("{cl}") => {
+                                return Some(ClMarker::End {
+                                    match_range: cursor..self.s.cursor(),
+                                });
                             }
                             _ => {}
                         }
