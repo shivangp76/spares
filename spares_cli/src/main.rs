@@ -6,6 +6,7 @@ mod review;
 mod sync;
 mod tree;
 mod utils;
+mod view;
 
 use std::io;
 use std::str::FromStr;
@@ -92,6 +93,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sync::sync_notes;
 use utils::ensure_ok;
 use utils::undo_event;
+use view::view_cards;
+use view::view_notes;
 
 use crate::tree::build_tree;
 use crate::tree::tree_to_string;
@@ -742,30 +745,26 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             match response {
                 SearchNotesResponse::Notes(note_responses) => {
                     for (note_response, parser_name) in note_responses {
-                        let parser = find_parser(parser_name.as_str(), &get_all_parsers())?;
                         match output_format {
                             OutputFormat::RawFilepath => {
-                                let mut note_raw_path = get_output_raw_dir(
-                                    parser.get_parser_name(),
-                                    spares_core::parsers::generate_files::RenderOutputType::Note,
-                                    None,
-                                );
-                                note_raw_path.push(parser.get_output_filename(
-                                    spares_core::parsers::generate_files::RenderOutputType::Note,
+                                let note_raw_path = utils::compute_note_raw_path(
+                                    parser_name.as_str(),
                                     note_response.id,
-                                ));
-                                note_raw_path.set_extension(parser.file_extension());
-                                println!("{}", note_raw_path.display());
+                                );
+                                match note_raw_path {
+                                    Ok(p) => println!("{}", p.display()),
+                                    Err(e) => println!("Error: {}", e),
+                                }
                             }
                             OutputFormat::RenderedFilepath => {
-                                let mut note_rendered_path = parser.get_output_rendered_dir(
-                                    spares_core::parsers::RenderOutputDirectoryType::Note,
-                                );
-                                note_rendered_path.push(parser.get_output_filename(
-                                    spares_core::parsers::generate_files::RenderOutputType::Note,
+                                let note_rendered_path = utils::compute_note_rendered_path(
+                                    parser_name.as_str(),
                                     note_response.id,
-                                ));
-                                println!("{}", note_rendered_path.display());
+                                );
+                                match note_rendered_path {
+                                    Ok(p) => println!("{}", p.display()),
+                                    Err(e) => println!("Error: {}", e),
+                                }
                             }
                         }
                     }
@@ -873,6 +872,18 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             .into_diagnostic()
             .map_err(|e| miette!("{:?}", e))?;
         }
+        Commands::View(view_args) => match view_args.command {
+            args::ViewCommands::Note(note_args) => {
+                view_notes(note_args, &base_url, &client)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+            }
+            args::ViewCommands::Card(card_args) => {
+                view_cards(card_args, &base_url, &client)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+            }
+        },
         Commands::GenerateShellCompletion { shell } => {
             shell.generate(&mut Cli::command(), &mut io::stdout());
             // generate(shell, &mut Cli::command(), "spares", &mut io::stdout());
