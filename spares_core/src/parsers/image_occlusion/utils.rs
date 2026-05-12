@@ -1,16 +1,19 @@
-use super::SvgClozeType;
-use crate::{
-    config::{get_cache_dir, get_data_dir},
-    parsers::generate_files::CardSide,
-};
-use image::{ImageBuffer, Rgba, RgbaImage};
-use resvg::{
-    tiny_skia::{Pixmap, Transform},
-    usvg::fontdb,
-};
 use std::fs::create_dir_all;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
+
+use image::ImageBuffer;
+use image::Rgba;
+use image::RgbaImage;
+use resvg::tiny_skia::Pixmap;
+use resvg::tiny_skia::Transform;
+use resvg::usvg::fontdb;
 use xmltree::Element;
+
+use super::SvgClozeType;
+use crate::config::get_cache_dir;
+use crate::config::get_data_dir;
+use crate::parsers::generate_files::CardSide;
 
 pub fn get_image_occlusion_directory() -> PathBuf {
     let mut image_occlusions_dir = get_data_dir();
@@ -313,22 +316,26 @@ pub fn render_svg_to_rgba(
 pub fn unpremultiply_rgba(premul: &[u8]) -> Vec<u8> {
     debug_assert!(premul.len().is_multiple_of(4));
     let mut out = Vec::with_capacity(premul.len());
-    let mut i = 0;
-    while i < premul.len() {
-        let r = u32::from(premul[i]);
-        let g = u32::from(premul[i + 1]);
-        let b = u32::from(premul[i + 2]);
-        let a = u32::from(premul[i + 3]);
-        if a == 0 {
-            out.extend_from_slice(&[0, 0, 0, 0]);
-        } else {
-            // Unpremultiply with rounding: c = (c * 255 + a/2) / a
+
+    for chunk in premul.chunks_exact(4) {
+        let r = u32::from(chunk[0]);
+        let g = u32::from(chunk[1]);
+        let b = u32::from(chunk[2]);
+        let a = u32::from(chunk[3]);
+
+        // .and_then chains the division only if 'a' is not zero.
+        // We use a map to apply the rounding formula: (c * 255 + a/2) / a
+        let unpremul = a.checked_div(a).map(|_| {
             let r_u = ((r * 255 + (a / 2)) / a).min(255) as u8;
             let g_u = ((g * 255 + (a / 2)) / a).min(255) as u8;
             let b_u = ((b * 255 + (a / 2)) / a).min(255) as u8;
-            out.extend_from_slice(&[r_u, g_u, b_u, a as u8]);
+            [r_u, g_u, b_u, a as u8]
+        });
+
+        match unpremul {
+            Some(pixel) => out.extend_from_slice(&pixel),
+            None => out.extend_from_slice(&[0, 0, 0, 0]),
         }
-        i += 4;
     }
     out
 }

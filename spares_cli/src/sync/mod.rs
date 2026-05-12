@@ -3,43 +3,55 @@ mod interactive;
 mod render_diffs;
 mod utils;
 
-use crate::{
-    import::import_from_files,
-    sync::utils::{
-        blake3_hex, build_file_map, clear_dir, load_hash_index, replace_action, save_hash_index,
-    },
-};
-use clap::{Args, Subcommand, ValueEnum};
-use interactive::{SyncMode, sync_notes_interactive};
+use std::collections::HashMap;
+use std::fs;
+use std::fs::remove_dir_all;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
+
+use clap::Args;
+use clap::Subcommand;
+use clap::ValueEnum;
+use interactive::SyncMode;
+use interactive::sync_notes_interactive;
 use itertools::Itertools;
 use log::info;
 use rayon::prelude::*;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
+use reqwest::StatusCode;
 use serde_json::Value;
-use spares_core::{
-    adapters::{
-        SrsAdapter,
-        impls::{
-            anki::AnkiAdapter,
-            spares::{SparesAdapter, SparesRequestProcessor},
-        },
-    },
-    config::{get_cache_dir, get_data_dir},
-    model::NoteId,
-    parsers::{
-        NoteFilepathData, find_parser,
-        generate_files::{GenerateNoteFilesRequests, RenderOutputType, create_note_files_bulk},
-        get_all_parsers, get_note_info_from_filepath, get_output_raw_dir,
-    },
-    schema::note::{NotesSelector, RenderNotesRequest},
-};
-use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
-use std::{collections::HashMap, fs::remove_dir_all};
-use std::{fs, io::Write};
+use spares_core::adapters::SrsAdapter;
+use spares_core::adapters::impls::anki::AnkiAdapter;
+use spares_core::adapters::impls::spares::SparesAdapter;
+use spares_core::adapters::impls::spares::SparesRequestProcessor;
+use spares_core::config::get_cache_dir;
+use spares_core::config::get_data_dir;
+use spares_core::model::NoteId;
+use spares_core::parsers::NoteFilepathData;
+use spares_core::parsers::find_parser;
+use spares_core::parsers::generate_files::GenerateNoteFilesRequests;
+use spares_core::parsers::generate_files::RenderOutputType;
+use spares_core::parsers::generate_files::create_note_files_bulk;
+use spares_core::parsers::get_all_parsers;
+use spares_core::parsers::get_note_info_from_filepath;
+use spares_core::parsers::get_output_raw_dir;
+use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::RenderNotesRequest;
 use strum::EnumIter;
-use strum_macros::{Display, EnumString};
-use utils::{GroupByInsertion as _, hub_spoke_error};
+use strum_macros::Display;
+use strum_macros::EnumString;
+use utils::GroupByInsertion as _;
+use utils::hub_spoke_error;
+
+use crate::import::import_from_files;
+use crate::sync::utils::blake3_hex;
+use crate::sync::utils::build_file_map;
+use crate::sync::utils::clear_dir;
+use crate::sync::utils::load_hash_index;
+use crate::sync::utils::replace_action;
+use crate::sync::utils::save_hash_index;
 
 #[derive(Args, Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
@@ -330,10 +342,9 @@ fn compute_file_hashes(all_paths: &[PathBuf]) -> Result<HashMap<PathBuf, String>
     let path_mtimes: Vec<(PathBuf, u64)> = all_paths
         .iter()
         .map(|p| {
-            let mtime = fs::metadata(p)
-                .and_then(|m| m.modified())
-                .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
-                .unwrap_or(0);
+            let mtime = fs::metadata(p).and_then(|m| m.modified()).map_or(0, |t| {
+                t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+            });
             (p.clone(), mtime)
         })
         .collect();
