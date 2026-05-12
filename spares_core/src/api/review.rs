@@ -223,6 +223,73 @@ fn build_review_card_response(
 
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
+async fn get_cards_left_by_state_and_time_estimate(
+    db: &SqlitePool,
+    where_clause: &str,
+    card_due_limit: DateTime<Utc>,
+    is_filtered_tag: bool,
+) -> Result<(HashMap<StateId, u32>, Duration), Error> {
+    // Get count of cards by state with the same filters
+    // These are the remaining cards that are due on `requested_date` grouped by state. Note that
+    // this is _not_ equivalent to the cards by state in `get_statistics()` because that does not
+    // filter by `requested_date`.
+    let count_query_str = format!(
+        indoc! {
+        "SELECT
+            c.state,
+            COUNT(*) as count
+        FROM card c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        WHERE {}
+        GROUP BY c.state"
+        },
+        where_clause
+    );
+    let mut count_query = sqlx::query_as(&count_query_str);
+    if !is_filtered_tag {
+        count_query = count_query.bind(card_due_limit.timestamp());
+    }
+    let cards_by_state_vec: Vec<(StateId, u32)> = count_query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let cards_left_by_state = cards_by_state_vec
+        .into_iter()
+        .collect::<HashMap<StateId, u32>>();
+
+    // Calculate time estimate
+    // The cast is necassary since the SUM function returns a different type depending on whether
+    // the arguments are all null or not.
+    let time_estimate_query_str = format!(
+        indoc! {
+        "SELECT
+            SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
+        FROM card c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        LEFT JOIN (
+            SELECT card_id, AVG(recall_duration + rate_duration) as avg_duration
+            FROM review_log
+            GROUP BY card_id
+        ) rl ON rl.card_id = c.id
+        WHERE {}"
+        },
+        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, where_clause
+    );
+    let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
+    if !is_filtered_tag {
+        time_estimate_query = time_estimate_query.bind(card_due_limit.timestamp());
+    }
+    let total_time_seconds: f64 = time_estimate_query
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let time_estimate = Duration::seconds(total_time_seconds as i64);
+
+    Ok((cards_left_by_state, time_estimate))
+}
+
 async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config(db).await?;
     let now = Utc::now();
@@ -358,63 +425,13 @@ pub async fn get_review_card(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    // Get count of cards by state with the same filters
-    // These are the remaining cards that are due on `requested_date` grouped by state. Note that
-    // this is _not_ equivalent to the cards by state in `get_statistics()` because that does not
-    // filter by `requested_date`.
-    let count_query_str = format!(
-        indoc! {
-        "SELECT
-            c.state,
-            COUNT(*) as count
-        FROM card c
-        JOIN note n ON c.note_id = n.id
-        JOIN parser p ON n.parser_id = p.id
-        WHERE {}
-        GROUP BY c.state"
-        },
-        where_clause
-    );
-    let mut count_query = sqlx::query_as(&count_query_str);
-    if !is_filtered_tag {
-        count_query = count_query.bind(card_due_limit.timestamp());
-    }
-    let cards_by_state_vec: Vec<(StateId, u32)> = count_query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let cards_left_by_state = cards_by_state_vec
-        .into_iter()
-        .collect::<HashMap<StateId, u32>>();
-
-    // Calculate time estimate
-    // The cast is necassary since the SUM function returns a different type depending on whether
-    // the arguments are all null or not.
-    let time_estimate_query_str = format!(
-        indoc! {
-        "SELECT
-            SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
-        FROM card c
-        JOIN note n ON c.note_id = n.id
-        JOIN parser p ON n.parser_id = p.id
-        LEFT JOIN (
-            SELECT card_id, AVG(recall_duration + rate_duration) as avg_duration
-            FROM review_log
-            GROUP BY card_id
-        ) rl ON rl.card_id = c.id
-        WHERE {}"
-        },
-        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, where_clause
-    );
-    let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
-    if !is_filtered_tag {
-        time_estimate_query = time_estimate_query.bind(card_due_limit.timestamp());
-    }
-    let total_time_seconds: f64 = time_estimate_query
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let time_estimate = Duration::seconds(total_time_seconds as i64);
+    let (cards_left_by_state, time_estimate) = get_cards_left_by_state_and_time_estimate(
+        db,
+        &where_clause,
+        card_due_limit,
+        is_filtered_tag,
+    )
+    .await?;
 
     if let Some(review_card) = review_card_opt {
         let linked_notes =
@@ -433,6 +450,7 @@ pub async fn get_review_card(
 pub async fn get_review_card_by_id(
     db: &SqlitePool,
     card_id: CardId,
+    requested_date: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<Option<GetReviewCardResponse>, Error> {
     let review_card_opt: Option<ReviewCard> = sqlx::query_as(
@@ -454,12 +472,43 @@ pub async fn get_review_card_by_id(
     .map_err(|e| Error::Sqlx { source: e })?;
 
     match review_card_opt {
-        Some(rc) => {
-            let linked_notes = get_linked_notes_for_review(db, rc.note_id, all_parsers).await?;
+        Some(review_card) => {
+            let linked_notes =
+                get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
+
+            // Compute cards_left_by_state and time_estimate for the full review queue
+            let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+            let card_due_limit = upper_limit;
+            let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
+                r"SELECT COUNT(DISTINCT card_id) FROM review_log
+              WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
+            )
+            .bind(lower_limit.timestamp())
+            .bind(upper_limit.timestamp())
+            .bind(NEW_CARD_STATE)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+            let config = read_external_config()?;
+            let not_new_card_str =
+                if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
+                    format!("\nAND c.state != {}", NEW_CARD_STATE)
+                } else {
+                    String::new()
+                };
+            let buried_state = SpecialState::BuriedUntilLaterToday as u8;
+            let where_clause = format!(
+                "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state}))"
+            );
+
+            let (cards_left_by_state, time_estimate) =
+                get_cards_left_by_state_and_time_estimate(db, &where_clause, card_due_limit, false)
+                    .await?;
+
             Ok(Some(build_review_card_response(
-                rc,
-                HashMap::new(),
-                Duration::zero(),
+                review_card,
+                cards_left_by_state,
+                time_estimate,
                 all_parsers,
                 linked_notes,
             )?))
