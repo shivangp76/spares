@@ -22,7 +22,9 @@
 | c.scheduler_buried  | bool     |
 | c.state             | u32      |
 | c.custom_data       | Json     |
-| linked_to           | i64      |
+| linked_to_note      | i64      |
+| linked_to_keyword   | String   |
+| linked_from_note    | i64      |
 | c.rated             | u32      |
 | c.count             | u32      |
 | c.cloze             | String   |
@@ -128,7 +130,7 @@ JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The que
 - Use sorting keys to order results by numeric or DateTime fields:
   - Ascending: `sort_by_asc=created_at`
   - Descending: `sort_by_desc=c.stability`
-- Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
+- Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to_note`, `linked_from_note`, `linked_to_keyword`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
 - Multiple sorts are allowed; later keys are appended to the ORDER BY list.
 
 ### Other Operators
