@@ -21,6 +21,9 @@ pub use card::update_cards;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::LibraryError;
+use crate::SchedulerErrorKind;
+use crate::model::SpecialState;
 
 pub(crate) fn placeholders(rows: usize) -> String {
     std::iter::repeat_n("?", rows)
@@ -77,6 +80,25 @@ where
     let chunks = rows.chunks(MAX_ROWS_IN_QUERY).collect::<Vec<_>>();
     for chunk in chunks {
         query_fn(db, chunk).await?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_bury_target(special_state: Option<SpecialState>) -> Result<(), Error> {
+    if let Some(special_state) = special_state {
+        match special_state {
+            SpecialState::Suspended => {
+                return Err(Error::Library(LibraryError::Scheduler(
+                    SchedulerErrorKind::Suspended,
+                )));
+            }
+            SpecialState::UserBuried | SpecialState::SchedulerBuried => {
+                return Err(Error::Library(LibraryError::Scheduler(
+                    SchedulerErrorKind::AlreadyBuried,
+                )));
+            }
+            SpecialState::BuriedUntilLaterToday => {}
+        }
     }
     Ok(())
 }
