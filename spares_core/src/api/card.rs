@@ -5,13 +5,12 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
-use crate::LibraryError;
-use crate::SchedulerErrorKind;
 use crate::api::execute_batched_query;
 use crate::api::placeholders_2d;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::validate_bury_target;
 use crate::config::read_external_config;
 use crate::model::Card;
 use crate::model::CardId;
@@ -98,7 +97,6 @@ fn build_update_card_payload(
     }
 }
 
-#[expect(clippy::too_many_lines)]
 pub async fn update_cards(
     db: &SqlitePool,
     body: UpdateCardsRequest,
@@ -133,23 +131,8 @@ pub async fn update_cards(
             .unwrap_or(existing_card.desired_retention);
         let new_special_state = requested_special_state.unwrap_or(existing_card.special_state);
         let new_due = body.due.unwrap_or(existing_card.due);
-        if let Some(Some(SpecialState::UserBuried)) = requested_special_state
-            && let Some(special_state) = existing_card.special_state
-        {
-            match special_state {
-                SpecialState::Suspended => {
-                    return Err(Error::Library(LibraryError::Scheduler(
-                        SchedulerErrorKind::Suspended,
-                    )));
-                }
-                SpecialState::UserBuried | SpecialState::SchedulerBuried => {
-                    return Err(Error::Library(LibraryError::Scheduler(
-                        SchedulerErrorKind::AlreadyBuried,
-                    )));
-                }
-                // Exclude `SpecialState::BuriedUntilLaterToday` since this can be overriden to buried
-                SpecialState::BuriedUntilLaterToday => {}
-            }
+        if let Some(Some(SpecialState::UserBuried)) = requested_special_state {
+            validate_bury_target(existing_card.special_state)?;
         }
         let updated_at: i64 =
         sqlx::query_scalar(r"UPDATE card SET desired_retention = ?, special_state = ?, due = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
