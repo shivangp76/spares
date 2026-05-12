@@ -134,6 +134,7 @@ fn build_review_card_response(
     time_estimate: Duration,
     all_parsers: &[fn() -> Box<dyn Parseable>],
     linked_notes: Vec<ReviewLinkedNote>,
+    keywords: Vec<String>,
 ) -> Result<GetReviewCardResponse, Error> {
     let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
@@ -215,6 +216,7 @@ fn build_review_card_response(
         card_back_raw_path,
         note_raw_path,
         parser_name,
+        keywords,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -436,12 +438,19 @@ pub async fn get_review_card(
     if let Some(review_card) = review_card_opt {
         let linked_notes =
             get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
+        let keywords: Vec<String> =
+            sqlx::query_scalar(r"SELECT keyword FROM note_keyword WHERE note_id = ?")
+                .bind(review_card.note_id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
         return Ok(Some(build_review_card_response(
             review_card,
             cards_left_by_state,
             time_estimate,
             all_parsers,
             linked_notes,
+            keywords,
         )?));
     }
     Ok(None)
@@ -475,6 +484,12 @@ pub async fn get_review_card_by_id(
         Some(review_card) => {
             let linked_notes =
                 get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
+            let keywords: Vec<String> =
+                sqlx::query_scalar(r"SELECT keyword FROM note_keyword WHERE note_id = ?")
+                    .bind(review_card.note_id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
 
             // Compute cards_left_by_state and time_estimate for the full review queue
             let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
@@ -511,6 +526,7 @@ pub async fn get_review_card_by_id(
                 time_estimate,
                 all_parsers,
                 linked_notes,
+                keywords,
             )?))
         }
         None => Ok(None),
