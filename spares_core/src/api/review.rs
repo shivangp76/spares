@@ -26,6 +26,7 @@ use crate::api::undo::insert_events;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::validate_bury_target;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
@@ -740,22 +741,7 @@ pub async fn bury_card(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    if let Some(special_state) = before_card.special_state {
-        match special_state {
-            SpecialState::Suspended => {
-                return Err(Error::Library(LibraryError::Scheduler(
-                    SchedulerErrorKind::Suspended,
-                )));
-            }
-            SpecialState::UserBuried | SpecialState::SchedulerBuried => {
-                return Err(Error::Library(LibraryError::Scheduler(
-                    SchedulerErrorKind::AlreadyBuried,
-                )));
-            }
-            // Exclude `SpecialState::BuriedUntilLaterToday` since this can be overriden to buried
-            SpecialState::BuriedUntilLaterToday => {}
-        }
-    }
+    validate_bury_target(before_card.special_state)?;
 
     let buried_card = scheduler.bury(&before_card)?;
 
