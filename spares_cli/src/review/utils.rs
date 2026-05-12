@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
@@ -20,6 +21,8 @@ use spares_core::schema::card::SpecialStateUpdate;
 use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
 use spares_core::schema::note::NotesSelector;
+use spares_core::schema::note::SearchNotesRequest;
+use spares_core::schema::note::SearchNotesResponse;
 use spares_core::schema::note::UpdateNotesRequest;
 use spares_core::schema::note::UpdateNotesResponse;
 use spares_core::schema::note::UpdateTags;
@@ -29,6 +32,7 @@ use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::schema::review::SubmitStudyActionResponse;
+use spares_core::search::QueryReturnItemType;
 
 use super::ReviewAction;
 
@@ -405,6 +409,100 @@ pub(super) async fn bury_until_later_today(
     let update_response: UpdateCardsResponse =
         response.json().await.map_err(|e| format!("{}", e))?;
     Ok(update_response.event_id)
+}
+
+pub(crate) async fn browse_keyword_notes(
+    keyword: &str,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    let request = SearchNotesRequest {
+        query: format!("linked_to_keyword=\"{}\"", keyword),
+        output_type: QueryReturnItemType::Notes,
+    };
+    let url = format!("{}/api/notes/search", base_url);
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    let status = response.status();
+    if status != reqwest::StatusCode::OK {
+        let response_json: serde_json::Value =
+            response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(format!("Failed to search notes by keyword: {:?}", message));
+    }
+    let search_response: SearchNotesResponse =
+        response.json().await.map_err(|e| format!("{}", e))?;
+
+    let notes = match search_response {
+        SearchNotesResponse::Notes(notes) => notes,
+        SearchNotesResponse::Cards(_) => {
+            return Err("Expected Notes response from search".to_string());
+        }
+    };
+
+    if notes.is_empty() {
+        println!("No notes found with keyword: {}", keyword);
+        return Ok(());
+    }
+
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for (note_response, parser_name) in &notes {
+        let note_raw_path = crate::utils::compute_note_raw_path(parser_name, note_response.id)?;
+        paths.push(note_raw_path);
+    }
+
+    println!("Notes matching keyword '{}':", keyword);
+    for path in &paths {
+        println!("  {}", path.display());
+    }
+
+    let should_copy = inquire::Confirm::new("Copy all filepaths to clipboard?")
+        .with_default(false)
+        .prompt()
+        .unwrap_or(false);
+
+    if should_copy {
+        let all_paths: String = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        copy_to_clipboard(&all_paths)?;
+        println!("Filepaths copied to clipboard!");
+    }
+
+    Ok(())
+}
+
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    let cmd = if cfg!(target_os = "macos") {
+        "pbcopy"
+    } else if cfg!(target_os = "linux") {
+        "xclip"
+    } else if cfg!(target_os = "windows") {
+        "clip"
+    } else {
+        return Err("Clipboard not supported on this platform".to_string());
+    };
+
+    let mut child = Command::new(cmd)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run {}: {}", cmd, e))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
+    }
+
+    child.wait().map_err(|e| format!("{}", e))?;
+    Ok(())
 }
 
 pub(super) fn format_duration(duration: chrono::Duration) -> String {

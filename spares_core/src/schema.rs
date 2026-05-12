@@ -490,6 +490,7 @@ pub mod review {
         /// Path to the raw note source file. Relative to `SPARES_FILES_DIR` when set.
         pub note_raw_path: PathBuf,
         pub parser_name: String,
+        pub keywords: Vec<String>,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,

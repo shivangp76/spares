@@ -108,6 +108,8 @@ enum ReviewAction {
     BuryNote,
     #[strum(serialize = "Bury Until Later Today")]
     BuryUntilLaterToday,
+    #[strum(serialize = "Browse Keywords")]
+    BrowseKeywords,
     #[strum(serialize = "Open Linked Notes")]
     OpenLinkedNotes,
     #[strum(serialize = "Tag to modify later")]
@@ -615,6 +617,17 @@ pub(crate) async fn review_cards(
                 let open_note_res = open::that_detached(&review_card_response.note_raw_path);
                 if let Err(e) = open_note_res {
                     println!("{}", e);
+                }
+            }
+            ReviewAction::BrowseKeywords => {
+                if review_card_response.keywords.is_empty() {
+                    println!("No keywords found.");
+                } else {
+                    let keyword_select =
+                        Select::new("Select a keyword:", review_card_response.keywords.clone());
+                    if let Ok(selected_keyword) = keyword_select.prompt() {
+                        utils::browse_keyword_notes(&selected_keyword, base_url, client).await?;
+                    }
                 }
             }
             ReviewAction::OpenLinkedNotes => {
