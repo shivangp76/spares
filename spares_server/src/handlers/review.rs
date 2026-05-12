@@ -41,7 +41,7 @@ pub(crate) async fn get_review_card_by_id_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     axum::extract::Path(card_id): axum::extract::Path<CardId>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let response = get_review_card_by_id(&data.db, card_id, &get_all_parsers())
+    let response = get_review_card_by_id(&data.db, card_id, Utc::now(), &get_all_parsers())
         .await
         .map_err(error_to_response)?;
     Ok(Json(response))
