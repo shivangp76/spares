@@ -51,7 +51,7 @@ use utils::tag_note;
 
 use crate::import::import_from_files;
 
-mod utils;
+pub(crate) mod utils;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::undo::UndoEventRequest;
 pub(crate) use utils::forget_card;

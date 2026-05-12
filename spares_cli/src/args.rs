@@ -20,6 +20,8 @@ use crate::import::ImportArgs;
 use crate::migrate::MigrateArgs;
 use crate::review::ReviewArgs;
 use crate::sync::SyncArgs;
+use crate::view::ViewCardArgs;
+use crate::view::ViewNoteArgs;
 
 pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
     let local_time = Local::now();
@@ -79,6 +81,8 @@ pub(crate) enum Commands {
     Schedule(ScheduleArgs),
     /// Undo an event
     Undo(UndoArgs),
+    /// View notes interactively
+    View(ViewArgs),
     /// Generate shell completions
     GenerateShellCompletion {
         #[arg(value_enum)]
@@ -397,6 +401,20 @@ pub(crate) struct UndoArgs {
     /// If true, undo all events in the same group as the specified event
     #[arg(short, long, default_value_t = false)]
     pub(crate) undo_group: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ViewArgs {
+    #[command(subcommand)]
+    pub(crate) command: ViewCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ViewCommands {
+    /// View notes matching a search query
+    Note(ViewNoteArgs),
+    /// View cards matching a search query (opens card backs)
+    Card(ViewCardArgs),
 }
 
 #[derive(Args, Debug)]
