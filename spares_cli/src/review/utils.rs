@@ -32,7 +32,7 @@ use spares_core::schema::review::SubmitStudyActionResponse;
 
 use super::ReviewAction;
 
-pub(super) fn open_rendered_file(
+pub(crate) fn open_rendered_file(
     file_path: &Path,
     open_command_opt: Option<&str>,
     _first: bool,
@@ -92,7 +92,7 @@ pub(crate) fn close_rendered_file(
     Ok(())
 }
 
-pub(crate) async fn get_scheduler_ratings(
+pub(super) async fn get_scheduler_ratings(
     scheduler_name: &str,
     base_url: &str,
     client: &Client,
