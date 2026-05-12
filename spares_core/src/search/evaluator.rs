@@ -261,7 +261,9 @@ enum NoteField {
     Tag,
     Keyword,
     CustomData(String),
-    LinkedTo,
+    LinkedToNote,
+    LinkedToKeyword,
+    LinkedFromNote,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,7 +334,9 @@ impl Field {
                     input.get(1).map(|x| (*x).to_string()).unwrap_or_default(),
                 )))
             }
-            "linked_to" => Ok(Field::Note(NoteField::LinkedTo)),
+            "linked_to_note" => Ok(Field::Note(NoteField::LinkedToNote)),
+            "linked_to_keyword" => Ok(Field::Note(NoteField::LinkedToKeyword)),
+            "linked_from_note" => Ok(Field::Note(NoteField::LinkedFromNote)),
             "c.id" => Ok(Field::Card(CardField::Id)),
             "c.created_at" => Ok(Field::Card(CardField::CreatedAt)),
             "c.updated_at" => Ok(Field::Card(CardField::UpdatedAt)),
@@ -392,9 +396,21 @@ impl Field {
                 NoteField::CustomData(json_path) => {
                     format!("json_extract(n.custom_data, '{}') {}", json_path, value_str)
                 }
-                NoteField::LinkedTo => {
+                NoteField::LinkedToNote => {
                     format!(
                         "EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id {})",
+                        value_str
+                    )
+                }
+                NoteField::LinkedToKeyword => {
+                    format!(
+                        "EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword {})",
+                        value_str
+                    )
+                }
+                NoteField::LinkedFromNote => {
+                    format!(
+                        "EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id {})",
                         value_str
                     )
                 }
@@ -455,10 +471,14 @@ impl Field {
     fn get_field_type(&self) -> FieldType {
         match self {
             Field::Note(note_field) => match note_field {
-                NoteField::Id | NoteField::LinkedTo => FieldType::Integer,
-                NoteField::Data | NoteField::Keyword | NoteField::ParserName | NoteField::Tag => {
-                    FieldType::String
+                NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote => {
+                    FieldType::Integer
                 }
+                NoteField::Data
+                | NoteField::Keyword
+                | NoteField::ParserName
+                | NoteField::Tag
+                | NoteField::LinkedToKeyword => FieldType::String,
                 NoteField::CreatedAt | NoteField::UpdatedAt => FieldType::DateTime,
                 NoteField::CustomData(_) => FieldType::Json,
             },
@@ -495,7 +515,7 @@ impl Field {
         }
         match field {
             Field::Note(note_field) => match note_field {
-                NoteField::Id | NoteField::LinkedTo => Ok("n.id".to_string()),
+                NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote => Ok("n.id".to_string()),
                 NoteField::CreatedAt => Ok("n.created_at".to_string()),
                 NoteField::UpdatedAt => Ok("n.updated_at".to_string()),
                 NoteField::ParserName => Ok("p.name".to_string()),
@@ -506,6 +526,10 @@ impl Field {
                 ),
                 NoteField::Tag => Ok(
                     "(SELECT min(t.name) FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id)"
+                        .to_string(),
+                ),
+                NoteField::LinkedToKeyword => Ok(
+                    "(SELECT min(nl.searched_keyword) FROM note_link nl WHERE nl.parent_note_id = n.id)"
                         .to_string(),
                 ),
                 // Unsupported types
@@ -557,7 +581,9 @@ impl TableRequirements {
                 NoteField::ParserName => req.needs_parser = true,
                 // NoteField::Tag => req.needs_tag = true,
                 NoteField::Tag => req.needs_card = true,
-                NoteField::LinkedTo => req.needs_note_link = true,
+                NoteField::LinkedToNote
+                | NoteField::LinkedToKeyword
+                | NoteField::LinkedFromNote => req.needs_note_link = true,
                 _ => {}
             },
             Field::Card(card_field) => {
@@ -742,7 +768,7 @@ impl Evaluate for TokenTree<'_> {
                         }
                         // Merge order_by clauses
                         // This is necessary to not allow sort by conditions
-                        // inside groups "c.stability>=2 or (a sort_by_asc=linked_to)"
+                        // inside groups "c.stability>=2 or (a sort_by_asc=linked_to_note)"
                         context.order_by.extend(inner_context.order_by);
                         // Merge limit
                         if let Some(inner_limit) = inner_context.limit {
@@ -1261,10 +1287,25 @@ mod tests {
                 "-tag=math",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%'))",
             ),
-            // Exclude linked to
+            // linked_to_note
             (
-                "-linked_to=12",
+                "linked_to_note=12",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 12)",
+            ),
+            // Exclude linked_to_note
+            (
+                "-linked_to_note=12",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE NOT (EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 12))",
+            ),
+            // linked_to_keyword
+            (
+                r#"linked_to_keyword="foo""#,
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword = \"foo\")",
+            ),
+            // linked_from_note
+            (
+                "linked_from_note=5",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id = 5)",
             ),
             // Convert types
             (
@@ -1436,19 +1477,24 @@ mod tests {
                 "c.stability>=2 sort_by_desc=c.due",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC",
             ),
-            // Sort with linked_to field
+            // Sort with linked_to_note field
             (
-                "sort_by_asc=linked_to",
+                "sort_by_asc=linked_to_note",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id ORDER BY n.id ASC",
+            ),
+            // Sort with linked_to_keyword field
+            (
+                "sort_by_asc=linked_to_keyword",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id ORDER BY (SELECT min(nl.searched_keyword) FROM note_link nl WHERE nl.parent_note_id = n.id) ASC",
             ),
             // Sort with parenthesis
             (
-                "(tag=math and c.stability>=2) sort_by_asc=linked_to)",
+                "(tag=math and c.stability>=2) sort_by_asc=linked_to_note)",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
             ),
             // The following should be equivalent to the one above.
             (
-                "tag=math and (c.stability>=2 sort_by_asc=linked_to)",
+                "tag=math and (c.stability>=2 sort_by_asc=linked_to_note)",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
             ),
         ];
@@ -1569,13 +1615,13 @@ mod tests {
             "sort_by_asc=sort_by_asc",
             "sort_by_asc=sort_by_desc",
             // Cannot use certain operators for sorting
-            "-sort_by_asc=linked_to",
-            "c.stability>=2 or sort_by_asc=linked_to",
+            "-sort_by_asc=linked_to_note",
+            "c.stability>=2 or sort_by_asc=linked_to_note",
             // `and` is fine since that is implictly used everywhere
             // Cannot use sort by inside grouping
-            "c.stability>=2 or (a sort_by_asc=linked_to)",
-            // NOTE: Even though this is equivalent to `(c.stability >=2 or a) sort_by_asc=linked_to`, this creates more confusion, so it is not allowed at the moment.
-            "c.stability>=2 -(a sort_by_asc=linked_to)",
+            "c.stability>=2 or (a sort_by_asc=linked_to_note)",
+            // NOTE: Even though this is equivalent to `(c.stability >=2 or a) sort_by_asc=linked_to_note`, this creates more confusion, so it is not allowed at the moment.
+            "c.stability>=2 -(a sort_by_asc=linked_to_note)",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);
