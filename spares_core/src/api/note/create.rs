@@ -623,16 +623,24 @@ pub(super) async fn apply_srs_inheritance(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-        // Copy review history from the source card to the destination card so that if the
-        // card's scheduling params are ever manually computed from the review logs, they will
-        // be correct.
-        let review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
-                .bind(src_card.id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+        copy_review_logs(db, src_card.id, &[dst_card_id]).await?;
+    }
+    Ok(())
+}
 
+/// Copy review history from a source card to destination cards.
+/// This is so that if the card's scheduling params are ever manually computed from the review logs, they will be correct.
+pub(super) async fn copy_review_logs(
+    db: &SqlitePool,
+    src_card_id: CardId,
+    dst_card_ids: &[CardId],
+) -> Result<(), Error> {
+    let review_logs: Vec<ReviewLog> = sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
+        .bind(src_card_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    for dst_card_id in dst_card_ids {
         for log in &review_logs {
             sqlx::query(
                 r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
