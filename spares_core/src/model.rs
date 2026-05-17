@@ -23,6 +23,12 @@ pub const NEW_CARD_STATE: StateId = 0;
 pub const DEFAULT_DESIRED_RETENTION: f64 = 0.9;
 pub const NOTE_ID_KEY: &str = "note-id";
 
+/// When enabled, a self-healing step runs during note updates that automatically
+/// creates missing cards or removes extra cards if the DB is inconsistent with
+/// the parsed note data. Set to `false` if historical data corruption is no longer
+/// a concern, for a minor performance gain.
+pub const AUTO_FIX_MISSING_CARDS: bool = true;
+
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct Note {
     pub id: NoteId,

@@ -5,14 +5,16 @@ use chrono::DateTime;
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 
-use super::super::apply_srs_inheritance;
-use super::super::create_cards;
 use crate::CardErrorKind;
 use crate::Error;
 use crate::LibraryError;
 use crate::api::execute_batched_query;
 use crate::api::fetch_batched_query;
+use crate::api::note::apply_srs_inheritance;
+use crate::api::note::copy_review_logs;
+use crate::api::note::create_cards;
 use crate::api::placeholders;
+use crate::model::AUTO_FIX_MISSING_CARDS;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NoteId;
@@ -203,5 +205,101 @@ pub(super) async fn update_cards(
         })
         .collect();
     apply_srs_inheritance(db, &inherit_entries).await?;
+    if AUTO_FIX_MISSING_CARDS {
+        verify_card_consistency(db, note_id, new_card_data_ref, at).await?;
+    }
+    Ok(())
+}
+
+/// Ensures the set of cards in the database exactly matches what the parser
+/// produced for the note. This is a safety net for historical data corruption
+/// where the DB may have fewer (or more) cards than expected.
+async fn verify_card_consistency(
+    db: &SqlitePool,
+    note_id: NoteId,
+    new_cards: &[CardData],
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    let existing_cards: Vec<Card> =
+        sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+            .bind(note_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let existing_orders: Vec<u32> = existing_cards.iter().map(|c| c.order).collect();
+    let expected_orders: Vec<u32> = (1..=new_cards.len() as u32).collect();
+    let missing_orders: Vec<u32> = expected_orders
+        .iter()
+        .copied()
+        .filter(|o| !existing_orders.contains(o))
+        .collect();
+
+    if !missing_orders.is_empty() {
+        let template = existing_cards.first();
+        let cards_to_create: Vec<Card> = missing_orders
+            .iter()
+            .map(|&order| {
+                let card_data = new_cards
+                    .get(order as usize - 1)
+                    .expect("order is 1-indexed within new_cards range");
+                let mut card = if let Some(t) = template {
+                    let mut c = t.clone();
+                    c.special_state = None;
+                    c.updated_at = at;
+                    c
+                } else {
+                    Card::new(at)
+                };
+                card.note_id = note_id;
+                card.order = order;
+                card.back_type = card_data.back_type;
+                if card_data.is_suspended.unwrap_or(false) {
+                    card.special_state = Some(SpecialState::Suspended);
+                }
+                card
+            })
+            .collect();
+        create_cards(db, &cards_to_create).await?;
+        // Copy review logs from template to newly created cards
+        if let Some(template) = template {
+            let orders: Vec<u32> = cards_to_create.iter().map(|c| c.order).collect();
+            let rows: Vec<(CardId, u32)> = fetch_batched_query(db, &orders, async |db, chunk| {
+                let query_str = format!(
+                    r#"SELECT id, "order" FROM card WHERE note_id = ? AND "order" IN ({})"#,
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as::<_, (CardId, u32)>(&query_str);
+                query = query.bind(note_id);
+                for order in chunk {
+                    query = query.bind(*order);
+                }
+                query
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            })
+            .await?;
+            let card_map: HashMap<u32, CardId> =
+                rows.into_iter().map(|(id, order)| (order, id)).collect();
+            let dst_card_ids: Vec<CardId> =
+                cards_to_create.iter().map(|c| card_map[&c.order]).collect();
+            copy_review_logs(db, template.id, &dst_card_ids).await?;
+        }
+    }
+
+    let extra_orders: Vec<u32> = existing_orders
+        .iter()
+        .copied()
+        .filter(|o| !expected_orders.contains(o))
+        .collect();
+    for order in &extra_orders {
+        sqlx::query(r#"DELETE FROM card WHERE note_id = ? AND "order" = ?"#)
+            .bind(note_id)
+            .bind(order)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+
     Ok(())
 }
