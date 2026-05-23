@@ -5,6 +5,7 @@ use chrono::Local;
 use clap::Args;
 use inquire::MultiSelect;
 use inquire::Select;
+use inquire::Text;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -40,6 +41,8 @@ enum ViewNoteAction {
     OpenNote,
     #[strum(serialize = "Open Linked Notes")]
     OpenLinkedNotes,
+    #[strum(serialize = "Go to Note Number")]
+    GoTo,
     #[strum(serialize = "Exit")]
     Exit,
 }
@@ -209,6 +212,7 @@ pub(crate) async fn view_notes(
         if note.linked_notes.as_ref().map_or(0, |v| v.len()) > 0 {
             action_options.push(ViewNoteAction::OpenLinkedNotes);
         }
+        action_options.push(ViewNoteAction::GoTo);
         action_options.push(ViewNoteAction::Exit);
 
         let Ok(chosen_action) =
@@ -262,6 +266,25 @@ pub(crate) async fn view_notes(
                                 }
                             }
                         }
+                    }
+                }
+            }
+            ViewNoteAction::GoTo => {
+                let prompt_text = format!("Enter note number (1-{total}):");
+                let prompt = Text::new(&prompt_text);
+                match prompt.prompt() {
+                    Ok(input) => match input.trim().parse::<usize>() {
+                        Ok(num) if num >= 1 && num <= total => {
+                            index = num - 1;
+                        }
+                        _ => {
+                            println!(
+                                "Invalid note number. Please enter a number between 1 and {total}."
+                            );
+                        }
+                    },
+                    Err(_) => {
+                        println!("Cancelled.");
                     }
                 }
             }
