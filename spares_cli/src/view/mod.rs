@@ -202,12 +202,8 @@ pub(crate) async fn view_notes(
         }
 
         let mut action_options: Vec<ViewNoteAction> = Vec::new();
-        if index < total - 1 {
-            action_options.push(ViewNoteAction::Next);
-        }
-        if index > 0 {
-            action_options.push(ViewNoteAction::Prev);
-        }
+        action_options.push(ViewNoteAction::Prev);
+        action_options.push(ViewNoteAction::Next);
         action_options.push(ViewNoteAction::OpenNote);
         if note.linked_notes.as_ref().map_or(0, |v| v.len()) > 0 {
             action_options.push(ViewNoteAction::OpenLinkedNotes);
@@ -223,12 +219,10 @@ pub(crate) async fn view_notes(
 
         match chosen_action {
             ViewNoteAction::Prev => {
-                index = index.saturating_sub(1);
+                index = (index + total - 1) % total;
             }
             ViewNoteAction::Next => {
-                if index < total - 1 {
-                    index += 1;
-                }
+                index = (index + 1) % total;
             }
             ViewNoteAction::OpenNote => {
                 if let Ok(path) = utils::compute_note_raw_path(parser_name, note.id) {
@@ -343,15 +337,12 @@ pub(crate) async fn view_cards(
             rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
         }
 
-        let mut action_options: Vec<ViewCardAction> = Vec::new();
-        if index < total - 1 {
-            action_options.push(ViewCardAction::Next);
-        }
-        if index > 0 {
-            action_options.push(ViewCardAction::Previous);
-        }
-        action_options.push(ViewCardAction::OpenNote);
-        action_options.push(ViewCardAction::Exit);
+        let action_options: Vec<ViewCardAction> = vec![
+            ViewCardAction::Previous,
+            ViewCardAction::Next,
+            ViewCardAction::OpenNote,
+            ViewCardAction::Exit,
+        ];
 
         let Ok(chosen_action) =
             prompt_select_action(&action_options, &mut rendered_file_child, close_command)
@@ -361,12 +352,10 @@ pub(crate) async fn view_cards(
 
         match chosen_action {
             ViewCardAction::Previous => {
-                index = index.saturating_sub(1);
+                index = (index + total - 1) % total;
             }
             ViewCardAction::Next => {
-                if index < total - 1 {
-                    index += 1;
-                }
+                index = (index + 1) % total;
             }
             ViewCardAction::OpenNote => {
                 if let Ok(path) = utils::compute_note_raw_path(parser_name, card.note_id) {
