@@ -17,6 +17,7 @@ use spares_core::schema::parser::ParserResponse;
 use spares_core::search::QueryReturnItemType;
 use strum_macros::Display;
 
+use crate::review::sync_note;
 use crate::review::utils::close_rendered_file;
 use crate::review::utils::open_rendered_file;
 use crate::utils;
@@ -41,6 +42,8 @@ enum ViewNoteAction {
     OpenNote,
     #[strum(serialize = "Open Linked Notes")]
     OpenLinkedNotes,
+    #[strum(serialize = "Sync Note")]
+    SyncNote,
     #[strum(serialize = "Go to Note Number")]
     GoTo,
     #[strum(serialize = "Exit")]
@@ -78,6 +81,8 @@ enum ViewCardAction {
     Next,
     #[strum(serialize = "Open Note")]
     OpenNote,
+    #[strum(serialize = "Sync Note")]
+    SyncNote,
     #[strum(serialize = "Exit")]
     Exit,
 }
@@ -209,6 +214,7 @@ pub(crate) async fn view_notes(
         if note.linked_notes.as_ref().map_or(0, |v| v.len()) > 0 {
             action_options.push(ViewNoteAction::OpenLinkedNotes);
         }
+        action_options.push(ViewNoteAction::SyncNote);
         action_options.push(ViewNoteAction::GoTo);
         action_options.push(ViewNoteAction::Exit);
 
@@ -261,6 +267,15 @@ pub(crate) async fn view_notes(
                                 }
                             }
                         }
+                    }
+                }
+            }
+            ViewNoteAction::SyncNote => {
+                println!("Syncing note...");
+                if let Ok(path) = utils::compute_note_raw_path(parser_name, note.id) {
+                    match sync_note(note.id, &path, parser_name, base_url, client).await {
+                        Ok(()) => println!("Note synced successfully."),
+                        Err(e) => println!("Failed to sync note: {e}"),
                     }
                 }
             }
@@ -342,6 +357,7 @@ pub(crate) async fn view_cards(
             ViewCardAction::Previous,
             ViewCardAction::Next,
             ViewCardAction::OpenNote,
+            ViewCardAction::SyncNote,
             ViewCardAction::Exit,
         ];
 
@@ -361,6 +377,15 @@ pub(crate) async fn view_cards(
             ViewCardAction::OpenNote => {
                 if let Ok(path) = utils::compute_note_raw_path(parser_name, card.note_id) {
                     utils::open_file(&path);
+                }
+            }
+            ViewCardAction::SyncNote => {
+                println!("Syncing note...");
+                if let Ok(path) = utils::compute_note_raw_path(parser_name, card.note_id) {
+                    match sync_note(card.note_id, &path, parser_name, base_url, client).await {
+                        Ok(()) => println!("Note synced successfully."),
+                        Err(e) => println!("Failed to sync note: {e}"),
+                    }
                 }
             }
             ViewCardAction::Exit => {
