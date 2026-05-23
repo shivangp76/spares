@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
 use std::time::Duration;
@@ -252,45 +253,28 @@ async fn get_review_card_by_id(
     response.json().await.map_err(|e| format!("{}", e))
 }
 
-async fn sync_note_background(
+pub(crate) async fn sync_note(
     note_id: NoteId,
-    note_raw_path: PathBuf,
-    parser_name: String,
-    base_url: String,
-    client: Client,
-    tx: mpsc::UnboundedSender<Result<NoteId, String>>,
-) {
-    // Import note from local file to database
+    note_raw_path: &Path,
+    parser_name: &str,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
     let mut adapter = SparesAdapter::new(SparesRequestProcessor::Server);
-    let parser = match find_parser(&parser_name, &get_all_parsers()) {
-        Ok(p) => p,
-        Err(e) => {
-            let _ = tx.send(Err(format!(
-                "[Note Id: {}] Failed to sync note: Failed to find parser: {}",
-                note_id, e
-            )));
-            return;
-        }
-    };
+    let parser = find_parser(parser_name, &get_all_parsers())
+        .map_err(|e| format!("Failed to find parser: {e}"))?;
 
-    if let Err(e) = import_from_files(
+    import_from_files(
         &mut adapter,
         Some(parser.as_ref()),
         None,
-        &[&note_raw_path],
+        &[note_raw_path],
         false,
-        true, // quiet mode
+        true,
     )
     .await
-    {
-        let _ = tx.send(Err(format!(
-            "[Note Id: {}] Failed to sync note: Failed to import note: {}",
-            note_id, e
-        )));
-        return;
-    }
+    .map_err(|e| format!("Failed to import note: {e}"))?;
 
-    // Regenerate rendered files for this note
     let request = RenderNotesRequest {
         selector: NotesSelector::Ids(vec![note_id]),
         immutable_note_ids: None,
@@ -300,39 +284,42 @@ async fn sync_note_background(
         generate_rendered: true,
         force_generate_rendered: false,
     };
-    let url = format!("{}/api/notes/generate_files", base_url);
-    let response = match client.post(&url).json(&request).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = tx.send(Err(format!(
-                "[Note Id: {}] Failed to sync note: Failed to regenerate files: {}",
-                note_id, e
-            )));
-            return;
-        }
-    };
-    let status = response.status();
-    if status != StatusCode::OK {
-        let response_json: Value = match response.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = tx.send(Err(format!(
-                    "[Note Id: {}] Failed to sync note: Failed to parse error response: {}",
-                    note_id, e
-                )));
-                return;
-            }
-        };
-        let message = response_json.get("message");
-        let _ = tx.send(Err(format!(
-            "[Note Id: {}] Failed to sync note: {}",
-            note_id,
-            message.unwrap_or(&Value::String("Unknown error".to_string()))
-        )));
-        return;
+    let url = format!("{base_url}/api/notes/generate_files");
+    let response = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to regenerate files: {e}"))?;
+    if response.status() != StatusCode::OK {
+        let response_json: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse error response: {e}"))?;
+        let message = response_json
+            .get("message")
+            .unwrap_or(&Value::String("Unknown error".to_string()))
+            .to_string();
+        return Err(message);
     }
 
-    let _ = tx.send(Ok(note_id));
+    Ok(())
+}
+
+async fn sync_note_background(
+    note_id: NoteId,
+    note_raw_path: PathBuf,
+    parser_name: String,
+    base_url: String,
+    client: Client,
+    tx: mpsc::UnboundedSender<Result<NoteId, String>>,
+) {
+    let result = sync_note(note_id, &note_raw_path, &parser_name, &base_url, &client).await;
+    let _ = tx.send(
+        result
+            .map_err(|e| format!("[Note Id: {note_id}] Failed to sync note: {e}"))
+            .map(|()| note_id),
+    );
 }
 
 async fn build_review_actions(
