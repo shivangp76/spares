@@ -34,7 +34,7 @@ pub(crate) struct ViewNoteArgs {
 #[derive(Clone, Debug, Display, PartialEq)]
 enum ViewNoteAction {
     #[strum(serialize = "Previous")]
-    Prev,
+    Previous,
     #[strum(serialize = "Next")]
     Next,
     #[strum(serialize = "Open Note")]
@@ -201,10 +201,11 @@ pub(crate) async fn view_notes(
             rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
         }
 
-        let mut action_options: Vec<ViewNoteAction> = Vec::new();
-        action_options.push(ViewNoteAction::Prev);
-        action_options.push(ViewNoteAction::Next);
-        action_options.push(ViewNoteAction::OpenNote);
+        let mut action_options: Vec<ViewNoteAction> = vec![
+            ViewNoteAction::Previous,
+            ViewNoteAction::Next,
+            ViewNoteAction::OpenNote,
+        ];
         if note.linked_notes.as_ref().map_or(0, |v| v.len()) > 0 {
             action_options.push(ViewNoteAction::OpenLinkedNotes);
         }
@@ -218,7 +219,7 @@ pub(crate) async fn view_notes(
         };
 
         match chosen_action {
-            ViewNoteAction::Prev => {
+            ViewNoteAction::Previous => {
                 index = (index + total - 1) % total;
             }
             ViewNoteAction::Next => {
