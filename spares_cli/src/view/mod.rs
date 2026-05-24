@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Child;
 
 use chrono::Local;
@@ -9,7 +10,9 @@ use inquire::Text;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
+use spares_core::model::NoteId;
 use spares_core::schema::card::CardResponse;
+use spares_core::schema::note::LinkedNote;
 use spares_core::schema::note::NoteResponse;
 use spares_core::schema::note::SearchNotesRequest;
 use spares_core::schema::note::SearchNotesResponse;
@@ -33,7 +36,7 @@ pub(crate) struct ViewNoteArgs {
 }
 
 #[derive(Clone, Debug, Display, PartialEq)]
-enum ViewNoteAction {
+enum ViewAction {
     #[strum(serialize = "Previous")]
     Previous,
     #[strum(serialize = "Next")]
@@ -44,7 +47,7 @@ enum ViewNoteAction {
     OpenLinkedNotes,
     #[strum(serialize = "Sync Note")]
     SyncNote,
-    #[strum(serialize = "Go to Note Number")]
+    #[strum(serialize = "Go to Item Number")]
     GoTo,
     #[strum(serialize = "Exit")]
     Exit,
@@ -73,20 +76,6 @@ pub(crate) struct ViewCardArgs {
     pub(crate) close_command: Option<String>,
 }
 
-#[derive(Clone, Debug, Display, PartialEq)]
-enum ViewCardAction {
-    #[strum(serialize = "Prev")]
-    Previous,
-    #[strum(serialize = "Next")]
-    Next,
-    #[strum(serialize = "Open Note")]
-    OpenNote,
-    #[strum(serialize = "Sync Note")]
-    SyncNote,
-    #[strum(serialize = "Exit")]
-    Exit,
-}
-
 fn display_card_info(card: &CardResponse, parser_name: &str, index: usize, total: usize) {
     println!();
     println!("--- Card {} of {} ---", index + 1, total);
@@ -103,6 +92,47 @@ fn display_card_info(card: &CardResponse, parser_name: &str, index: usize, total
         println!("Special:    {:?}", special_state);
     }
     println!();
+}
+
+trait ViewItem {
+    fn item_id(&self) -> NoteId;
+    fn display(&self, parser_name: &str, index: usize, total: usize);
+    fn rendered_path(&self, parser_name: &str) -> Result<PathBuf, String>;
+    fn linked_notes(&self) -> Option<&[LinkedNote]> {
+        None
+    }
+}
+
+impl ViewItem for NoteResponse {
+    fn item_id(&self) -> NoteId {
+        self.id
+    }
+
+    fn display(&self, parser_name: &str, index: usize, total: usize) {
+        display_note_info(self, parser_name, index, total);
+    }
+
+    fn rendered_path(&self, parser_name: &str) -> Result<PathBuf, String> {
+        utils::compute_note_rendered_path(parser_name, self.id)
+    }
+
+    fn linked_notes(&self) -> Option<&[LinkedNote]> {
+        self.linked_notes.as_deref()
+    }
+}
+
+impl ViewItem for CardResponse {
+    fn item_id(&self) -> NoteId {
+        self.note_id
+    }
+
+    fn display(&self, parser_name: &str, index: usize, total: usize) {
+        display_card_info(self, parser_name, index, total);
+    }
+
+    fn rendered_path(&self, parser_name: &str) -> Result<PathBuf, String> {
+        utils::compute_card_rendered_back_path(parser_name, self.note_id, self.order)
+    }
 }
 
 async fn search_notes_api(
@@ -150,6 +180,138 @@ fn prompt_select_action<'a, T: std::fmt::Display>(
 }
 
 #[expect(clippy::too_many_lines)]
+async fn view_items<T: ViewItem>(
+    items: Vec<(T, String)>,
+    empty_msg: &str,
+    open_command: Option<&str>,
+    close_command: Option<&str>,
+    base_url: &str,
+    client: &Client,
+    parser_map: Option<&HashMap<i64, String>>,
+) -> Result<(), String> {
+    if items.is_empty() {
+        println!("{empty_msg}");
+        return Ok(());
+    }
+
+    let total = items.len();
+    let mut index = 0;
+    let mut rendered_file_child: Option<Child> = None;
+
+    loop {
+        if let Some(mut child) = rendered_file_child.take() {
+            close_rendered_file(&mut child, close_command, false)?;
+        }
+
+        let (item, parser_name) = &items[index];
+        item.display(parser_name, index, total);
+
+        if let Ok(path) = item.rendered_path(parser_name) {
+            rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
+        }
+
+        let mut action_options: Vec<ViewAction> =
+            vec![ViewAction::Previous, ViewAction::Next, ViewAction::OpenNote];
+        if let Some(ln) = item.linked_notes()
+            && !ln.is_empty()
+        {
+            action_options.push(ViewAction::OpenLinkedNotes);
+        }
+        action_options.push(ViewAction::SyncNote);
+        action_options.push(ViewAction::GoTo);
+        action_options.push(ViewAction::Exit);
+
+        let Ok(chosen_action) =
+            prompt_select_action(&action_options, &mut rendered_file_child, close_command)
+        else {
+            return Ok(());
+        };
+
+        match chosen_action {
+            ViewAction::Previous => {
+                index = (index + total - 1) % total;
+            }
+            ViewAction::Next => {
+                index = (index + 1) % total;
+            }
+            ViewAction::OpenNote => {
+                if let Ok(path) = utils::compute_note_raw_path(parser_name, item.item_id()) {
+                    utils::open_file(&path);
+                }
+            }
+            ViewAction::OpenLinkedNotes => {
+                if let Some(linked_notes) = item.linked_notes() {
+                    let ln_options: Vec<String> = linked_notes
+                        .iter()
+                        .map(|ln| {
+                            format!(
+                                "{} ({})",
+                                ln.searched_keyword,
+                                ln.linked_note_id.unwrap_or(0)
+                            )
+                        })
+                        .collect();
+                    let mut multi =
+                        MultiSelect::new("Select linked notes to open:", ln_options.clone());
+                    multi.vim_mode = true;
+                    if let Ok(selected) = multi.prompt() {
+                        for label in &selected {
+                            if let Some(idx) = ln_options.iter().position(|o| o == label)
+                                && let Some(linked_id) = linked_notes[idx].linked_note_id
+                            {
+                                let note_url = format!("{}/api/notes/{}", base_url, linked_id);
+                                if let Ok(resp) = client.get(&note_url).send().await
+                                    && resp.status() == StatusCode::OK
+                                    && let Ok(linked_note) = resp.json::<NoteResponse>().await
+                                    && let Some(pn) =
+                                        parser_map.and_then(|m| m.get(&linked_note.parser_id))
+                                    && let Ok(path) = utils::compute_note_raw_path(pn, linked_id)
+                                {
+                                    utils::open_file(&path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ViewAction::SyncNote => {
+                println!("Syncing note...");
+                if let Ok(path) = utils::compute_note_raw_path(parser_name, item.item_id()) {
+                    match sync_note(item.item_id(), &path, parser_name, base_url, client).await {
+                        Ok(()) => println!("Note synced successfully."),
+                        Err(e) => println!("Failed to sync note: {e}"),
+                    }
+                }
+            }
+            ViewAction::GoTo => {
+                let prompt_text = format!("Enter item number (1-{total}):");
+                let prompt = Text::new(&prompt_text);
+                match prompt.prompt() {
+                    Ok(input) => match input.trim().parse::<usize>() {
+                        Ok(num) if num >= 1 && num <= total => {
+                            index = num - 1;
+                        }
+                        _ => {
+                            println!(
+                                "Invalid item number. Please enter a number between 1 and {total}."
+                            );
+                        }
+                    },
+                    Err(_) => {
+                        println!("Cancelled.");
+                    }
+                }
+            }
+            ViewAction::Exit => {
+                if let Some(mut child) = rendered_file_child.take() {
+                    close_rendered_file(&mut child, close_command, true)?;
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
 pub(crate) async fn view_notes(
     view_args: ViewNoteArgs,
     base_url: &str,
@@ -173,12 +335,6 @@ pub(crate) async fn view_notes(
         }
     };
 
-    if notes.is_empty() {
-        println!("No notes found.");
-        return Ok(());
-    }
-
-    // Fetch parsers for linked note resolution
     let parsers_url = format!("{}/api/parsers", base_url);
     let parsers_resp = client
         .get(&parsers_url)
@@ -190,123 +346,18 @@ pub(crate) async fn view_notes(
     let parser_map: HashMap<i64, String> =
         parser_list.into_iter().map(|p| (p.id, p.name)).collect();
 
-    let total = notes.len();
-    let mut index = 0;
-    let mut rendered_file_child: Option<Child> = None;
-
-    loop {
-        if let Some(mut child) = rendered_file_child.take() {
-            close_rendered_file(&mut child, close_command, false)?;
-        }
-
-        let (note, parser_name) = &notes[index];
-        display_note_info(note, parser_name, index, total);
-
-        if let Ok(path) = utils::compute_note_rendered_path(parser_name, note.id) {
-            rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
-        }
-
-        let mut action_options: Vec<ViewNoteAction> = vec![
-            ViewNoteAction::Previous,
-            ViewNoteAction::Next,
-            ViewNoteAction::OpenNote,
-        ];
-        if note.linked_notes.as_ref().map_or(0, |v| v.len()) > 0 {
-            action_options.push(ViewNoteAction::OpenLinkedNotes);
-        }
-        action_options.push(ViewNoteAction::SyncNote);
-        action_options.push(ViewNoteAction::GoTo);
-        action_options.push(ViewNoteAction::Exit);
-
-        let Ok(chosen_action) =
-            prompt_select_action(&action_options, &mut rendered_file_child, close_command)
-        else {
-            return Ok(());
-        };
-
-        match chosen_action {
-            ViewNoteAction::Previous => {
-                index = (index + total - 1) % total;
-            }
-            ViewNoteAction::Next => {
-                index = (index + 1) % total;
-            }
-            ViewNoteAction::OpenNote => {
-                if let Ok(path) = utils::compute_note_raw_path(parser_name, note.id) {
-                    utils::open_file(&path);
-                }
-            }
-            ViewNoteAction::OpenLinkedNotes => {
-                if let Some(ref linked_notes) = note.linked_notes {
-                    let ln_options: Vec<String> = linked_notes
-                        .iter()
-                        .map(|ln| {
-                            format!(
-                                "{} ({})",
-                                ln.searched_keyword,
-                                ln.linked_note_id.unwrap_or(0)
-                            )
-                        })
-                        .collect();
-                    let mut multi =
-                        MultiSelect::new("Select linked notes to open:", ln_options.clone());
-                    multi.vim_mode = true;
-                    if let Ok(selected) = multi.prompt() {
-                        for label in &selected {
-                            if let Some(idx) = ln_options.iter().position(|o| o == label)
-                                && let Some(linked_id) = linked_notes[idx].linked_note_id
-                            {
-                                let note_url = format!("{}/api/notes/{}", base_url, linked_id);
-                                if let Ok(resp) = client.get(&note_url).send().await
-                                    && resp.status() == StatusCode::OK
-                                    && let Ok(linked_note) = resp.json::<NoteResponse>().await
-                                    && let Some(pn) = parser_map.get(&linked_note.parser_id)
-                                    && let Ok(path) = utils::compute_note_raw_path(pn, linked_id)
-                                {
-                                    utils::open_file(&path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            ViewNoteAction::SyncNote => {
-                println!("Syncing note...");
-                if let Ok(path) = utils::compute_note_raw_path(parser_name, note.id) {
-                    match sync_note(note.id, &path, parser_name, base_url, client).await {
-                        Ok(()) => println!("Note synced successfully."),
-                        Err(e) => println!("Failed to sync note: {e}"),
-                    }
-                }
-            }
-            ViewNoteAction::GoTo => {
-                let prompt_text = format!("Enter note number (1-{total}):");
-                let prompt = Text::new(&prompt_text);
-                match prompt.prompt() {
-                    Ok(input) => match input.trim().parse::<usize>() {
-                        Ok(num) if num >= 1 && num <= total => {
-                            index = num - 1;
-                        }
-                        _ => {
-                            println!(
-                                "Invalid note number. Please enter a number between 1 and {total}."
-                            );
-                        }
-                    },
-                    Err(_) => {
-                        println!("Cancelled.");
-                    }
-                }
-            }
-            ViewNoteAction::Exit => {
-                if let Some(mut child) = rendered_file_child.take() {
-                    close_rendered_file(&mut child, close_command, true)?;
-                }
-                return Ok(());
-            }
-        }
-    }
+    view_items(
+        notes,
+        "No notes found.",
+        open_command,
+        close_command,
+        base_url,
+        client,
+        Some(&parser_map),
+    )
+    .await
 }
+
 pub(crate) async fn view_cards(
     view_args: ViewCardArgs,
     base_url: &str,
@@ -330,70 +381,14 @@ pub(crate) async fn view_cards(
         }
     };
 
-    if cards.is_empty() {
-        println!("No cards found.");
-        return Ok(());
-    }
-
-    let total = cards.len();
-    let mut index = 0;
-    let mut rendered_file_child: Option<Child> = None;
-
-    loop {
-        if let Some(mut child) = rendered_file_child.take() {
-            close_rendered_file(&mut child, close_command, false)?;
-        }
-
-        let (card, parser_name) = &cards[index];
-        display_card_info(card, parser_name, index, total);
-
-        if let Ok(path) =
-            utils::compute_card_rendered_back_path(parser_name, card.note_id, card.order)
-        {
-            rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
-        }
-
-        let action_options: Vec<ViewCardAction> = vec![
-            ViewCardAction::Previous,
-            ViewCardAction::Next,
-            ViewCardAction::OpenNote,
-            ViewCardAction::SyncNote,
-            ViewCardAction::Exit,
-        ];
-
-        let Ok(chosen_action) =
-            prompt_select_action(&action_options, &mut rendered_file_child, close_command)
-        else {
-            return Ok(());
-        };
-
-        match chosen_action {
-            ViewCardAction::Previous => {
-                index = (index + total - 1) % total;
-            }
-            ViewCardAction::Next => {
-                index = (index + 1) % total;
-            }
-            ViewCardAction::OpenNote => {
-                if let Ok(path) = utils::compute_note_raw_path(parser_name, card.note_id) {
-                    utils::open_file(&path);
-                }
-            }
-            ViewCardAction::SyncNote => {
-                println!("Syncing note...");
-                if let Ok(path) = utils::compute_note_raw_path(parser_name, card.note_id) {
-                    match sync_note(card.note_id, &path, parser_name, base_url, client).await {
-                        Ok(()) => println!("Note synced successfully."),
-                        Err(e) => println!("Failed to sync note: {e}"),
-                    }
-                }
-            }
-            ViewCardAction::Exit => {
-                if let Some(mut child) = rendered_file_child.take() {
-                    close_rendered_file(&mut child, close_command, true)?;
-                }
-                return Ok(());
-            }
-        }
-    }
+    view_items(
+        cards,
+        "No cards found.",
+        open_command,
+        close_command,
+        base_url,
+        client,
+        None,
+    )
+    .await
 }
