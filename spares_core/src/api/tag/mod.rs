@@ -24,7 +24,7 @@ use crate::schema::tag::UpdateTagRequest;
 mod query;
 pub use query::*;
 
-const TAG_DEFAULT_LIMIT: usize = 100;
+const TAG_DEFAULT_LIMIT: usize = 500;
 pub const DEFAULT_TAG_AUTO_DELETE: bool = true;
 
 pub async fn create_tag(
