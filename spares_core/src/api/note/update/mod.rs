@@ -385,6 +385,7 @@ mod tests {
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::review::submit_study_action;
     use crate::model::Card;
+    use crate::model::ReviewLog;
     use crate::model::SpecialState;
     use crate::parsers::BackType;
     use crate::parsers::get_all_parsers;
@@ -858,5 +859,38 @@ mod tests {
             src_card_after_review.due.timestamp()
         );
         assert_eq!(dst_card2.special_state, src_card_after_review.special_state);
+
+        // Step 6: Verify the review history was also inherited.
+        let src_review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+                .bind(src_card.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let dst_review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+                .bind(dst_card2.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            src_review_logs.len(),
+            dst_review_logs.len(),
+            "review log count mismatch"
+        );
+        for (src_log, dst_log) in src_review_logs.iter().zip(dst_review_logs.iter()) {
+            assert_eq!(dst_log.card_id, dst_card2.id);
+            assert_eq!(
+                dst_log.reviewed_at.timestamp(),
+                src_log.reviewed_at.timestamp()
+            );
+            assert_eq!(dst_log.rating, src_log.rating);
+            assert_eq!(dst_log.scheduler_name, src_log.scheduler_name);
+            assert_eq!(dst_log.scheduled_time, src_log.scheduled_time);
+            assert_eq!(dst_log.recall_duration, src_log.recall_duration);
+            assert_eq!(dst_log.rate_duration, src_log.rate_duration);
+            assert_eq!(dst_log.previous_state, src_log.previous_state);
+            assert_eq!(dst_log.custom_data, src_log.custom_data);
+        }
     }
 }
