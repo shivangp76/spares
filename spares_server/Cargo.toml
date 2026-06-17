@@ -19,16 +19,9 @@ env_logger = "0.11.9"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 spares_core = { path = "../spares_core" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
-tokio = { version = "1.50.0", features = ["full"] }
-tower-http = { version = "0.6.8", features = ["cors", "fs"] }
-log = "0.4.29"
-
-# [dev-dependencies]
-# tower = { version = "0.4", features = ["util"] }
-# tower-http = { version = "0.5.0", features = ["trace"] }
-# mime = "0.3"
-# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# http-body-util = "0.1.0"
+tokio = { version = "1.52.3", features = ["full"] }
+tower-http = { version = "0.7.0", features = ["cors", "fs"] }
+log = "0.4.32"
 
 [lints]
 workspace = true
