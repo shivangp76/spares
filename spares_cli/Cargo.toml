@@ -16,30 +16,30 @@ name = "spares"
 path = "src/main.rs"
 
 [dependencies]
-blake3 = "1.8.4"
-chrono = { version = "0.4.44", features = ["serde"] }
-clap = { version = "4.6.0", features = ["derive", "cargo", "env"] }
+blake3 = "1.8.5"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.1", features = ["derive", "cargo", "env"] }
 clap_complete_command = "0.6.1"
 colored = "3.1.1"
 copy_dir = "0.1.3"
-env_logger = "0.11.9"
-indexmap = "2.13.0"
+env_logger = "0.11.10"
+indexmap = "2.14.0"
 indicatif = { version = "0.18.4", features = ["rayon"] }
 inquire = { version = "0.9.4", features = ["date"] }
-itertools = "0.14.0"
-log = "0.4.29"
+itertools = "0.15.0"
+log = "0.4.32"
 miette = { version = "7.6.0", features = ["fancy"] }
-open = "5.3.3"
+open = "5.3.5"
 petgraph = "0.8.3"
-rayon = "1.11.0"
-reqwest = { version = "0.13.2", features = ["json", "query"] }
+rayon = "1.12.0"
+reqwest = { version = "0.13.4", features = ["json", "query"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["preserve_order"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
 spares_core = { path = "../spares_core" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
 strum = { version = "0.28.0", features = ["derive"] }
 strum_macros = "0.28.0"
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 walkdir = "2.5.0"
 
 [lints]
