@@ -56,8 +56,8 @@ uuid = { version = "1.22.0", features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 
-[features]
-testing = [] # Used to mitigate effects to local data files in integration testing. See <https://www.reddit.com/r/rust/comments/ny6k3f/cfgtest_doesnt_take_affect_when_running/>.
+# [features]
+# testing = [] # Used to mitigate effects to local data files in integration testing. See <https://www.reddit.com/r/rust/comments/ny6k3f/cfgtest_doesnt_take_affect_when_running/>.
 
 [lints]
 workspace = true
