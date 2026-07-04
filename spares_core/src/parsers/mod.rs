@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::Path;
@@ -21,6 +22,7 @@ use crate::model::CustomData;
 use crate::model::NoteId;
 
 mod cards;
+pub(crate) mod cli;
 mod clozes;
 pub mod generate_files;
 mod helpers;
@@ -28,7 +30,10 @@ pub(crate) mod image_occlusion;
 pub(crate) mod impls;
 mod notes;
 mod settings;
+
 pub use cards::*;
+pub use cli::CliBlockMatch;
+pub use cli::CliData;
 pub use clozes::*;
 pub use helpers::*;
 pub use notes::*;
@@ -157,6 +162,90 @@ pub trait Parseable: Send + Sync {
         image_occlusion_data: &ImageOcclusionData,
         output_type: ConstructImageOcclusionType,
     ) -> String;
+
+    /// Find all `spares: cli start…end` blocks in `data`. Default impl uses
+    /// the parser's comment syntax, so this works for any host parser.
+    /// The canonical implementation lives in [`cli::get_cli_blocks`]; this
+    /// trait method cannot delegate there directly (object-safety), so it
+    /// shares the same cache and unterminated-block detection helpers.
+    fn get_cli_blocks(&self, data: &str) -> Result<Vec<CliBlockMatch>, LibraryError> {
+        let start = self.construct_comment("spares: cli start");
+        let end = self.construct_comment("spares: cli end");
+        let regex_string = format!(
+            "(?s){}(.*?)\n{}",
+            fancy_regex::escape(&start),
+            fancy_regex::escape(&end),
+        );
+        let cli_regex = cli::get_or_compile_cli_regex(&regex_string)?;
+        let mut blocks = Vec::new();
+        for captures in cli_regex.captures_iter(data) {
+            let captures = captures.map_err(|e| {
+                LibraryError::Note(crate::NoteErrorKind::Other {
+                    description: e.to_string(),
+                })
+            })?;
+            let full = captures.get(0).ok_or_else(|| {
+                LibraryError::Note(crate::NoteErrorKind::Other {
+                    description: "cli block regex produced no full match".to_string(),
+                })
+            })?;
+            let body = captures.get(1).ok_or_else(|| {
+                LibraryError::Note(crate::NoteErrorKind::Other {
+                    description: "cli block regex produced no body capture".to_string(),
+                })
+            })?;
+            blocks.push(CliBlockMatch {
+                range: full.start()..full.end(),
+                body_range: body.start()..body.end(),
+            });
+        }
+        cli::check_unterminated_blocks(
+            data,
+            &start,
+            &blocks.iter().map(|b| b.range.clone()).collect::<Vec<_>>(),
+        )?;
+        Ok(blocks)
+    }
+
+    /// Build the textual form of a CLI block in `parser`'s comment syntax.
+    /// Re-emit a CLI block in this parser's comment syntax. Symmetric to
+    /// [`Self::construct_image_occlusion`]; used by `add_order_to_note_data`
+    /// to round-trip note data through card assembly.
+    ///
+    /// **Round-trip hazard:** if `exec` contains a line that, after
+    /// `construct_comment`, equals the `spares: cli end` comment marker
+    /// (e.g. `<!--- spares: cli end --->` in markdown), re-parsing the
+    /// output will truncate the block at that point. This is a known
+    /// limitation; multi-line `exec` values should avoid such lines.
+    fn construct_cli_block(&self, cli_data: &CliData) -> String {
+        // Build TOML `exec = "..."` with proper escaping for basic strings.
+        // Avoids `toml_edit::ser` which can fail on control characters
+        // (U+0000..=U+001F) that are illegal in TOML basic strings.
+        fn escape_toml_basic(s: &str) -> String {
+            let mut out = String::with_capacity(s.len());
+            for c in s.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '"' => out.push_str("\\\""),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    // c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+                    c if c.is_control() => {
+                        let _ = write!(out, "\\u{:04X}", c as u32);
+                    }
+                    c => out.push(c),
+                }
+            }
+            out
+        }
+        let exec_line = format!(r#"exec = "{}""#, escape_toml_basic(&cli_data.exec));
+        let mut out = String::new();
+        out.push_str(&self.construct_comment("spares: cli start"));
+        out.push_str(&self.construct_comment(&exec_line));
+        out.push_str(&self.construct_comment("spares: cli end"));
+        out
+    }
 
     fn construct_file_data(
         &self,

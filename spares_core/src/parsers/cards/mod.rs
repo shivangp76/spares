@@ -9,14 +9,19 @@ use super::FrontConceal;
 use crate::Error;
 use crate::LibraryError;
 use crate::helpers::merge_by_key;
+use crate::model::NoteId;
+use crate::parsers::CliData;
 use crate::parsers::ClozeData;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeGroupingSettings;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeSettings;
+use crate::parsers::DEFAULT_BACK_EMPHASIS;
 use crate::parsers::NotePart;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::ReadableCardIdentifier;
+use crate::parsers::cli;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionCloze;
 use crate::parsers::image_occlusion::ImageOcclusionClozeIndex;
@@ -34,16 +39,14 @@ mod match_cards;
 pub mod overlapper;
 mod validation;
 
+use std::ops::Range;
+
 pub use data::*;
 use grouping::apply_conceal_and_reveal;
 use grouping::group_clozes;
 use grouping::modify_card_settings;
 pub use match_cards::*;
 pub use validation::*;
-
-use crate::model::NoteId;
-use crate::parsers::DEFAULT_BACK_EMPHASIS;
-use crate::parsers::ReadableCardIdentifier;
 
 #[derive(Clone, Copy)]
 enum Direction {
@@ -176,6 +179,22 @@ pub fn get_cards_main(
     let mut all_clozes = merge_by_key(&text_clozes, &image_occlusion_clozes, |x| {
         x.0.start_delim.end
     });
+
+    // CLI cards (native block type, like image occlusion). A CLI block produces
+    // exactly one card reviewed by spawning an external command. Mixing CLI
+    // blocks with text clozes or image occlusions in the same note is rejected
+    // since a CLI card has no rendered form.
+    let cli_blocks = cli::parse_cli_data(parser, &data)?;
+    if !cli_blocks.is_empty() {
+        if !all_clozes.is_empty() {
+            return Err(LibraryError::Card(crate::CardErrorKind::InvalidInput(
+                "A note cannot contain both a CLI block and text/image-occlusion clozes. \
+                 Move the CLI block into its own note."
+                    .to_string(),
+            )));
+        }
+        return Ok(build_cli_cards(parser, &data, &cli_blocks, add_order));
+    }
     for cloze_data in all_clozes.iter().map(|(cloze_data, _)| cloze_data) {
         assert!(cloze_data.start_delim.start <= cloze_data.start_delim.end);
         assert!(cloze_data.start_delim.end <= cloze_data.end_delim.start);
@@ -382,9 +401,12 @@ pub fn get_cards_main(
                 && card_data
                     .iter()
                     .filter_map(|x| match x {
+                        // CLI cards contribute no cloze replacements; skip the
+                        // "all clozes hidden" check for them.
                         NotePart::SurroundingData(_)
                         | NotePart::ClozeStart(_)
-                        | NotePart::ClozeEnd(_) => None,
+                        | NotePart::ClozeEnd(_)
+                        | NotePart::Cli { .. } => None,
                         NotePart::ImageOcclusion { cloze_indices, .. } => {
                             Some(cloze_indices.iter().map(|x| &x.1).collect::<Vec<_>>())
                         }
@@ -554,8 +576,53 @@ pub fn add_order_to_note_data(
                     NotePart::ImageOcclusion { data, .. } => {
                         parser.construct_image_occlusion(data, ConstructImageOcclusionType::Note)
                     }
+                    NotePart::Cli { exec } => {
+                        parser.construct_cli_block(&CliData { exec: exec.clone() })
+                    }
                 })
                 .collect::<String>()
         });
     Ok((note_data, card_datas))
+}
+
+/// Build one [`CardData`] per CLI block. Each card's `data` consists of the
+/// surrounding text (everything outside the block, joined) followed by a
+/// [`NotePart::Cli`] with the parsed `exec`. Cards are sequenced 1..N in the
+/// order the blocks appear in the note so the database can reference them by
+/// `(note_id, order)`.
+///
+/// `_add_order` is ignored because CLI blocks have no grouping or order
+/// markers to inject — ordering is always sequential from the block's
+/// position in the note. Callers pass the same `add_order` value that would
+/// be used for cloze-grouped cards; for CLI cards it is a safe no-op.
+fn build_cli_cards(
+    _parser: &dyn Parseable,
+    data: &str,
+    cli_blocks: &[(cli::CliData, Range<usize>)],
+    _add_order: bool,
+) -> Vec<CardData> {
+    let surrounding_text = cli::compute_surrounding_text(data, cli_blocks);
+    let mut cards: Vec<CardData> = Vec::with_capacity(cli_blocks.len());
+    for (order_n, (cli_data, _range)) in cli_blocks.iter().enumerate() {
+        let order_n = order_n + 1;
+        let grouping = ClozeGrouping::Auto(order_n as u32);
+        cards.push(CardData {
+            order: Some(order_n),
+            previous_order: Some(order_n),
+            grouping,
+            is_suspended: None,
+            front_conceal: FrontConceal::default(),
+            back_reveal: BackReveal::default(),
+            back_emphasis: DEFAULT_BACK_EMPHASIS,
+            back_type: BackType::Cli,
+            inherit: None,
+            data: vec![
+                NotePart::SurroundingData(surrounding_text.clone()),
+                NotePart::Cli {
+                    exec: cli_data.exec.clone(),
+                },
+            ],
+        });
+    }
+    cards
 }

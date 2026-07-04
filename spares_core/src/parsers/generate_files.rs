@@ -365,6 +365,12 @@ fn create_raw_and_rendered_file(
         ConstructFileDataType::Card(order, _, side) => RenderOutputType::Card(order, side),
     };
 
+    // CLI cards are reviewed via an external command and have no rendered
+    // document. If this content carries a CLI block, skip rendering entirely
+    // (no pandoc/XeLaTeX run, no placeholder file needed). The raw text file
+    // is still written so future `sync` operations can re-import the note.
+    let render = render && parser.get_cli_blocks(file_contents)?.is_empty();
+
     // Write to raw file
     let output_rendered_filename = parser.get_output_filename(render_output_type, note_id);
     let mut output_text_filepath = get_output_raw_dir(

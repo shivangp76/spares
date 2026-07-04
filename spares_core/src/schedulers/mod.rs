@@ -43,6 +43,40 @@ pub trait SrsScheduler: Send + Sync {
 
     fn get_ratings(&self) -> Vec<Rating>;
 
+    /// Map a `[0, 1]` score to a [`Rating`] using continuous linear
+    /// interpolation across the ratings sorted by id (lowest id = worst,
+    /// highest id = best).
+    ///
+    /// Returns an error if the scheduler has no ratings or if `score` is
+    /// not a finite value in `[0, 1]`.
+    fn rating_from_score(&self, score: f64) -> Result<Rating, Error> {
+        if !score.is_finite() || !(0.0..=1.0).contains(&score) {
+            return Err(Error::Library(LibraryError::Scheduler(
+                SchedulerErrorKind::InvalidInput(format!(
+                    "score {score} is not a finite number in [0, 1]"
+                )),
+            )));
+        }
+        let mut ratings = self.get_ratings();
+        if ratings.is_empty() {
+            return Err(Error::Library(LibraryError::Scheduler(
+                SchedulerErrorKind::InvalidInput("scheduler returned no ratings".to_string()),
+            )));
+        }
+        ratings.sort_by_key(|r| r.id);
+        let last = ratings.len() - 1;
+        // `ratings.len()` is nowhere near 2^52, so this conversion never loses
+        // meaningful precision — silencing pedantic's blanket concern here.
+        #[allow(clippy::cast_precision_loss)]
+        let last_f64 = last as f64;
+        let position = (score * last_f64).round();
+        // `score` is guaranteed in [0, 1] so `position` is always in
+        // `[0.0, last_f64]` — never negative, never larger than `last`.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let idx = (position as usize).min(last);
+        Ok(ratings[idx].clone())
+    }
+
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error>;
 
     /// Returns a rating and when it was reviewed at

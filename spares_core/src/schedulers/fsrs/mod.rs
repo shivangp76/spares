@@ -79,12 +79,18 @@ impl SrsScheduler for FSRS {
     }
 
     fn get_ratings(&self) -> Vec<Rating> {
-        rs_fsrs::Rating::iter()
-            .map(|fsrs_rating| Rating {
-                id: rating_to_number(*fsrs_rating),
-                description: format!("{:?}", fsrs_rating),
+        use std::sync::OnceLock;
+        static RATINGS: OnceLock<Vec<Rating>> = OnceLock::new();
+        RATINGS
+            .get_or_init(|| {
+                rs_fsrs::Rating::iter()
+                    .map(|fsrs_rating| Rating {
+                        id: rating_to_number(*fsrs_rating),
+                        description: format!("{:?}", fsrs_rating),
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>()
+            .clone()
     }
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
