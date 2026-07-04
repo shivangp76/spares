@@ -280,7 +280,7 @@ fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
         Op::And | Op::Or => (3, 4),
         Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual => (6, 5),
         Op::Equal | Op::Tilde => (11, 10),
-        Op::Colon => (9, 8),
+        Op::Colon => (13, 12),
         // Op::Field => (16, 15),
         _ => return None,
     };
