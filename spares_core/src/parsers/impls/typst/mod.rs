@@ -10,6 +10,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::config::get_cache_dir;
+use crate::parsers::CliData;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -238,6 +239,10 @@ impl Parseable for TypstParser {
                             );
                             image_occlusion_order += 1;
                             image_occlusion
+                        }
+                        NotePart::Cli { .. } => {
+                            // CLI cards are not rendered; emit nothing here.
+                            String::new()
                         }
                         NotePart::ClozeStart(_) | NotePart::ClozeEnd(_) => String::new(),
                     })

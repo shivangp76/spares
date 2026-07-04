@@ -25,9 +25,10 @@ pub fn validate_cards(cards: &[CardData]) -> Result<(), LibraryError> {
                 .data
                 .iter()
                 .any(|p| matches!(p, NotePart::ClozeData(_, _)))
+            && !cd.data.iter().any(|p| matches!(p, NotePart::Cli { .. }))
     }) {
         return Err(LibraryError::Card(CardErrorKind::MissingField(
-            "Cloze or Image Occlusion".to_string(),
+            "Cloze, Image Occlusion, or Cli".to_string(),
         )));
     }
     Ok(())

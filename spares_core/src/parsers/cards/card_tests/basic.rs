@@ -432,3 +432,45 @@ fn test_get_cloze_context_for_card_order_typst_proof() {
         "ctx2 should include outside cloze: {ctx2}"
     );
 }
+
+#[test]
+fn test_get_cards_cli_block_produces_single_card() {
+    use indoc::indoc;
+    let data = indoc! {r#"
+        Run the test suite and recall score.
+        <!--- spares: cli start --->
+        <!--- exec = "pytest tests/" --->
+        <!--- spares: cli end --->
+    "#};
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.back_type, BackType::Cli);
+    assert_eq!(card.order, Some(1));
+    assert!(card.data.iter().any(|p| matches!(p, NotePart::Cli { .. })));
+    assert!(
+        card.data
+            .iter()
+            .any(|p| matches!(p, NotePart::SurroundingData(_)))
+    );
+}
+
+#[test]
+fn test_get_cards_cli_block_mix_with_cloze_errors() {
+    use indoc::indoc;
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- spares: cli end --->
+        {{ should not be allowed }}
+    "#};
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let result = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
+    assert!(result.is_err(), "expected mutual-exclusion error");
+    let msg = format!("{}", result.unwrap_err());
+    assert!(
+        msg.contains("cannot contain both a CLI block"),
+        "unexpected error: {msg}"
+    );
+}

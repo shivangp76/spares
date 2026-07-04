@@ -458,6 +458,19 @@ pub mod review {
         Note(PathBuf),
     }
 
+    /// Review info for a CLI card. The spares CLI uses `exec` to spawn an
+    /// external command, reads a JSON score from its trailing stdout, and
+    /// submits the score to the server's `rating_from_score` endpoint.
+    /// `surrounding` is the note text outside all CLI blocks, printed
+    /// verbatim in the terminal before exec runs.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct CliReviewInfo {
+        pub exec: String,
+        /// The surrounding note text (everything outside CLI blocks), printed
+        /// in the terminal before exec runs.
+        pub surrounding: String,
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ReviewLinkedNote {
         pub searched_keyword: String,
@@ -491,13 +504,16 @@ pub mod review {
         pub note_raw_path: PathBuf,
         pub parser_name: String,
         pub keywords: Vec<String>,
+        /// Present iff this card is a CLI card.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub cli: Option<CliReviewInfo>,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
         pub linked_notes: Vec<ReviewLinkedNote>,
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct Rating {
         pub id: RatingId,
         pub description: String,

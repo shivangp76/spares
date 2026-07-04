@@ -13,6 +13,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
 use crate::config::read_external_config;
+use crate::parsers::CliData;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -246,6 +247,12 @@ impl Parseable for MarkdownParser {
                             );
                             image_occlusion_order += 1;
                             image_occlusion
+                        }
+                        NotePart::Cli { .. } => {
+                            // CLI cards are not rendered; emit nothing for the
+                            // card file. The block is retained on the note via
+                            // `add_order_to_note_data`, not here.
+                            String::new()
                         }
                         NotePart::ClozeStart(_) | NotePart::ClozeEnd(_) => String::new(),
                     })

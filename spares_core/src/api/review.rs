@@ -44,6 +44,8 @@ use crate::model::Tag;
 use crate::parsers::BackType;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::cli::compute_surrounding_text;
+use crate::parsers::cli::parse_cli_data;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
@@ -51,6 +53,7 @@ use crate::parsers::get_output_raw_dir;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::review::CardBackRenderedPath;
+use crate::schema::review::CliReviewInfo;
 use crate::schema::review::GetReviewCardFilterRequest;
 use crate::schema::review::GetReviewCardRequest;
 use crate::schema::review::GetReviewCardResponse;
@@ -76,6 +79,16 @@ struct ReviewCard {
     card_back_type: BackType,
     card_id: i64,
     card_state: StateId,
+}
+
+/// Fetch the raw note text for a CLI card. Only called when the card's
+/// `back_type` is [`BackType::Cli`]; non-CLI cards skip this query entirely.
+async fn fetch_note_data_for_cli(db: &SqlitePool, note_id: NoteId) -> Result<String, Error> {
+    sqlx::query_scalar(r"SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -121,6 +134,7 @@ async fn get_linked_notes_for_review(
     Ok(linked_notes)
 }
 
+#[expect(clippy::too_many_lines)]
 fn build_review_card_response(
     ReviewCard {
         note_id,
@@ -130,6 +144,7 @@ fn build_review_card_response(
         card_id,
         card_state,
     }: ReviewCard,
+    note_data: Option<String>,
     cards_left_by_state: HashMap<StateId, u32>,
     time_estimate: Duration,
     all_parsers: &[fn() -> Box<dyn Parseable>],
@@ -165,7 +180,7 @@ fn build_review_card_response(
     let note_raw_path = maybe_relativize(note_raw_path);
 
     let card_back_rendered_path = match card_back_type {
-        BackType::NoteFilePath => {
+        BackType::NoteFilePath | BackType::Cli => {
             let mut note_rendered_path =
                 parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
             note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
@@ -183,7 +198,7 @@ fn build_review_card_response(
     };
 
     let card_back_raw_path = match card_back_type {
-        BackType::NoteFilePath => {
+        BackType::NoteFilePath | BackType::Cli => {
             let mut path =
                 get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
             path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
@@ -205,6 +220,45 @@ fn build_review_card_response(
         }
     };
 
+    // CLI cards: re-parse the note's `data` for `spares: cli start…end` blocks
+    // and surface the block matching this card's `order` (1-based) so the
+    // review loop can spawn `exec` and read a score from its stdout. Only
+    // CLI cards have `BackType::Cli`; for everything else `cli` is `None`.
+    let cli = if matches!(card_back_type, BackType::Cli) {
+        let note_data = note_data.ok_or_else(|| {
+            Error::Library(LibraryError::Card(crate::CardErrorKind::InvalidInput(
+                format!(
+                    "Note {} card {} is a CLI card (BackType::Cli) but note data was not loaded.",
+                    note_id, card_order
+                ),
+            )))
+        })?;
+        let cli_blocks = parse_cli_data(parser.as_ref(), &note_data)?;
+        let cli_block = cli_blocks
+            .get(
+                card_order
+                    .checked_sub(1)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .unwrap_or(usize::MAX),
+            )
+            .map(|(cli_data, _range)| cli_data)
+            .ok_or_else(|| {
+                Error::Library(LibraryError::Card(crate::CardErrorKind::InvalidInput(
+                    format!(
+                        "Note {} card {} is a CLI card (BackType::Cli) but no \
+                         matching `spares: cli start` block was found in note data.",
+                        note_id, card_order
+                    ),
+                )))
+            })?;
+        Some(CliReviewInfo {
+            exec: cli_block.exec.clone(),
+            surrounding: compute_surrounding_text(&note_data, &cli_blocks),
+        })
+    } else {
+        None
+    };
+
     Ok(GetReviewCardResponse {
         note_id,
         card_order,
@@ -217,6 +271,7 @@ fn build_review_card_response(
         note_raw_path,
         parser_name,
         keywords,
+        cli,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -436,6 +491,11 @@ pub async fn get_review_card(
     .await?;
 
     if let Some(review_card) = review_card_opt {
+        let note_data = if matches!(review_card.card_back_type, BackType::Cli) {
+            Some(fetch_note_data_for_cli(db, review_card.note_id).await?)
+        } else {
+            None
+        };
         let linked_notes =
             get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
         let keywords: Vec<String> =
@@ -446,6 +506,7 @@ pub async fn get_review_card(
                 .map_err(|e| Error::Sqlx { source: e })?;
         return Ok(Some(build_review_card_response(
             review_card,
+            note_data,
             cards_left_by_state,
             time_estimate,
             all_parsers,
@@ -482,6 +543,11 @@ pub async fn get_review_card_by_id(
 
     match review_card_opt {
         Some(review_card) => {
+            let note_data = if matches!(review_card.card_back_type, BackType::Cli) {
+                Some(fetch_note_data_for_cli(db, review_card.note_id).await?)
+            } else {
+                None
+            };
             let linked_notes =
                 get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
             let keywords: Vec<String> =
@@ -522,6 +588,7 @@ pub async fn get_review_card_by_id(
 
             Ok(Some(build_review_card_response(
                 review_card,
+                note_data,
                 cards_left_by_state,
                 time_estimate,
                 all_parsers,

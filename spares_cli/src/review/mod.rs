@@ -23,9 +23,11 @@ use spares_core::parsers::get_all_parsers;
 use spares_core::schema::note::NotesSelector;
 use spares_core::schema::note::RenderNotesRequest;
 use spares_core::schema::review::CardBackRenderedPath;
+use spares_core::schema::review::CliReviewInfo;
 use spares_core::schema::review::GetReviewCardFilterRequest;
 use spares_core::schema::review::GetReviewCardRequest;
 use spares_core::schema::review::GetReviewCardResponse;
+use spares_core::schema::review::Rating;
 use spares_core::schema::review::RatingSubmission;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::StatisticsResponse;
@@ -40,11 +42,14 @@ use utils::bury_note;
 use utils::bury_until_later_today;
 use utils::close_rendered_file;
 use utils::format_duration;
+use utils::get_rating_from_score;
 use utils::get_scheduler_ratings;
 use utils::open_rendered_file;
+use utils::parse_cli_score;
 use utils::print_rate_duration;
 use utils::print_recall_duration;
 use utils::print_summary;
+use utils::spawn_cli_exec;
 use utils::submit_rating;
 use utils::suspend_cards;
 use utils::suspend_note;
@@ -139,7 +144,7 @@ async fn get_review_card(
     base_url: &str,
     client: &Client,
     first: bool,
-) -> Result<Option<(GetReviewCardResponse, Child)>, String> {
+) -> Result<Option<(GetReviewCardResponse, Option<Child>)>, String> {
     let url = format!("{}/api/review", base_url);
     let filter = if let Some(ref query) = filter_args.query {
         Some(GetReviewCardFilterRequest::Query(query.clone()))
@@ -183,22 +188,28 @@ async fn get_review_card(
 
     match review_card_response {
         Some(review_card) => {
-            // Open rendered card
-            let child = open_rendered_file(
-                review_card.card_front_rendered_path.as_ref(),
-                open_command,
-                first,
-            )?;
+            let is_cli = review_card.cli.is_some();
+            // Open rendered card. CLI cards have no rendered document;
+            // their review is driven by an external command spawned later in
+            // the loop, so there is nothing to open here.
+            let child = if is_cli {
+                None
+            } else {
+                Some(open_rendered_file(
+                    review_card.card_front_rendered_path.as_ref(),
+                    open_command,
+                    first,
+                )?)
+            };
             println!("Note Id: {}", &review_card.note_id);
             println!("Card Id: {}", &review_card.card_id);
-            println!(
-                "Card Front File Name: {:?}",
-                &review_card
+            if !is_cli {
+                let file_name = review_card
                     .card_front_rendered_path
                     .file_name()
-                    .unwrap()
-                    .display()
-            );
+                    .map_or_else(|| "<unknown>".to_string(), |f| f.display().to_string());
+                println!("Card Front File Name: {file_name:?}");
+            }
 
             // Display cards left by state
             if !review_card.cards_left_by_state.is_empty() {
@@ -225,6 +236,10 @@ async fn get_review_card(
                     .with_timezone(&Local)
                     .format("%H:%M:%S %P (%m-%d-%Y)")
             );
+
+            if is_cli && let Some(cli) = &review_card.cli {
+                println!("\n{}", cli.surrounding);
+            }
 
             Ok(Some((review_card, child)))
         }
@@ -392,6 +407,116 @@ fn spawn_stats_fetch(
     stats_rx
 }
 
+async fn setup_cli_card_state(
+    review_card_response: &GetReviewCardResponse,
+    scheduler_name: &str,
+    base_url: &str,
+    client: &Client,
+) -> Result<(Rating, Duration), String> {
+    let CliReviewInfo {
+        exec,
+        surrounding: _,
+    } = review_card_response
+        .cli
+        .as_ref()
+        .ok_or_else(|| "CLI card response missing `cli` field".to_string())?;
+
+    let (stdout, recall_duration) = spawn_cli_exec(exec).await?;
+    let score = parse_cli_score(&stdout)?;
+    let rating = get_rating_from_score(scheduler_name, score, base_url, client).await?;
+    println!("cli score: {:.3} → {}", score, rating.description);
+    Ok((rating, recall_duration))
+}
+
+fn build_action_menu(
+    all_options: &[ReviewAction],
+    card_flipped: bool,
+    cli_rating: Option<Rating>,
+) -> Vec<ReviewAction> {
+    let is_cli = cli_rating.is_some();
+    let mut options: Vec<ReviewAction> = all_options
+        .iter()
+        .filter(|x| {
+            if is_cli {
+                !matches!(
+                    **x,
+                    ReviewAction::Flip | ReviewAction::Rate { .. } | ReviewAction::Loop
+                )
+            } else if card_flipped {
+                !matches!(**x, ReviewAction::Flip)
+            } else {
+                !matches!(**x, ReviewAction::Rate { .. } | ReviewAction::Loop)
+            }
+        })
+        .cloned()
+        .collect();
+    if let Some(rating) = cli_rating {
+        options.insert(
+            0,
+            ReviewAction::Rate {
+                id: rating.id,
+                description: rating.description,
+            },
+        );
+    }
+    options
+}
+
+/// Result of handling a CLI exec error.
+enum CliExecErrorAction {
+    Exit,
+    Advance,
+}
+
+/// Show an error prompt for a failed CLI exec and return the chosen action.
+fn handle_cli_exec_error(
+    e: &str,
+    stats_rx: &mut mpsc::UnboundedReceiver<StatisticsResponse>,
+    session_start: Instant,
+    session_recall_duration: Duration,
+    session_rate_duration: Duration,
+    reviewed_cards_count: u32,
+) -> CliExecErrorAction {
+    println!("Error reviewing cli card: {e}");
+    let mut select = Select::new("Action:", vec![ReviewAction::Loop, ReviewAction::Exit]);
+    select.vim_mode = true;
+    match select.prompt() {
+        Ok(ReviewAction::Exit) | Err(_) => {
+            let day_stats = stats_rx.try_recv().ok();
+            print_summary(
+                session_start,
+                session_recall_duration,
+                session_rate_duration,
+                reviewed_cards_count,
+                day_stats,
+            );
+            CliExecErrorAction::Exit
+        }
+        Ok(_) => CliExecErrorAction::Advance,
+    }
+}
+
+/// Apply the result of a successful CLI card setup to the review loop state.
+#[expect(clippy::too_many_arguments)]
+fn apply_cli_setup_state(
+    rating: Rating,
+    exec_duration: Duration,
+    pending_cli_rating: &mut Option<Rating>,
+    recall_duration: &mut Option<Duration>,
+    session_recall_duration: &mut Duration,
+    card_flipped: &mut bool,
+    rate_start: &mut Instant,
+    rate_duration: &mut Option<Duration>,
+) {
+    *pending_cli_rating = Some(rating);
+    *recall_duration = Some(exec_duration);
+    *session_recall_duration += exec_duration;
+    print_recall_duration(exec_duration);
+    *card_flipped = true;
+    *rate_start = Instant::now();
+    *rate_duration = None;
+}
+
 #[expect(clippy::too_many_lines)]
 pub(crate) async fn review_cards(
     review_args: ReviewArgs,
@@ -450,7 +575,41 @@ pub(crate) async fn review_cards(
     let mut rate_duration = None;
     let mut last_action_event_id: Option<i64> = None;
     let mut last_action_was_rating = false;
+    let mut pending_cli_rating: Option<Rating> = None;
     let mut sync_advance_needed = false;
+
+    if review_card_response.cli.is_some() {
+        match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client).await {
+            Ok((rating, exec_duration)) => {
+                apply_cli_setup_state(
+                    rating,
+                    exec_duration,
+                    &mut pending_cli_rating,
+                    &mut recall_duration,
+                    &mut session_recall_duration,
+                    &mut card_flipped,
+                    &mut rate_start,
+                    &mut rate_duration,
+                );
+            }
+            Err(e) => {
+                if matches!(
+                    handle_cli_exec_error(
+                        e.as_str(),
+                        &mut stats_rx,
+                        session_start,
+                        session_recall_duration,
+                        session_rate_duration,
+                        reviewed_cards_count,
+                    ),
+                    CliExecErrorAction::Exit,
+                ) {
+                    return Ok(());
+                }
+                advance_review_card = true;
+            }
+        }
+    }
 
     loop {
         if advance_review_card || sync_advance_needed {
@@ -482,24 +641,51 @@ pub(crate) async fn review_cards(
                 return Ok(());
             }
             (review_card_response, card_front_rendered_child) = review_card_opt.unwrap();
+
+            pending_cli_rating = None;
+            card_flipped = false;
+            if review_card_response.cli.is_some() {
+                match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client)
+                    .await
+                {
+                    Ok((rating, exec_duration)) => {
+                        apply_cli_setup_state(
+                            rating,
+                            exec_duration,
+                            &mut pending_cli_rating,
+                            &mut recall_duration,
+                            &mut session_recall_duration,
+                            &mut card_flipped,
+                            &mut rate_start,
+                            &mut rate_duration,
+                        );
+                    }
+                    Err(e) => {
+                        if matches!(
+                            handle_cli_exec_error(
+                                e.as_str(),
+                                &mut stats_rx,
+                                session_start,
+                                session_recall_duration,
+                                session_rate_duration,
+                                reviewed_cards_count,
+                            ),
+                            CliExecErrorAction::Exit,
+                        ) {
+                            return Ok(());
+                        }
+                        advance_review_card = true;
+                        continue;
+                    }
+                }
+            }
         }
         // Ask user for action
-        let options = all_options
-            .iter()
-            .filter(|x| {
-                if card_flipped {
-                    !matches!(*x, ReviewAction::Flip)
-                } else {
-                    !matches!(*x, ReviewAction::Rate { .. } | ReviewAction::Loop)
-                }
-            })
-            .collect::<Vec<_>>();
+        let options = build_action_menu(&all_options, card_flipped, pending_cli_rating.clone());
         let mut select = Select::new("Action:", options);
         select.vim_mode = true;
         select.page_size = 10;
-        let chosen_action_res = select.prompt();
-        if chosen_action_res.is_err() {
-            // The user exited. (Probably pressed Escape).
+        let Ok(chosen_action) = select.prompt() else {
             let day_stats = stats_rx.try_recv().ok();
             print_summary(
                 session_start,
@@ -509,11 +695,10 @@ pub(crate) async fn review_cards(
                 day_stats,
             );
             return Ok(());
-        }
-        let chosen_action = chosen_action_res.as_ref().unwrap();
+        };
 
         advance_review_card = false;
-        match chosen_action {
+        match &chosen_action {
             ReviewAction::Loop => {}
             ReviewAction::Rate {
                 description: _,
@@ -522,11 +707,9 @@ pub(crate) async fn review_cards(
                 card_flipped = false;
 
                 // Close card back
-                close_rendered_file(
-                    &mut card_back_rendered_child.take().unwrap(),
-                    close_command,
-                    false,
-                )?;
+                if let Some(mut child) = card_back_rendered_child.take() {
+                    close_rendered_file(&mut child, close_command, false)?;
+                }
 
                 // Rate duration
                 let rate_duration_local = rate_duration.unwrap_or(rate_start.elapsed());
@@ -538,8 +721,12 @@ pub(crate) async fn review_cards(
                 let rating_submission = RatingSubmission {
                     card_id: review_card_response.card_id,
                     rating: *rating_id,
-                    recall_duration: chrono::Duration::from_std(recall_duration.unwrap()).unwrap(),
-                    rate_duration: chrono::Duration::from_std(rate_duration_local).unwrap(),
+                    recall_duration: chrono::Duration::from_std(
+                        recall_duration.expect("recall_duration set before Rate"),
+                    )
+                    .expect("recall_duration fits chrono::Duration"),
+                    rate_duration: chrono::Duration::from_std(rate_duration_local)
+                        .expect("rate_duration_local fits chrono::Duration"),
                     tag_id,
                 };
                 last_action_event_id =
@@ -560,7 +747,9 @@ pub(crate) async fn review_cards(
                 card_flipped = true;
 
                 // Close card
-                close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
+                if let Some(child) = card_front_rendered_child.as_mut() {
+                    close_rendered_file(child, close_command, false)?;
+                }
 
                 // Open card back to see answer
                 // The duration is calculated before the card back is opened since the user already
@@ -572,8 +761,9 @@ pub(crate) async fn review_cards(
                 // recorded during `OpenNote`.
                 if recall_duration.is_none() {
                     recall_duration = Some(recall_start.elapsed());
-                    session_recall_duration += recall_duration.unwrap();
-                    print_recall_duration(recall_duration.unwrap());
+                    let rd = recall_duration.expect("recall_duration set in Flip guard");
+                    session_recall_duration += rd;
+                    print_recall_duration(rd);
                 }
                 let card_back_rendered_path = match &review_card_response.card_back_rendered_path {
                     CardBackRenderedPath::CardBack(path_buf)
@@ -598,8 +788,9 @@ pub(crate) async fn review_cards(
                     rate_duration = Some(rate_start.elapsed());
                 } else {
                     recall_duration = Some(recall_start.elapsed());
-                    session_recall_duration += recall_duration.unwrap();
-                    print_recall_duration(recall_duration.unwrap());
+                    let rd = recall_duration.expect("recall_duration set in OpenNote guard");
+                    session_recall_duration += rd;
+                    print_recall_duration(rd);
                 }
                 let open_note_res = open::that_detached(&review_card_response.note_raw_path);
                 if let Err(e) = open_note_res {
@@ -652,7 +843,7 @@ pub(crate) async fn review_cards(
             | ReviewAction::SetNoteDueDateIn(_)
             | ReviewAction::BuryUntilLaterToday => {
                 last_action_was_rating = false;
-                match chosen_action {
+                match &chosen_action {
                     ReviewAction::BuryCard => {
                         last_action_event_id = bury_card(
                             scheduler_name,
@@ -756,14 +947,14 @@ pub(crate) async fn review_cards(
                 }
                 if card_flipped {
                     // Close card back
-                    close_rendered_file(
-                        &mut card_back_rendered_child.take().unwrap(),
-                        close_command,
-                        false,
-                    )?;
+                    if let Some(mut child) = card_back_rendered_child.take() {
+                        close_rendered_file(&mut child, close_command, false)?;
+                    }
                 } else {
                     // Close card front
-                    close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
+                    if let Some(child) = card_front_rendered_child.as_mut() {
+                        close_rendered_file(child, close_command, false)?;
+                    }
                 }
                 card_flipped = false;
 
@@ -805,20 +996,18 @@ pub(crate) async fn review_cards(
                 });
             }
             ReviewAction::Undo => {
-                if card_flipped {
+                if card_flipped && pending_cli_rating.is_none() {
                     // Close card back
-                    close_rendered_file(
-                        &mut card_back_rendered_child.take().unwrap(),
-                        close_command,
-                        false,
-                    )?;
+                    if let Some(mut child) = card_back_rendered_child.take() {
+                        close_rendered_file(&mut child, close_command, false)?;
+                    }
 
                     // Reopen card front for the current card
-                    card_front_rendered_child = open_rendered_file(
+                    card_front_rendered_child = Some(open_rendered_file(
                         &review_card_response.card_front_rendered_path,
                         open_command,
                         false,
-                    )?;
+                    )?);
 
                     card_flipped = false;
 
@@ -831,7 +1020,9 @@ pub(crate) async fn review_cards(
                     rate_duration = None;
                 } else {
                     // Close card front
-                    close_rendered_file(&mut card_front_rendered_child, close_command, false)?;
+                    if let Some(child) = card_front_rendered_child.as_mut() {
+                        close_rendered_file(child, close_command, false)?;
+                    }
 
                     // Undo the latest review action, using the tracked event id so that
                     // background syncs in another window don't cause the wrong event to be undone.
@@ -859,7 +1050,9 @@ pub(crate) async fn review_cards(
                 }
             }
             ReviewAction::Exit => {
-                close_rendered_file(&mut card_front_rendered_child, close_command, true)?;
+                if let Some(child) = card_front_rendered_child.as_mut() {
+                    close_rendered_file(child, close_command, true)?;
+                }
                 if let Some(mut child) = card_back_rendered_child {
                     close_rendered_file(&mut child, close_command, true)?;
                 }
@@ -892,27 +1085,34 @@ pub(crate) async fn review_cards(
                                     "[Note Id: {}] Current card refreshed after sync (card order may have changed).",
                                     synced_note_id
                                 );
+                                let is_cli = new_response.cli.is_some();
                                 if card_flipped {
                                     if let Some(mut child) = card_back_rendered_child.take() {
                                         close_rendered_file(&mut child, close_command, false)?;
                                     }
-                                    let back_path = match &new_response.card_back_rendered_path {
-                                        CardBackRenderedPath::CardBack(p)
-                                        | CardBackRenderedPath::Note(p) => p.clone(),
-                                    };
-                                    card_back_rendered_child =
-                                        Some(open_rendered_file(&back_path, open_command, false)?);
+                                    if !is_cli {
+                                        let back_path = match &new_response.card_back_rendered_path
+                                        {
+                                            CardBackRenderedPath::CardBack(p)
+                                            | CardBackRenderedPath::Note(p) => p.clone(),
+                                        };
+                                        card_back_rendered_child = Some(open_rendered_file(
+                                            &back_path,
+                                            open_command,
+                                            false,
+                                        )?);
+                                    }
                                 } else {
-                                    close_rendered_file(
-                                        &mut card_front_rendered_child,
-                                        close_command,
-                                        false,
-                                    )?;
-                                    card_front_rendered_child = open_rendered_file(
-                                        &new_response.card_front_rendered_path,
-                                        open_command,
-                                        false,
-                                    )?;
+                                    if let Some(child) = card_front_rendered_child.as_mut() {
+                                        close_rendered_file(child, close_command, false)?;
+                                    }
+                                    if !is_cli {
+                                        card_front_rendered_child = Some(open_rendered_file(
+                                            &new_response.card_front_rendered_path,
+                                            open_command,
+                                            false,
+                                        )?);
+                                    }
                                 }
                                 review_card_response = new_response;
                             }
@@ -925,12 +1125,8 @@ pub(crate) async fn review_cards(
                                     if let Some(mut child) = card_back_rendered_child.take() {
                                         close_rendered_file(&mut child, close_command, false)?;
                                     }
-                                } else {
-                                    close_rendered_file(
-                                        &mut card_front_rendered_child,
-                                        close_command,
-                                        false,
-                                    )?;
+                                } else if let Some(child) = card_front_rendered_child.as_mut() {
+                                    close_rendered_file(child, close_command, false)?;
                                 }
                                 card_flipped = false;
                                 sync_advance_needed = true;
