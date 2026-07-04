@@ -8,6 +8,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::parsers::CardData;
+use crate::parsers::CliData;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
@@ -67,6 +68,16 @@ pub enum NotePart {
         // `FrontConceal::AllGroupings` or `BackReveal::OnlyAnswered`.
         cloze_indices: Vec<(usize, ClozeHiddenReplacement)>,
         data: Arc<ImageOcclusionData>,
+    },
+    /// A card whose review is driven by an external CLI command rather than a
+    /// rendered document. At review time the spares CLI spawns `exec`, reads a
+    /// floating-point score from the last non-empty JSON object on its stdout,
+    /// and submits it to the server's `rating_from_score` endpoint to get a
+    /// scheduler rating. The card has no rendered back (`BackType::Cli`);
+    /// the surrounding text in the note is printed in the terminal before
+    /// exec runs.
+    Cli {
+        exec: String,
     },
 }
 
@@ -192,6 +203,7 @@ fn complete_note(
                 | NotePart::ClozeData(text, _) => text,
                 NotePart::ImageOcclusion { data, .. } => output_parser
                     .construct_image_occlusion(&data, ConstructImageOcclusionType::Note),
+                NotePart::Cli { exec } => output_parser.construct_cli_block(&CliData { exec }),
             })
             .collect::<String>()
     } else {

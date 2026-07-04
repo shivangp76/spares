@@ -171,6 +171,8 @@ pub enum SchedulerErrorKind {
     InvalidState(StateId),
     #[error("Invalid rating. Received `{0}`.")]
     InvalidRating(RatingId),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
     #[error("`{scheduler_name}` scheduler returned an error: {error}")]
     Custom {
         scheduler_name: String,

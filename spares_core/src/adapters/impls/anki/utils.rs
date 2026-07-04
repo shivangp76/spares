@@ -135,6 +135,11 @@ impl AnkiAdapter {
                 NotePart::ImageOcclusion { data, .. } => {
                     parser.construct_image_occlusion(data, ConstructImageOcclusionType::Note)
                 }
+                NotePart::Cli { .. } => {
+                    // Anki adapter does not support CLI cards (no rendered form);
+                    // emit nothing.
+                    String::new()
+                }
             })
             .collect::<String>()
     }

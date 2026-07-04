@@ -40,6 +40,7 @@ use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::submit_study_action_handler;
+use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::tag::create_tag_handler;
 use crate::handlers::tag::delete_tag_handler;
@@ -108,6 +109,10 @@ pub(crate) fn create_router(
         .route(
             "/api/scheduler/{name}/ratings",
             get(get_scheduler_ratings_handler),
+        )
+        .route(
+            "/api/scheduler/{name}/rating",
+            get(get_rating_from_score_handler),
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))

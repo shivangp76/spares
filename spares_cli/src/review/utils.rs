@@ -33,6 +33,7 @@ use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::schema::review::SubmitStudyActionResponse;
 use spares_core::search::QueryReturnItemType;
+use tokio::io::AsyncBufReadExt;
 
 use super::ReviewAction;
 
@@ -534,12 +535,14 @@ pub(super) fn format_duration(duration: chrono::Duration) -> String {
 }
 
 pub(super) fn print_recall_duration(recall_duration: Duration) {
-    let duration = chrono::Duration::from_std(recall_duration).unwrap();
+    let duration =
+        chrono::Duration::from_std(recall_duration).expect("recall_duration fits chrono::Duration");
     println!("Recall Duration: {}", format_duration(duration));
 }
 
 pub(super) fn print_rate_duration(rate_duration: Duration) {
-    let duration = chrono::Duration::from_std(rate_duration).unwrap();
+    let duration =
+        chrono::Duration::from_std(rate_duration).expect("rate_duration fits chrono::Duration");
     println!("Rate Duration: {}", format_duration(duration));
 }
 
@@ -551,9 +554,12 @@ pub(super) fn print_summary(
     day_stats: Option<StatisticsResponse>,
 ) {
     if cards_studied_count > 0 {
-        let session_duration = chrono::Duration::from_std(session_start.elapsed()).unwrap();
-        let session_recall_duration = chrono::Duration::from_std(session_recall_duration).unwrap();
-        let session_rate_duration = chrono::Duration::from_std(session_rate_duration).unwrap();
+        let session_duration = chrono::Duration::from_std(session_start.elapsed())
+            .expect("session_duration fits chrono::Duration");
+        let session_recall_duration = chrono::Duration::from_std(session_recall_duration)
+            .expect("session_recall_duration fits chrono::Duration");
+        let session_rate_duration = chrono::Duration::from_std(session_rate_duration)
+            .expect("session_rate_duration fits chrono::Duration");
         println!();
         println!("--- Session Statistics ---");
         println!("Total Cards Reviewed:   {:?}", cards_studied_count);
@@ -589,5 +595,217 @@ pub(super) fn print_summary(
                 format_duration(day_recall_duration + day_rate_duration)
             );
         }
+    }
+}
+
+/// Read the final non-empty line of an external command's stdout and parse it
+/// as a JSON object of the form `{"score": <f64 in [0,1]>}`. Any other shape
+/// is rejected; this is a strict contract — bare floats are not accepted.
+pub(super) fn parse_cli_score(stdout: &str) -> Result<f64, String> {
+    let last_line = stdout
+        .lines()
+        .map(|l| l.trim())
+        .rfind(|l| !l.is_empty())
+        .ok_or_else(|| "CLI exec produced no score on stdout".to_string())?;
+    if !last_line.trim_start().starts_with('{') {
+        return Err(format!(
+            "CLI exec score must be a JSON object (got `{last_line}`). For example, emit \
+             `{{\"score\": 0.83}}` as the last non-empty stdout line."
+        ));
+    }
+    let value: Value = serde_json::from_str(last_line)
+        .map_err(|e| format!("Could not parse JSON from `{last_line}`: {e}"))?;
+    let score = value
+        .get("score")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| format!("JSON `{last_line}` is missing a numeric `score` field"))?;
+    if !(0.0..=1.0).contains(&score) {
+        return Err(format!("CLI exec score {score} is out of range [0, 1]"));
+    }
+    Ok(score)
+}
+
+/// Spawn an external `cli`-parser exec command interactively with a
+/// 30-minute timeout. stdin and stderr are inherited so the child (e.g.
+/// `poker_trainer`'s `inquire` prompts) can use the TTY directly; stdout is
+/// piped and read line-by-line with a 1 MiB cap. Returns (last non-empty
+/// stdout line, elapsed wall-clock duration).
+///
+/// # Trust model
+/// `exec` comes from the note's `spares: cli` block and is run through
+/// `sh -c` without sanitisation. CLI cards should only be used with notes
+/// from trusted sources (i.e. authored by the same user).
+pub(super) async fn spawn_cli_exec(exec: &str) -> Result<(String, Duration), String> {
+    const MAX_STDOUT_BYTES: usize = 1_048_576; // 1 MiB
+    const EXEC_TIMEOUT: Duration = Duration::from_secs(1800); // 30 min
+
+    let exec_owned = exec.to_string();
+    let result = tokio::time::timeout(EXEC_TIMEOUT, async move {
+        let recall_start = Instant::now();
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&exec_owned)
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn cli exec `{exec_owned}`: {e}"))?;
+
+        let stdout_handle = child
+            .stdout
+            .take()
+            .ok_or_else(|| "No stdout pipe".to_string())?;
+
+        let mut reader = tokio::io::BufReader::new(stdout_handle);
+        let mut line = String::new();
+        let mut total_bytes = 0usize;
+        let mut last_non_empty_line = String::new();
+
+        loop {
+            line.clear();
+            let n = reader
+                .read_line(&mut line)
+                .await
+                .map_err(|e| format!("Failed to read stdout: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            total_bytes += n;
+            if total_bytes > MAX_STDOUT_BYTES {
+                return Err(format!(
+                    "cli exec `{exec_owned}` produced more than {} bytes of stdout",
+                    MAX_STDOUT_BYTES
+                ));
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                last_non_empty_line = trimmed.to_string();
+            }
+        }
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| format!("Failed to wait on child: {e}"))?;
+        let recall_duration = recall_start.elapsed();
+
+        if !status.success() {
+            let excerpt = if last_non_empty_line.len() > 256 {
+                format!("{}... (truncated)", &last_non_empty_line[..256])
+            } else {
+                last_non_empty_line.clone()
+            };
+            return Err(format!(
+                "cli exec `{exec_owned}` exited with status {}\nlast stdout line: {}",
+                status, excerpt
+            ));
+        }
+
+        Ok((last_non_empty_line, recall_duration))
+    })
+    .await;
+
+    result.map_err(|_| {
+        format!(
+            "cli exec `{exec}` timed out after {}s",
+            EXEC_TIMEOUT.as_secs()
+        )
+    })?
+}
+
+/// Fetch a scheduler rating for a `[0, 1]` score via the server's
+/// `rating_from_score` endpoint. Returns an error immediately if `score`
+/// is not a finite number in `[0, 1]` (defense in depth).
+pub(super) async fn get_rating_from_score(
+    scheduler_name: &str,
+    score: f64,
+    base_url: &str,
+    client: &Client,
+) -> Result<Rating, String> {
+    if !score.is_finite() || !(0.0..=1.0).contains(&score) {
+        return Err(format!("score {score} is not a finite number in [0, 1]"));
+    }
+    let url = format!(
+        "{}/api/scheduler/{}/rating?score={}",
+        base_url, scheduler_name, score
+    );
+    client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("rating_from_score request failed: {e}"))?
+        .json::<Rating>()
+        .await
+        .map_err(|e| format!("rating_from_score decode failed: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_cli_score;
+
+    #[test]
+    fn parse_score_valid() {
+        let result = parse_cli_score("some output\n{\"score\": 0.83}");
+        assert!((result.unwrap() - 0.83).abs() < 1e-10);
+    }
+
+    #[test]
+    fn parse_score_empty_stdout() {
+        let result = parse_cli_score("");
+        assert!(result.is_err(), "expected error for empty stdout");
+    }
+
+    #[test]
+    fn parse_score_only_whitespace() {
+        let result = parse_cli_score("  \n  \n  ");
+        assert!(result.is_err(), "expected error for whitespace-only stdout");
+    }
+
+    #[test]
+    fn parse_score_bare_float() {
+        let result = parse_cli_score("0.83");
+        assert!(result.is_err(), "bare floats should be rejected");
+    }
+
+    #[test]
+    fn parse_score_missing_score_field() {
+        let result = parse_cli_score(r#"{"not_score": 0.5}"#);
+        assert!(result.is_err(), "expected error for missing score field");
+    }
+
+    #[test]
+    fn parse_score_string_score() {
+        let result = parse_cli_score(r#"{"score": "0.5"}"#);
+        assert!(result.is_err(), "expected error for string score");
+    }
+
+    #[test]
+    fn parse_score_integer_score() {
+        let result = parse_cli_score(r#"{"score": 1}"#);
+        assert!((result.unwrap() - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn parse_score_negative() {
+        let result = parse_cli_score(r#"{"score": -0.1}"#);
+        assert!(result.is_err(), "expected error for negative score");
+    }
+
+    #[test]
+    fn parse_score_greater_than_one() {
+        let result = parse_cli_score(r#"{"score": 1.5}"#);
+        assert!(result.is_err(), "expected error for score > 1");
+    }
+
+    #[test]
+    fn parse_score_uses_last_non_empty_line() {
+        let result = parse_cli_score("line1\n{\"score\": 0.3}\nline2\n  \n{\"score\": 0.9}\n");
+        assert!((result.unwrap() - 0.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn parse_score_trailing_newline() {
+        let result = parse_cli_score("{\"score\": 0.5}\n");
+        assert!((result.unwrap() - 0.5).abs() < 1e-10);
     }
 }

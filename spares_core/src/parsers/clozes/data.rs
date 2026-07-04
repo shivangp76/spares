@@ -196,6 +196,10 @@ pub enum BackType {
     #[default]
     NoteFilePath = 1,
     CardFilePath = 2,
+    /// A CLI card whose review is driven by spawning an external command
+    /// and reading a score from its stdout, rather than flipping a
+    /// rendered document. This card has no rendered back.
+    Cli = 3,
 }
 
 impl BackType {
