@@ -1044,7 +1044,11 @@ fn evaluate_field_value(
                         .params
                         .push(format!("':' || t.name || ':' LIKE '%:{}:%'", value_param));
                 } else {
-                    if matches!(op, Op::Equal) && matches!(field_type, FieldType::String) {
+                    if matches!(op, Op::Equal)
+                        && (matches!(field_type, FieldType::String)
+                            || (matches!(field_type, FieldType::Json)
+                                && matches!(value_type, FieldType::String)))
+                    {
                         value_param = format!("\"{}\"", value_param);
                     }
                     value_context.params.push(format!("{} {}", op, value_param));
@@ -1330,6 +1334,11 @@ mod tests {
             (
                 "custom_data:\"$.x.y[1]\">=123",
                 "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.x.y[1]') >= 123",
+            ),
+            // Custom data with string value containing special characters
+            (
+                r#"custom_data:"$.card_key"="preflop-hand|SB|K5o|default""#,
+                r#"SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = "preflop-hand|SB|K5o|default""#,
             ),
             // Regex search
             (
