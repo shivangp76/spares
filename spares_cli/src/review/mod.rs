@@ -58,6 +58,7 @@ use utils::tag_note;
 use crate::import::import_from_files;
 
 pub(crate) mod utils;
+use spares_core::parsers::cloze_tag_str;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::undo::UndoEventRequest;
 pub(crate) use utils::forget_card;
@@ -76,6 +77,8 @@ pub(crate) struct ReviewArgs {
     pub(crate) scheduler_name: String,
     #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
     pub(crate) open_command: Option<String>,
+    #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND_CARD")]
+    pub(crate) open_command_card: Option<String>,
     #[arg(long, env = "SPARES_RENDERED_FILE_CLOSE_COMMAND")]
     pub(crate) close_command: Option<String>,
 }
@@ -198,6 +201,7 @@ async fn get_review_card(
                 Some(open_rendered_file(
                     review_card.card_front_rendered_path.as_ref(),
                     open_command,
+                    Some(&cloze_tag_str(review_card.note_id, review_card.card_order)),
                     first,
                 )?)
             };
@@ -524,13 +528,15 @@ pub(crate) async fn review_cards(
     client: &Client,
 ) -> Result<(), String> {
     let open_command = review_args.open_command.as_deref();
+    let open_command_card = review_args.open_command_card.as_deref();
+    let open_command_card_used = open_command_card.or(open_command);
     let close_command = review_args.close_command.as_deref();
     let scheduler_name = &review_args.scheduler_name;
     let tag_id = review_args.filter_args.tag_id;
 
     let review_card_opt = get_review_card(
         &review_args.filter_args,
-        open_command,
+        open_command_card_used,
         base_url,
         client,
         true,
@@ -771,7 +777,11 @@ pub(crate) async fn review_cards(
                 };
                 card_back_rendered_child = Some(open_rendered_file(
                     card_back_rendered_path,
-                    open_command,
+                    open_command_card_used,
+                    Some(&cloze_tag_str(
+                        review_card_response.note_id,
+                        review_card_response.card_order,
+                    )),
                     false,
                 )?);
                 rate_start = Instant::now();
@@ -1005,7 +1015,11 @@ pub(crate) async fn review_cards(
                     // Reopen card front for the current card
                     card_front_rendered_child = Some(open_rendered_file(
                         &review_card_response.card_front_rendered_path,
-                        open_command,
+                        open_command_card_used,
+                        Some(&cloze_tag_str(
+                            review_card_response.note_id,
+                            review_card_response.card_order,
+                        )),
                         false,
                     )?);
 
@@ -1098,7 +1112,11 @@ pub(crate) async fn review_cards(
                                         };
                                         card_back_rendered_child = Some(open_rendered_file(
                                             &back_path,
-                                            open_command,
+                                            open_command_card_used,
+                                            Some(&cloze_tag_str(
+                                                new_response.note_id,
+                                                new_response.card_order,
+                                            )),
                                             false,
                                         )?);
                                     }
@@ -1109,7 +1127,11 @@ pub(crate) async fn review_cards(
                                     if !is_cli {
                                         card_front_rendered_child = Some(open_rendered_file(
                                             &new_response.card_front_rendered_path,
-                                            open_command,
+                                            open_command_card_used,
+                                            Some(&cloze_tag_str(
+                                                new_response.note_id,
+                                                new_response.card_order,
+                                            )),
                                             false,
                                         )?);
                                     }

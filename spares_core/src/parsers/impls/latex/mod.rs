@@ -27,6 +27,7 @@ use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
@@ -127,8 +128,9 @@ impl Parseable for LatexParserNote {
         &self,
         cloze_replacement: &ClozeReplacement,
         side: CardSide,
+        id: Option<&str>,
     ) -> String {
-        construct_cloze_replacement(cloze_replacement, side)
+        construct_cloze_replacement(cloze_replacement, side, id)
     }
 
     fn construct_image_occlusion(
@@ -310,37 +312,7 @@ fn construct_file_data(
             note_file_data
         }
         ConstructFileDataType::Card(card_order, card_data, side) => {
-            let mut image_occlusion_order: usize = 1;
-            let card_data = card_data
-                .data
-                .iter()
-                .map(|p| match p {
-                    NotePart::ClozeData(d, cloze_replacement) => parser
-                        .construct_cloze_replacement(
-                            &ClozeReplacement::parse(side, cloze_replacement, d),
-                            side,
-                        ),
-                    NotePart::SurroundingData(d) => d.clone(),
-                    NotePart::ImageOcclusion { data, .. } => {
-                        let image_occlusion = parser.construct_image_occlusion(
-                            data,
-                            ConstructImageOcclusionType::Card {
-                                side,
-                                note_id: *note_id,
-                                card_order,
-                                image_occlusion_order,
-                            },
-                        );
-                        image_occlusion_order += 1;
-                        image_occlusion
-                    }
-                    NotePart::Cli { .. } => {
-                        // CLI cards are not rendered; emit nothing here.
-                        String::new()
-                    }
-                    NotePart::ClozeStart(_) | NotePart::ClozeEnd(_) => String::new(),
-                })
-                .collect::<String>();
+            let card_data_str = construct_card_data(parser, card_order, card_data, side, *note_id);
             let lines = [
                 // parser.construct_setting("spares: start"),
                 "\n".to_string(),
@@ -352,7 +324,7 @@ fn construct_file_data(
                 // custom_data_str,
                 "\\begin{mdframed}".to_string(),
                 "\n".to_string(),
-                card_data.clone(),
+                card_data_str,
                 "\n".to_string(),
                 "\\end{mdframed}".to_string(),
                 // linked_notes_str,
@@ -423,21 +395,33 @@ fn file_extension(_: &impl Parseable) -> &'static str {
     "tex"
 }
 
-fn construct_cloze_replacement(cloze_replacement: &ClozeReplacement, _side: CardSide) -> String {
+fn construct_cloze_replacement(
+    cloze_replacement: &ClozeReplacement,
+    _side: CardSide,
+    id: Option<&str>,
+) -> String {
     match cloze_replacement {
         ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
-            ClozeHiddenReplacement::ToAnswer { hint } => {
-                if let Some(hint) = hint {
-                    format!("\\hl{{\\_\\_\\_\\_\\_ ({})}}", hint)
-                } else {
-                    "\\hl{\\_\\_\\_\\_\\_}".to_string()
+            ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
+                (Some(hint), Some(id)) => {
+                    format!("\\hl{{{id} \\_\\_\\_\\_\\_ ({hint})}}")
                 }
-            }
+                (Some(hint), None) => {
+                    format!("\\hl{{\\_\\_\\_\\_\\_ ({hint})}}")
+                }
+                (None, Some(id)) => {
+                    format!("\\hl{{{id} \\_\\_\\_\\_\\_}}")
+                }
+                (None, None) => "\\hl{\\_\\_\\_\\_\\_}".to_string(),
+            },
             ClozeHiddenReplacement::NotToAnswer => {
                 "{\\sethlcolor{{green}}\\hl{\\_\\_\\_\\_\\_}}".to_string()
             }
         },
-        ClozeReplacement::Reveal(data) => format!("{{\\sethlcolor{{blue}}\\hl{{{}}}}}", data),
+        ClozeReplacement::Reveal(data) => match id {
+            Some(id) => format!("{{\\sethlcolor{{blue}}\\hl{{{id} {data}}}}}"),
+            None => format!("{{\\sethlcolor{{blue}}\\hl{{{data}}}}}"),
+        },
     }
 }
 
