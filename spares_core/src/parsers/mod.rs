@@ -126,6 +126,7 @@ pub trait Parseable: Send + Sync {
         &self,
         cloze_replacement: &ClozeReplacement,
         side: CardSide,
+        id: Option<&str>,
     ) -> String;
 
     fn construct_setting(&self, data: &str) -> String;
@@ -391,6 +392,51 @@ pub trait Parseable: Send + Sync {
             },
         }
     }
+}
+
+pub fn construct_card_data(
+    parser: &dyn Parseable,
+    card_order: usize,
+    card_data: &CardData,
+    side: CardSide,
+    note_id: NoteId,
+) -> String {
+    let card_id = cloze_tag_str(note_id, card_order);
+    let mut id_injected = false;
+    let mut image_occlusion_order: usize = 1;
+    card_data
+        .data
+        .iter()
+        .map(|p| match p {
+            NotePart::ClozeData(d, cloze_replacement) => {
+                let replacement = ClozeReplacement::parse(side, cloze_replacement, d);
+                let id_opt = if !id_injected
+                    && matches!(cloze_replacement, ClozeHiddenReplacement::ToAnswer { .. })
+                {
+                    id_injected = true;
+                    Some(card_id.as_str())
+                } else {
+                    None
+                };
+                parser.construct_cloze_replacement(&replacement, side, id_opt)
+            }
+            NotePart::SurroundingData(d) => d.clone(),
+            NotePart::ImageOcclusion { data, .. } => {
+                let image_occlusion = parser.construct_image_occlusion(
+                    data,
+                    ConstructImageOcclusionType::Card {
+                        side,
+                        note_id,
+                        card_order,
+                        image_occlusion_order,
+                    },
+                );
+                image_occlusion_order += 1;
+                image_occlusion
+            }
+            NotePart::Cli { .. } | NotePart::ClozeStart(_) | NotePart::ClozeEnd(_) => String::new(),
+        })
+        .collect::<String>()
 }
 
 pub fn validate_parser(parser: &dyn Parseable) -> Option<String> {

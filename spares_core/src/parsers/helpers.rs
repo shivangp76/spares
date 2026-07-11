@@ -32,6 +32,12 @@ pub struct NoteFilepathData {
     pub note_id: NoteId,
 }
 
+/// Text to pass to the first answerable cloze when viewing the card front so that the pdf viewer
+/// can scroll to it.
+pub fn cloze_tag_str(note_id: NoteId, card_order: impl std::fmt::Display) -> String {
+    format!("card-{note_id}-{card_order}")
+}
+
 pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathData, String> {
     let parser_name = note_filepath
         .parent()

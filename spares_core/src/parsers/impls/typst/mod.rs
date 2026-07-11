@@ -23,6 +23,7 @@ use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
@@ -216,37 +217,8 @@ impl Parseable for TypstParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let mut image_occlusion_order: usize = 1;
-                let card_data = card_data
-                    .data
-                    .iter()
-                    .map(|p| match p {
-                        NotePart::ClozeData(d, cloze_replacement) => self
-                            .construct_cloze_replacement(
-                                &ClozeReplacement::parse(side, cloze_replacement, d),
-                                side,
-                            ),
-                        NotePart::SurroundingData(d) => d.clone(),
-                        NotePart::ImageOcclusion { data, .. } => {
-                            let image_occlusion = self.construct_image_occlusion(
-                                data,
-                                ConstructImageOcclusionType::Card {
-                                    side,
-                                    note_id: *note_id,
-                                    card_order,
-                                    image_occlusion_order,
-                                },
-                            );
-                            image_occlusion_order += 1;
-                            image_occlusion
-                        }
-                        NotePart::Cli { .. } => {
-                            // CLI cards are not rendered; emit nothing here.
-                            String::new()
-                        }
-                        NotePart::ClozeStart(_) | NotePart::ClozeEnd(_) => String::new(),
-                    })
-                    .collect::<String>();
+                let card_data_str =
+                    construct_card_data(self, card_order, card_data, side, *note_id);
                 let mut lines = vec![format!("- note-id{} {}", settings_key_value_delim, note_id)];
                 if !keywords_str.is_empty() {
                     lines.push(format!(
@@ -259,7 +231,7 @@ impl Parseable for TypstParser {
                     String::new(),
                     "#line(length: 100%)".to_string(),
                     String::new(),
-                    card_data.clone(),
+                    card_data_str,
                 ]);
                 let card_file_data = lines.join("\n");
                 card_file_data
@@ -271,19 +243,28 @@ impl Parseable for TypstParser {
         &self,
         cloze_replacement: &ClozeReplacement,
         _side: CardSide,
+        id: Option<&str>,
     ) -> String {
         match cloze_replacement {
             ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
-                ClozeHiddenReplacement::ToAnswer { hint } => {
-                    if let Some(hint) = hint {
-                        format!("#cloze(hint: \"{}\")", hint)
-                    } else {
-                        "#cloze()".to_string()
+                ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
+                    (Some(hint), Some(id)) => {
+                        format!("#cloze(hint: \"{hint}\", id: \"{id}\")")
                     }
-                }
+                    (Some(hint), None) => {
+                        format!("#cloze(hint: \"{hint}\")")
+                    }
+                    (None, Some(id)) => {
+                        format!("#cloze(id: \"{id}\")")
+                    }
+                    (None, None) => "#cloze()".to_string(),
+                },
                 ClozeHiddenReplacement::NotToAnswer => "#cloze(to_answer: false)".to_string(),
             },
-            ClozeReplacement::Reveal(data) => format!("#block(fill: aqua, outset: .2em)[{}]", data),
+            ClozeReplacement::Reveal(data) => match id {
+                Some(id) => format!("#cloze-reveal(id: \"{id}\")[{data}]"),
+                None => format!("#cloze-reveal[{data}]"),
+            },
         }
     }
 

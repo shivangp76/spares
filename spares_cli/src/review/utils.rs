@@ -37,13 +37,48 @@ use tokio::io::AsyncBufReadExt;
 
 use super::ReviewAction;
 
+fn substitute_placeholders(
+    open_command: &str,
+    file_path: &Path,
+    card_id: Option<&str>,
+) -> Result<String, String> {
+    if open_command.contains("{card_id}") && card_id.is_none() {
+        return Err(
+            "open command references {card_id} but no card id is available (e.g. a note). \
+             Use SPARES_RENDERED_FILE_OPEN_COMMAND_CARD for card contexts or remove \
+             {card_id} from your note command."
+                .to_string(),
+        );
+    }
+    let file_str = file_path.display().to_string();
+    let escaped_file = format!("'{}'", file_str.replace('\'', "'\\''"));
+    let mut cmd = open_command.replace("{pdf_file}", &escaped_file);
+    if let Some(cid) = card_id {
+        cmd = cmd.replace("{card_id}", cid);
+    }
+    Ok(cmd)
+}
+
 pub(crate) fn open_rendered_file(
     file_path: &Path,
     open_command_opt: Option<&str>,
+    card_id: Option<&str>,
     _first: bool,
 ) -> Result<Child, String> {
     let open_command_opt = open_command_opt.filter(|x| !x.is_empty());
     if let Some(open_command) = open_command_opt {
+        let has_placeholder =
+            open_command.contains("{pdf_file}") || open_command.contains("{card_id}");
+        if has_placeholder {
+            let cmd = substitute_placeholders(open_command, file_path, card_id)?;
+            return Command::new("sh")
+                .arg("-c")
+                .arg(&cmd)
+                .stdout(Stdio::null()) // Hide output from terminal
+                .stderr(Stdio::null()) // Hide output from terminal
+                .spawn()
+                .map_err(|e| format!("Failed to open rendered file: {}", e));
+        }
         let mut parts = open_command.split_whitespace();
         let program = parts
             .next()
@@ -807,5 +842,59 @@ mod tests {
     fn parse_score_trailing_newline() {
         let result = parse_cli_score("{\"score\": 0.5}\n");
         assert!((result.unwrap() - 0.5).abs() < 1e-10);
+    }
+
+    use std::path::Path;
+
+    use super::substitute_placeholders;
+
+    #[test]
+    fn placeholder_substitution_basic() {
+        let path = Path::new("/tmp/my file.pdf");
+        let cmd = substitute_placeholders("sioyek {pdf_file}", path, Some("42:3")).unwrap();
+        assert_eq!(cmd, "sioyek '/tmp/my file.pdf'");
+    }
+
+    #[test]
+    fn placeholder_substitution_with_card_id() {
+        let path = Path::new("/tmp/file.pdf");
+        let cmd = substitute_placeholders(
+            "sioyek {pdf_file} & sleep 0.1 ; sioyek --execute-command 'search({card_id});next_item'",
+            path,
+            Some("42:3"),
+        )
+        .unwrap();
+        assert_eq!(
+            cmd,
+            "sioyek '/tmp/file.pdf' & sleep 0.1 ; sioyek --execute-command 'search(42:3);next_item'"
+        );
+    }
+
+    #[test]
+    fn placeholder_substitution_missing_card_id_errors() {
+        let path = Path::new("/tmp/file.pdf");
+        let result = substitute_placeholders("sioyek {card_id}", path, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn placeholder_substitution_no_card_id_needed() {
+        let path = Path::new("/tmp/file.pdf");
+        let cmd = substitute_placeholders("sioyek {pdf_file}", path, None).unwrap();
+        assert_eq!(cmd, "sioyek '/tmp/file.pdf'");
+    }
+
+    #[test]
+    fn placeholder_substitution_single_quote_escape() {
+        let path = Path::new("/tmp/it's a file.pdf");
+        let cmd = substitute_placeholders("sioyek {pdf_file}", path, None).unwrap();
+        assert_eq!(cmd, "sioyek '/tmp/it'\\''s a file.pdf'");
+    }
+
+    #[test]
+    fn placeholder_substitution_no_op_without_placeholders() {
+        let path = Path::new("/tmp/file.pdf");
+        let cmd = substitute_placeholders("sioyek", path, None).unwrap();
+        assert_eq!(cmd, "sioyek");
     }
 }

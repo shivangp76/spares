@@ -11,6 +11,7 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 use spares_core::model::NoteId;
+use spares_core::parsers::cloze_tag_str;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::note::LinkedNote;
 use spares_core::schema::note::NoteResponse;
@@ -72,6 +73,8 @@ pub(crate) struct ViewCardArgs {
     pub(crate) query: String,
     #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
     pub(crate) open_command: Option<String>,
+    #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND_CARD")]
+    pub(crate) open_command_card: Option<String>,
     #[arg(long, env = "SPARES_RENDERED_FILE_CLOSE_COMMAND")]
     pub(crate) close_command: Option<String>,
 }
@@ -98,6 +101,9 @@ trait ViewItem {
     fn item_id(&self) -> NoteId;
     fn display(&self, parser_name: &str, index: usize, total: usize);
     fn rendered_path(&self, parser_name: &str) -> Result<PathBuf, String>;
+    fn card_id_str(&self) -> Option<String> {
+        None
+    }
     fn linked_notes(&self) -> Option<&[LinkedNote]> {
         None
     }
@@ -132,6 +138,10 @@ impl ViewItem for CardResponse {
 
     fn rendered_path(&self, parser_name: &str) -> Result<PathBuf, String> {
         utils::compute_card_rendered_back_path(parser_name, self.note_id, self.order)
+    }
+
+    fn card_id_str(&self) -> Option<String> {
+        Some(cloze_tag_str(self.note_id, self.order))
     }
 }
 
@@ -180,10 +190,12 @@ fn prompt_select_action<'a, T: std::fmt::Display>(
 }
 
 #[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 async fn view_items<T: ViewItem>(
     items: Vec<(T, String)>,
     empty_msg: &str,
     open_command: Option<&str>,
+    open_command_card: Option<&str>,
     close_command: Option<&str>,
     base_url: &str,
     client: &Client,
@@ -207,7 +219,14 @@ async fn view_items<T: ViewItem>(
         item.display(parser_name, index, total);
 
         if let Ok(path) = item.rendered_path(parser_name) {
-            rendered_file_child = Some(open_rendered_file(path.as_ref(), open_command, false)?);
+            let effective_open_cmd = open_command_card.or(open_command);
+            let card_id_str = item.card_id_str();
+            rendered_file_child = Some(open_rendered_file(
+                path.as_ref(),
+                effective_open_cmd,
+                card_id_str.as_deref(),
+                false,
+            )?);
         }
 
         let mut action_options: Vec<ViewAction> =
@@ -350,6 +369,7 @@ pub(crate) async fn view_notes(
         notes,
         "No notes found.",
         open_command,
+        None,
         close_command,
         base_url,
         client,
@@ -364,6 +384,7 @@ pub(crate) async fn view_cards(
     client: &Client,
 ) -> Result<(), String> {
     let open_command = view_args.open_command.as_deref();
+    let open_command_card = view_args.open_command_card.as_deref();
     let close_command = view_args.close_command.as_deref();
 
     let search_response = search_notes_api(
@@ -385,6 +406,7 @@ pub(crate) async fn view_cards(
         cards,
         "No cards found.",
         open_command,
+        open_command_card,
         close_command,
         base_url,
         client,
