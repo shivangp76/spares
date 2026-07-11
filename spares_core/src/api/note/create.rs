@@ -766,7 +766,7 @@ mod tests {
     use crate::schema::review::SubmitStudyActionRequest;
 
     /// Creates a note with a single cloze and returns `(note_id, card)`.
-    async fn create_single_cloze_note(pool: &SqlitePool, data: &str) -> (NoteId, Card) {
+    async fn create_single_cloze_note(pool: &SqlitePool, data: &str) -> (NoteId, Card, i64) {
         let parser = create_parser_helper(pool, "markdown").await;
         let res = create_notes(
             pool,
@@ -792,14 +792,15 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap();
-        (note_id, card)
+        (note_id, card, parser.id)
     }
 
     /// `inh:NOTE_ID/ORDER` on a newly created card copies all SRS fields from the source card.
     #[sqlx::test]
     async fn test_create_note_inherit_copies_srs_data(pool: SqlitePool) {
         // Step 1: Create the source note and give its card non-default SRS data by rating it.
-        let (src_note_id, src_card) = create_single_cloze_note(&pool, "{{ source }}").await;
+        let (src_note_id, src_card, parser_id) =
+            create_single_cloze_note(&pool, "{{ source }}").await;
         submit_study_action(
             &pool,
             SubmitStudyActionRequest {
@@ -825,12 +826,11 @@ mod tests {
         assert_ne!(src_card_after_review.stability, src_card.stability);
 
         // Step 2: Create a new note whose card inherits from the source card.
-        let parser = create_parser_helper(&pool, "markdown").await;
         let inherit_data = format!("{{{{[inh:{src_note_id}/1] destination }}}}");
         let res = create_notes(
             &pool,
             CreateNotesRequest {
-                parser_id: parser.id,
+                parser_id,
                 requests: vec![CreateNoteRequest {
                     data: inherit_data,
                     keywords: vec![],
