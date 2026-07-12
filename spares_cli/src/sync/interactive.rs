@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::io::{self};
@@ -190,6 +191,7 @@ async fn sync_notes_between_files(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sync_notes_interactive(
     base_url: &str,
     client: &Client,
@@ -198,6 +200,7 @@ pub(crate) async fn sync_notes_interactive(
     dry_run: bool,
     sync_all_notes: bool,
     sync_mode: SyncMode,
+    filter_note_ids: Option<HashSet<NoteId>>,
 ) -> Result<(), String> {
     let sync_source_hub = SyncSource::default();
     if sync_source_from != sync_source_hub && sync_source_to != sync_source_hub {
@@ -218,7 +221,13 @@ pub(crate) async fn sync_notes_interactive(
         &from_output_dir.display(),
         &to_output_dir.display()
     );
-    let import_data = get_import_data(&from_output_dir, &to_output_dir, dry_run, sync_all_notes)?;
+    let import_data = get_import_data(
+        &from_output_dir,
+        &to_output_dir,
+        dry_run,
+        sync_all_notes,
+        filter_note_ids.as_ref(),
+    )?;
     println!();
     if import_data.is_empty() {
         println!("All notes are up to date.");

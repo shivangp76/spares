@@ -76,44 +76,28 @@ Available sources:
 
 ### Option 1: Interactive Mode
 ```sh
-spares sync interactive --from {source1} --to {source2} --dry-run
+spares sync --from {source1} --to {source2} --dry-run
 ```
 where `{source1}` and `{source2}` are from the list above.
 
-This will walk you through syncing notes between these sources
+This will walk you through syncing notes between these sources. Use `--individual` to review changes one at a time instead of in bulk.
 
-### Option 2: Render Diffs
+To sync a specific note by ID:
 ```sh
-spares sync render-diffs --from {source1} --to {source2}
+spares sync --from spares-local-files --to spares --ids 5 12 23
 ```
-where `{source1}` and `{source2}` are from the list above.
 
-This will:
-- Render notes in `/tmp/spares/{from_source}/notes/{parser_name}/` and `/tmp/spares/{to_source}/notes/{parser_name}/`.
-- Render diffs in `/tmp/spares/{from_source}/diffs/{parser_name}/`.
-- Output the path to the directory containing the diffs.
+### Option 2: Batch selection with fzf
 
-A suggested workflow is to use `fzf` to select diffs from the outputted path and use `sed` to transform them into the corresponding note path. For example:
+Use `--print-files` to output changed note file paths non-interactively, then pipe them to fzf for multi-selection:
+
 ```sh
-diff-selector-widget() {
-  print -z "$(eval "fd --absolute-path --ignore --hidden --no-require-git --type f --type l . --exec-batch ls -t" |
-    sort --reverse |
-    fzf --multi \
-      --prompt="sync notes> " \
-      --preview 'bat --color=always {}' \
-      --preview-window 'up,60%,wrap,border-bottom,+{2}+3/3,~3' \
-      --bind 'enter:become:sort -u {+f1} | sed "s|/diffs/|/notes/|g" | sed "s/.diff//g" | tr "\n" " "')"
-  zle accept-line
-  preexec # End with beam cursor
-}
-zle -N diff-selector-widget
-bindkey -M viins '^d' diff-selector-widget
+spares sync --from spares --to spares-local-files --print-files \
+  | fzf -m --preview 'bat --color=always {}' \
+  | xargs spares sync --from spares-local-files --to spares --files @-
 ```
-Thus, the final workflow to sync from spares-local-files to spares looks like:
-1. Run `cd $(spares sync render-diffs --from spares --to spares-local-files) | diff-selector-widget`
-1. Press `Ctrl+D`
-1. Select the notes you would like to sync
-1. Run `spares import --adapter spares-local-files --dry-run {FILES}` where `{FILES}` is the selected notes
+
+This works the same in reverse (from spares-local-files to spares). The `--print-files` output is cache-rendered paths, and `--files` accepts them directly.
 
 ## Latex
 

@@ -1,6 +1,5 @@
 mod cloud;
 mod interactive;
-mod render_diffs;
 mod utils;
 
 use std::collections::HashMap;
@@ -77,24 +76,19 @@ pub(crate) struct SyncArgs {
     /// Review each change one at a time
     #[arg(long, overrides_with_all = ["bulk"])]
     pub(crate) individual: bool,
+    /// Limit sync to specific note IDs
+    #[arg(long, value_delimiter = ' ', num_args = 1..)]
+    pub(crate) ids: Option<Vec<NoteId>>,
+    /// Limit sync to notes matching the given file paths (accepts cache-rendered paths)
+    #[arg(long, value_delimiter = ' ', num_args = 1..)]
+    pub(crate) files: Option<Vec<PathBuf>>,
+    /// Print changed note file paths to stdout (non-interactive). Use with fzf for batch selection.
+    #[arg(long, default_value_t = false, conflicts_with_all = ["dry_run", "individual", "bulk"])]
+    pub(crate) print_files: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub(crate) enum SyncSubcommand {
-    /// Render all diffs between the source and destination.
-    ///
-    /// For example, if syncing from Spares to Anki, then `/tmp/spares/spares/markdown/0001.md` will have the diff of the note with id 1 in spares with the note with spares id 1 in Anki. All files in `/tmp/spares/spares/` will contain the diffs for all the notes, sorted by their parser. To sync this note, `spares sync files --from spares --to anki /tmp/spares/spares/markdown/0001.md` can be run.
-    ///
-    /// Returns the path to the directory containing the diffs.
-    #[command(arg_required_else_help = false)]
-    RenderDiffs {
-        /// Sync Source
-        #[arg(short, long, default_value = "spares-local-files")]
-        from: SyncSource,
-        /// Sync Destination
-        #[arg(short, long, default_value = "spares")]
-        to: SyncSource,
-    },
     /// Push local DB and files to a remote server via rsync.
     ///
     /// Reads `remote_host` from config.toml (e.g. "user@myserver.com").
@@ -298,24 +292,34 @@ pub(crate) async fn sync_notes(
     client: &Client,
     sync_args: SyncArgs,
 ) -> Result<(), String> {
+    let filter_note_ids = resolve_filter(sync_args.ids.as_ref(), sync_args.files.as_ref())?;
+
     match sync_args.subcommand {
-        Some(SyncSubcommand::RenderDiffs {
-            from: sync_source_from,
-            to: sync_source_to,
-        }) => {
-            // Render notes in cache directory
-            let (from_output_dir, to_output_dir) =
-                generate_notes(base_url, client, sync_source_from, sync_source_to).await?;
-
-            // Render diffs
-            let diffs_directory_path =
-                render_diffs::generate_diffs(&from_output_dir, &to_output_dir)?;
-            println!("{}", diffs_directory_path.display());
-
-            Ok(())
-        }
         Some(SyncSubcommand::Cloud) => cloud::sync_cloud(),
         None => {
+            // Non-interactive: print changed note file paths and exit
+            if sync_args.print_files {
+                let (from_output_dir, to_output_dir) =
+                    generate_notes(base_url, client, sync_args.from, sync_args.to).await?;
+
+                let import_data = get_import_data(
+                    &from_output_dir,
+                    &to_output_dir,
+                    sync_args.dry_run,
+                    sync_args.all,
+                    filter_note_ids.as_ref(),
+                )?;
+
+                for import in &import_data {
+                    let path = match &import.action {
+                        SyncImportAction::Add { to } | SyncImportAction::Delete { to } => to,
+                        SyncImportAction::Update { from, .. } => from,
+                    };
+                    println!("{}", path.display());
+                }
+                return Ok(());
+            }
+
             let sync_mode = if sync_args.individual {
                 SyncMode::Individual
             } else {
@@ -329,9 +333,36 @@ pub(crate) async fn sync_notes(
                 sync_args.dry_run,
                 sync_args.all,
                 sync_mode,
+                filter_note_ids,
             )
             .await
         }
+    }
+}
+
+/// Resolve `--ids` and `--files` flags into a set of note IDs for filtering.
+/// Returns `None` if no filter is active.
+fn resolve_filter(
+    ids: Option<&Vec<NoteId>>,
+    files: Option<&Vec<PathBuf>>,
+) -> Result<Option<std::collections::HashSet<NoteId>>, String> {
+    let mut set: std::collections::HashSet<NoteId> = std::collections::HashSet::new();
+
+    if let Some(ids) = ids {
+        set.extend(ids);
+    }
+    if let Some(files) = files {
+        for f in files {
+            let data = get_note_info_from_filepath(f)
+                .map_err(|e| format!("Failed to parse file {}: {}", f.display(), e))?;
+            set.insert(data.note_id);
+        }
+    }
+
+    if set.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(set))
     }
 }
 
@@ -548,6 +579,7 @@ fn get_import_data(
     to_output_dir: &Path,
     dry_run: bool,
     sync_all_notes: bool,
+    filter_note_ids: Option<&std::collections::HashSet<NoteId>>,
 ) -> Result<Vec<SyncImportData>, String> {
     let from_output_base_dir = from_output_dir.parent().unwrap();
 
@@ -576,7 +608,13 @@ fn get_import_data(
         expand_sync_all(&mut import_data, &to_files, from_output_base_dir);
     }
 
-    Ok(fuse_parser_changes(import_data))
+    let mut import_data = fuse_parser_changes(import_data);
+
+    if let Some(filter) = filter_note_ids {
+        import_data.retain(|d| filter.contains(&d.note_id));
+    }
+
+    Ok(import_data)
 }
 
 /// Generate all notes (not cards) in cache directory

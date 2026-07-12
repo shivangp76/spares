@@ -67,9 +67,9 @@ pub(crate) enum Commands {
     /// By default, runs in interactive bulk mode: all changes are shown together and you choose
     /// to push or pull them as a group. Use `--individual` to review changes one at a time.
     ///
-    /// The `render-diffs` subcommand is non-interactive: it writes diffs to a directory so you
-    /// can use a tool like `fzf` to select which diffs to apply, then import them with
-    /// `spares import`. See the workflows documentation for a more detailed example.
+    /// Use `--ids` or `--files` to filter to specific notes. Use `--print-files` for
+    /// non-interactive output suitable for piping to fzf for batch selection. See the
+    /// workflows documentation for more details.
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),
