@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use chrono::DateTime;
+use chrono::Local;
 use chrono::Utc;
 use inquire::DateSelect;
 use reqwest::Client;
@@ -26,6 +27,7 @@ use spares_core::schema::note::SearchNotesResponse;
 use spares_core::schema::note::UpdateNotesRequest;
 use spares_core::schema::note::UpdateNotesResponse;
 use spares_core::schema::note::UpdateTags;
+use spares_core::schema::review::GetReviewCardResponse;
 use spares_core::schema::review::Rating;
 use spares_core::schema::review::RatingSubmission;
 use spares_core::schema::review::StatisticsResponse;
@@ -579,6 +581,37 @@ pub(super) fn print_rate_duration(rate_duration: Duration) {
     let duration =
         chrono::Duration::from_std(rate_duration).expect("rate_duration fits chrono::Duration");
     println!("Rate Duration: {}", format_duration(duration));
+}
+
+pub(super) fn print_cards_left_by_state_and_time_estimate(
+    review_card_response: &GetReviewCardResponse,
+) {
+    if !review_card_response.cards_left_by_state.is_empty() {
+        println!("Cards left by state for today:");
+        let mut cards_left_by_state = review_card_response
+            .cards_left_by_state
+            .iter()
+            .collect::<Vec<_>>();
+        cards_left_by_state.sort_by_key(|(state_id, _)| *state_id);
+        for (state_id, count) in cards_left_by_state {
+            let indicator = if *state_id == review_card_response.card_state {
+                "--> "
+            } else {
+                "    "
+            };
+            println!(" {}State {}: {}", indicator, state_id, count);
+        }
+    }
+    println!(
+        "Estimated Time Remaining: {}",
+        format_duration(review_card_response.time_estimate)
+    );
+    println!(
+        "Estimated Completion Time: {}",
+        (Utc::now() + review_card_response.time_estimate)
+            .with_timezone(&Local)
+            .format("%H:%M:%S %P (%m-%d-%Y)")
+    );
 }
 
 pub(super) fn print_summary(

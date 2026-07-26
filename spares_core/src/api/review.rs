@@ -280,6 +280,86 @@ fn build_review_card_response(
 
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
+struct ReviewFilterQuery {
+    where_clause: String,
+    is_filtered_tag: bool,
+    card_due_limit: DateTime<Utc>,
+}
+
+/// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
+///
+/// Returns `Ok(None)` when a `FilteredTag` filter references a tag that does not exist.
+/// Returns `Err` when a `FilteredTag` filter references a tag that has no query.
+/// Returns `Ok(Some(…))` on success.
+async fn build_review_filter_query(
+    db: &SqlitePool,
+    filter: Option<&GetReviewCardFilterRequest>,
+    requested_date: DateTime<Utc>,
+) -> Result<Option<ReviewFilterQuery>, Error> {
+    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+    let card_due_limit = upper_limit;
+    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
+        r"SELECT COUNT(DISTINCT card_id) FROM review_log
+      WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
+    )
+    .bind(lower_limit.timestamp())
+    .bind(upper_limit.timestamp())
+    .bind(NEW_CARD_STATE)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let config = read_external_config()?;
+    let not_new_card_str = if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
+        format!("\nAND c.state != {}", NEW_CARD_STATE)
+    } else {
+        String::new()
+    };
+    let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
+        let evaluator = Evaluator::new(query);
+        let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
+        format!("\nAND c.id IN ({})", card_ids_str)
+    } else {
+        String::new()
+    };
+    let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
+    let buried_state = SpecialState::BuriedUntilLaterToday as u8;
+    let where_clause = match filter {
+        Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) => {
+            let tag_query_opt: Option<(Option<String>,)> =
+                sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
+                    .bind(tag_id)
+                    .fetch_optional(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            if tag_query_opt.is_none() {
+                return Ok(None);
+            }
+            if let Some((tag_query,)) = tag_query_opt
+                && tag_query.is_none()
+            {
+                return Err(Error::Library(LibraryError::Tag(
+                    TagErrorKind::InvalidInput(
+                        "Cannot study a tag that does not have a query.".to_string(),
+                    ),
+                )));
+            }
+            format!(
+                "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
+            )
+        }
+        _ => {
+            format!(
+                "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}"
+            )
+        }
+    };
+    Ok(Some(ReviewFilterQuery {
+        where_clause,
+        is_filtered_tag,
+        card_due_limit,
+    }))
+}
+
 async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     where_clause: &str,
@@ -377,7 +457,6 @@ async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
 }
 
 // Note that `requested_date` is not in `ReviewOptions` since we don't want the user to be able to edit it. However, for testing purposes, we still want to be able to mimic calling this function on different days, so it is included as an argument.
-#[expect(clippy::too_many_lines)]
 pub async fn get_review_card(
     db: &SqlitePool,
     body: GetReviewCardRequest,
@@ -389,66 +468,16 @@ pub async fn get_review_card(
     // Unbury cards, if needed
     unbury_cards_and_update_config(db).await?;
 
-    // Get cards reviewed on `requested_date`
-    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
-        r"SELECT COUNT(DISTINCT card_id) FROM review_log
-      WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
-    )
-    .bind(lower_limit.timestamp())
-    .bind(upper_limit.timestamp())
-    .bind(NEW_CARD_STATE)
-    .fetch_one(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-    let config = read_external_config()?;
-    let card_due_limit = upper_limit;
-    let not_new_card_str = if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
-        format!("\nAND c.state != {}", NEW_CARD_STATE)
-    } else {
-        String::new()
+    // Build the filter query for matching cards
+    let Some(ReviewFilterQuery {
+        where_clause,
+        is_filtered_tag,
+        card_due_limit,
+    }) = build_review_filter_query(db, filter.as_ref(), requested_date).await?
+    else {
+        return Ok(None);
     };
-    let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(ref query)) = filter {
-        let evaluator = Evaluator::new(query);
-        let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
-        format!("\nAND c.id IN ({})", card_ids_str)
-    } else {
-        String::new()
-    };
-    let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
-    let buried_state = SpecialState::BuriedUntilLaterToday as u8;
-    let where_clause = if let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) = filter {
-        // Verify tag has a query
-        let tag_query_opt: Option<(Option<String>,)> =
-            sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
-                .bind(tag_id)
-                .fetch_optional(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        if tag_query_opt.is_none() {
-            return Ok(None);
-            // return Err(Error::Library(LibraryError::Tag(
-            //     TagErrorKind::InvalidInput("Tag does not exist.".to_string()),
-            // )));
-        }
-        if let Some((tag_query,)) = tag_query_opt
-            && tag_query.is_none()
-        {
-            return Err(Error::Library(LibraryError::Tag(
-                TagErrorKind::InvalidInput(
-                    "Cannot study a tag that does not have a query.".to_string(),
-                ),
-            )));
-        }
-        // Get all review cards that match the tag, regardless of whether they are due today
-        format!(
-            "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
-        )
-    } else {
-        format!(
-            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}"
-        )
-    };
+
     // Sort by `n.created_at` after `c.due` so cards from older notes are shown first. This ensures that notes that depend on previous knowledge are shown in the right order.
     // BuriedUntilLaterToday cards are shown after normal cards, ordered by their burial timestamp (FIFO).
     let query_str = format!(
@@ -472,7 +501,7 @@ pub async fn get_review_card(
         },
         where_clause
     );
-    info!("{}", &query_str);
+    info!("{}", query_str);
     let mut query = sqlx::query_as(&query_str);
     if !is_filtered_tag {
         query = query.bind(card_due_limit.timestamp());
@@ -520,6 +549,7 @@ pub async fn get_review_card(
 pub async fn get_review_card_by_id(
     db: &SqlitePool,
     card_id: CardId,
+    filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<Option<GetReviewCardResponse>, Error> {
@@ -557,34 +587,25 @@ pub async fn get_review_card_by_id(
                     .await
                     .map_err(|e| Error::Sqlx { source: e })?;
 
-            // Compute cards_left_by_state and time_estimate for the full review queue
-            let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-            let card_due_limit = upper_limit;
-            let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
-                r"SELECT COUNT(DISTINCT card_id) FROM review_log
-              WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
-            )
-            .bind(lower_limit.timestamp())
-            .bind(upper_limit.timestamp())
-            .bind(NEW_CARD_STATE)
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-            let config = read_external_config()?;
-            let not_new_card_str =
-                if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
-                    format!("\nAND c.state != {}", NEW_CARD_STATE)
-                } else {
-                    String::new()
-                };
-            let buried_state = SpecialState::BuriedUntilLaterToday as u8;
-            let where_clause = format!(
-                "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state}))"
-            );
-
+            // Compute cards_left_by_state and time_estimate using the same filter as the review session
             let (cards_left_by_state, time_estimate) =
-                get_cards_left_by_state_and_time_estimate(db, &where_clause, card_due_limit, false)
-                    .await?;
+                match build_review_filter_query(db, filter, requested_date).await? {
+                    Some(ReviewFilterQuery {
+                        where_clause,
+                        is_filtered_tag,
+                        card_due_limit,
+                    }) => {
+                        get_cards_left_by_state_and_time_estimate(
+                            db,
+                            &where_clause,
+                            card_due_limit,
+                            is_filtered_tag,
+                        )
+                        .await?
+                    }
+                    // Tag not found — no cards left to review under this filter
+                    None => (HashMap::new(), Duration::zero()),
+                };
 
             Ok(Some(build_review_card_response(
                 review_card,
@@ -1031,10 +1052,12 @@ mod tests {
     use super::*;
     use crate::api::note::tests::tests::create_note_helper;
     use crate::api::statistics::get_statistics;
+    use crate::api::tag::create_tag;
     use crate::model::Card;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::NoteResponse;
     use crate::schema::review::StatisticsRequest;
+    use crate::schema::tag::CreateTagRequest;
 
     async fn create_note(pool: &sqlx::SqlitePool) -> (NoteResponse, Vec<Card>) {
         // Create note
@@ -1458,5 +1481,63 @@ mod tests {
             still_buried_count, 0,
             "All BuriedUntilLaterToday cards should be unburied at next-day rollover"
         );
+    }
+
+    #[sqlx::test]
+    async fn test_get_review_card_by_id_respects_filter(pool: sqlx::SqlitePool) -> () {
+        let now = Utc::now();
+
+        // Create notes (3 notes from helper)
+        let created_notes = create_note_helper(&pool).await;
+        assert_eq!(created_notes.len(), 3);
+
+        // Get all cards (1 per note)
+        let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(all_cards.len(), 3);
+
+        // Initialize last_unburied = today so subsequent calls don't unbury
+        let _ = get_review_card(
+            &pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+
+        // Test with filter=None -> should count all 3 cards
+        let response = get_review_card_by_id(&pool, all_cards[0].id, None, now, &get_all_parsers())
+            .await
+            .unwrap()
+            .unwrap();
+        let total_all: u32 = response.cards_left_by_state.values().sum();
+        assert_eq!(total_all, 3);
+
+        // Create a filtered tag whose query matches cards tagged "tag 1"
+        // (first two notes have "tag 1", third has none)
+        let tag_request = CreateTagRequest {
+            name: "test-by-id-filter".to_string(),
+            description: String::new(),
+            query: Some(r#"tag="tag 1""#.to_string()),
+            auto_delete: false,
+        };
+        let tag = create_tag(&pool, tag_request, false).await.unwrap();
+
+        // Test with FilteredTag filter -> should count only the 2 cards matching "tag 1"
+        let response = get_review_card_by_id(
+            &pool,
+            all_cards[0].id,
+            Some(&GetReviewCardFilterRequest::FilteredTag { tag_id: tag.id }),
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let total_filtered: u32 = response.cards_left_by_state.values().sum();
+        assert_eq!(total_filtered, 2);
     }
 }

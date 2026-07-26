@@ -113,7 +113,7 @@ pub fn update_cloze_settings(
 ) -> Result<(), LibraryError> {
     let clozes_file_contents = read_to_string(clozes_filepath).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
-            description: format!("Failed to read {}.", &clozes_filepath.display()),
+            description: format!("Failed to read {}.", clozes_filepath.display()),
             advice: None,
             src: data.to_string(),
             at: cloze_range.clone().into(),
@@ -140,7 +140,7 @@ pub fn update_cloze_settings(
             description: format!(
                 "Failed to find cloze #{} in {}.",
                 cloze_index + 1,
-                &clozes_filepath.display()
+                clozes_filepath.display()
             ),
             advice: None,
             src: data.to_string(),
@@ -167,7 +167,7 @@ pub fn update_cloze_settings(
     let clozes_file_contents = String::from_utf8(buffer).unwrap();
     std::fs::write(clozes_filepath, clozes_file_contents).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
-            description: format!("Failed to write file {}.", &clozes_filepath.display()),
+            description: format!("Failed to write file {}.", clozes_filepath.display()),
             advice: None,
             src: data.to_string(),
             at: cloze_range.clone().into(),
@@ -390,7 +390,7 @@ pub(crate) fn create_image_occlusion_card(
     } = image_occlusion_data;
     let clozes_file_contents = read_to_string(clozes_filepath).map_err(|_| {
         LibraryError::Note(NoteErrorKind::Other {
-            description: format!("Failed to read {}.", &clozes_filepath.display()),
+            description: format!("Failed to read {}.", clozes_filepath.display()),
         })
     })?;
     let mut clozes_svg_element = Element::parse(clozes_file_contents.as_bytes()).map_err(|e| {

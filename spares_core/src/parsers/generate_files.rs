@@ -124,7 +124,7 @@ pub fn file_in_cache(
                 // Full read only happens here, on the rare path where hashes match.
                 let current_raw_string =
                     read_to_string(output_raw_filepath).map_err(|e| Error::Io {
-                        description: format!("Failed to read {}", &output_raw_filepath.display()),
+                        description: format!("Failed to read {}", output_raw_filepath.display()),
                         source: e,
                     })?;
                 // Use rfind to locate the last line boundary without collecting all lines
@@ -168,7 +168,7 @@ pub fn create_note_files_bulk(
         .map_err(|e| Error::Io {
         description: format!(
             "Failed to read template for parser {}",
-            &parser.get_parser_name()
+            parser.get_parser_name()
         ),
         source: e,
     })?;
@@ -178,7 +178,7 @@ pub fn create_note_files_bulk(
             .map_err(|e| Error::Io {
                 description: format!(
                     "Failed to read template for parser {}",
-                    &parser.get_parser_name()
+                    parser.get_parser_name()
                 ),
                 source: e,
             })?;
@@ -412,7 +412,7 @@ fn create_raw_and_rendered_file(
         description: format!(
             "[Note Id: {}] Failed to write to {}",
             note_id,
-            &output_text_filepath.display()
+            output_text_filepath.display()
         ),
         source: e,
     })?;

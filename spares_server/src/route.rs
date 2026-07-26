@@ -102,7 +102,7 @@ pub(crate) fn create_router(
         .route("/api/cards/unbury", post(unbury_cards_handler))
         // Review
         .route("/api/review", post(get_review_card_handler))
-        .route("/api/review/card/{id}", get(get_review_card_by_id_handler))
+        .route("/api/review/card/{id}", post(get_review_card_by_id_handler))
         .route("/api/review/submit", post(submit_study_action_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
         // Scheduler

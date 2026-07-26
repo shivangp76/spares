@@ -62,7 +62,7 @@ pub async fn export_notes(
             .map_err(|e| Error::Io {
                 description: format!(
                     "Failed to read template for parser {}",
-                    &parser.get_parser_name()
+                    parser.get_parser_name()
                 ),
                 source: e,
             })?;

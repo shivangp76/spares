@@ -146,7 +146,7 @@ where
     };
     for file_path in file_paths.iter().progress_with(progress_bar) {
         let file_contents = read_to_string(file_path).map_err(|e| Error::Io {
-            description: format!("Failed to read {}", &file_path.as_ref().display()),
+            description: format!("Failed to read {}", file_path.as_ref().display()),
             source: e,
         })?;
 

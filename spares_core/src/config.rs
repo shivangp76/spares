@@ -403,7 +403,7 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
         return Ok(config);
     }
     let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}.", &config_file_path.display()),
+        description: format!("Failed to read {}.", config_file_path.display()),
         source: e,
     })?;
     let doc = file_contents

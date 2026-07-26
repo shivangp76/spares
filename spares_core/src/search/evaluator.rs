@@ -72,7 +72,7 @@ impl<'de> Evaluator<'de> {
         let query_str =
             Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Notes, true)
                 .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        info!("{}", &query_str);
+        info!("{}", query_str);
         let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -88,7 +88,7 @@ impl<'de> Evaluator<'de> {
         let query_str = self
             .evaluate(EvaluatorReturnItemType::NoteIds)
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        info!("{}", &query_str);
+        info!("{}", query_str);
         let note_ids: Vec<NoteId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
             .await
@@ -120,7 +120,7 @@ impl<'de> Evaluator<'de> {
         let query_str =
             Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Cards, true)
                 .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        info!("{}", &query_str);
+        info!("{}", query_str);
         let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
             .fetch_all(db)
             .await
@@ -149,7 +149,7 @@ impl<'de> Evaluator<'de> {
         let query_str =
             Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::CardIds, false)
                 .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        info!("{}", &query_str);
+        info!("{}", query_str);
         let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
             .await
@@ -191,7 +191,7 @@ impl<'de> Evaluator<'de> {
                 let query_str =
                     Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
                         .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-                info!("{}", &query_str);
+                info!("{}", query_str);
                 let candidates: Vec<EnrichedCardWithNoteData> = sqlx::query_as(&query_str)
                     .fetch_all(db)
                     .await
@@ -219,7 +219,7 @@ impl<'de> Evaluator<'de> {
                 let query_str =
                     Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
                         .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-                info!("{}", &query_str);
+                info!("{}", query_str);
                 let cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
                     .fetch_all(db)
                     .await
