@@ -45,6 +45,7 @@ use reqwest::Client;
 use review::forget_card;
 use review::review_cards;
 use serde_json::Map;
+use serde_json::Value;
 use spares_core::adapters::get_adapter_from_string;
 use spares_core::config::get_env_config;
 use spares_core::model::NoteLink;
@@ -149,6 +150,25 @@ fn parse_list(data: &str) -> Vec<String> {
         .collect::<Vec<_>>()
 }
 
+fn parse_custom_data(s: &str) -> Result<Map<String, Value>, Error> {
+    let v: Value = serde_json::from_str::<Value>(s)
+        .map_err(|e| miette!("invalid --custom-data JSON: {}", e))?;
+    match v {
+        Value::Object(m) => Ok(m),
+        other => Err(miette!(
+            "invalid --custom-data JSON: expected a JSON object, got {}",
+            match other {
+                Value::Array(_) => "array",
+                Value::String(_) => "string",
+                Value::Number(_) => "number",
+                Value::Bool(_) => "bool",
+                Value::Null => "null",
+                Value::Object(_) => unreachable!(),
+            }
+        )),
+    }
+}
+
 #[expect(clippy::too_many_lines)]
 #[allow(clippy::similar_names)]
 async fn process_args(args: Cli) -> Result<(), Error> {
@@ -201,13 +221,18 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 keywords,
                 tags,
                 is_suspended,
+                custom_data,
             } => {
+                let custom_data = match custom_data {
+                    Some(s) => parse_custom_data(&s)?,
+                    None => Map::new(),
+                };
                 let create_note_request = CreateNoteRequest {
                     data,
                     keywords: parse_list(keywords.as_str()),
                     tags,
                     is_suspended,
-                    custom_data: Map::new(),
+                    custom_data,
                 };
                 let create_notes_request = CreateNotesRequest {
                     parser_id,
@@ -292,6 +317,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 tags_to_remove,
                 tags_to_add,
                 remove_all_tags,
+                custom_data,
             } => {
                 let selector = selector
                     .get_notes_selector()
@@ -305,13 +331,17 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                         tags_to_add,
                     }
                 };
+                let custom_data = match custom_data {
+                    Some(s) => Some(parse_custom_data(&s)?),
+                    None => None,
+                };
                 let request = UpdateNotesRequest {
                     selector,
                     data,
                     parser_id,
                     keywords: keywords.as_deref().map(parse_list),
                     tags,
-                    custom_data: None,
+                    custom_data,
                 };
                 let url = format!("{}/api/notes", base_url);
                 let response = client

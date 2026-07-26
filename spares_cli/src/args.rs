@@ -147,6 +147,9 @@ pub(crate) enum AddCommands {
         tags: Vec<String>,
         #[arg(short, long, default_value_t = false)]
         is_suspended: bool,
+        /// JSON object to set as the note's custom data (initial value on create)
+        #[arg(long, value_name = "JSON")]
+        custom_data: Option<String>,
     },
 }
 
@@ -196,6 +199,9 @@ pub(crate) enum EditCommands {
         tags_to_add: Option<Vec<String>>,
         #[arg(long, default_value_t = false)]
         remove_all_tags: bool,
+        /// JSON object to set as the note's custom data (full replace on edit)
+        #[arg(long, value_name = "JSON")]
+        custom_data: Option<String>,
     },
     Card {
         #[command(flatten)]
