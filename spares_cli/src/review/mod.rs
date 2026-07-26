@@ -1,10 +1,8 @@
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::Child;
 use std::time::Duration;
 use std::time::Instant;
 
-use chrono::Local;
 use chrono::Utc;
 use clap::Args;
 use inquire::MultiSelect;
@@ -149,30 +147,7 @@ async fn get_review_card(
     first: bool,
 ) -> Result<Option<(GetReviewCardResponse, Option<Child>)>, String> {
     let url = format!("{}/api/review", base_url);
-    let filter = if let Some(ref query) = filter_args.query {
-        Some(GetReviewCardFilterRequest::Query(query.clone()))
-    } else if let Some(ref tag_name) = filter_args.tag_name {
-        let url = format!("{}/api/tags/name/{}", base_url, tag_name);
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| format!("{}", e))?;
-        let status = response.status();
-        if status != StatusCode::OK {
-            let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-            let message = response_json.get("message");
-            return Err(message.unwrap().to_string());
-        }
-        let tag_response: TagResponse = response.json().await.map_err(|e| format!("{}", e))?;
-        Some(GetReviewCardFilterRequest::FilteredTag {
-            tag_id: tag_response.id,
-        })
-    } else {
-        filter_args
-            .tag_id
-            .map(|tag_id| GetReviewCardFilterRequest::FilteredTag { tag_id })
-    };
+    let filter = filter_args_to_filter(filter_args, base_url, client).await?;
     let request = GetReviewCardRequest { filter };
     let response = client
         .post(url)
@@ -205,8 +180,8 @@ async fn get_review_card(
                     first,
                 )?)
             };
-            println!("Note Id: {}", &review_card.note_id);
-            println!("Card Id: {}", &review_card.card_id);
+            println!("Note Id: {}", review_card.note_id);
+            println!("Card Id: {}", review_card.card_id);
             if !is_cli {
                 let file_name = review_card
                     .card_front_rendered_path
@@ -214,32 +189,7 @@ async fn get_review_card(
                     .map_or_else(|| "<unknown>".to_string(), |f| f.display().to_string());
                 println!("Card Front File Name: {file_name:?}");
             }
-
-            // Display cards left by state
-            if !review_card.cards_left_by_state.is_empty() {
-                println!("Cards left by state for today:");
-                let mut cards_left_by_state =
-                    review_card.cards_left_by_state.iter().collect::<Vec<_>>();
-                cards_left_by_state.sort_by_key(|(state_id, _)| *state_id);
-                for (state_id, count) in cards_left_by_state {
-                    let indicator = if *state_id == review_card.card_state {
-                        "--> "
-                    } else {
-                        "    "
-                    };
-                    println!(" {}State {}: {}", indicator, state_id, count);
-                }
-            }
-            println!(
-                "Estimated Time Remaining: {}",
-                format_duration(review_card.time_estimate)
-            );
-            println!(
-                "Estimated Completion Time: {}",
-                (Utc::now() + review_card.time_estimate)
-                    .with_timezone(&Local)
-                    .format("%H:%M:%S %P (%m-%d-%Y)")
-            );
+            utils::print_cards_left_by_state_and_time_estimate(&review_card);
 
             if is_cli && let Some(cli) = &review_card.cli {
                 println!("\n{}", cli.surrounding);
@@ -252,14 +202,48 @@ async fn get_review_card(
     }
 }
 
+async fn filter_args_to_filter(
+    filter_args: &FilterArgs,
+    base_url: &str,
+    client: &Client,
+) -> Result<Option<GetReviewCardFilterRequest>, String> {
+    if let Some(ref query) = filter_args.query {
+        Ok(Some(GetReviewCardFilterRequest::Query(query.clone())))
+    } else if let Some(ref tag_name) = filter_args.tag_name {
+        let url = format!("{}/api/tags/name/{}", base_url, tag_name);
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("{}", e))?;
+        let status = response.status();
+        if status != StatusCode::OK {
+            let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+            let message = response_json.get("message");
+            return Err(message.unwrap().to_string());
+        }
+        let tag_response: TagResponse = response.json().await.map_err(|e| format!("{}", e))?;
+        Ok(Some(GetReviewCardFilterRequest::FilteredTag {
+            tag_id: tag_response.id,
+        }))
+    } else {
+        Ok(filter_args
+            .tag_id
+            .map(|tag_id| GetReviewCardFilterRequest::FilteredTag { tag_id }))
+    }
+}
+
 async fn get_review_card_by_id(
     card_id: spares_core::model::CardId,
+    filter: Option<GetReviewCardFilterRequest>,
     base_url: &str,
     client: &Client,
 ) -> Result<Option<GetReviewCardResponse>, String> {
     let url = format!("{}/api/review/card/{}", base_url, card_id);
+    let request = GetReviewCardRequest { filter };
     let response = client
-        .get(&url)
+        .post(&url)
+        .json(&request)
         .send()
         .await
         .map_err(|e| format!("{}", e))?;
@@ -323,22 +307,6 @@ pub(crate) async fn sync_note(
     }
 
     Ok(())
-}
-
-async fn sync_note_background(
-    note_id: NoteId,
-    note_raw_path: PathBuf,
-    parser_name: String,
-    base_url: String,
-    client: Client,
-    tx: mpsc::UnboundedSender<Result<NoteId, String>>,
-) {
-    let result = sync_note(note_id, &note_raw_path, &parser_name, &base_url, &client).await;
-    let _ = tx.send(
-        result
-            .map_err(|e| format!("[Note Id: {note_id}] Failed to sync note: {e}"))
-            .map(|()| note_id),
-    );
 }
 
 async fn build_review_actions(
@@ -562,8 +530,6 @@ pub(crate) async fn review_cards(
     )
     .await?;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Result<NoteId, String>>();
-
     // Spawn background task to fetch day statistics
     let mut stats_rx = spawn_stats_fetch(scheduler_name, base_url, client);
 
@@ -582,7 +548,6 @@ pub(crate) async fn review_cards(
     let mut last_action_event_id: Option<i64> = None;
     let mut last_action_was_rating = false;
     let mut pending_cli_rating: Option<Rating> = None;
-    let mut sync_advance_needed = false;
 
     if review_card_response.cli.is_some() {
         match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client).await {
@@ -618,8 +583,7 @@ pub(crate) async fn review_cards(
     }
 
     loop {
-        if advance_review_card || sync_advance_needed {
-            sync_advance_needed = false;
+        if advance_review_card {
             println!();
             println!();
             // Opening the card's raw file is not useful since edits must be made to the note, not the
@@ -881,7 +845,7 @@ pub(crate) async fn review_cards(
                             forget_card(review_card_response.card_id, base_url, client).await?;
                         last_action_event_id = forget_response.event_id;
                         println!("Card forgotten (scheduling reset):");
-                        println!("{:#?}", &forget_response.card);
+                        println!("{:#?}", forget_response.card);
                     }
                     ReviewAction::SetCardDueDate => {
                         let result = set_due_date_with_prompt(
@@ -982,27 +946,134 @@ pub(crate) async fn review_cards(
                 last_action_was_rating = false;
             }
             ReviewAction::SyncNote => {
-                println!("Syncing note in background...");
+                println!("Syncing note...");
 
-                // Clone values needed for background task
+                // Phase 1: Import (DB update) — await inline so that get_review_card_by_id
+                // sees the latest state before we re-prompt.
+                let mut adapter = SparesAdapter::new(SparesRequestProcessor::Server);
+                let parser = find_parser(&review_card_response.parser_name, &get_all_parsers())
+                    .map_err(|e| format!("Failed to find parser: {e}"))?;
+
+                import_from_files(
+                    &mut adapter,
+                    Some(parser.as_ref()),
+                    None,
+                    &[review_card_response.note_raw_path.as_path()],
+                    false,
+                    true,
+                )
+                .await
+                .map_err(|e| format!("Failed to import note: {e}"))?;
+
                 let note_id = review_card_response.note_id;
-                let note_raw_path = review_card_response.note_raw_path.clone();
-                let parser_name = review_card_response.parser_name.clone();
+
+                // Check whether the current card still exists after the import.
+                let active_filter =
+                    filter_args_to_filter(&review_args.filter_args, base_url, client).await?;
+                match get_review_card_by_id(
+                    review_card_response.card_id,
+                    active_filter,
+                    base_url,
+                    client,
+                )
+                .await
+                {
+                    Ok(Some(new_response)) => {
+                        println!(
+                            "[Note Id: {}] Current card refreshed after sync (card order may have changed).",
+                            note_id
+                        );
+                        let is_cli = new_response.cli.is_some();
+                        if card_flipped {
+                            if let Some(mut child) = card_back_rendered_child.take() {
+                                close_rendered_file(&mut child, close_command, false)?;
+                            }
+                            if !is_cli {
+                                let back_path = match &new_response.card_back_rendered_path {
+                                    CardBackRenderedPath::CardBack(p)
+                                    | CardBackRenderedPath::Note(p) => p.clone(),
+                                };
+                                card_back_rendered_child = Some(open_rendered_file(
+                                    &back_path,
+                                    open_command_card_used,
+                                    Some(&cloze_tag_str(
+                                        new_response.note_id,
+                                        new_response.card_order,
+                                    )),
+                                    false,
+                                )?);
+                            }
+                        } else {
+                            if let Some(child) = card_front_rendered_child.as_mut() {
+                                close_rendered_file(child, close_command, false)?;
+                            }
+                            if !is_cli {
+                                card_front_rendered_child = Some(open_rendered_file(
+                                    &new_response.card_front_rendered_path,
+                                    open_command_card_used,
+                                    Some(&cloze_tag_str(
+                                        new_response.note_id,
+                                        new_response.card_order,
+                                    )),
+                                    false,
+                                )?);
+                            }
+                        }
+                        review_card_response = new_response;
+                        utils::print_cards_left_by_state_and_time_estimate(&review_card_response);
+                    }
+                    Ok(None) => {
+                        println!(
+                            "[Note Id: {}] Current card was deleted during sync. Advancing to next card.",
+                            note_id
+                        );
+                        if card_flipped {
+                            if let Some(mut child) = card_back_rendered_child.take() {
+                                close_rendered_file(&mut child, close_command, false)?;
+                            }
+                        } else if let Some(child) = card_front_rendered_child.as_mut() {
+                            close_rendered_file(child, close_command, false)?;
+                        }
+                        card_flipped = false;
+                        advance_review_card = true;
+                    }
+                    Err(e) => {
+                        println!(
+                            "[Note Id: {}] Failed to refresh card after sync: {}",
+                            note_id, e
+                        );
+                    }
+                }
+
+                // Phase 2: File rendering — spawn in background (slower, non-blocking).
                 let base_url_string = base_url.to_string();
                 let client_clone = client.clone();
-                let tx_clone = tx.clone();
-
-                // Spawn background task
                 tokio::spawn(async move {
-                    sync_note_background(
-                        note_id,
-                        note_raw_path,
-                        parser_name,
-                        base_url_string,
-                        client_clone,
-                        tx_clone,
-                    )
-                    .await;
+                    let request = RenderNotesRequest {
+                        selector: NotesSelector::Ids(vec![note_id]),
+                        immutable_note_ids: None,
+                        overridden_output_raw_dir: None,
+                        include_linked_notes: true,
+                        include_cards: true,
+                        generate_rendered: true,
+                        force_generate_rendered: false,
+                    };
+                    let url = format!("{base_url_string}/api/notes/generate_files");
+                    let response = client_clone.post(&url).json(&request).send().await;
+                    match response {
+                        Ok(resp) => {
+                            if resp.status() != StatusCode::OK
+                                && let Ok(json) = resp.json::<Value>().await
+                            {
+                                let msg = json
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Unknown error");
+                                eprintln!("[Note Id: {note_id}] Failed to regenerate files: {msg}");
+                            }
+                        }
+                        Err(e) => eprintln!("[Note Id: {note_id}] Failed to regenerate files: {e}"),
+                    }
                 });
             }
             ReviewAction::Undo => {
@@ -1079,90 +1150,6 @@ pub(crate) async fn review_cards(
                     day_stats,
                 );
                 return Ok(());
-            }
-        }
-
-        // Drain any pending messages from background sync tasks
-        while let Ok(result) = rx.try_recv() {
-            match result {
-                Ok(synced_note_id) => {
-                    println!("[Note Id: {}] Note synced successfully.", synced_note_id);
-                    // If the synced note is the one being reviewed and we are not already
-                    // advancing, refresh the current card's paths since card ordering may
-                    // have shifted (e.g. a cloze was deleted).
-                    if synced_note_id == review_card_response.note_id && !advance_review_card {
-                        match get_review_card_by_id(review_card_response.card_id, base_url, client)
-                            .await
-                        {
-                            Ok(Some(new_response)) => {
-                                println!(
-                                    "[Note Id: {}] Current card refreshed after sync (card order may have changed).",
-                                    synced_note_id
-                                );
-                                let is_cli = new_response.cli.is_some();
-                                if card_flipped {
-                                    if let Some(mut child) = card_back_rendered_child.take() {
-                                        close_rendered_file(&mut child, close_command, false)?;
-                                    }
-                                    if !is_cli {
-                                        let back_path = match &new_response.card_back_rendered_path
-                                        {
-                                            CardBackRenderedPath::CardBack(p)
-                                            | CardBackRenderedPath::Note(p) => p.clone(),
-                                        };
-                                        card_back_rendered_child = Some(open_rendered_file(
-                                            &back_path,
-                                            open_command_card_used,
-                                            Some(&cloze_tag_str(
-                                                new_response.note_id,
-                                                new_response.card_order,
-                                            )),
-                                            false,
-                                        )?);
-                                    }
-                                } else {
-                                    if let Some(child) = card_front_rendered_child.as_mut() {
-                                        close_rendered_file(child, close_command, false)?;
-                                    }
-                                    if !is_cli {
-                                        card_front_rendered_child = Some(open_rendered_file(
-                                            &new_response.card_front_rendered_path,
-                                            open_command_card_used,
-                                            Some(&cloze_tag_str(
-                                                new_response.note_id,
-                                                new_response.card_order,
-                                            )),
-                                            false,
-                                        )?);
-                                    }
-                                }
-                                review_card_response = new_response;
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "[Note Id: {}] Current card was deleted during sync. Advancing to next card.",
-                                    synced_note_id
-                                );
-                                if card_flipped {
-                                    if let Some(mut child) = card_back_rendered_child.take() {
-                                        close_rendered_file(&mut child, close_command, false)?;
-                                    }
-                                } else if let Some(child) = card_front_rendered_child.as_mut() {
-                                    close_rendered_file(child, close_command, false)?;
-                                }
-                                card_flipped = false;
-                                sync_advance_needed = true;
-                            }
-                            Err(e) => {
-                                println!(
-                                    "[Note Id: {}] Failed to refresh card after sync: {}",
-                                    synced_note_id, e
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(msg) => println!("{}", msg),
             }
         }
     }

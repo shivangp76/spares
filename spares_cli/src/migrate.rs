@@ -107,7 +107,7 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
             return Err(body.to_string());
         }
     } else {
-        println!("{:?}", &request);
+        println!("{:?}", request);
     }
     let duration = start.elapsed();
     println!("Notes render duration: {:?}", duration);
