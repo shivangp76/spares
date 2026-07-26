@@ -158,8 +158,11 @@ async fn get_review_card(
     let status = response.status();
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(message.unwrap().to_string());
+        let message = response_json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(message.to_string());
     }
     let review_card_response: Option<GetReviewCardResponse> =
         response.json().await.map_err(|e| format!("{}", e))?;
@@ -219,8 +222,11 @@ async fn filter_args_to_filter(
         let status = response.status();
         if status != StatusCode::OK {
             let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-            let message = response_json.get("message");
-            return Err(message.unwrap().to_string());
+            let message = response_json
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(message.to_string());
         }
         let tag_response: TagResponse = response.json().await.map_err(|e| format!("{}", e))?;
         Ok(Some(GetReviewCardFilterRequest::FilteredTag {
@@ -250,8 +256,11 @@ async fn get_review_card_by_id(
     let status = response.status();
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(message.unwrap().to_string());
+        let message = response_json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(message.to_string());
     }
     response.json().await.map_err(|e| format!("{}", e))
 }
@@ -704,7 +713,6 @@ pub(crate) async fn review_cards(
                 last_action_was_rating = true;
 
                 // let old_card_rendered_path = review_card_response.card_rendered_path;
-
                 // Advance to next review card
                 advance_review_card = true;
 
@@ -968,8 +976,21 @@ pub(crate) async fn review_cards(
                 let note_id = review_card_response.note_id;
 
                 // Check whether the current card still exists after the import.
-                let active_filter =
-                    filter_args_to_filter(&review_args.filter_args, base_url, client).await?;
+                let active_filter = match filter_args_to_filter(
+                    &review_args.filter_args,
+                    base_url,
+                    client,
+                )
+                .await
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        println!(
+                            "Warning: Could not resolve filter context: {e}. Refreshing card without filter context."
+                        );
+                        None
+                    }
+                };
                 match get_review_card_by_id(
                     review_card_response.card_id,
                     active_filter,
@@ -1062,14 +1083,25 @@ pub(crate) async fn review_cards(
                     let response = client_clone.post(&url).json(&request).send().await;
                     match response {
                         Ok(resp) => {
-                            if resp.status() != StatusCode::OK
-                                && let Ok(json) = resp.json::<Value>().await
-                            {
-                                let msg = json
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Unknown error");
-                                eprintln!("[Note Id: {note_id}] Failed to regenerate files: {msg}");
+                            let status = resp.status();
+                            if status != StatusCode::OK {
+                                match resp.json::<Value>().await {
+                                    Ok(json) => {
+                                        let msg = json
+                                            .get("message")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Unknown error");
+                                        eprintln!(
+                                            "[Note Id: {note_id}] Failed to regenerate files: {msg}"
+                                        );
+                                    }
+                                    Err(parse_err) => {
+                                        eprintln!(
+                                            "[Note Id: {note_id}] Failed to regenerate files (status={}, parse_error={})",
+                                            status, parse_err
+                                        );
+                                    }
+                                }
                             }
                         }
                         Err(e) => eprintln!("[Note Id: {note_id}] Failed to regenerate files: {e}"),

@@ -360,8 +360,11 @@ pub(crate) async fn forget_card(
         .map_err(|e| format!("{}", e))?;
     if response.status() != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(message.unwrap().to_string());
+        let message = response_json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(message.to_string());
     }
     let forget_response: ForgetCardResponse =
         response.json().await.map_err(|e| format!("{}", e))?;
@@ -408,8 +411,11 @@ pub(crate) async fn set_due_date(
         .map_err(|e| format!("{}", e))?;
     if response.status() != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(message.unwrap().to_string());
+        let message = response_json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(message.to_string());
     }
     let update_response: UpdateCardsResponse =
         response.json().await.map_err(|e| format!("{}", e))?;
