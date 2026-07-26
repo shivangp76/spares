@@ -550,7 +550,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                         .map(|x| x.name)
                         .collect::<Vec<_>>()
                         .join("\n");
-                    println!("{}", &tag_names);
+                    println!("{}", tag_names);
                 } else if tree {
                     let tag_names = tag_responses
                         .into_iter()
@@ -558,7 +558,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                         .collect::<Vec<_>>();
                     let tree = build_tree(tag_names);
                     let output = tree_to_string(&tree, 0);
-                    println!("{}", &output);
+                    println!("{}", output);
                 } else if long {
                     println!("{}", serde_json::to_string_pretty(&tag_responses).unwrap());
                 } else {
@@ -920,7 +920,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     let forget_response = forget_card(card_id, &base_url, &client)
                         .await
                         .map_err(|e| miette!("{}", e))?;
-                    println!("Forgot card: {:#?}", &forget_response.card);
+                    println!("Forgot card: {:#?}", forget_response.card);
                 }
             }
             ScheduleCommands::Leeches { scheduler_name } => {

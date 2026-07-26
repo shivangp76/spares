@@ -67,7 +67,7 @@ impl SparesAdapter {
         if status != StatusCode::OK {
             let response_json: Value = response.json().await.map_err(Error::ApiRequest)?;
             let message = response_json.get("message");
-            info!("{:?}", &message);
+            info!("{:?}", message);
             return Err(Error::Library(LibraryError::Adapter(
                 AdapterErrorKind::Custom {
                     adapter_name: self.get_adapter_name().to_string(),

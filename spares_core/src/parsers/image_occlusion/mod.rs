@@ -248,7 +248,7 @@ pub fn parse_image_occlusion_data(
                 LibraryError::Note(NoteErrorKind::InvalidSettings {
                     description: format!(
                         "Failed to read {}.",
-                        &image_occlusion_data.clozes_filepath.display()
+                        image_occlusion_data.clozes_filepath.display()
                     ),
                     advice: None,
                     src: data.to_string(),
