@@ -9,7 +9,7 @@ pub mod tag;
 pub(crate) mod tests;
 pub mod undo;
 
-const MAX_ROWS_IN_QUERY: usize = 200;
+pub(crate) const MAX_ROWS_IN_QUERY: usize = 200;
 
 pub use card::create_card_tags;
 pub use card::delete_card_tags;
