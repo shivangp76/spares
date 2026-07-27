@@ -242,6 +242,7 @@ impl SrsAdapter for AnkiAdapter {
         dry_run: bool,
         quiet: bool,
         _at: DateTime<Utc>,
+        _live_update_note_ids: Vec<NoteId>,
     ) -> Result<(), Error> {
         if !dry_run {
             self.verify_anki_is_open()?;
@@ -251,7 +252,7 @@ impl SrsAdapter for AnkiAdapter {
         let is_latex = parser_name.contains("latex");
         let client = Client::new();
         let mut added_notes = Vec::new();
-        for (local_settings, note_data_res) in notes.clone() {
+        for (local_settings, note_data_res) in notes {
             if note_data_res.is_none() {
                 continue;
             }

@@ -273,6 +273,7 @@ async fn update_changes(
                     filepaths.as_slice(),
                     false,
                     false, // not quiet
+                    false,
                 )
                 .await
                 .map_err(|e| format!("{}", e))?;

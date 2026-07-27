@@ -413,4 +413,57 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(tags.len(), 0);
     }
+
+    #[sqlx::test]
+    async fn test_find_live_note_by_block_order(pool: SqlitePool) {
+        let parser = create_parser_helper(&pool, "markdown").await;
+
+        // Create a note with live_sync_name = "test_lsn", live_block_order = 0
+        let mut custom_data = Map::new();
+        custom_data.insert(
+            "live_sync_name".to_string(),
+            serde_json::Value::String("test_lsn".to_string()),
+        );
+        custom_data.insert(
+            "live_block_order".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(0)),
+        );
+        let create_res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "Test live note".to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: custom_data.clone(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let created_id = create_res.notes[0].id;
+
+        // Found by matching (live_sync_name, block_order)
+        let found = find_live_note_by_block_order(&pool, "test_lsn", 0)
+            .await
+            .unwrap();
+        assert_eq!(found, Some(created_id));
+
+        // Wrong block_order -> None
+        let wrong_order = find_live_note_by_block_order(&pool, "test_lsn", 1)
+            .await
+            .unwrap();
+        assert_eq!(wrong_order, None);
+
+        // Wrong live_sync_name -> None
+        let wrong_name = find_live_note_by_block_order(&pool, "nonexistent", 0)
+            .await
+            .unwrap();
+        assert_eq!(wrong_name, None);
+    }
 }

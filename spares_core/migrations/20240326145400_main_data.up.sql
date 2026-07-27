@@ -136,3 +136,12 @@ CREATE INDEX IF NOT EXISTS idx_note_keyword_keyword ON note_keyword(keyword);
 
 -- Index on tag.query for faster filtering in WHERE clause
 CREATE INDEX IF NOT EXISTS idx_tag_query ON tag(query);
+
+-- Unique expression index for live-sync (live_sync_name, live_block_order) lookups,
+-- used by spares import live-mode to match notes by custom_data fields.
+-- UNIQUE prevents silent duplicate notes when two imports race on the same pair.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_note_live_sync
+    ON note(
+        json_extract(custom_data, '$.live_sync_name'),
+        json_extract(custom_data, '$.live_block_order')
+    );

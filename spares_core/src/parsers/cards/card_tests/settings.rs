@@ -32,6 +32,7 @@ fn test_get_cards_front_conceal_1() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -55,6 +56,7 @@ fn test_get_cards_front_conceal_1() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -76,6 +78,7 @@ fn test_get_cards_front_conceal_1() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -122,6 +125,7 @@ fn test_get_cards_front_conceal_2() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1;f:all]".to_string()),
@@ -150,6 +154,7 @@ fn test_get_cards_front_conceal_2() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -171,6 +176,7 @@ fn test_get_cards_front_conceal_2() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -204,6 +210,7 @@ fn test_get_cards_back_reveal_1() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1;b:a]".to_string()),
@@ -237,6 +244,7 @@ fn test_get_cards_back_reveal_2() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -260,6 +268,7 @@ fn test_get_cards_back_reveal_2() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -281,6 +290,7 @@ fn test_get_cards_back_reveal_2() {
                 back_emphasis: false,
                 back_type: BackType::CardFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -335,6 +345,7 @@ fn test_get_cards_suspended_only_deserialized() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -368,6 +379,7 @@ fn test_get_cards_suspended_false() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -405,6 +417,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -426,6 +439,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -464,6 +478,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -485,6 +500,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -506,6 +522,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -544,6 +561,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -565,6 +583,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2,3;r:]".to_string()),
@@ -586,6 +605,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a{{[o:1]b}}c".to_string(),
@@ -626,6 +646,7 @@ fn test_get_cards_inherit_basic() {
                 note_id: 123,
                 order: 1,
             }),
+            cloze_uid: None,
             data: vec![
                 // `inh:` is not serialized, so ClozeStart has no settings.
                 NotePart::ClozeStart("{{".to_string()),
@@ -661,6 +682,7 @@ fn test_get_cards_inherit_with_order() {
                 note_id: 456,
                 order: 2,
             }),
+            cloze_uid: None,
             data: vec![
                 NotePart::ClozeStart("{{[o:1]".to_string()),
                 NotePart::ClozeData(

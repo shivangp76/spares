@@ -230,6 +230,16 @@ pub async fn create_notes(
                     if *is_suspended {
                         card.special_state = Some(SpecialState::Suspended);
                     }
+                    if let Some(ref uid) = card_data.cloze_uid {
+                        let uid_str = uid.to_string();
+                        if let serde_json::Value::Object(ref mut map) = card.custom_data {
+                            map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                        } else {
+                            let mut map = serde_json::Map::new();
+                            map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                            card.custom_data = serde_json::Value::Object(map);
+                        }
+                    }
                     // Collect inheritance directives for post-creation update
                     if let Some(ReadableCardIdentifier {
                         note_id: src_note_id,

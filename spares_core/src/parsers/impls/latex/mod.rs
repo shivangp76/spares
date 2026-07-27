@@ -553,6 +553,7 @@ mod tests {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}[o:1]".to_string()),
@@ -579,6 +580,7 @@ mod tests {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}".to_string()),

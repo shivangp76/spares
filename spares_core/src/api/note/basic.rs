@@ -234,6 +234,22 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     Ok(responses)
 }
 
+pub async fn find_live_note_by_block_order(
+    db: &SqlitePool,
+    live_sync_name: &str,
+    block_order: i64,
+) -> Result<Option<NoteId>, Error> {
+    let note_id: Option<NoteId> = sqlx::query_scalar(
+        r"SELECT id FROM note WHERE json_extract(custom_data, '$.live_sync_name') = ? AND json_extract(custom_data, '$.live_block_order') = ?",
+    )
+    .bind(live_sync_name)
+    .bind(block_order)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(note_id)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use chrono::Utc;
