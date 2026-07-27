@@ -37,6 +37,7 @@ mod data;
 mod grouping;
 mod match_cards;
 pub mod overlapper;
+mod uids;
 mod validation;
 
 use std::ops::Range;
@@ -46,6 +47,7 @@ use grouping::apply_conceal_and_reveal;
 use grouping::group_clozes;
 use grouping::modify_card_settings;
 pub use match_cards::*;
+pub use uids::*;
 pub use validation::*;
 
 #[derive(Clone, Copy)]
