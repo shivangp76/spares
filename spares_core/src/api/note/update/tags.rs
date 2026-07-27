@@ -121,14 +121,12 @@ pub(super) async fn update_tags(
     db: &SqlitePool,
     tags: &UpdateTags,
     note_id: NoteId,
+    existing_filtered_tag_names: &[String],
 ) -> Result<Vec<CreateTagPayload>, Error> {
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
-    // Validate tags do not contain filtered tags
-    let existing_filtered_tags_names: Vec<String> =
-        sqlx::query_scalar(r"SELECT name FROM tag WHERE query IS NOT NULL")
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+    if matches!(tags, UpdateTags::None) {
+        return Ok(new_tag_payloads);
+    }
 
     let remove_all_tags = matches!(tags, UpdateTags::SetTags(_));
     let (tags_to_remove, tags_to_add) = match tags {
@@ -137,13 +135,13 @@ pub(super) async fn update_tags(
             tags_to_add,
         } => (tags_to_remove, tags_to_add),
         UpdateTags::SetTags(items) => (&None, &Some(items.clone())),
-        UpdateTags::None => (&None, &None),
+        UpdateTags::None => unreachable!("handled by early return earlier"),
     };
 
     if let Some(tags_to_remove) = tags_to_remove
         && let Some(filtered_tag) = tags_to_remove
             .iter()
-            .find(|t| existing_filtered_tags_names.contains(t))
+            .find(|t| existing_filtered_tag_names.contains(t))
     {
         return Err(Error::Library(LibraryError::Tag(
             TagErrorKind::InvalidInput(format!(
@@ -231,7 +229,7 @@ pub(super) async fn update_tags(
             });
         }
         new_tag_payloads.extend(
-            add_tags_to_note(db, note_id, &tags_to_add, &existing_filtered_tags_names).await?,
+            add_tags_to_note(db, note_id, &tags_to_add, existing_filtered_tag_names).await?,
         );
     }
     Ok(new_tag_payloads)
