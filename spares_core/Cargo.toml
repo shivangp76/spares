@@ -48,13 +48,19 @@ resvg = "0.47.0"
 tiny-skia = "0.12.0"
 
 [dev-dependencies]
+criterion = { version = "0.6", features = ["async_futures"] }
 pretty_assertions = "1.4.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 uuid = { version = "1.23.3", features = [
     "serde",
     "v4",                # Lets you generate random UUIDs
     "fast-rng",          # Use a faster (but still sufficiently random) RNG
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
+
+[[bench]]
+name = "update_notes"
+harness = false
 
 # [features]
 # testing = [] # Used to mitigate effects to local data files in integration testing. See <https://www.reddit.com/r/rust/comments/ny6k3f/cfgtest_doesnt_take_affect_when_running/>.
