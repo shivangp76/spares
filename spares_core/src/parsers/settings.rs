@@ -108,6 +108,7 @@ pub struct NoteSettingsKeys {
     pub back_reveal: ReadWriteValue,
     pub back_emphasis: ReadWriteValue,
     pub custom_data: ReadWriteValue,
+    pub live_sync_name: ReadWriteValue,
     pub settings_delim: &'static str,
     pub settings_key_value_delim: &'static str,
     pub global_settings_prefix: ReadWriteValue,
@@ -136,6 +137,7 @@ impl Default for NoteSettingsKeys {
             back_reveal: ReadWriteValue::Same("back-reveal"),
             back_emphasis: ReadWriteValue::Same("back-emphasis"),
             custom_data: ReadWriteValue::Same("custom-data"),
+            live_sync_name: ReadWriteValue::Same("live-sync-name"),
             settings_delim: ";",
             settings_key_value_delim: ":",
             global_settings_prefix: ReadWriteValue::Same("g-"),
@@ -177,6 +179,7 @@ pub fn parse_note_settings(
         back_reveal: back_reveal_key,
         back_emphasis: back_emphasis_key,
         custom_data: custom_data_key,
+        live_sync_name: live_sync_name_key,
         global_settings_prefix: global_prefix,
         settings_delim,
         settings_key_value_delim,
@@ -335,6 +338,11 @@ pub fn parse_note_settings(
                         ));
                     }
                 }
+            } else if live_sync_name_key.matches_read(key) {
+                settings.custom_data.insert(
+                    "live_sync_name".to_string(),
+                    Value::String(value.to_string()),
+                );
             } else {
                 settings
                     .custom_data
@@ -513,4 +521,88 @@ fn parse_settings_list(
         return Err(errors);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_live_sync_name_stored_in_custom_data() {
+        let parser: Box<dyn crate::parsers::Parseable> =
+            Box::new(crate::parsers::impls::markdown::MarkdownParser::new());
+        let adapter = crate::adapters::impls::spares::SparesAdapter::new(
+            crate::adapters::impls::spares::SparesRequestProcessor::Server,
+        );
+
+        // A minimal note with a global live-sync-name setting
+        let data = "<!--- # g-live-sync-name: lecture_notes-501 --->\n\
+                     <!--- # note-id: 1 --->\n\
+                     <!--- spares: note start --->\n\
+                     some content\n\
+                     <!--- spares: note end --->\n";
+
+        let settings_ranges = parser.as_ref().get_settings(data).unwrap();
+        let mut global_settings = NoteSettings::default();
+        let mut local_settings = NoteSettings::default();
+        let note_range = 0..data.len();
+
+        parse_note_settings(
+            parser.as_ref(),
+            data,
+            &settings_ranges,
+            &mut global_settings,
+            &mut local_settings,
+            &adapter,
+            &note_range,
+        );
+
+        assert_eq!(
+            local_settings
+                .custom_data
+                .get("live_sync_name")
+                .and_then(|v| v.as_str()),
+            Some("lecture_notes-501"),
+        );
+        // Also check global_settings has it
+        assert_eq!(
+            global_settings
+                .custom_data
+                .get("live_sync_name")
+                .and_then(|v| v.as_str()),
+            Some("lecture_notes-501"),
+        );
+    }
+
+    #[test]
+    fn test_non_live_import_ignores_key() {
+        let parser: Box<dyn crate::parsers::Parseable> =
+            Box::new(crate::parsers::impls::markdown::MarkdownParser::new());
+        let adapter = crate::adapters::impls::spares::SparesAdapter::new(
+            crate::adapters::impls::spares::SparesRequestProcessor::Server,
+        );
+
+        // No g-live-sync-name in settings
+        let data = "<!--- # note-id: 1 --->\n\
+                     <!--- spares: note start --->\n\
+                     some content\n\
+                     <!--- spares: note end --->\n";
+
+        let settings_ranges = parser.as_ref().get_settings(data).unwrap();
+        let mut global_settings = NoteSettings::default();
+        let mut local_settings = NoteSettings::default();
+        let note_range = 0..data.len();
+
+        parse_note_settings(
+            parser.as_ref(),
+            data,
+            &settings_ranges,
+            &mut global_settings,
+            &mut local_settings,
+            &adapter,
+            &note_range,
+        );
+
+        assert!(local_settings.custom_data.get("live_sync_name").is_none());
+    }
 }
