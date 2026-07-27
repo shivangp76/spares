@@ -8,6 +8,7 @@ use super::data::BackType;
 use super::data::ClozeGrouping;
 use super::data::ClozeGroupingSettings;
 use super::data::ClozeSettings;
+use super::data::ClozeUid;
 use super::data::FrontConceal;
 use super::data::ModifyDefaultsFn;
 use super::data::ReadableCardIdentifier;
@@ -33,6 +34,7 @@ pub struct ClozeSettingsKeys {
     pub back_emphasis: &'static str,
     pub inherit: &'static str,
     pub overlapper: &'static str,
+    pub id: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -50,6 +52,7 @@ impl Default for ClozeSettingsKeys {
             back_emphasis: "be",
             inherit: "inh",
             overlapper: "ov",
+            id: "id",
         }
     }
 }
@@ -78,6 +81,12 @@ pub fn construct_cloze_string(
         parts.push(format!(
             "{}{}",
             cloze_settings_keys.overlapper, settings_key_value_delim
+        ));
+    }
+    if let Some(ref cloze_uid) = global_settings.cloze_uid {
+        parts.push(format!(
+            "{}{}{}",
+            cloze_settings_keys.id, settings_key_value_delim, cloze_uid
         ));
     }
 
@@ -297,6 +306,7 @@ fn parse_grouping_settings(
         back_emphasis: back_emphasis_key,
         inherit: inherit_key,
         overlapper: overlapper_key,
+        id: id_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -354,6 +364,14 @@ fn parse_grouping_settings(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             current_grouping_settings.orders = Some(orders);
+        } else if key == id_key {
+            settings.cloze_uid = Some(ClozeUid::try_from(*value).map_err(|_| {
+                LibraryError::Card(CardErrorKind::InvalidSettings {
+                    description: format!("The cloze uid `{}` is invalid.", value),
+                    src: data.to_string(),
+                    at: card_settings_indices.clone().into(),
+                })
+            })?);
         } else {
             return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
                 description: format!("The key `{}` is not supported.", key),

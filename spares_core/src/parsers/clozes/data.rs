@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::Range;
 
 use serde::Deserialize;
@@ -6,6 +7,31 @@ use serde::Serialize;
 use super::DEFAULT_BACK_EMPHASIS;
 use crate::model::NoteId;
 use crate::parsers::image_occlusion::ImageOcclusionCloze;
+
+/// A fixed-size 12-byte UID (always 12 ASCII hex characters).
+/// Avoids the heap allocation of `Option<String>`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClozeUid(pub [u8; 12]);
+
+impl fmt::Display for ClozeUid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = std::str::from_utf8(&self.0).expect("ClozeUid must be valid ASCII");
+        f.write_str(s)
+    }
+}
+
+impl TryFrom<&str> for ClozeUid {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        if s.len() != 12 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("invalid cloze uid: {s}"));
+        }
+        let mut bytes = [0u8; 12];
+        bytes.copy_from_slice(s.as_bytes());
+        Ok(ClozeUid(bytes))
+    }
+}
 
 /// See [`ClozeGroupingSettings`] for documentation.
 pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
@@ -38,6 +64,9 @@ pub struct ClozeSettings {
     /// have their grouping settings replaced dynamically by the overlapper algorithm
     /// during card generation. The flag is preserved in the note via the `ov:` key.
     pub is_overlapper: bool,
+    /// A stable, globally-unique 12-hex identifier for this cloze (one per cloze, not
+    /// per grouping), used during live-mode reconciliation across imports.
+    pub cloze_uid: Option<ClozeUid>,
 }
 
 #[derive(Debug)]
