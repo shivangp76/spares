@@ -97,10 +97,11 @@ pub(super) async fn update_cards(
             let new_card = &new_cards[i - 1];
             old_card.back_type != new_card.back_type
                 || old_card.is_suspended != new_card.is_suspended
+                || old_card.cloze_uid != new_card.cloze_uid
         })
         .collect();
 
-    // Update moved cards (or cards with the same index where their `back_type` or `special_state` changed)
+    // Update moved cards (or cards with the same index where their `back_type`, `special_state`, or `cloze_uid` changed)
     let indices = move_card_indices
         .iter()
         .map(|(x, _)| *x)
@@ -143,11 +144,28 @@ pub(super) async fn update_cards(
         }
         moved_card.back_type = new_card.back_type;
         moved_card.updated_at = at;
+        // Merge cloze_uid into custom_data. When the parser produces a cloze_uid
+        // (from an `id:` key in the note text) we set it; when it doesn't (note
+        // text has no `id:` after e.g. a strip-liveness pass) we remove any stale uid.
+        let mut custom_data_map = match moved_card.custom_data.clone() {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        if let Some(ref uid) = new_card.cloze_uid {
+            custom_data_map.insert(
+                "cloze_uid".to_string(),
+                serde_json::Value::String(uid.to_string()),
+            );
+        } else {
+            custom_data_map.remove("cloze_uid");
+        }
+        let updated_custom_data = serde_json::Value::Object(custom_data_map);
         let _update_card_result =
-            sqlx::query(r#"UPDATE card SET "order" = ?, back_type = ?, special_state = ?, updated_at = ? WHERE id = ?"#)
+            sqlx::query(r#"UPDATE card SET "order" = ?, back_type = ?, special_state = ?, custom_data = ?, updated_at = ? WHERE id = ?"#)
                 .bind(moved_card.order)
                 .bind(moved_card.back_type)
                 .bind(moved_card.special_state)
+                .bind(&updated_custom_data)
                 .bind(moved_card.updated_at.timestamp())
                 .bind(moved_card.id)
                 .execute(db)
@@ -172,7 +190,7 @@ pub(super) async fn update_cards(
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(())
     })
-    .await;
+    .await?;
 
     // Create new cards
     let new_card_data_ref = new_cards; // keep reference before shadowing
@@ -187,6 +205,16 @@ pub(super) async fn update_cards(
                 card.special_state = Some(SpecialState::Suspended);
             }
             card.back_type = new_card.back_type;
+            if let Some(ref uid) = new_card.cloze_uid {
+                let uid_str = uid.to_string();
+                if let serde_json::Value::Object(ref mut map) = card.custom_data {
+                    map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                } else {
+                    let mut map = serde_json::Map::new();
+                    map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                    card.custom_data = serde_json::Value::Object(map);
+                }
+            }
             card
         })
         .collect::<Vec<_>>();
@@ -255,6 +283,16 @@ async fn verify_card_consistency(
                 card.back_type = card_data.back_type;
                 if card_data.is_suspended.unwrap_or(false) {
                     card.special_state = Some(SpecialState::Suspended);
+                }
+                if let Some(ref uid) = card_data.cloze_uid {
+                    let uid_str = uid.to_string();
+                    if let serde_json::Value::Object(ref mut map) = card.custom_data {
+                        map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                    } else {
+                        let mut map = serde_json::Map::new();
+                        map.insert("cloze_uid".to_string(), serde_json::Value::String(uid_str));
+                        card.custom_data = serde_json::Value::Object(map);
+                    }
                 }
                 card
             })

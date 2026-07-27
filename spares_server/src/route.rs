@@ -21,6 +21,7 @@ use crate::handlers::health_check_handler;
 use crate::handlers::note::create_notes_handler;
 use crate::handlers::note::delete_notes_handler;
 use crate::handlers::note::export_notes_handler;
+use crate::handlers::note::find_live_note_handler;
 use crate::handlers::note::generate_note_files_handler;
 use crate::handlers::note::get_duplicate_keywords_handler;
 use crate::handlers::note::get_note_handler;
@@ -93,6 +94,7 @@ pub(crate) fn create_router(
             get(get_duplicate_keywords_handler),
         )
         .route("/api/notes/search/note-links", post(get_note_links_handler))
+        .route("/api/notes/live", post(find_live_note_handler))
         // Card
         .route("/api/cards/{id}", get(get_card_handler))
         .route("/api/cards/note_id/{id}", get(get_cards_handler))

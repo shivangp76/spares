@@ -32,6 +32,7 @@ fn test_get_cards_basic_1_markdown() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -58,6 +59,7 @@ fn test_get_cards_basic_1_markdown() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a ".to_string()),
                 NotePart::ClozeStart("{{".to_string()),
@@ -91,6 +93,7 @@ fn test_get_cards_add_order_1() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -142,6 +145,7 @@ fn test_get_cards_order() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -174,6 +178,7 @@ fn test_get_cards_hint() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::ClozeStart("{{[h:this is a hint]".to_string()),
                 NotePart::ClozeData(
@@ -206,6 +211,7 @@ fn test_get_cards_hidden_1() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;hide:]".to_string()),
@@ -251,6 +257,7 @@ fn test_get_cards_hidden_3() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData("a".to_string(), ClozeHiddenReplacement::NotToAnswer),
@@ -275,6 +282,7 @@ fn test_get_cards_hidden_3() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;hide:; g:3]".to_string()),
                     NotePart::ClozeData(
@@ -299,6 +307,7 @@ fn test_get_cards_hidden_3() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;hide:; g:3]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;hide:; g:2]".to_string()),

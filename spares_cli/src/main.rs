@@ -878,6 +878,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             to_parser: to_parser_string_opt,
             files,
             dry_run,
+            strip_liveness,
         }) => {
             let parser = parser_string_opt
                 .map(|parser_string| find_parser(parser_string.as_str(), &get_all_parsers()))
@@ -897,6 +898,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 files.as_slice(),
                 dry_run,
                 false,
+                strip_liveness,
             )
             .await
             .into_diagnostic()
