@@ -9,6 +9,7 @@ use chrono::Utc;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::delete_notes;
 use spares_core::api::note::export::export_notes;
+use spares_core::api::note::find_live_note_by_block_order;
 use spares_core::api::note::get_duplicate_keywords;
 use spares_core::api::note::get_note;
 use spares_core::api::note::get_note_links;
@@ -23,6 +24,8 @@ use spares_core::schema::FilterOptions;
 use spares_core::schema::note::CreateNotesRequest;
 use spares_core::schema::note::DeleteNotesRequest;
 use spares_core::schema::note::ExportNotesRequest;
+use spares_core::schema::note::FindLiveNoteRequest;
+use spares_core::schema::note::FindLiveNoteResponse;
 use spares_core::schema::note::NoteLinksRequest;
 use spares_core::schema::note::RenderNotesRequest;
 use spares_core::schema::note::SearchKeywordRequest;
@@ -108,6 +111,16 @@ pub(crate) async fn generate_note_files_handler(
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)
+}
+
+pub(crate) async fn find_live_note_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<FindLiveNoteRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let id = find_live_note_by_block_order(&data.db, &body.live_sync_name, body.block_order)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(FindLiveNoteResponse { id }))
 }
 
 pub(crate) async fn get_unmatched_keywords_handler(

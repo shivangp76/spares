@@ -59,6 +59,7 @@ fn blank_card(grouping: ClozeGrouping, data: Vec<NotePart>) -> CardData {
         back_emphasis: false,
         back_type: BackType::NoteFilePath,
         inherit: None,
+        cloze_uid: None,
         data,
     }
 }

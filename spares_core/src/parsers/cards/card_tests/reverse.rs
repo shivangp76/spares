@@ -31,6 +31,7 @@ fn test_get_cards_reverse_1() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -52,6 +53,7 @@ fn test_get_cards_reverse_1() {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -88,6 +90,7 @@ fn test_get_cards_reverse_2() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::ClozeData(
                     "a".to_string(),

@@ -550,6 +550,7 @@ pub mod tests {
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
                     inherit: None,
+                    cloze_uid: None,
                     data: vec![
                         NotePart::ClozeStart("#cl[".to_string()),
                         NotePart::ClozeData(
@@ -569,6 +570,7 @@ pub mod tests {
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
                     inherit: None,
+                    cloze_uid: None,
                     data: vec![
                         NotePart::SurroundingData("#cl[\n- Test ".to_string()),
                         NotePart::ClozeStart("#cl[".to_string()),
@@ -604,6 +606,7 @@ pub mod tests {
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
                 inherit: None,
+                cloze_uid: None,
                 data: vec![
                     NotePart::SurroundingData("[".to_string()),
                     NotePart::ClozeStart("#cl[".to_string()),

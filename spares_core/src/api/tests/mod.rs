@@ -116,7 +116,14 @@ async fn read_generated_notes(
     let start_date: DateTime<Utc> = serde_json::from_value(start_date_value.clone()).unwrap();
     adapter
         .as_mut()
-        .process_data(all_notes, parser.as_ref(), true, true, start_date) // run quietly
+        .process_data(
+            all_notes,
+            parser.as_ref(),
+            true,
+            true,
+            start_date,
+            Vec::new(),
+        ) // run quietly
         .await
         .unwrap();
     let notes = list_notes(

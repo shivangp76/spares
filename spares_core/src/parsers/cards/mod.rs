@@ -90,6 +90,7 @@ pub fn get_cards_main(
     move_files: bool,
     defaults: (FrontConceal, BackReveal, bool),
     overlapper: Option<&OverlapperConfig>,
+    // When true, ephemeral settings like `inh:` are serialized; `id:` is always serialized.
     serialize_ephemeral: bool,
 ) -> Result<Vec<CardData>, LibraryError> {
     let mut data = data;
@@ -297,7 +298,9 @@ pub fn get_cards_main(
             .find(|(_, x)| !x.skip_serialization)
             .unwrap()
             .1;
-        let ClozeSettings { hint, .. } = &clozes.first().unwrap().0.settings;
+        let ClozeSettings {
+            hint, cloze_uid, ..
+        } = &clozes.first().unwrap().0.settings;
         let mut orders_iter = orders.as_ref().into_iter().flat_map(|v| v.iter().copied());
 
         // Extract old orders for this grouping
@@ -444,6 +447,7 @@ pub fn get_cards_main(
                 back_type: BackType::from_back_reveal(back_reveal, groupings_count, *back_emphasis),
                 // WORKAROUND: To reduce complexity, `inherit` only applies to the first (forward) card. For `r:` clozes that produce both a forward and backward card, the backward card starts fresh. If we wanted to implement it for the backwards card as well, we would need modify the syntax of `inh:` and also add a key to `ClozeGroupingSettings` which is already a large struct.
                 inherit: if is_first_direction { *inherit } else { None },
+                cloze_uid: *cloze_uid,
             });
             is_first_direction = false;
         }
@@ -618,6 +622,7 @@ fn build_cli_cards(
             back_emphasis: DEFAULT_BACK_EMPHASIS,
             back_type: BackType::Cli,
             inherit: None,
+            cloze_uid: None,
             data: vec![
                 NotePart::SurroundingData(surrounding_text.clone()),
                 NotePart::Cli {

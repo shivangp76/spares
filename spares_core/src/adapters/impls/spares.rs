@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use log::info;
+use log::warn;
 use reqwest::Client;
 use reqwest::Response;
 use reqwest::StatusCode;
@@ -22,6 +23,7 @@ use crate::api::parser::list_parsers;
 use crate::config::Environment;
 use crate::config::get_env_config;
 use crate::model::CustomData;
+use crate::model::NoteId;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
@@ -30,6 +32,8 @@ use crate::schema::FilterOptions;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
+use crate::schema::note::FindLiveNoteRequest;
+use crate::schema::note::FindLiveNoteResponse;
 use crate::schema::note::NotesResponse;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::RenderNotesRequest;
@@ -39,7 +43,7 @@ use crate::schema::parser::ParserResponse;
 
 #[derive(Debug)]
 pub struct SparesAdapter {
-    request_processor: SparesRequestProcessor,
+    request_processor: SparesRequestProcessorInternal,
 }
 
 #[derive(Debug)]
@@ -59,7 +63,22 @@ enum SparesRequestProcessorInternal {
 
 impl SparesAdapter {
     pub fn new(request_processor: SparesRequestProcessor) -> Self {
-        Self { request_processor }
+        let internal = match request_processor {
+            SparesRequestProcessor::Server => {
+                let env_config = get_env_config(Environment::Production);
+                let base_url = format!("http://{}", env_config.socket_address);
+                SparesRequestProcessorInternal::Server {
+                    base_url,
+                    client: Client::new(),
+                }
+            }
+            SparesRequestProcessor::Database { pool } => {
+                SparesRequestProcessorInternal::Database { pool }
+            }
+        };
+        Self {
+            request_processor: internal,
+        }
     }
 
     async fn handle_response(&self, response: Response) -> Result<Response, Error> {
@@ -67,7 +86,7 @@ impl SparesAdapter {
         if status != StatusCode::OK {
             let response_json: Value = response.json().await.map_err(Error::ApiRequest)?;
             let message = response_json.get("message");
-            info!("{:?}", message);
+            warn!("{:?}", message);
             return Err(Error::Library(LibraryError::Adapter(
                 AdapterErrorKind::Custom {
                     adapter_name: self.get_adapter_name().to_string(),
@@ -85,19 +104,6 @@ impl SparesAdapter {
         dry_run: bool,
         at: DateTime<Utc>,
     ) -> Result<(), Error> {
-        let request_processor = match self.request_processor {
-            SparesRequestProcessor::Server => {
-                let env_config = get_env_config(Environment::Production);
-                let base_url = format!("http://{}", env_config.socket_address);
-                SparesRequestProcessorInternal::Server {
-                    base_url,
-                    client: Client::new(),
-                }
-            }
-            SparesRequestProcessor::Database { ref pool } => {
-                SparesRequestProcessorInternal::Database { pool: pool.clone() }
-            }
-        };
         let update_note_request = UpdateNotesRequest {
             selector: NotesSelector::Ids(vec![note_id]),
             custom_data: Some(custom_data),
@@ -107,7 +113,7 @@ impl SparesAdapter {
             tags: UpdateTags::None,
         };
         if !dry_run {
-            match &request_processor {
+            match &self.request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
                     let response = client
@@ -154,23 +160,10 @@ impl SrsAdapter for SparesAdapter {
         dry_run: bool,
         _quiet: bool,
         at: DateTime<Utc>,
+        live_update_note_ids: Vec<NoteId>,
     ) -> Result<(), Error> {
-        let request_processor = match self.request_processor {
-            SparesRequestProcessor::Server => {
-                let env_config = get_env_config(Environment::Production);
-                let base_url = format!("http://{}", env_config.socket_address);
-                SparesRequestProcessorInternal::Server {
-                    base_url,
-                    client: Client::new(),
-                }
-            }
-            SparesRequestProcessor::Database { ref pool } => {
-                SparesRequestProcessorInternal::Database { pool: pool.clone() }
-            }
-        };
-
         // Get parser id
-        let parser_responses: Vec<ParserResponse> = match &request_processor {
+        let parser_responses: Vec<ParserResponse> = match &self.request_processor {
             SparesRequestProcessorInternal::Server { base_url, client } => {
                 let url = format!("{}/api/parsers", base_url);
                 let mut response = client.get(url).send().await.map_err(Error::ApiRequest)?;
@@ -217,7 +210,7 @@ impl SrsAdapter for SparesAdapter {
                         custom_data: Some(local_settings.custom_data),
                     };
                     if !dry_run {
-                        match &request_processor {
+                        match &self.request_processor {
                             SparesRequestProcessorInternal::Server { base_url, client } => {
                                 let url = format!("{}/api/notes", base_url);
                                 let response = client
@@ -252,7 +245,7 @@ impl SrsAdapter for SparesAdapter {
             let request = DeleteNotesRequest {
                 selector: NotesSelector::Ids(delete_note_ids),
             };
-            match &request_processor {
+            match &self.request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
                     let response = client
@@ -273,10 +266,10 @@ impl SrsAdapter for SparesAdapter {
             parser_id,
             requests: create_note_requests,
         };
-        // Create notes and render created notes
-        // We cannot render updated notes since that might overwrite unsaved changes.
+        // Create notes and render created notes + live-updated notes
+        // We cannot render non-live updated notes since that might overwrite unsaved changes.
         if !dry_run {
-            let created_note_ids = match &request_processor {
+            let created_note_ids = match &self.request_processor {
                 SparesRequestProcessorInternal::Server { base_url, client } => {
                     let url = format!("{}/api/notes", base_url);
                     let response = client
@@ -309,33 +302,78 @@ impl SrsAdapter for SparesAdapter {
             // - do not want to render notes to save time. We can explicitly call render notes if we need to.
             // - want to render notes in a different directory, so we don't overwrite user data.
             if !cfg!(test) {
-                let request = RenderNotesRequest {
-                    selector: NotesSelector::Ids(created_note_ids),
-                    immutable_note_ids: None,
-                    overridden_output_raw_dir: None,
-                    include_linked_notes: true,
-                    include_cards: true,
-                    generate_rendered: true,
-                    force_generate_rendered: false,
-                };
-                match &request_processor {
-                    SparesRequestProcessorInternal::Server { base_url, client } => {
-                        let url = format!("{}/api/notes/generate_files", base_url);
-                        let response = client
-                            .post(url)
-                            .json(&request)
-                            .send()
-                            .await
-                            .map_err(Error::ApiRequest)?;
-                        let _response = self.handle_response(response).await?;
-                    }
-                    SparesRequestProcessorInternal::Database { pool } => {
-                        render_notes(pool, request, &get_all_parsers()).await?;
+                let mut all_render_ids = created_note_ids;
+                all_render_ids.extend(live_update_note_ids);
+                if !all_render_ids.is_empty() {
+                    let request = RenderNotesRequest {
+                        selector: NotesSelector::Ids(all_render_ids),
+                        immutable_note_ids: None,
+                        overridden_output_raw_dir: None,
+                        include_linked_notes: true,
+                        include_cards: true,
+                        generate_rendered: true,
+                        force_generate_rendered: false,
+                    };
+                    match &self.request_processor {
+                        SparesRequestProcessorInternal::Server { base_url, client } => {
+                            let url = format!("{}/api/notes/generate_files", base_url);
+                            let response = client
+                                .post(url)
+                                .json(&request)
+                                .send()
+                                .await
+                                .map_err(Error::ApiRequest)?;
+                            let _response = self.handle_response(response).await?;
+                        }
+                        SparesRequestProcessorInternal::Database { pool } => {
+                            render_notes(pool, request, &get_all_parsers()).await?;
+                        }
                     }
                 }
             }
         }
 
         Ok(())
+    }
+
+    async fn find_live_note_by_block_order(
+        &self,
+        live_sync_name: &str,
+        block_order: i64,
+    ) -> Result<Option<NoteId>, Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server { base_url, client } => {
+                let url = format!("{}/api/notes/live", base_url);
+                let body = FindLiveNoteRequest {
+                    live_sync_name: live_sync_name.to_string(),
+                    block_order,
+                };
+                let response = client
+                    .post(url)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                let response: FindLiveNoteResponse = response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })?;
+                Ok(response.id)
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                let note_id: Option<i64> = sqlx::query_scalar(
+                    r"SELECT id FROM note WHERE json_extract(custom_data, '$.live_sync_name') = ? AND json_extract(custom_data, '$.live_block_order') = ?",
+                )
+                .bind(live_sync_name)
+                .bind(block_order)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+                Ok(note_id)
+            }
+        }
     }
 }

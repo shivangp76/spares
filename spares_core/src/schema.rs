@@ -325,6 +325,17 @@ pub mod note {
         pub notes: Vec<NoteResponse>,
         pub event_id: Option<i64>,
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct FindLiveNoteRequest {
+        pub live_sync_name: String,
+        pub block_order: i64,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct FindLiveNoteResponse {
+        pub id: Option<NoteId>,
+    }
 }
 
 pub mod card {

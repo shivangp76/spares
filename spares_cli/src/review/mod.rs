@@ -283,6 +283,7 @@ pub(crate) async fn sync_note(
         &[note_raw_path],
         false,
         true,
+        false,
     )
     .await
     .map_err(|e| format!("Failed to import note: {e}"))?;
@@ -969,6 +970,7 @@ pub(crate) async fn review_cards(
                     &[review_card_response.note_raw_path.as_path()],
                     false,
                     true,
+                    false,
                 )
                 .await
                 .map_err(|e| format!("Failed to import note: {e}"))?;

@@ -3,6 +3,7 @@ use super::BackType;
 use super::FrontConceal;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::ClozeUid;
 use crate::parsers::NotePart;
 use crate::parsers::ReadableCardIdentifier;
 
@@ -17,6 +18,7 @@ pub struct CardData {
     pub back_emphasis: bool,
     pub back_type: BackType,
     pub inherit: Option<ReadableCardIdentifier>,
+    pub cloze_uid: Option<ClozeUid>,
     pub data: Vec<NotePart>,
 }
 

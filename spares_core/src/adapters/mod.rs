@@ -7,6 +7,7 @@ use sqlx::SqlitePool;
 use crate::AdapterErrorKind;
 use crate::Error;
 use crate::LibraryError;
+use crate::model::NoteId;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 
@@ -34,7 +35,20 @@ pub trait SrsAdapter: Send + Sync {
         dry_run: bool,
         quiet: bool,
         at: DateTime<Utc>,
+        live_update_note_ids: Vec<NoteId>,
     ) -> Result<(), Error>;
+
+    /// For live-mode imports, query the DB for the `note_id` of a block with the given
+    /// `live_sync_name` and `block_order`. Returns `None` if no such note exists (should
+    /// be created as new). Default returns `None` (non-spares adapters don't support live notes).
+    #[allow(unused_variables)]
+    async fn find_live_note_by_block_order(
+        &self,
+        live_sync_name: &str,
+        block_order: i64,
+    ) -> Result<Option<NoteId>, Error> {
+        Ok(None)
+    }
 }
 
 pub fn get_adapter_from_string(adapter_str: &str) -> Result<Box<dyn SrsAdapter>, Error> {
