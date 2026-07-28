@@ -52,6 +52,18 @@ pub(crate) mod payloads;
 #[cfg(test)]
 mod e2e_tests;
 
+pub async fn get_latest_note_event_id(db: &SqlitePool) -> Result<i64, Error> {
+    let id: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event WHERE kind IN (?, ?, ?)")
+            .bind(EventType::CreateNotes)
+            .bind(EventType::UpdateNotes)
+            .bind(EventType::DeleteNotes)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(id)
+}
+
 pub async fn undo_event(
     db: &SqlitePool,
     body: UndoEventRequest,

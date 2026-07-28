@@ -221,4 +221,152 @@ function M.complete_tags()
   end
 end
 
+-- Keyword completion ---------------------------------------------------------
+
+M._keywords = nil
+M._keywords_loading = false
+M._last_event_id = nil
+M._event_job = nil
+
+function M.refresh_keywords()
+  local binary = find_binary()
+  if not binary then
+    vim.notify(
+      'spares: binary not found — set vim.g.spares_binary or add spares to PATH',
+      vim.log.levels.ERROR
+    )
+    return
+  end
+
+  if M._keywords_loading then return end
+  M._keywords_loading = true
+
+  local job = vim.fn.jobstart({ binary, 'keyword', 'list', '--short' }, {
+    stdout_buffered = true,
+    on_stdout = function(_, data)
+      if data then
+        local keywords = {}
+        for _, kw in ipairs(data) do
+          if kw ~= '' then
+            table.insert(keywords, kw)
+          end
+        end
+        M._keywords = keywords
+      end
+      M._keywords_loading = false
+    end,
+    on_stderr = function(_, data)
+      if data then
+        vim.notify(
+          'Error loading spares keywords: ' .. table.concat(data, '\n'),
+          vim.log.levels.ERROR
+        )
+      end
+      M._keywords_loading = false
+    end,
+  })
+  if job <= 0 then
+    M._keywords_loading = false
+    vim.notify('Failed to start spares job for keywords', vim.log.levels.ERROR)
+  end
+end
+
+-- Returns (start_col, partial) when cursor is inside a #key[...] or #lin[...]
+-- block on the current line. start_col is the 1-indexed column of the first
+-- character after the opening `[`. partial is the text typed so far.
+-- Only scans the current line (single-line blocks), so multi-line references
+-- get completion only on the first line. The manual <Plug> is the fallback.
+local function get_keyword_block()
+  local line = vim.api.nvim_get_current_line()
+  local cur_0col = vim.api.nvim_win_get_cursor(0)[2]
+  if cur_0col < 1 then return nil end
+
+  local best_start = nil
+  local i = 1
+  while true do
+    local s = line:find('#key%[', i) or line:find('#lin%[', i)
+    if not s then break end
+
+    local bracket_open_1 = s + 5
+
+    local depth = 1
+    local j = s + 6
+    while j <= #line and depth > 0 do
+      local ch = line:sub(j, j)
+      if ch == '[' then
+        depth = depth + 1
+      elseif ch == ']' then
+        depth = depth - 1
+      end
+      j = j + 1
+    end
+
+    if depth > 0 then
+      -- unclosed on this line; cursor is inside if past the '['
+      if cur_0col + 1 >= bracket_open_1 then
+        best_start = bracket_open_1
+      end
+    else
+      local close_1 = j - 1
+      if (cur_0col + 1) >= bracket_open_1 and (cur_0col + 1) <= close_1 then
+        best_start = bracket_open_1
+      end
+    end
+
+    i = s + 1
+  end
+
+  if not best_start then return nil end
+
+  local partial = line:sub(best_start, cur_0col)
+  return best_start, partial
+end
+
+function M.check_event_id()
+  local binary = find_binary()
+  if not binary then return end
+  if M._event_job then return end
+
+  M._event_job = vim.fn.jobstart({ binary, 'event', 'latest' }, {
+    stdout_buffered = true,
+    on_stdout = function(_, data)
+      M._event_job = nil
+      if not data then return end
+      local combined = table.concat(data, ''):match('^%s*(%d+)%s*$')
+      if not combined then return end
+      local latest = tonumber(combined)
+      if latest and latest ~= M._last_event_id then
+        M._last_event_id = latest
+        M.refresh_keywords()
+      end
+    end,
+    on_stderr = function(_, _data)
+      M._event_job = nil
+    end,
+  })
+  if M._event_job <= 0 then
+    M._event_job = nil
+  end
+end
+
+function M.complete_keywords()
+  if not M._keywords then
+    M.check_event_id()
+    return
+  end
+
+  if vim.api.nvim_get_mode().mode ~= 'i' then return end
+
+  local start_col, partial = get_keyword_block()
+  if not start_col or not partial or partial == '' then return end
+
+  local matches = vim.fn.matchfuzzy(M._keywords, partial)
+  if #matches > 50 then
+    matches = { unpack(matches, 1, 50) }
+  end
+  if #matches > 0 then
+    vim.fn.complete(start_col, matches)
+  end
+end
+
 return M

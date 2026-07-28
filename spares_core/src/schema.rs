@@ -624,4 +624,9 @@ pub mod undo {
         /// The IDs of all events that were undone (including the original and any in the group)
         pub undone_event_ids: Vec<i64>,
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct LatestEventResponse {
+        pub latest_event_id: i64,
+    }
 }
