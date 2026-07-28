@@ -11,6 +11,7 @@ use spares_core::api::note::delete_notes;
 use spares_core::api::note::export::export_notes;
 use spares_core::api::note::find_live_note_by_block_order;
 use spares_core::api::note::get_duplicate_keywords;
+use spares_core::api::note::get_keywords;
 use spares_core::api::note::get_note;
 use spares_core::api::note::get_note_links;
 use spares_core::api::note::get_unmatched_keywords;
@@ -159,4 +160,11 @@ pub(crate) async fn get_duplicate_keywords_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(duplicate_keywords))
+}
+
+pub(crate) async fn get_keywords_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let keywords = get_keywords(&data.db).await.map_err(error_to_response)?;
+    Ok(Json(keywords))
 }
