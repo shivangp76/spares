@@ -78,9 +78,9 @@ pub(crate) enum Commands {
     #[command(arg_required_else_help = true)]
     Keyword(KeywordArgs),
     #[command(arg_required_else_help = true)]
+    Event(EventArgs),
+    #[command(arg_required_else_help = true)]
     Schedule(ScheduleArgs),
-    /// Undo an event
-    Undo(UndoArgs),
     /// View notes interactively
     View(ViewArgs),
     /// Generate shell completions
@@ -429,6 +429,20 @@ pub(crate) struct KeywordArgs {
     pub(crate) command: KeywordCommands,
 }
 
+#[derive(Args, Debug)]
+pub(crate) struct EventArgs {
+    #[command(subcommand)]
+    pub(crate) command: EventCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum EventCommands {
+    /// Get the latest note-mutation event id (monotonically increasing; for change detection)
+    Latest,
+    /// Undo an event
+    Undo(UndoArgs),
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum KeywordCommands {
     /// Get unmatched keywords
@@ -439,6 +453,12 @@ pub(crate) enum KeywordCommands {
     Search { keyword: String },
     /// Search for a keyword and show all matches ranked
     Ranking { keyword: String },
+    /// List all keywords
+    List {
+        /// Display only deduped keyword strings, one per line
+        #[arg(long)]
+        short: bool,
+    },
 }
 
 #[derive(Args, Debug)]

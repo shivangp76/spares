@@ -24,6 +24,7 @@ use crate::handlers::note::export_notes_handler;
 use crate::handlers::note::find_live_note_handler;
 use crate::handlers::note::generate_note_files_handler;
 use crate::handlers::note::get_duplicate_keywords_handler;
+use crate::handlers::note::get_keywords_handler;
 use crate::handlers::note::get_note_handler;
 use crate::handlers::note::get_note_links_handler;
 use crate::handlers::note::get_unmatched_keywords_handler;
@@ -50,6 +51,7 @@ use crate::handlers::tag::get_tag_handler;
 use crate::handlers::tag::list_tags_handler;
 use crate::handlers::tag::rebuild_tag_handler;
 use crate::handlers::tag::update_tag_handler;
+use crate::handlers::undo::get_latest_note_event_id_handler;
 use crate::handlers::undo::undo_event_handler;
 
 pub(crate) fn create_router(
@@ -93,8 +95,13 @@ pub(crate) fn create_router(
             "/api/notes/duplicate-keywords",
             get(get_duplicate_keywords_handler),
         )
+        .route("/api/notes/keywords", get(get_keywords_handler))
         .route("/api/notes/search/note-links", post(get_note_links_handler))
         .route("/api/notes/live", post(find_live_note_handler))
+        .route(
+            "/api/notes/latest-event-id",
+            get(get_latest_note_event_id_handler),
+        )
         // Card
         .route("/api/cards/{id}", get(get_card_handler))
         .route("/api/cards/note_id/{id}", get(get_cards_handler))

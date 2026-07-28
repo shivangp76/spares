@@ -17,6 +17,8 @@ use args::Cli;
 use args::Commands;
 use args::DeleteCommands;
 use args::EditCommands;
+use args::EventArgs;
+use args::EventCommands;
 use args::ForgetCardArgs;
 use args::GenerateArgs;
 use args::GetCommands;
@@ -37,6 +39,7 @@ use clap::Parser;
 use graph::chart;
 use import::import_from_files;
 use inquire::Confirm;
+use itertools::Itertools;
 use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
@@ -87,6 +90,7 @@ use spares_core::schema::tag::CreateTagRequest;
 use spares_core::schema::tag::TagResponse;
 use spares_core::schema::tag::TagSelector;
 use spares_core::schema::tag::UpdateTagRequest;
+use spares_core::schema::undo::LatestEventResponse;
 use spares_core::schema::undo::UndoEventRequest;
 use spares_core::search::QueryReturnItemType;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -748,6 +752,48 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                     response.json().await.map_err(|e| miette!("{}", e))?;
                 println!("{}", serde_json::to_string_pretty(&response).unwrap());
             }
+            KeywordCommands::List { short } => {
+                let url = format!("{}/api/notes/keywords", base_url);
+                let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                let response: Vec<(spares_core::model::NoteId, String)> =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                if short {
+                    println!("{}", response.iter().map(|(_, kw)| kw).unique().join("\n"));
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                }
+            }
+        },
+        Commands::Event(EventArgs { command }) => match command {
+            EventCommands::Latest => {
+                let url = format!("{}/api/notes/latest-event-id", base_url);
+                let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                let response: LatestEventResponse =
+                    response.json().await.map_err(|e| miette!("{}", e))?;
+                println!("{}", response.latest_event_id);
+            }
+            EventCommands::Undo(UndoArgs {
+                event_id,
+                undo_group,
+            }) => {
+                let request = UndoEventRequest {
+                    event_id,
+                    undo_group,
+                };
+                let undo_response_opt = undo_event(&base_url, &client, request)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                match undo_response_opt {
+                    Some(undo_response) => {
+                        println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                    }
+                    None => {
+                        println!("No event to undo");
+                    }
+                }
+            }
         },
         Commands::Search(SearchArgs {
             query,
@@ -1020,26 +1066,6 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 println!("Postponed {} cards.", count);
             }
         },
-        Commands::Undo(UndoArgs {
-            event_id,
-            undo_group,
-        }) => {
-            let request = UndoEventRequest {
-                event_id,
-                undo_group,
-            };
-            let undo_response_opt = undo_event(&base_url, &client, request)
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            match undo_response_opt {
-                Some(undo_response) => {
-                    println!("Undone event(s): {:?}", undo_response.undone_event_ids);
-                }
-                None => {
-                    println!("No event to undo");
-                }
-            }
-        }
     }
     Ok(())
 }
