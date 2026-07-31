@@ -127,6 +127,64 @@ After stripping, the notes are ordinary notes and can no longer be matched by `l
 
 > **Note:** `--strip-liveness` requires the notes to already exist in the database. Import them first without the flag.
 
+## Inheriting SRS data from another card
+
+New cards normally start with fresh scheduling. If you create a card that tests the same material as an existing card — for example when splitting one note into several, or when importing material you already know — you can copy the source card's scheduling and review history onto the new card with the `inh:` cloze setting.
+
+On creation (or update), the new card inherits the source card's `stability`, `difficulty`, `desired_retention`, `state`, `due`, and `special_state`, along with its full review history. It will be scheduled as if it had been reviewed before.
+
+### Syntax
+
+Add `inh:` to a cloze's settings:
+
+```
+{{[inh:NOTE_ID/ORDER] content }}
+```
+
+- `NOTE_ID` is the id of the note containing the source card.
+- `ORDER` is the 1-based order of the source card within its note (the first card of a note has order 1).
+
+### 1. Find the source card
+
+List the source note's cards to find the right `order` (the output JSON has an `order` field per card):
+
+```sh
+spares get card -n 5
+```
+
+### 2. Add `inh:` to the destination cloze
+
+In a markdown file, the destination card inherits from note 5's first card:
+
+```md
+<!--- spares: start --->
+
+<!--- # tags: geology, oceans --->
+<!--- spares: note start --->
+# Deep Sea Trenches
+
+The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:5/1] at about 10,935 meters}}.
+<!--- spares: note end --->
+
+<!--- spares: end --->
+```
+
+Import:
+
+```sh
+spares import --parser markdown ./trenches.md
+```
+
+The new card is created with the same scheduling and review history as note 5's first card, instead of starting from scratch.
+
+### Notes
+
+- The source card must already exist in the database; otherwise the import fails with an error.
+- `ORDER` must be `>= 1`.
+- For clozes that produce both a forward and backward card (via `r:`), only the forward card inherits — the backward card starts fresh.
+- Each cloze in a note can carry its own `inh:` pointing at a different source card.
+- `inh:` is ephemeral: it is consumed when the note is created or updated and is stripped from the stored note data, so it will not be re-applied on subsequent imports.
+
 ## Fast note creation
 
 Using snippets, such as through [LuaSnip](https://github.com/L3MON4D3/LuaSnip), can speed up note creation.

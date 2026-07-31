@@ -14,6 +14,8 @@ Clozes are added to parts of a note to create a card. They are used to omit cert
 
 Clozes can also be nested, but only across different cards.
 
+Cloze settings can also reference other cards. For example, the `inh:` setting copies a source card's scheduling and review history onto a newly created card. See the [Inheriting SRS data from another card](workflows.md#inheriting-srs-data-from-another-card) workflow for details.
+
 See <https://docs.rs/spares/latest/spares/spares/parsers/struct.ClozeSettings.html> for a full list of cloze settings.
 
 See <https://docs.rs/spares/latest/spares/spares/parsers/struct.ClozeGroupingSettings.html> for a full list of cloze grouping settings.
