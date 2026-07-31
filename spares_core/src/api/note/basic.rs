@@ -169,7 +169,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     }
     // Single query to fetch notes with their tags, card counts, and note links in one go
     let limit = opts.limit.unwrap_or(10);
-    let offset = (opts.page.unwrap_or(1) - 1) * limit;
+    let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;
 
     // NOTE: Filtered tags (from `card_tags`) are not returned here, since they are specific to cards, not notes.
     let notes_data: Vec<ListNotesRow> = sqlx::query_as(

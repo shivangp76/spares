@@ -170,7 +170,7 @@ JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The que
 - `-tag=math`
 
 **Search for notes tagged exactly `a`, with no descendants. In other words, notes tagged `a:b` won't match**
-- `spares search 'tag~re:"^a$"'`
+- `spares note search 'tag~re:"^a$"'`
 
 **Search for cards with stability ≥ 2**
 - `c.stability>=2`

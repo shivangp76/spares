@@ -149,7 +149,7 @@ Add `inh:` to a cloze's settings:
 List the source note's cards to find the right `order` (the output JSON has an `order` field per card):
 
 ```sh
-spares get card -n 5
+spares card get -n 5
 ```
 
 ### 2. Add `inh:` to the destination cloze
@@ -199,7 +199,7 @@ spares import --to-parser="markdown" 0001.tex 0002.tex
 ## Unbury cards matching query
 
 ```sh
-spares edit card -q 'QUERY and c.user_buried' --special-state none
+spares card edit -q 'QUERY and c.user_buried' --special-state none
 ```
 where QUERY is replaced with your query
 
@@ -209,8 +209,8 @@ spares ships with fzf support which can be used to perform bulk note actions, su
 
 Examples:
 ```sh
-spares edit note --tags-to-add tag1 tag2 --files 0001.tex 0002.tex
-spares edit note --tags-to-remove tag1 tag2 --files 0001.tex 0002.tex
+spares note edit --tags-to-add tag1 tag2 --files 0001.tex 0002.tex
+spares note edit --tags-to-remove tag1 tag2 --files 0001.tex 0002.tex
 ```
 
 ## Getting notes created `n` days before a note
@@ -224,7 +224,7 @@ get_notes_before() {
   local days_before=${2:-5}
 
   # Get the creation date of the input note
-  local note_date=$(spares get note "$note_id" | jq -r '.created_at')
+  local note_date=$(spares note get "$note_id" | jq -r '.created_at')
 
   # Check if we successfully got a date
   if [[ -z "$note_date" || "$note_date" == "null" ]]; then
@@ -236,7 +236,7 @@ get_notes_before() {
   local start_date=$(date -j -v-${days_before}d -f "%Y-%m-%dT%H:%M:%SZ" "$note_date" "+%Y-%m-%dT%H:%M:%SZ")
 
   # Search for notes in the date range
-  spares search "created_at<=$note_date and created_at>=$start_date"
+  spares note search "created_at<=$note_date and created_at>=$start_date"
 }
 ```
 
@@ -244,12 +244,12 @@ get_notes_before() {
 
 Print tags as a tree:
 ```sh
-spares list tag --limit=9999 --tree
+spares tag list --limit=9999 --tree
 ```
 
 Print notes as graph:
 ```sh
-spares list note --limit=9999 --graph
+spares note list --limit=9999 --graph
 ```
 
 ## Syncing notes between sources

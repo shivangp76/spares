@@ -211,7 +211,7 @@ pub async fn list_parsers(
     opts: FilterOptions,
 ) -> Result<Vec<ParserResponse>, Error> {
     let limit = opts.limit.unwrap_or(PARSERS_DEFAULT_LIMIT);
-    let offset = (opts.page.unwrap_or(1) - 1) * limit;
+    let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;
 
     let items = sqlx::query_as(r"SELECT * FROM parser ORDER by id LIMIT ? OFFSET ?")
         .bind(limit as u32)

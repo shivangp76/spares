@@ -42,24 +42,15 @@ pub(crate) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {
     #[command(arg_required_else_help = true)]
-    Add(AddArgs),
+    Parser(ParserArgs),
     #[command(arg_required_else_help = true)]
-    Edit(EditArgs),
+    Tag(TagArgs),
     #[command(arg_required_else_help = true)]
-    Delete(DeleteArgs),
+    Note(NoteArgs),
     #[command(arg_required_else_help = true)]
-    Get(GetArgs),
+    Card(CardArgs),
     #[command(arg_required_else_help = true)]
-    List(ListArgs),
-    /// Generate note and card files
-    Generate(GenerateArgs),
-    /// Study cards
-    Review(ReviewArgs),
-    /// Studying statistics
-    #[command(alias = "stats")]
-    Statistics(StatisticsArgs),
-    /// Search for notes or cards
-    Search(SearchArgs),
+    Link(LinkArgs),
     /// Import notes data from file
     Import(ImportArgs),
     /// Sync data between local note files, database, and adapters.
@@ -73,60 +64,60 @@ pub(crate) enum Commands {
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),
-    /// Export notes matching a query
-    Export(ExportArgs),
     #[command(arg_required_else_help = true)]
     Keyword(KeywordArgs),
     #[command(arg_required_else_help = true)]
     Event(EventArgs),
-    #[command(arg_required_else_help = true)]
-    Schedule(ScheduleArgs),
-    /// View notes interactively
-    View(ViewArgs),
     /// Generate shell completions
-    GenerateShellCompletion {
+    Completion {
         #[arg(value_enum)]
         shell: clap_complete_command::Shell,
     },
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct AddArgs {
+pub(crate) struct ParserArgs {
     #[command(subcommand)]
-    pub(crate) command: AddCommands,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct DeleteArgs {
-    #[command(subcommand)]
-    pub(crate) command: DeleteCommands,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct EditArgs {
-    #[command(subcommand)]
-    pub(crate) command: EditCommands,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct GetArgs {
-    #[command(subcommand)]
-    pub(crate) command: GetCommands,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct ListArgs {
-    #[command(subcommand)]
-    pub(crate) command: ListCommands,
+    pub(crate) command: ParserCommands,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum AddCommands {
-    Parser {
+pub(crate) enum ParserCommands {
+    /// Add a parser
+    Add {
         #[arg(short, long)]
         name: String,
     },
-    Tag {
+    /// Edit a parser
+    Edit {
+        id: i64,
+        #[arg(short, long)]
+        name: String,
+    },
+    /// Delete a parser
+    Delete { id: i64 },
+    /// Get a parser
+    Get { id: i64 },
+    /// List parsers
+    List {
+        #[arg(short, long)]
+        page: Option<usize>,
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TagArgs {
+    #[command(subcommand)]
+    pub(crate) command: TagCommands,
+}
+
+#[derive(Debug, Subcommand)]
+#[allow(clippy::option_option)]
+pub(crate) enum TagCommands {
+    /// Add a tag
+    Add {
         #[arg(short, long)]
         name: String,
         #[arg(short, long, default_value = "")]
@@ -136,32 +127,8 @@ pub(crate) enum AddCommands {
         #[arg(short, long, default_value_t = DEFAULT_TAG_AUTO_DELETE)]
         auto_delete: bool,
     },
-    Note {
-        #[arg(short, long)]
-        data: String,
-        #[arg(short, long)]
-        parser_id: i64,
-        #[arg(short, long, default_value = "")]
-        keywords: String,
-        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-        tags: Vec<String>,
-        #[arg(short, long, default_value_t = false)]
-        is_suspended: bool,
-        /// JSON object to set as the note's custom data (initial value on create)
-        #[arg(long, value_name = "JSON")]
-        custom_data: Option<String>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-#[allow(clippy::option_option)]
-pub(crate) enum EditCommands {
-    Parser {
-        id: i64,
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-    Tag {
+    /// Edit a tag
+    Edit {
         /// ID of the tag to modify
         #[arg(
             long,
@@ -184,7 +151,59 @@ pub(crate) enum EditCommands {
         #[arg(long, default_value_t = false)]
         rebuild: bool,
     },
-    Note {
+    /// Delete a tag
+    Delete { id: i64 },
+    /// Get a tag by id or name
+    Get {
+        #[arg(short, long, required_unless_present = "name", conflicts_with = "name")]
+        id: Option<i64>,
+        #[arg(short, long, required_unless_present = "id", conflicts_with = "id")]
+        name: Option<String>,
+    },
+    /// List tags
+    List {
+        #[arg(short, long)]
+        page: Option<usize>,
+        #[arg(short, long)]
+        limit: Option<usize>,
+        /// Display results in long format (default)
+        #[arg(long, conflicts_with_all = ["short", "tree"])]
+        long: bool,
+        /// Display results in short format
+        #[arg(long, conflicts_with_all = ["long", "tree"])]
+        short: bool,
+        /// Display results as a tree
+        #[arg(long, conflicts_with_all = ["long", "short"])]
+        tree: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct NoteArgs {
+    #[command(subcommand)]
+    pub(crate) command: NoteCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum NoteCommands {
+    /// Add a note
+    Add {
+        #[arg(short, long)]
+        data: String,
+        #[arg(short, long)]
+        parser_id: i64,
+        #[arg(short, long, default_value = "")]
+        keywords: String,
+        #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+        tags: Vec<String>,
+        #[arg(short, long, default_value_t = false)]
+        is_suspended: bool,
+        /// JSON object to set as the note's custom data (initial value on create)
+        #[arg(long, value_name = "JSON")]
+        custom_data: Option<String>,
+    },
+    /// Edit a note
+    Edit {
         #[command(flatten)]
         selector: NotesSelectorLocal,
         #[arg(short, long)]
@@ -203,7 +222,43 @@ pub(crate) enum EditCommands {
         #[arg(long, value_name = "JSON")]
         custom_data: Option<String>,
     },
-    Card {
+    /// Delete a note
+    Delete {
+        #[command(flatten)]
+        selector: NotesSelectorLocal,
+    },
+    /// Get a note
+    Get { id: i64 },
+    /// List notes
+    List {
+        #[arg(short, long)]
+        page: Option<usize>,
+        #[arg(short, long)]
+        limit: Option<usize>,
+        /// Display notes as a graph
+        #[arg(long)]
+        graph: bool,
+    },
+    /// View notes matching a search query
+    View(ViewNoteArgs),
+    /// Search for notes
+    Search(SearchArgs),
+    /// Export notes matching a query
+    Export(ExportArgs),
+    /// Generate note and card files
+    Generate(GenerateArgs),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CardArgs {
+    #[command(subcommand)]
+    pub(crate) command: CardCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum CardCommands {
+    /// Edit a card
+    Edit {
         #[command(flatten)]
         selector: CardsSelectorLocal,
         #[arg(short, long)]
@@ -212,6 +267,66 @@ pub(crate) enum EditCommands {
         special_state: Option<SpecialStateLocal>,
         #[arg(long)]
         due: Option<DateTime<Utc>>,
+    },
+    /// Get a card by id or note id
+    Get {
+        #[arg(
+            short,
+            long,
+            required_unless_present = "note_id",
+            conflicts_with = "note_id"
+        )]
+        id: Option<i64>,
+        #[arg(short, long, required_unless_present = "id", conflicts_with = "id")]
+        note_id: Option<i64>,
+    },
+    /// List cards
+    List {
+        #[arg(short, long)]
+        page: Option<usize>,
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
+    /// View cards matching a search query (opens card backs)
+    View(ViewCardArgs),
+    /// Search for cards
+    Search(SearchArgs),
+    /// Study cards
+    Review(ReviewArgs),
+    /// Advance cards (review material ahead of time)
+    Advance(AdvanceArgs),
+    /// Postpone cards (delay reviews)
+    Postpone(PostponeArgs),
+    /// Forget cards (reset scheduling, keep review logs)
+    Forget(ForgetCardArgs),
+    /// Unbury all cards
+    Unbury {
+        #[arg(short, long)]
+        query: Option<String>,
+    },
+    /// Get leeches (cards that are frequently forgotten)
+    Leeches {
+        #[arg(short, long, default_value = "fsrs")]
+        scheduler_name: String,
+    },
+    /// Studying statistics
+    #[command(alias = "stats")]
+    Statistics(StatisticsArgs),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct LinkArgs {
+    #[command(subcommand)]
+    pub(crate) command: LinkCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum LinkCommands {
+    /// List note links, only showing links with a score below the threshold
+    List {
+        /// Only notes with scores below this will be returned
+        #[arg(short, long)]
+        score_threshold: Score,
     },
 }
 
@@ -248,95 +363,8 @@ pub(crate) struct NotesSelectorLocal {
 pub(crate) struct CardsSelectorLocal {
     #[arg(long, value_delimiter = ' ', num_args = 1..)]
     pub(crate) ids: Option<Vec<CardId>>,
-    // #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-    // files: Option<Vec<PathBuf>>,
     #[arg(short, long)]
     pub(crate) query: Option<String>,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum DeleteCommands {
-    Parser {
-        id: i64,
-    },
-    Tag {
-        id: i64,
-    },
-    Note {
-        #[command(flatten)]
-        selector: NotesSelectorLocal,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum GetCommands {
-    Parser {
-        id: i64,
-    },
-    Tag {
-        #[arg(short, long)]
-        id: Option<i64>,
-        #[arg(short, long, conflicts_with = "id")]
-        name: Option<String>,
-    },
-    Note {
-        id: i64,
-        // /// Open in editor
-        // #[arg(short, long, default_value_t = false)]
-        // use_editor: bool,
-    },
-    Card {
-        #[arg(short, long)]
-        id: Option<i64>,
-        #[arg(short, long, conflicts_with = "id")]
-        note_id: Option<i64>,
-    },
-}
-
-#[derive(Debug, Copy, Clone, Default, PartialEq, ValueEnum)]
-pub(crate) enum ListTagOutput {
-    #[default]
-    Long,
-    Short,
-    Tree,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ListCommands {
-    Parser {
-        #[arg(short, long)]
-        page: Option<usize>,
-        #[arg(short, long)]
-        limit: Option<usize>,
-    },
-    Tag {
-        #[arg(short, long)]
-        page: Option<usize>,
-        #[arg(short, long)]
-        limit: Option<usize>,
-        /// Display results in long format
-        #[arg(long, default_value_t = true, overrides_with_all = ["short", "tree"])]
-        long: bool,
-        /// Display results in short format
-        #[arg(long, overrides_with_all = ["long", "tree"])]
-        short: bool,
-        /// Display results as a tree
-        #[arg(long, overrides_with_all = ["long", "short"])]
-        tree: bool,
-    },
-    Note {
-        #[arg(short, long)]
-        page: Option<usize>,
-        #[arg(short, long)]
-        limit: Option<usize>,
-        #[arg(long)]
-        graph: bool,
-    },
-    NoteLink {
-        /// Only notes with scores below this will be returned
-        #[arg(short, long)]
-        score_threshold: Score,
-    },
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -372,6 +400,11 @@ pub(crate) struct ExportArgs {
 }
 
 #[derive(Debug, Parser)]
+#[command(group(
+    ArgGroup::new("target")
+        .args(&["ids", "query"])
+        .required(true)
+))]
 pub(crate) struct ForgetCardArgs {
     #[arg(long, value_delimiter = ' ', num_args = 1..)]
     pub(crate) ids: Option<Vec<i64>>,
@@ -410,20 +443,6 @@ pub(crate) struct UndoArgs {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct ViewArgs {
-    #[command(subcommand)]
-    pub(crate) command: ViewCommands,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ViewCommands {
-    /// View notes matching a search query
-    Note(ViewNoteArgs),
-    /// View cards matching a search query (opens card backs)
-    Card(ViewCardArgs),
-}
-
-#[derive(Args, Debug)]
 pub(crate) struct KeywordArgs {
     #[command(subcommand)]
     pub(crate) command: KeywordCommands,
@@ -445,52 +464,20 @@ pub(crate) enum EventCommands {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum KeywordCommands {
-    /// Get unmatched keywords
-    Unmatched,
-    /// Get keywords associated with more than 1 note
-    Duplicate,
-    /// Search for a keyword (returns best match)
-    Search { keyword: String },
-    /// Search for a keyword and show all matches ranked
-    Ranking { keyword: String },
     /// List all keywords
     List {
         /// Display only deduped keyword strings, one per line
         #[arg(long)]
         short: bool,
     },
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct ScheduleArgs {
-    #[command(subcommand)]
-    pub(crate) command: ScheduleCommands,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ScheduleCommands {
-    /// Forget cards (reset scheduling, keep review logs)
-    Forget(ForgetCardArgs),
-    /// Get leeches (cards that are frequently forgotten)
-    Leeches {
-        #[arg(short, long, default_value = "fsrs")]
-        scheduler_name: String,
-    },
-    /// Unbury all cards
-    Unbury {
-        #[arg(short, long)]
-        query: Option<String>,
-    },
-    /// Advance cards (review material ahead of time)
-    Advance(AdvanceArgs),
-    /// Postpone cards (delay reviews)
-    Postpone(PostponeArgs),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
-pub(crate) enum OutputItemType {
-    Notes,
-    Cards,
+    /// Search for a keyword (returns best match)
+    Search { keyword: String },
+    /// Search for a keyword and show all matches ranked
+    Ranking { keyword: String },
+    /// Get unmatched keywords
+    Unmatched,
+    /// Get keywords associated with more than 1 note
+    Duplicate,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, ValueEnum)]
@@ -501,8 +488,6 @@ pub(crate) enum OutputFormat {
 
 #[derive(Args, Debug)]
 pub(crate) struct SearchArgs {
-    #[arg(short, long, default_value = "notes")]
-    pub(crate) output_type: OutputItemType,
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
     pub(crate) query: String,
@@ -532,5 +517,86 @@ impl NotesSelectorLocal {
         } else {
             Err("should be unreachable by clap conflicts with".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+    use clap::Parser;
+
+    #[test]
+    fn cli_contract_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn card_get_requires_id_or_note_id() {
+        assert!(Cli::try_parse_from(["spares", "card", "get"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "card", "get", "--id", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "card", "get", "--note-id", "1"]).is_ok());
+    }
+
+    #[test]
+    fn tag_get_requires_id_or_name() {
+        assert!(Cli::try_parse_from(["spares", "tag", "get"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "tag", "get", "--id", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "tag", "get", "--name", "foo"]).is_ok());
+    }
+
+    #[test]
+    fn tag_edit_rebuild_accepts_id_or_tag_name() {
+        assert!(
+            Cli::try_parse_from(["spares", "tag", "edit", "--tag-name", "foo", "--rebuild"])
+                .is_ok()
+        );
+        assert!(Cli::try_parse_from(["spares", "tag", "edit", "--id", "1", "--rebuild"]).is_ok());
+    }
+
+    #[test]
+    fn card_forget_requires_ids_or_query() {
+        assert!(Cli::try_parse_from(["spares", "card", "forget"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "card", "forget", "--ids", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "card", "forget", "--query", "foo"]).is_ok());
+    }
+
+    #[test]
+    fn card_list_parses() {
+        let cli = Cli::try_parse_from(["spares", "card", "list"]).unwrap();
+        match cli.command {
+            Commands::Card(CardArgs {
+                command: CardCommands::List { page, limit },
+            }) => {
+                assert!(page.is_none());
+                assert!(limit.is_none());
+            }
+            _ => panic!("expected card list"),
+        }
+        let cli = Cli::try_parse_from(["spares", "card", "list", "--page", "2", "--limit", "50"])
+            .unwrap();
+        match cli.command {
+            Commands::Card(CardArgs {
+                command: CardCommands::List { page, limit },
+            }) => {
+                assert_eq!(page, Some(2));
+                assert_eq!(limit, Some(50));
+            }
+            _ => panic!("expected card list"),
+        }
+    }
+
+    #[test]
+    fn tag_list_flags_are_mutually_exclusive() {
+        assert!(Cli::try_parse_from(["spares", "tag", "list", "--short", "--tree"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "tag", "list", "--long", "--short"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "tag", "list", "--short"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "tag", "list"]).is_ok());
+    }
+
+    #[test]
+    fn parser_edit_requires_name() {
+        assert!(Cli::try_parse_from(["spares", "parser", "edit", "1"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "parser", "edit", "1", "--name", "x"]).is_ok());
     }
 }
