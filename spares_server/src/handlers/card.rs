@@ -2,15 +2,18 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Path;
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
 use spares_core::api::card::get_card;
 use spares_core::api::card::get_cards;
 use spares_core::api::card::get_leeches;
+use spares_core::api::card::list_cards;
 use spares_core::api::card::unbury_cards;
 use spares_core::api::card::update_cards;
 use spares_core::api::forget_card;
+use spares_core::schema::FilterOptions;
 use spares_core::schema::card::GetLeechesRequest;
 use spares_core::schema::card::UnburyRequest;
 use spares_core::schema::card::UpdateCardsRequest;
@@ -33,6 +36,16 @@ pub(crate) async fn get_cards_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let card_res = get_cards(&data.db, note_id)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(card_res))
+}
+
+pub(crate) async fn list_cards_handler(
+    opts: Query<FilterOptions>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let card_res = list_cards(&data.db, opts.0)
         .await
         .map_err(error_to_response)?;
     Ok(Json(card_res))

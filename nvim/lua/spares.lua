@@ -93,12 +93,12 @@ local function run(args)
 end
 
 local function resolve_path(note_id)
-  local raw = run({ 'get', 'note', tostring(note_id) })
+  local raw = run({ 'note', 'get', tostring(note_id) })
   if not raw then return nil end
   local ok, note = pcall(vim.fn.json_decode, raw)
   if not ok or type(note) ~= 'table' or not note.parser_id then return nil end
 
-  local raw2 = run({ 'list', 'parser' })
+  local raw2 = run({ 'parser', 'list' })
   if not raw2 then return nil end
   local ok2, parsers = pcall(vim.fn.json_decode, raw2)
   if not ok2 or type(parsers) ~= 'table' then return nil end
@@ -196,7 +196,7 @@ function M.complete_tags()
   local cursor_col = vim.api.nvim_win_get_cursor(0)[2]
   local current_word = string.match(current_line:sub(1, cursor_col), '%w+$') or ''
 
-  local job = vim.fn.jobstart({ binary, 'list', 'tag', '--short' }, {
+  local job = vim.fn.jobstart({ binary, 'tag', 'list', '--short' }, {
     stdout_buffered = true,
     on_stdout = function(_, data)
       if data then

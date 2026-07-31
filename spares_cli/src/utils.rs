@@ -5,6 +5,7 @@ use miette::Error;
 use miette::miette;
 use reqwest::Client;
 use reqwest::StatusCode;
+use serde_json::Map;
 use serde_json::Value;
 use spares_core::model::NoteId;
 use spares_core::parsers::RenderOutputDirectoryType;
@@ -15,6 +16,46 @@ use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_output_raw_dir;
 use spares_core::schema::undo::UndoEventRequest;
 use spares_core::schema::undo::UndoEventResponse;
+
+pub(crate) fn page_limit_queries(
+    page: Option<usize>,
+    limit: Option<usize>,
+) -> Vec<(&'static str, String)> {
+    let mut queries = Vec::new();
+    if let Some(page) = page {
+        queries.push(("page", page.to_string()));
+    }
+    if let Some(limit) = limit {
+        queries.push(("limit", limit.to_string()));
+    }
+    queries
+}
+
+pub(crate) fn parse_list(data: &str) -> Vec<String> {
+    data.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn parse_custom_data(s: &str) -> Result<Map<String, Value>, Error> {
+    let v: Value = serde_json::from_str::<Value>(s)
+        .map_err(|e| miette!("invalid --custom-data JSON: {}", e))?;
+    match v {
+        Value::Object(m) => Ok(m),
+        other => Err(miette!(
+            "invalid --custom-data JSON: expected a JSON object, got {}",
+            match other {
+                Value::Array(_) => "array",
+                Value::String(_) => "string",
+                Value::Number(_) => "number",
+                Value::Bool(_) => "bool",
+                Value::Null => "null",
+                Value::Object(_) => unreachable!(),
+            }
+        )),
+    }
+}
 
 pub(crate) async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Response, Error> {
     let status = response.status();

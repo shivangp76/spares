@@ -415,7 +415,7 @@ pub async fn delete_tag_event(
 
 pub async fn list_tags(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<TagResponse>, Error> {
     let limit = opts.limit.unwrap_or(TAG_DEFAULT_LIMIT);
-    let offset = (opts.page.unwrap_or(1) - 1) * limit;
+    let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;
     let items = sqlx::query_as(r"SELECT * FROM tag ORDER by id LIMIT ? OFFSET ?")
         .bind(limit as u32)
         .bind(offset as u32)

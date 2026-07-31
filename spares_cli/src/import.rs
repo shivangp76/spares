@@ -27,7 +27,7 @@ use spares_core::parsers::remove_cloze_uid_from_note_data;
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
-    // NOTE: To import to spares-local-files, refer to `spares generate`
+    // NOTE: To import to spares-local-files, refer to `spares note generate`
     #[arg(short, long, default_value = "spares")]
     pub(crate) adapter: String,
 

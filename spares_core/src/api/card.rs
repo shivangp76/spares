@@ -21,6 +21,7 @@ use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schema::FilterOptions;
 use crate::schema::card::CardResponse;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::ForgetCardResponse;
@@ -29,6 +30,8 @@ use crate::schema::card::SpecialStateUpdate;
 use crate::schema::card::UpdateCardsRequest;
 use crate::schema::card::UpdateCardsResponse;
 use crate::search::evaluator::Evaluator;
+
+const DEFAULT_CARDS_LIMIT: usize = 100;
 
 pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error> {
     let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
@@ -42,6 +45,21 @@ pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error
 pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardResponse>, Error> {
     let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ?")
         .bind(note_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(cards
+        .into_iter()
+        .map(|card| CardResponse::new(&card))
+        .collect::<Vec<_>>())
+}
+
+pub async fn list_cards(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<CardResponse>, Error> {
+    let limit = opts.limit.unwrap_or(DEFAULT_CARDS_LIMIT);
+    let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;
+    let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id LIMIT ? OFFSET ?")
+        .bind(limit as u32)
+        .bind(offset as u32)
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
