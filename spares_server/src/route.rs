@@ -15,6 +15,7 @@ use crate::handlers::card::forget_card_handler;
 use crate::handlers::card::get_card_handler;
 use crate::handlers::card::get_cards_handler;
 use crate::handlers::card::get_leeches_handler;
+use crate::handlers::card::list_cards_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
@@ -103,6 +104,7 @@ pub(crate) fn create_router(
             get(get_latest_note_event_id_handler),
         )
         // Card
+        .route("/api/cards", get(list_cards_handler))
         .route("/api/cards/{id}", get(get_card_handler))
         .route("/api/cards/note_id/{id}", get(get_cards_handler))
         .route("/api/cards/leeches", post(get_leeches_handler))

@@ -33,8 +33,8 @@ Spares ships with a CLI to interact with the server. Its documentation can be fo
 
 Using the CLI, we can add our parsers to the database. This is needed for creating notes that use these parsers.
 ```sh
-spares add parser --name markdown
-spares add parser --name latex-note
+spares parser add --name markdown
+spares parser add --name latex-note
 ```
 
 The CLI also provides an import functionality to add notes in bulk. For example, using the "markdown" parser, we can create a file called `notes.md` with the following contents:
@@ -86,7 +86,7 @@ You can render notes with the following command. This will create the following 
     - The card's rendered file. For the markdown parser, this is a pdf file.
 
 ```sh
-spares generate --render
+spares note generate --render
 ```
 
 The note's text file will also contain the linked notes. The exact syntax of these files can be modified in the parser.
@@ -104,7 +104,7 @@ This will walk you through your changes, letting you decide what to keep and wha
 # Reviewing
 
 ```sh
-spares review
+spares card review
 ```
 
 ## Image Occlusions
