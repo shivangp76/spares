@@ -44,6 +44,24 @@ pub async fn create_tag(
     create_tag_event(db, payload, log).await
 }
 
+/// Inserts a new tag row and returns its id. The caller must have already verified that a tag
+/// with this name does not exist (and deduplicated names), e.g. `update_tags` pre-filters
+/// existing tags. Unlike [`create_tag`], it only supports the `query = None` case and runs on a
+/// supplied connection so it can participate in a surrounding transaction.
+pub(crate) async fn create_tag_row(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    name: &str,
+) -> Result<TagId, Error> {
+    sqlx::query_scalar(
+        r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, '', NULL, ?) RETURNING id",
+    )
+    .bind(name)
+    .bind(DEFAULT_TAG_AUTO_DELETE)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
+}
+
 pub async fn create_tag_event(
     db: &SqlitePool,
     payload: CreateTagPayload,
@@ -469,12 +487,11 @@ pub(crate) mod tests {
     #[sqlx::test]
     async fn test_create_tag(pool: SqlitePool) -> () {
         // Create parent tag
-        let parent_tag =
+        let _parent_tag =
             create_tag_helper(&pool, "Parent tag name", "Parent tag description").await;
-        let parent_tag_id = parent_tag.id;
 
         // Create child tag
-        let child_tag = create_tag_helper(&pool, "Child tag name", "Child tag description").await;
+        let _child_tag = create_tag_helper(&pool, "Child tag name", "Child tag description").await;
 
         // Create tag with duplicate name
         let request = CreateTagRequest {
@@ -490,9 +507,8 @@ pub(crate) mod tests {
     #[sqlx::test]
     async fn test_get_tag(pool: SqlitePool) -> () {
         // Create parent tag
-        let parent_tag =
+        let _parent_tag =
             create_tag_helper(&pool, "Parent tag name", "Parent tag description").await;
-        let parent_tag_id = parent_tag.id;
 
         // Create child tag
         let child_tag = create_tag_helper(&pool, "Child tag name", "Child tag description").await;

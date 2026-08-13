@@ -9,6 +9,7 @@ use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::note::create_note_links;
 use crate::api::note::get_keywords;
@@ -170,23 +171,28 @@ async fn persist_updated_note_links(
     db: &SqlitePool,
     updated_note_links: &[NoteLink],
 ) -> Result<(), Error> {
-    execute_batched_query(db, updated_note_links, async |db, chunk| {
-        let query_str = format!(
-            "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
-            placeholders_2d(chunk.len(), 2)
-        );
-        let mut delete_query = sqlx::query(query_str.as_str());
-        for nl in chunk {
-            delete_query = delete_query.bind(nl.parent_note_id);
-            delete_query = delete_query.bind(nl.order);
-        }
-        delete_query
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
-    .await;
+    execute_batched_query(
+        db,
+        updated_note_links,
+        MAX_ROWS_IN_QUERY,
+        async |db, chunk| {
+            let query_str = format!(
+                "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
+                placeholders_2d(chunk.len(), 2)
+            );
+            let mut delete_query = sqlx::query(query_str.as_str());
+            for nl in chunk {
+                delete_query = delete_query.bind(nl.parent_note_id);
+                delete_query = delete_query.bind(nl.order);
+            }
+            delete_query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        },
+    )
+    .await?;
     create_note_links(db, updated_note_links).await
 }
 

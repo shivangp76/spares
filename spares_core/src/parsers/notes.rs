@@ -452,8 +452,6 @@ mod tests {
         // - Multiple image occlusions to make sure the offset is correct and the surrounding data is properly parser
         // - Reimporting image occlusions (image occlusions that contain the rendered image so the user can preview it)
 
-        use crate::parsers::BackReveal;
-        use crate::parsers::FrontConceal;
         use crate::parsers::image_occlusion::get_image_occlusion_directory;
         use crate::parsers::impls::latex::LatexParserNote;
         use crate::parsers::impls::markdown::MarkdownParser;

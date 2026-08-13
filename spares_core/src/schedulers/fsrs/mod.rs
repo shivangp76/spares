@@ -19,7 +19,6 @@ mod reposition;
 mod utils;
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -31,7 +30,6 @@ use disperse::disperse_siblings_distance;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use log::info;
-use rand::Rng;
 use rand::RngExt;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;

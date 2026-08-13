@@ -11,9 +11,11 @@ use crate::CardErrorKind;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::card::create_card_tags;
 use crate::api::execute_batched_query;
 use crate::api::fetch_batched_query;
+use crate::api::max_rows_for;
 use crate::api::note::basic::fetch_note_snapshot;
 use crate::api::parser::get_parser_name;
 use crate::api::placeholders;
@@ -51,7 +53,6 @@ use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
-use crate::schema::note::{self};
 use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
 
@@ -67,7 +68,7 @@ async fn rebuild_filtered_tags_for_created_notes(
             .map_err(|e| Error::Sqlx { source: e })?;
     // Get card ids from the note.id here
     let created_card_ids: Vec<CardId> =
-        fetch_batched_query(db, note_responses, async |db, chunk| {
+        fetch_batched_query(db, note_responses, MAX_ROWS_IN_QUERY, async |db, chunk| {
             let query_str = format!(
                 "SELECT id FROM cards WHERE note_id IN ({})",
                 placeholders(chunk.len())
@@ -346,15 +347,28 @@ pub async fn create_notes(
         let payload = CreateNotesPayload { notes: snapshots };
         let note_event = (
             EventType::CreateNotes,
-            serde_json::to_value(&payload).unwrap(),
+            serde_json::to_value(&payload).map_err(|e| {
+                Error::Library(LibraryError::InvalidConfig(format!(
+                    "failed to serialize create notes payload: {e}"
+                )))
+            })?,
         );
         if new_tag_payloads.is_empty() {
             insert_events(db, &[note_event], at, None).await?;
         } else {
             let mut events: Vec<(EventType, Value)> = new_tag_payloads
                 .into_iter()
-                .map(|p| (EventType::CreateTag, serde_json::to_value(&p).unwrap()))
-                .collect();
+                .map(|p| {
+                    Ok::<_, Error>((
+                        EventType::CreateTag,
+                        serde_json::to_value(&p).map_err(|e| {
+                            Error::Library(LibraryError::InvalidConfig(format!(
+                                "failed to serialize create tag payload: {e}"
+                            )))
+                        })?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             events.push(note_event);
             create_event_group(db, events, at).await?;
         }
@@ -447,7 +461,7 @@ pub(crate) async fn create_notes_event(
 
         // Insert cards with specific IDs
         if !cards.is_empty() {
-            execute_batched_query(db, cards, async |db, chunk| {
+            execute_batched_query(db, cards, max_rows_for(12), async |db, chunk| {
                 let query_str = format!(
                     "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
                     placeholders_2d(chunk.len(), 12)
@@ -482,7 +496,11 @@ pub(crate) async fn create_notes_event(
             db,
             &[(
                 crate::model::EventType::CreateNotes,
-                serde_json::to_value(&payload).unwrap(),
+                serde_json::to_value(&payload).map_err(|e| {
+                    Error::Library(LibraryError::InvalidConfig(format!(
+                        "failed to serialize create notes payload: {e}"
+                    )))
+                })?,
             )],
             chrono::Utc::now(),
             None,
@@ -501,7 +519,7 @@ pub async fn create_note_keywords(
         .iter()
         .flat_map(|(note_id, ks)| ks.iter().map(|k| (*note_id, k)))
         .collect::<Vec<_>>();
-    execute_batched_query(db, &rows, async |db, chunk| {
+    execute_batched_query(db, &rows, MAX_ROWS_IN_QUERY, async |db, chunk| {
         let query_str = format!(
             "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
             placeholders_2d(chunk.len(), 3)
@@ -525,7 +543,15 @@ pub async fn create_note_links(
     db: &SqlitePool,
     note_link_entries: &[NoteLink],
 ) -> Result<(), Error> {
-    execute_batched_query(db, note_link_entries, async |db, chunk| {
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    create_note_links_on(&mut conn, note_link_entries).await
+}
+
+pub(crate) async fn create_note_links_on(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    note_link_entries: &[NoteLink],
+) -> Result<(), Error> {
+    for chunk in note_link_entries.chunks(max_rows_for(6)) {
         let query_str = format!(
             "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
             placeholders_2d(chunk.len(), 6)
@@ -548,34 +574,38 @@ pub async fn create_note_links(
             query = query.bind(score);
         }
         query
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
-    .await
+    }
+    Ok(())
 }
 
 pub async fn create_note_tags(
     db: &SqlitePool,
     note_tag_entries: &[(NoteId, TagId)],
 ) -> Result<(), Error> {
-    execute_batched_query(db, note_tag_entries, async |db, chunk| {
-        let query_str = format!(
-            "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
-            placeholders_2d(chunk.len(), 2)
-        );
-        let mut query = sqlx::query(query_str.as_str());
-        for (note_id, tag_id) in chunk {
-            query = query.bind(note_id);
-            query = query.bind(tag_id);
-        }
-        query
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
+    execute_batched_query(
+        db,
+        note_tag_entries,
+        MAX_ROWS_IN_QUERY,
+        async |db, chunk| {
+            let query_str = format!(
+                "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
+                placeholders_2d(chunk.len(), 2)
+            );
+            let mut query = sqlx::query(query_str.as_str());
+            for (note_id, tag_id) in chunk {
+                query = query.bind(note_id);
+                query = query.bind(tag_id);
+            }
+            query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -587,12 +617,20 @@ pub(super) async fn apply_srs_inheritance(
     db: &SqlitePool,
     inherit_entries: &[(NoteId, u32, NoteId, usize)],
 ) -> Result<(), Error> {
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    apply_srs_inheritance_on(&mut conn, inherit_entries).await
+}
+
+pub(crate) async fn apply_srs_inheritance_on(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    inherit_entries: &[(NoteId, u32, NoteId, usize)],
+) -> Result<(), Error> {
     for &(dst_note_id, dst_order, src_note_id, src_order) in inherit_entries {
         let src_card: Option<Card> =
             sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? AND "order" = ?"#)
                 .bind(src_note_id)
                 .bind(src_order as u32)
-                .fetch_optional(db)
+                .fetch_optional(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -606,7 +644,7 @@ pub(super) async fn apply_srs_inheritance(
             sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? AND "order" = ?"#)
                 .bind(dst_note_id)
                 .bind(dst_order)
-                .fetch_optional(db)
+                .fetch_optional(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -629,25 +667,25 @@ pub(super) async fn apply_srs_inheritance(
         .bind(src_card.special_state)
         .bind(dst_note_id)
         .bind(dst_order)
-        .execute(db)
+        .execute(&mut *conn)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-        copy_review_logs(db, src_card.id, &[dst_card_id]).await?;
+        copy_review_logs_on(&mut *conn, src_card.id, &[dst_card_id]).await?;
     }
     Ok(())
 }
 
 /// Copy review history from a source card to destination cards.
 /// This is so that if the card's scheduling params are ever manually computed from the review logs, they will be correct.
-pub(super) async fn copy_review_logs(
-    db: &SqlitePool,
+pub(crate) async fn copy_review_logs_on(
+    conn: &mut sqlx::sqlite::SqliteConnection,
     src_card_id: CardId,
     dst_card_ids: &[CardId],
 ) -> Result<(), Error> {
     let review_logs: Vec<ReviewLog> = sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
         .bind(src_card_id)
-        .fetch_all(db)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     for dst_card_id in dst_card_ids {
@@ -666,7 +704,7 @@ pub(super) async fn copy_review_logs(
             .bind(log.rate_duration)
             .bind(log.previous_state)
             .bind(&log.custom_data)
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         }
@@ -675,7 +713,15 @@ pub(super) async fn copy_review_logs(
 }
 
 pub async fn create_cards(db: &SqlitePool, card_entries: &[Card]) -> Result<(), Error> {
-    execute_batched_query(db, card_entries, async |db, chunk| {
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    create_cards_on(&mut conn, card_entries).await
+}
+
+pub(crate) async fn create_cards_on(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    card_entries: &[Card],
+) -> Result<(), Error> {
+    for chunk in card_entries.chunks(max_rows_for(11)) {
         let query_str = format!(
             "INSERT INTO card (note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
             placeholders_2d(chunk.len(), 11)
@@ -695,12 +741,11 @@ pub async fn create_cards(db: &SqlitePool, card_entries: &[Card]) -> Result<(), 
             query = query.bind(&card.custom_data);
         }
         query
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
-    .await
+    }
+    Ok(())
 }
 
 async fn add_note_tags(

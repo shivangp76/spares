@@ -20,9 +20,6 @@ use crate::schema::undo::UndoEventRequest;
 #[sqlx::test]
 async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
     use crate::api::note::create_notes;
-    use crate::api::note::delete_notes;
-    use crate::schema::note::DeleteNotesRequest;
-    use crate::schema::note::NotesSelector;
 
     let parser = create_parser_helper(&pool, "markdown").await;
     let request = CreateNotesRequest {

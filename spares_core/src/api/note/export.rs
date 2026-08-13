@@ -4,8 +4,6 @@ use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
-use crate::LibraryError;
-use crate::NoteErrorKind;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::parsers::ConstructFileDataType;
