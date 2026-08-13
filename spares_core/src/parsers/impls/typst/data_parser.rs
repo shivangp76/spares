@@ -61,7 +61,7 @@ impl Collector {
         // We only care about FuncCall nodes — everything else we just descend.
         let mut entered_cloze = false;
         if node.kind() == SyntaxKind::FuncCall
-            && let Some(name) = func_name(node, offset)
+            && let Some(name) = func_name(node)
         {
             match name.text.as_str() {
                 CLOZE_FUNC_NAME => {
@@ -171,7 +171,7 @@ fn collect_cloze_recursive(call: &LinkedNode<'_>, call_offset: usize, out: &mut 
 /// Descend looking for `#cl[…]` calls anywhere inside `node`.
 fn find_nested_cloze_calls(node: &LinkedNode<'_>, offset: usize, out: &mut Vec<ClozeMatch>) {
     if node.kind() == SyntaxKind::FuncCall
-        && let Some(name) = func_name(node, offset)
+        && let Some(name) = func_name(node)
         && name.text == CLOZE_FUNC_NAME
     {
         collect_cloze_recursive(node, offset, out);
@@ -220,7 +220,7 @@ fn build_cloze_match(call: &LinkedNode<'_>, call_offset: usize) -> Option<ClozeM
         call_child_off += len;
     }
 
-    let ident_range = ident_range?;
+    let _ident_range = ident_range?;
     let (args_node, args_off) = args_range?;
 
     // ── find content blocks inside Args ──────────────────────────────────────
@@ -266,7 +266,7 @@ fn build_cloze_match(call: &LinkedNode<'_>, call_offset: usize) -> Option<ClozeM
     // end_match  = first-block's `]` start .. second-block's `]` end
     //            = the span `][settings]` (inclusive of both brackets).
     let first_close = &blocks[0].0.close_bracket;
-    let second_open = &blocks[1].0.open_bracket;
+    // let _second_open = &blocks[1].0.open_bracket;
     let second_close = &blocks[1].0.close_bracket;
     let second_content = &blocks[1].0.content_range;
 
@@ -297,16 +297,13 @@ struct ContentBlockInfo {
 }
 
 /// Return the function name from a `FuncCall` node (the Ident child).
-fn func_name(call: &LinkedNode<'_>, call_offset: usize) -> Option<IdentInfo> {
-    let mut child_off = call_offset;
+fn func_name(call: &LinkedNode<'_>) -> Option<IdentInfo> {
     for child in call.children() {
-        let len = child.len();
         if child.kind() == SyntaxKind::Ident {
             return Some(IdentInfo {
                 text: child.text().to_string(),
             });
         }
-        child_off += len;
     }
     None
 }

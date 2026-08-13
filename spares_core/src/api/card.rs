@@ -5,6 +5,7 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::placeholders_2d;
 use crate::api::undo::insert_events;
@@ -471,22 +472,27 @@ pub async fn create_card_tags(
     db: &SqlitePool,
     card_tag_entries: &[(CardId, TagId)],
 ) -> Result<(), Error> {
-    execute_batched_query(db, card_tag_entries, async |db, chunk| {
-        let query_str = format!(
-            "INSERT INTO card_tag (card_id, tag_id) VALUES {}",
-            placeholders_2d(chunk.len(), 2)
-        );
-        let mut query = sqlx::query(query_str.as_str());
-        for (card_id, tag_id) in chunk {
-            query = query.bind(card_id);
-            query = query.bind(tag_id);
-        }
-        query
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
+    execute_batched_query(
+        db,
+        card_tag_entries,
+        MAX_ROWS_IN_QUERY,
+        async |db, chunk| {
+            let query_str = format!(
+                "INSERT INTO card_tag (card_id, tag_id) VALUES {}",
+                placeholders_2d(chunk.len(), 2)
+            );
+            let mut query = sqlx::query(query_str.as_str());
+            for (card_id, tag_id) in chunk {
+                query = query.bind(card_id);
+                query = query.bind(tag_id);
+            }
+            query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -494,22 +500,27 @@ pub async fn delete_card_tags(
     db: &SqlitePool,
     delete_card_tag_entries: &[(CardId, TagId)],
 ) -> Result<(), Error> {
-    execute_batched_query(db, delete_card_tag_entries, async |db, chunk| {
-        let query_str = format!(
-            "DELETE FROM card_tag WHERE (card_id, tag_id) IN ({})",
-            placeholders_2d(chunk.len(), 2)
-        );
-        let mut query = sqlx::query(query_str.as_str());
-        for (card_id, tag_id) in chunk {
-            query = query.bind(card_id);
-            query = query.bind(tag_id);
-        }
-        query
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
+    execute_batched_query(
+        db,
+        delete_card_tag_entries,
+        MAX_ROWS_IN_QUERY,
+        async |db, chunk| {
+            let query_str = format!(
+                "DELETE FROM card_tag WHERE (card_id, tag_id) IN ({})",
+                placeholders_2d(chunk.len(), 2)
+            );
+            let mut query = sqlx::query(query_str.as_str());
+            for (card_id, tag_id) in chunk {
+                query = query.bind(card_id);
+                query = query.bind(tag_id);
+            }
+            query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        },
+    )
     .await
 }
 

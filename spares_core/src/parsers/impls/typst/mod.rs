@@ -10,7 +10,6 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::config::get_cache_dir;
-use crate::parsers::CliData;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -18,7 +17,6 @@ use crate::parsers::ConstructFileDataType;
 use crate::parsers::ConstructImageOcclusionType;
 use crate::parsers::GenerateNoteFilesRequest;
 use crate::parsers::NoteImportAction;
-use crate::parsers::NotePart;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
@@ -31,7 +29,6 @@ use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
-mod old_data_parser;
 
 /// See <https://typst.app/>
 ///
@@ -54,18 +51,18 @@ impl Parseable for TypstParser {
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-        let mut parser = TypstDataParser::new(data);
+        let parser = TypstDataParser::new(data);
         Ok(parser.linked_notes)
     }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        let mut parser = TypstDataParser::new(data);
+        let parser = TypstDataParser::new(data);
         Ok(parser.keywords)
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        let mut parser = TypstDataParser::new(data);
+        let parser = TypstDataParser::new(data);
         Ok(parser.settings)
     }
 
@@ -78,7 +75,7 @@ impl Parseable for TypstParser {
 
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
         // Note that a regex approach will not work for nested clozes.
-        let mut parser = TypstDataParser::new(data);
+        let parser = TypstDataParser::new(data);
         Ok(parser.clozes.into_iter().flatten().collect::<Vec<_>>())
     }
 

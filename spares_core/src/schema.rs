@@ -295,7 +295,7 @@ pub mod note {
                 created_at: note.created_at,
                 updated_at: note.updated_at,
                 tags,
-                custom_data: note.custom_data.as_object().unwrap().clone(),
+                custom_data: note.custom_data.as_object().cloned().unwrap_or_default(),
                 linked_notes,
                 card_count,
             }

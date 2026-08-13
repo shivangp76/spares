@@ -46,6 +46,7 @@ pub use construct::construct_image_occlusion_from_image;
 pub use construct::create_image_occlusion_cards;
 pub use construct::update_cloze_settings;
 pub use utils::get_image_occlusion_card_filepath;
+#[cfg(test)]
 pub use utils::get_image_occlusion_directory;
 pub use utils::get_image_occlusion_rendered_directory;
 

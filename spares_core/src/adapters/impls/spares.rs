@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use log::info;
 use log::warn;
 use reqwest::Client;
 use reqwest::Response;

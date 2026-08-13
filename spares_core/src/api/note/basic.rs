@@ -1,46 +1,20 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::path::Path;
-
 use chrono::DateTime;
 use chrono::Utc;
-use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
-use crate::api::execute_batched_query;
-use crate::api::fetch_batched_query;
-use crate::api::parser::get_parser;
-use crate::api::placeholders;
-use crate::api::undo::insert_events;
 use crate::api::undo::payloads::CardSnapshot;
-use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::read_internal_config;
-use crate::config::write_internal_config;
 use crate::helpers::value_to_string_vec;
 use crate::model::Card;
-use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
-use crate::model::TagId;
-use crate::parsers::Parseable;
-use crate::parsers::RenderOutputDirectoryType;
-use crate::parsers::find_parser;
-use crate::parsers::generate_files::CardSide;
-use crate::parsers::generate_files::RenderOutputType;
-use crate::parsers::get_output_raw_dir;
-use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
-use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
-use crate::parsers::image_occlusion::parse_image_occlusion_data;
 use crate::schema::FilterOptions;
-use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::LinkedNote;
 use crate::schema::note::NoteResponse;
-use crate::schema::note::NotesSelector;
-use crate::search::evaluator::Evaluator;
 
 pub async fn get_note(db: &SqlitePool, note_id: NoteId) -> Result<NoteResponse, Error> {
     // Get note
@@ -264,6 +238,7 @@ pub(crate) mod tests {
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::DeleteNotesRequest;
     use crate::schema::note::NotesSelector;
     use crate::schema::note::UpdateNotesRequest;
     use crate::schema::note::UpdateNotesResponse;

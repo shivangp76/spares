@@ -3,12 +3,10 @@ use std::cmp;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use rand::Rng;
 use rand::RngExt;
 use sqlx::SqlitePool;
 
 use crate::Error;
-use crate::api::get_card;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::helpers::FractionalDays;

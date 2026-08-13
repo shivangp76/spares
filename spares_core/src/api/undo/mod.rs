@@ -15,16 +15,11 @@
 //! - Schema for payload changes
 //!   - Handled by `version` field
 
-use chrono::DateTime;
 use chrono::Utc;
-use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::api::fetch_batched_query;
-use crate::api::placeholders;
-use crate::api::placeholders_2d;
 use crate::api::undo::invert_payload::create_undo_event;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateParserPayload;
@@ -71,7 +66,7 @@ pub async fn undo_event(
     // Get the event to undo
     let event_opt: Option<Event> = if let Some(event_id) = body.event_id {
         sqlx::query_as(r"SELECT * FROM event WHERE id = ?")
-            .bind(body.event_id)
+            .bind(event_id)
             .fetch_optional(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?

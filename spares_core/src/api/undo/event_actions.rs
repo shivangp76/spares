@@ -6,16 +6,10 @@ use sqlx::SqlitePool;
 use crate::Error;
 use crate::LibraryError;
 use crate::api::fetch_batched_query;
-use crate::api::placeholders;
+use crate::api::max_rows_for;
 use crate::api::placeholders_2d;
 use crate::api::undo::EVENT_VERSION;
-use crate::api::undo::payloads::CreateParserPayload;
-use crate::api::undo::payloads::DeleteParserPayload;
-use crate::api::undo::payloads::UpdateParserPayload;
-use crate::model::Event;
 use crate::model::EventType;
-use crate::schema::undo::UndoEventRequest;
-use crate::schema::undo::UndoEventResponse;
 
 pub async fn insert_events(
     db: &SqlitePool,
@@ -23,7 +17,7 @@ pub async fn insert_events(
     at: DateTime<Utc>,
     group_id: Option<i64>,
 ) -> Result<Vec<i64>, Error> {
-    let event_ids: Vec<i64> = fetch_batched_query(db, events, async |db, chunk| {
+    let event_ids: Vec<i64> = fetch_batched_query(db, events, max_rows_for(5), async |db, chunk| {
         let query_str = format!(
             "INSERT INTO event (kind, created_at, version, group_id, payload) VALUES {} RETURNING id",
             placeholders_2d(chunk.len(), 5)

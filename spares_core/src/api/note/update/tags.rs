@@ -1,33 +1,38 @@
 use std::collections::HashSet;
 
-use futures::future::try_join_all;
-use sqlx::sqlite::SqlitePool;
+use itertools::Itertools;
+use sqlx::sqlite::SqliteConnection;
 
-use super::super::delete_empty_tags;
+use super::super::delete_empty_tags_on;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
-use crate::api::execute_batched_query;
-use crate::api::fetch_batched_query;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
-use crate::api::tag::create_tag;
+use crate::api::tag::create_tag_row;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::helpers::remove_ancestor_tags;
 use crate::model::NoteId;
 use crate::model::TagId;
 use crate::schema::note::UpdateTags;
-use crate::schema::tag::CreateTagRequest;
 
-/// Validates that none of the tags are filtered tags, creates any missing tags, and inserts
-/// note-tag rows for all of them.  Returns payloads for any newly created tags.
+/// Adds `note_tag` rows for all of `tags_to_add`, creating any missing tags first.
+/// Returns payloads for any newly created tags.
+///
+/// `existing_filtered_tag_names` must contain the `name` of every tag whose `query`
+/// column is non-null. It is pre-fetched by the caller to avoid one query per note,
+/// and is used to reject attempts to manually assign a filtered tag.
 pub(super) async fn add_tags_to_note(
-    db: &SqlitePool,
+    conn: &mut SqliteConnection,
     note_id: NoteId,
     tags_to_add: &[String],
     existing_filtered_tag_names: &[String],
 ) -> Result<Vec<CreateTagPayload>, Error> {
+    // Deduplicate so a repeated name never creates duplicate `tag` rows or events (there is
+    // no unique constraint on `tag.name`).
+    let tags_to_add: Vec<String> = tags_to_add.iter().unique().cloned().collect();
     if let Some(filtered_tag) = tags_to_add
         .iter()
         .find(|t| existing_filtered_tag_names.contains(t))
@@ -40,22 +45,23 @@ pub(super) async fn add_tags_to_note(
         )));
     }
     let mut new_tag_payloads = Vec::new();
-    let tags_info: Vec<(TagId, String)> =
-        fetch_batched_query(db, tags_to_add, async |db, chunk| {
-            let query_str = format!(
-                "SELECT id, name FROM tag WHERE name IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query_as(query_str.as_str());
-            for tag_name in chunk {
-                query = query.bind(tag_name);
-            }
+    let mut tags_info: Vec<(TagId, String)> = Vec::new();
+    for chunk in tags_to_add.chunks(MAX_ROWS_IN_QUERY) {
+        let query_str = format!(
+            "SELECT id, name FROM tag WHERE name IN ({})",
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as(query_str.as_str());
+        for tag_name in chunk {
+            query = query.bind(tag_name);
+        }
+        tags_info.extend(
             query
-                .fetch_all(db)
+                .fetch_all(&mut *conn)
                 .await
-                .map_err(|e| Error::Sqlx { source: e })
-        })
-        .await?;
+                .map_err(|e| Error::Sqlx { source: e })?,
+        );
+    }
     let mut new_tag_ids: Vec<i64> = tags_info.iter().map(|(x, _)| *x).collect::<Vec<_>>();
     let existing_tag_names = tags_info
         .iter()
@@ -65,38 +71,22 @@ pub(super) async fn add_tags_to_note(
         .iter()
         .filter(|tag_name| !existing_tag_names.contains(tag_name.as_str()))
         .collect::<Vec<_>>();
-    let new_tag_names: Vec<String> = new_tags.iter().map(|s| (*s).clone()).collect();
-    let tag_responses = try_join_all(
-        new_tags
-            .into_iter()
-            .map(|tag| {
-                create_tag(
-                    db,
-                    CreateTagRequest {
-                        name: (*tag).clone(),
-                        description: String::new(),
-                        query: None,
-                        auto_delete: DEFAULT_TAG_AUTO_DELETE,
-                    },
-                    false,
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
-    .await?;
-    new_tag_payloads.extend(new_tag_names.into_iter().zip(tag_responses.iter()).map(
-        |(name, resp)| CreateTagPayload {
-            id: Some(resp.id),
-            name,
+    // Create missing tags sequentially on the transaction connection (tags are rare, and the
+    // connection can't be shared by concurrent tasks anyway).
+    for tag in new_tags {
+        let tag_id = create_tag_row(&mut *conn, tag).await?;
+        new_tag_ids.push(tag_id);
+        new_tag_payloads.push(CreateTagPayload {
+            id: Some(tag_id),
+            name: (*tag).clone(),
             description: String::new(),
             query: None,
             auto_delete: DEFAULT_TAG_AUTO_DELETE,
             note_ids: vec![],
             card_ids: vec![],
-        },
-    ));
-    new_tag_ids.extend(tag_responses.into_iter().map(|r| r.id).collect::<Vec<_>>());
-    execute_batched_query(db, &new_tag_ids, async |db, chunk| {
+        });
+    }
+    for chunk in new_tag_ids.chunks(MAX_ROWS_IN_QUERY) {
         let query_str = format!(
             "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
             placeholders_2d(chunk.len(), 2)
@@ -107,18 +97,16 @@ pub(super) async fn add_tags_to_note(
             query = query.bind(tag_id);
         }
         query
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
-    .await?;
+    }
     Ok(new_tag_payloads)
 }
 
 #[expect(clippy::too_many_lines)]
 pub(super) async fn update_tags(
-    db: &SqlitePool,
+    conn: &mut SqliteConnection,
     tags: &UpdateTags,
     note_id: NoteId,
     existing_filtered_tag_names: &[String],
@@ -156,7 +144,7 @@ pub(super) async fn update_tags(
         // Get tags for the note that have `auto_delete` enabled
         let tag_ids: Vec<TagId> = sqlx::query_scalar(r"SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.auto_delete = 1")
                 .bind(note_id)
-                .fetch_all(db)
+                .fetch_all(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         tags_to_check.extend(tag_ids);
@@ -164,33 +152,34 @@ pub(super) async fn update_tags(
         // Remove all tags
         let _delete_note_tag_result = sqlx::query(r"DELETE FROM note_tag WHERE note_id = ?")
             .bind(note_id)
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
     } else if let Some(tags_to_remove) = tags_to_remove
         && !tags_to_remove.is_empty()
     {
         // Get tags for the note that have `auto_delete` enabled
-        let tags: Vec<TagId> =
-        fetch_batched_query(db, tags_to_remove, async |db, chunk| {
+        let mut tags: Vec<TagId> = Vec::new();
+        for chunk in tags_to_remove.chunks(MAX_ROWS_IN_QUERY) {
             let query_str = format!(
                 "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_scalar(&query_str);
+            let mut query = sqlx::query_scalar::<_, TagId>(&query_str);
             query = query.bind(note_id);
             for tag_name in chunk {
                 query = query.bind(tag_name);
             }
-            query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })
-        })
-        .await?;
+            tags.extend(
+                query
+                    .fetch_all(&mut *conn)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?,
+            );
+        }
         tags_to_check.extend(tags);
 
-        execute_batched_query(db, tags_to_remove, async |db, chunk| {
+        for chunk in tags_to_remove.chunks(MAX_ROWS_IN_QUERY) {
             let query_str = format!(
                 "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
                 placeholders(chunk.len())
@@ -200,15 +189,13 @@ pub(super) async fn update_tags(
                 query = query.bind(tag_name);
             }
             query
-                .execute(db)
+                .execute(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-            Ok(())
-        })
-        .await?;
+        }
     }
     // Delete tags with no more notes
-    delete_empty_tags(db, &tags_to_check).await?;
+    delete_empty_tags_on(&mut *conn, &tags_to_check).await?;
 
     if let Some(tags_to_add) = tags_to_add {
         let mut tags_to_add = remove_ancestor_tags(tags_to_add);
@@ -218,7 +205,7 @@ pub(super) async fn update_tags(
                     "SELECT t.name FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ?",
                 )
                 .bind(note_id)
-                .fetch_all(db)
+                .fetch_all(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
             tags_to_add.retain(|tag| {
@@ -229,7 +216,7 @@ pub(super) async fn update_tags(
             });
         }
         new_tag_payloads.extend(
-            add_tags_to_note(db, note_id, &tags_to_add, existing_filtered_tag_names).await?,
+            add_tags_to_note(conn, note_id, &tags_to_add, existing_filtered_tag_names).await?,
         );
     }
     Ok(new_tag_payloads)

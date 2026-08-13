@@ -1,19 +1,14 @@
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::model::Card;
 use crate::model::CardId;
-use crate::model::Note;
 use crate::model::NoteId;
-use crate::model::Parser;
-use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::StateId;
-use crate::model::Tag;
 use crate::model::TagId;
 use crate::parsers::BackType;
 

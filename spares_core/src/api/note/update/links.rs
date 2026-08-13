@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::SqliteConnection;
 
-use super::super::create_note_links;
+use super::super::create_note_links_on;
 use crate::Error;
 use crate::model::NoteId;
 use crate::model::NoteLink;
 use crate::parsers::Parseable;
 
 pub(super) async fn update_note_links(
-    db: &SqlitePool,
+    conn: &mut SqliteConnection,
     note_id: NoteId,
     new_parser: &dyn Parseable,
     new_data: &str,
@@ -18,7 +18,7 @@ pub(super) async fn update_note_links(
     let old_note_links: Vec<NoteLink> =
         sqlx::query_as(r#"SELECT * FROM note_link WHERE parent_note_id = ? ORDER BY "order""#)
             .bind(note_id)
-            .fetch_all(db)
+            .fetch_all(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -54,7 +54,7 @@ pub(super) async fn update_note_links(
         // Delete all linked notes for this note
         let _delete_result = sqlx::query(r"DELETE FROM note_link WHERE parent_note_id = ?")
             .bind(note_id)
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -82,7 +82,7 @@ pub(super) async fn update_note_links(
 
         // Insert all new linked note ids
         if !new_note_links.is_empty() {
-            create_note_links(db, &new_note_links).await?;
+            create_note_links_on(&mut *conn, &new_note_links).await?;
         }
     }
 

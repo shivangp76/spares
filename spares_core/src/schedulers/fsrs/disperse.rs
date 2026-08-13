@@ -355,7 +355,6 @@ mod tests {
 
     use chrono::TimeZone;
     use chrono::Utc;
-    use rand::Rng;
     use rand::RngExt;
 
     use super::*;

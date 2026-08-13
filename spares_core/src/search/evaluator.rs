@@ -919,8 +919,7 @@ fn validate_field_value_types(
         | (FieldType::Float, FieldType::Float | FieldType::Integer)
         | (FieldType::String | FieldType::Json, _)
         | (FieldType::DateTime, FieldType::DateTime)
-        | (FieldType::Boolean, FieldType::Boolean)
-        | (FieldType::String, FieldType::Regex) => Ok(()),
+        | (FieldType::Boolean, FieldType::Boolean) => Ok(()),
         _ => Err(miette!(
             "The field `{:?}` has a type of `{:?}`. The provided value of `{}` has a type of `{:?}` which does not match the field's type.",
             field,
@@ -1161,9 +1160,9 @@ fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
 /// Returns true if the token tree contains a `c.cloze` field reference.
 fn has_cloze_field(tree: &TokenTree) -> bool {
     match tree {
-        TokenTree::Atom(Atom::Field(f)) => Field::from_str(&[f])
-            .ok()
-            .is_some_and(|f| matches!(f, Field::Card(CardField::Cloze))),
+        TokenTree::Atom(Atom::Field(f)) => {
+            Field::from_str(&[f]).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
+        }
         TokenTree::Cons(_, children) => children.iter().any(has_cloze_field),
         TokenTree::Atom(_) => false,
     }
@@ -1176,9 +1175,7 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
             let is_cloze = matches!(
                 &children[0],
                 TokenTree::Atom(Atom::Field(f))
-                if Field::from_str(&[f])
-                    .ok()
-                    .is_some_and(|f| matches!(f, Field::Card(CardField::Cloze)))
+                if Field::from_str(&[f]).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
             );
             if is_cloze {
                 return match &children[1] {

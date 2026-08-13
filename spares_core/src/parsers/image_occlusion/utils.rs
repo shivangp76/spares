@@ -317,7 +317,7 @@ pub fn unpremultiply_rgba(premul: &[u8]) -> Vec<u8> {
     debug_assert!(premul.len().is_multiple_of(4));
     let mut out = Vec::with_capacity(premul.len());
 
-    for chunk in premul.chunks_exact(4) {
+    for chunk in premul.as_chunks::<4>().0 {
         let r = u32::from(chunk[0]);
         let g = u32::from(chunk[1]);
         let b = u32::from(chunk[2]);

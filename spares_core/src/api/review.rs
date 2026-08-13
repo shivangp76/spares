@@ -18,7 +18,6 @@ use super::note::delete_empty_tags;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
-use crate::SchedulerErrorKind;
 use crate::TagErrorKind;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
