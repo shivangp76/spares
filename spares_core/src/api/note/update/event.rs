@@ -5,7 +5,9 @@ use super::super::create_note_keywords;
 use super::super::create_note_tags;
 use super::super::delete_empty_tags;
 use crate::Error;
+use crate::LibraryError;
 use crate::api::execute_batched_query;
+use crate::api::max_rows_for;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag;
@@ -153,7 +155,7 @@ pub async fn update_notes_event(
             // Re-insert cards from `after` with specific IDs
             let card_snapshots = &cards_transition.after;
             if !card_snapshots.is_empty() {
-                execute_batched_query(db, card_snapshots, async |db, chunk| {
+                execute_batched_query(db, card_snapshots, max_rows_for(12), async |db, chunk| {
                     let query_str = format!(
                         "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
                         placeholders_2d(chunk.len(), 12)
@@ -189,7 +191,11 @@ pub async fn update_notes_event(
             db,
             &[(
                 EventType::UpdateNotes,
-                serde_json::to_value(&payload).unwrap(),
+                serde_json::to_value(&payload).map_err(|e| {
+                    Error::Library(LibraryError::InvalidConfig(format!(
+                        "failed to serialize update notes payload: {e}"
+                    )))
+                })?,
             )],
             at,
             None,

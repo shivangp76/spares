@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::rc::Weak;
 
-use rand::Rng;
 use rand::RngExt;
 use rand::rngs::ThreadRng;
 use rand::seq::IndexedRandom;

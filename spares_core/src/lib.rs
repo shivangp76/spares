@@ -1,4 +1,3 @@
-#![allow(unused)]
 pub mod adapters;
 pub mod api;
 pub mod config;

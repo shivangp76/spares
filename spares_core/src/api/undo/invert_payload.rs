@@ -1,11 +1,8 @@
-use chrono::DateTime;
 use chrono::Utc;
 use serde_json::Value;
-use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::Error;
-use crate::api::undo::insert_events;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateParserPayload;
 use crate::api::undo::payloads::CreateTagPayload;
@@ -260,8 +257,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::api::parser::tests::create_parser_helper;
+    use crate::api::undo::insert_events;
 
     #[sqlx::test]
     async fn create_undo_event_create_parser_produces_delete_parser(pool: SqlitePool) {

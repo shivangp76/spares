@@ -8,23 +8,19 @@ use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::fetch_batched_query;
 use crate::api::note::fetch_note_snapshot;
 use crate::api::parser::get_parser;
 use crate::api::placeholders;
 use crate::api::undo::insert_events;
-use crate::api::undo::payloads::CardSnapshot;
 use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
-use crate::helpers::value_to_string_vec;
-use crate::model::Card;
 use crate::model::EventType;
-use crate::model::Note;
 use crate::model::NoteId;
-use crate::model::NoteLink;
 use crate::model::TagId;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
@@ -35,12 +31,7 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::parsers::image_occlusion::parse_image_occlusion_data;
-use crate::schema::FilterOptions;
 use crate::schema::note::DeleteNotesRequest;
-use crate::schema::note::LinkedNote;
-use crate::schema::note::NoteResponse;
-use crate::schema::note::NotesSelector;
-use crate::search::evaluator::Evaluator;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
     if cfg!(test) {
@@ -187,20 +178,25 @@ pub async fn delete_notes(
             created_at: i64,
             custom_data: Value,
         }
-        let rows: Vec<NoteRow> = fetch_batched_query(db, &note_ids, async |db, chunk| {
-            let query_str = format!(
-                r"SELECT id, parser_id, data, created_at, custom_data FROM note WHERE id IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query_as(&query_str);
-            for note_id in chunk {
-                query = query.bind(note_id);
-            }
-            query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })
-        })
+        let rows: Vec<NoteRow> = fetch_batched_query(
+            db,
+            &note_ids,
+            MAX_ROWS_IN_QUERY,
+            async |db, chunk| {
+                let query_str = format!(
+                    r"SELECT id, parser_id, data, created_at, custom_data FROM note WHERE id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as(&query_str);
+                for note_id in chunk {
+                    query = query.bind(note_id);
+                }
+                query
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })
+            },
+        )
         .await?;
 
         let mut snapshots = Vec::with_capacity(rows.len());
@@ -258,9 +254,10 @@ async fn delete_notes_from_db(
 ) -> Result<(), Error> {
     // Get all tags with `auto_delete` enabled for all notes (batched query)
     // NOTE: AUTOMATIC REBUILD: If `Automatic` rebuild is enabled in the future, then a check would be added to ensure `auto_delete` is false. In other words, `auto_delete` as true and rebuild as `Automatic` conflict since once the tag has 0 notes left, it will be deleted so that means notes are not automatically added to it anymore.
-    let tags_rows: Vec<TagId> = fetch_batched_query(db, note_ids, async |db, chunk| {
-        let query_str = format!(
-            "SELECT DISTINCT t.id
+    let tags_rows: Vec<TagId> =
+        fetch_batched_query(db, note_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
+            let query_str = format!(
+                "SELECT DISTINCT t.id
             FROM tag t
             LEFT JOIN note_tag nt ON t.id = nt.tag_id
             LEFT JOIN card_tag ct ON t.id = ct.tag_id
@@ -268,25 +265,25 @@ async fn delete_notes_from_db(
             WHERE
                 (nt.note_id IN ({}) OR c.note_id IN ({}))
                 AND t.auto_delete = 1",
-            placeholders(chunk.len()),
-            placeholders(chunk.len())
-        );
-        let mut query = sqlx::query_scalar(&query_str);
-        for note_id in chunk {
-            query = query.bind(note_id);
-        }
-        for note_id in chunk {
-            query = query.bind(note_id);
-        }
-        query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })
-    })
-    .await?;
+                placeholders(chunk.len()),
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_scalar(&query_str);
+            for note_id in chunk {
+                query = query.bind(note_id);
+            }
+            for note_id in chunk {
+                query = query.bind(note_id);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
 
     // Delete notes
-    execute_batched_query(db, note_ids, async |db, chunk| {
+    execute_batched_query(db, note_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
         let query_str = format!(
             "DELETE FROM note WHERE id IN ({})",
             placeholders(chunk.len()),
@@ -343,7 +340,15 @@ pub(crate) async fn delete_notes_event(
 }
 
 pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(), Error> {
-    execute_batched_query(db, tag_ids, async |db, chunk| {
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    delete_empty_tags_on(&mut conn, tag_ids).await
+}
+
+pub(crate) async fn delete_empty_tags_on(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    tag_ids: &[TagId],
+) -> Result<(), Error> {
+    for chunk in tag_ids.chunks(MAX_ROWS_IN_QUERY) {
         let query_str = format!(
             r"DELETE FROM tag
             WHERE id IN ({})
@@ -361,10 +366,9 @@ pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(),
             query = query.bind(tag_id);
         }
         query
-            .execute(db)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(())
-    })
-    .await
+    }
+    Ok(())
 }

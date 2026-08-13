@@ -7,9 +7,9 @@ use chrono::Local;
 use chrono::TimeZone;
 use chrono::Utc;
 use indexmap::IndexMap;
-use itertools::Itertools;
 use serde_json::Value;
 
+#[cfg(test)]
 use crate::DelimiterErrorKind;
 
 /// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
@@ -91,13 +91,6 @@ where
     merged
 }
 
-pub fn is_monotonic_increasing<A>(vec: &[A]) -> bool
-where
-    A: Ord,
-{
-    vec.iter().tuple_windows().all(|(cur, next)| cur < next)
-}
-
 // [10, 40, 33, 20];
 // rev: [20, 33, 40, 10];
 // split_inclusive (if x == 33): [20, 33] [40, 10];
@@ -156,6 +149,7 @@ where
 
 /// Finds the corresponding end delimiter in the remainder of a string.
 /// For example, if you had the string "(())" and you wanted to find the matching end delimiter for the first open parenthesis, then you would pass in "())" to get a result of `Ok(2)` which is the index of the corresponding end parenthesis.
+#[cfg(test)]
 pub fn find_pair(
     data: &str,
     start_delim: char,

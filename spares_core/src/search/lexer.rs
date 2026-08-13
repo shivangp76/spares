@@ -1,4 +1,3 @@
-#![allow(unused)]
 use miette::Diagnostic;
 use miette::Error;
 use miette::LabeledSpan;

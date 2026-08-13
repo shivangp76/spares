@@ -4,7 +4,6 @@ use std::str::FromStr;
 use indexmap::IndexMap;
 
 use super::data::BackReveal;
-use super::data::BackType;
 use super::data::ClozeGrouping;
 use super::data::ClozeGroupingSettings;
 use super::data::ClozeSettings;

@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::fetch_batched_query;
@@ -24,7 +25,7 @@ pub(super) async fn rebuild_filtered_tags_for_updated_notes(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
     let created_card_ids: Vec<CardId> =
-        fetch_batched_query(db, note_responses, async |db, chunk| {
+        fetch_batched_query(db, note_responses, MAX_ROWS_IN_QUERY, async |db, chunk| {
             let query_str = format!(
                 "SELECT id FROM cards WHERE note_id IN ({})",
                 placeholders(chunk.len())
@@ -48,8 +49,11 @@ pub(super) async fn rebuild_filtered_tags_for_updated_notes(
             .iter()
             .map(|card_id| (*card_id, tag_id))
             .partition(|(card_id, _)| search_card_ids.contains(card_id));
-        let existing_card_tags: Vec<(CardId, TagId)> =
-            fetch_batched_query(db, &created_card_ids, async |db, chunk| {
+        let existing_card_tags: Vec<(CardId, TagId)> = fetch_batched_query(
+            db,
+            &created_card_ids,
+            MAX_ROWS_IN_QUERY,
+            async |db, chunk| {
                 let query_str = format!(
                     "SELECT card_id, tag_id FROM card_tag WHERE card_id IN ({}) AND tag_id = ?",
                     placeholders(chunk.len())
@@ -63,8 +67,9 @@ pub(super) async fn rebuild_filtered_tags_for_updated_notes(
                     .fetch_all(db)
                     .await
                     .map_err(|e| Error::Sqlx { source: e })
-            })
-            .await?;
+            },
+        )
+        .await?;
         let existing_card_tags_set: HashSet<(CardId, TagId)> =
             existing_card_tags.into_iter().collect();
         let card_ids_to_add_tag: Vec<(CardId, TagId)> = card_ids_to_add_tag
