@@ -2,10 +2,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
 use cloze_parser::ClozeParser;
 use fancy_regex::Captures;
-use fancy_regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -13,6 +13,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
 use crate::config::read_external_config;
+use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -73,7 +74,7 @@ impl Parseable for MarkdownParser {
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // let settings_regex = Regex::new(r"(?m)<!--- # (.*) --->").unwrap();
-        let settings_regex = Regex::new(r"(?s)<!--- # ([^\n]*) --->").unwrap();
+        let settings_regex = get_or_compile_regex(r"(?s)<!--- # ([^\n]*) --->").unwrap();
         let settings_data = settings_regex
             .captures_iter(data)
             .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap())
@@ -333,8 +334,8 @@ impl Parseable for MarkdownParser {
 }
 
 /// <https://pandoc.org/MANUAL.html?pandocs-markdown#reference-links>
-fn get_linked_notes_regex() -> Regex {
-    Regex::new(r"(?m)\[([^\]]*)\]\[li([^\]]*)?\]").unwrap()
+fn get_linked_notes_regex() -> Arc<fancy_regex::Regex> {
+    get_or_compile_regex(r"(?m)\[([^\]]*)\]\[li([^\]]*)?\]").unwrap()
 }
 
 fn get_linked_notes_string(

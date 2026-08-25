@@ -22,10 +22,7 @@
 //! must emit a single trailing JSON object on stdout of the form
 //! `{"score": <float in [0,1]>}`. Any other trailing line shape is an error.
 
-use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::Mutex;
-use std::sync::OnceLock;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -50,23 +47,6 @@ pub struct CliBlockMatch {
     pub range: Range<usize>,
     /// Range of the body between start and end delimiters (the `key = "value"` lines).
     pub body_range: Range<usize>,
-}
-
-pub(crate) fn get_or_compile_cli_regex(pattern: &str) -> Result<fancy_regex::Regex, LibraryError> {
-    type Cache = Mutex<HashMap<String, fancy_regex::Regex>>;
-    static CACHE: OnceLock<Cache> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = cache.lock().unwrap();
-    if let Some(re) = map.get(pattern) {
-        return Ok(re.clone());
-    }
-    let re = fancy_regex::Regex::new(pattern).map_err(|e| {
-        LibraryError::Note(NoteErrorKind::Other {
-            description: e.to_string(),
-        })
-    })?;
-    map.insert(pattern.to_string(), re.clone());
-    Ok(re)
 }
 
 /// Scan for any occurrence of `start_marker` in `data` that is not inside
@@ -156,7 +136,11 @@ pub fn get_cli_blocks(
         fancy_regex::escape(&start),
         fancy_regex::escape(&end),
     );
-    let cli_regex = get_or_compile_cli_regex(&regex_string)?;
+    let cli_regex = crate::helpers::get_or_compile_regex(&regex_string).map_err(|e| {
+        LibraryError::Note(NoteErrorKind::Other {
+            description: e.to_string(),
+        })
+    })?;
     let mut blocks = Vec::new();
     for captures in cli_regex.captures_iter(data) {
         let captures = captures.map_err(|e| {

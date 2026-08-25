@@ -8,11 +8,11 @@ use std::process::Command;
 use std::process::Output;
 
 use data_parser::LatexDataParser;
-use fancy_regex::Regex;
 
 use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
+use crate::helpers::get_or_compile_regex;
 use crate::model::NoteId;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
@@ -48,7 +48,8 @@ impl Parseable for LatexParserNote {
 
     fn get_notes_data(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         let notes_regex =
-            Regex::new(r"(?ms)^\\begin\{note\}(?:\[([^\n]*?)\])?\n(.*?)\n\\end\{note}").unwrap();
+            get_or_compile_regex(r"(?ms)^\\begin\{note\}(?:\[([^\n]*?)\])?\n(.*?)\n\\end\{note}")
+                .unwrap();
         let notes_data = notes_regex
             .captures_iter(data)
             .map(|c| c.unwrap())

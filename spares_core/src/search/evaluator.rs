@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use fancy_regex::Regex;
 use log::info;
 use miette::Error;
 use miette::Report;
@@ -10,6 +10,7 @@ use sqlx::Sqlite;
 use sqlx::SqlitePool;
 
 use crate::LibraryError;
+use crate::helpers::get_or_compile_regex;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::Note;
@@ -1096,13 +1097,14 @@ fn evaluate_field_value(
 struct ClozePattern {
     is_regex: bool,
     value: String,
+    regex: Option<Arc<fancy_regex::Regex>>,
 }
 
 impl ClozePattern {
     fn matches(&self, text: &str) -> bool {
         if self.is_regex {
-            Regex::new(&self.value)
-                .ok()
+            self.regex
+                .as_ref()
                 .and_then(|re| re.is_match(text).ok())
                 .unwrap_or(false)
         } else {
@@ -1183,12 +1185,14 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
                         vec![ClozePattern {
                             is_regex: true,
                             value: r.to_string(),
+                            regex: get_or_compile_regex(r).ok(),
                         }]
                     }
                     TokenTree::Atom(Atom::String(s)) => {
                         vec![ClozePattern {
                             is_regex: false,
                             value: s.to_string(),
+                            regex: None,
                         }]
                     }
                     _ => vec![],
