@@ -1,4 +1,4 @@
-// ── Note undo tests ───────────────────────────────────────────────────────────
+//! Note undo tests
 
 use chrono::Utc;
 use serde_json::Map;
