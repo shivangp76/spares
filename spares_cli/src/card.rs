@@ -11,6 +11,7 @@ use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
+use spares_core::search::QueryReturnItemType;
 
 use crate::args::AdvanceArgs;
 use crate::args::CardArgs;
@@ -27,7 +28,6 @@ use crate::search::search_cards;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::view::view_cards;
-use spares_core::search::QueryReturnItemType;
 
 #[expect(clippy::too_many_lines)]
 pub(crate) async fn handle(

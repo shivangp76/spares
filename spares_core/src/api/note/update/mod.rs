@@ -83,8 +83,9 @@ struct PendingNote {
     note_id: NoteId,
     updated_note: Note,
     all_keywords: Vec<(String, bool)>, // (keyword, is_embedded)
-    card_count: usize,
     old_card_orders: Vec<usize>,
+    // Reused by file generation (Phase 4) so it does not re-parse the note text for cards.
+    new_cards: Vec<CardData>,
 }
 
 /// Builds an `UpdateNotePayload` by comparing two snapshots of the same note.
@@ -465,8 +466,8 @@ pub async fn update_notes(
             note_id: parsed.note_id,
             updated_note,
             all_keywords: parsed.all_keywords,
-            card_count: parsed.new_cards.len(),
             old_card_orders: parsed.old_card_orders,
+            new_cards: parsed.new_cards,
         });
     }
 
@@ -574,14 +575,21 @@ pub async fn update_notes(
 
     // ---- Phase 4: Build responses, parse requests, delete old files, and undo snapshots ----
 
+    // Cards parsed in Phase 2a are reused by file generation so it does not re-parse the note
+    // text for cards (which would also re-run image-occlusion file checks).
+    let mut precomputed_cards: HashMap<NoteId, Vec<CardData>> = HashMap::new();
+
     for PendingNote {
         note_id,
         updated_note,
         all_keywords,
-        card_count,
         old_card_orders,
+        new_cards,
     } in pending_notes
     {
+        let card_count = new_cards.len();
+        precomputed_cards.insert(note_id, new_cards);
+
         let tags = current_tags_map.get(&note_id).cloned().unwrap_or_default();
 
         // Compute shared keyword vectors once per note instead of re-cloning for every consumer.
@@ -710,12 +718,23 @@ pub async fn update_notes(
 
         // Update note and card files, without compiling. This will also ensure that updated notes
         // will have their clozes renumbered sequentially so the note is ready to be edited again.
+        // Only this group's notes' cards are passed: lookups are keyed by `note_id`, and a note
+        // belongs to exactly one parser, so each card vec is used by exactly one group.
+        let group_precomputed_cards: HashMap<NoteId, Vec<CardData>> = requests
+            .iter()
+            .filter_map(|r| {
+                precomputed_cards
+                    .get(&r.note_id)
+                    .map(|cards| (r.note_id, cards.clone()))
+            })
+            .collect();
         let parse_notes_request = GenerateNoteFilesRequests {
             requests,
             overridden_output_raw_dir: None,
             include_cards: true,
             render: false,
             force_render: false,
+            precomputed_cards: Some(group_precomputed_cards),
         };
         let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
             .into_iter()
