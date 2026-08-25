@@ -1,5 +1,9 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use chrono::DateTime;
 use chrono::Duration;
@@ -14,6 +18,23 @@ use crate::DelimiterErrorKind;
 
 /// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
 /// Returns an empty vector if the value is not an array or if any elements are not strings.
+/// Compile a `fancy_regex` pattern once and cache it forever, keyed by the
+/// pattern string. The cache is process-wide, so repeated parses of the same
+/// pattern (e.g. per-file during a library import, or per-card during search)
+/// reuse the already-compiled regex.
+pub fn get_or_compile_regex(pattern: &str) -> Result<Arc<fancy_regex::Regex>, fancy_regex::Error> {
+    type Cache = Mutex<HashMap<String, Arc<fancy_regex::Regex>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().unwrap();
+    if let Some(re) = map.get(pattern) {
+        return Ok(re.clone());
+    }
+    let re = Arc::new(fancy_regex::Regex::new(pattern)?);
+    map.insert(pattern.to_string(), re.clone());
+    Ok(re)
+}
+
 pub fn value_to_string_vec(value: &Value) -> Vec<String> {
     value
         .as_array()

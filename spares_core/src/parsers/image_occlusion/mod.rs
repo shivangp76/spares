@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use construct::get_clozes_from_svg_str;
 use construct::read_image_occlusion_data;
-use fancy_regex::Regex;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -33,6 +32,7 @@ use super::FrontConceal;
 use super::generate_files::CardSide;
 use crate::LibraryError;
 use crate::NoteErrorKind;
+use crate::helpers::get_or_compile_regex;
 use crate::model::NoteId;
 use crate::parsers::ClozeGroupingSettings;
 use crate::parsers::ClozeHiddenReplacement;
@@ -221,7 +221,7 @@ pub fn parse_image_occlusion_data(
 ) -> Result<Vec<ParsedImageOcclusionData>, LibraryError> {
     let start = parser.construct_comment("(.*)");
     let regex_string = format!(r"(?m){}", start.trim());
-    let image_occlusion_settings_regex = Regex::new(&regex_string).unwrap();
+    let image_occlusion_settings_regex = get_or_compile_regex(&regex_string).unwrap();
     let image_occlusion_ranges = parser.get_image_occlusions(data)?;
     let image_occlusion_range_with_settings = image_occlusion_ranges
         .into_iter()

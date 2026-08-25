@@ -3,8 +3,8 @@ use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use fancy_regex::Regex;
 use generate_files::CardSide;
 use generate_files::GenerateNoteFilesRequest;
 use generate_files::RenderOutputType;
@@ -18,6 +18,7 @@ use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
 use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
+use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
 
@@ -73,7 +74,7 @@ pub trait Parseable: Send + Sync {
             fancy_regex::escape(&start),
             fancy_regex::escape(&end)
         );
-        let notes_regex = Regex::new(&regex_string).unwrap();
+        let notes_regex = get_or_compile_regex(&regex_string).unwrap();
         let notes_data = notes_regex
             .captures_iter(data)
             .map(|c| c.unwrap())
@@ -93,7 +94,7 @@ pub trait Parseable: Send + Sync {
         NoteSettingsKeys::default()
     }
 
-    fn start_end_regex(&self) -> Regex {
+    fn start_end_regex(&self) -> Arc<fancy_regex::Regex> {
         let start = self.construct_comment("spares: start");
         let end = self.construct_comment("spares: end");
         let regex_string = format!(
@@ -101,7 +102,7 @@ pub trait Parseable: Send + Sync {
             fancy_regex::escape(&start),
             fancy_regex::escape(&end)
         );
-        Regex::new(&regex_string).unwrap()
+        get_or_compile_regex(&regex_string).unwrap()
     }
 
     // Nested clozes make it so "data" can NOT be split into disjoint segment of NotePart::Data and NotePart::Cloze. This is because what a cloze really represents is that you want to see everything else *besides* what is in the cloze.
@@ -139,7 +140,7 @@ pub trait Parseable: Send + Sync {
         let start = self.construct_comment("spares: image occlusion start");
         let end = self.construct_comment("spares: image occlusion end");
         let regex_string = format!("(?s){}(.*?)\n{}?", start, end);
-        let image_occlusion_regex = Regex::new(&regex_string).unwrap();
+        let image_occlusion_regex = get_or_compile_regex(&regex_string).unwrap();
         let image_occlusions = image_occlusion_regex
             .find_iter(data)
             .map(|m| m.unwrap())
@@ -177,7 +178,11 @@ pub trait Parseable: Send + Sync {
             fancy_regex::escape(&start),
             fancy_regex::escape(&end),
         );
-        let cli_regex = cli::get_or_compile_cli_regex(&regex_string)?;
+        let cli_regex = get_or_compile_regex(&regex_string).map_err(|e| {
+            LibraryError::Note(crate::NoteErrorKind::Other {
+                description: e.to_string(),
+            })
+        })?;
         let mut blocks = Vec::new();
         for captures in cli_regex.captures_iter(data) {
             let captures = captures.map_err(|e| {
