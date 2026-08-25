@@ -316,6 +316,7 @@ pub async fn create_notes(
         include_cards: true,
         render: false,
         force_render: false,
+        precomputed_cards: None,
     };
     let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
         .into_iter()
