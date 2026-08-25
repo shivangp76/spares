@@ -329,6 +329,7 @@ pub async fn render_notes(
             include_cards,
             render: generate_rendered,
             force_render: force_generate_rendered,
+            precomputed_cards: None,
         };
         let _card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests)?
             .into_iter()

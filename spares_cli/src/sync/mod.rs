@@ -721,6 +721,7 @@ async fn generate_notes(
                         include_cards: false,
                         render: false,
                         force_render: false,
+                        precomputed_cards: None,
                     };
                     let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)
                         .map_err(|e| format!("{}", e))?

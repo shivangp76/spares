@@ -522,9 +522,10 @@ impl NotesSelectorLocal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::CommandFactory;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn cli_contract_is_valid() {

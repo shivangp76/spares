@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::create_dir_all;
 use std::fs::read_to_string;
@@ -19,6 +20,7 @@ use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::model::NoteId;
 use crate::parsers::BackType;
+use crate::parsers::CardData;
 use crate::parsers::ConstructFileDataType;
 use crate::parsers::CustomData;
 use crate::parsers::NoteImportAction;
@@ -54,6 +56,11 @@ pub struct GenerateNoteFilesRequests {
     pub render: bool,
     /// Skip the cache. Useful for when the rendering command was modified.
     pub force_render: bool,
+    /// Pre-parsed cards per note. When present for a note, `create_note_files` uses them instead
+    /// of re-parsing `note_data` (which would duplicate the parse already done by
+    /// `add_order_to_note_data` in the update path). Falls back to `get_cards` for notes absent
+    /// from the map.
+    pub precomputed_cards: Option<HashMap<NoteId, Vec<CardData>>>,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq)]
@@ -211,6 +218,7 @@ pub fn create_note_files_bulk(
                 request.include_cards,
                 request.render,
                 request.force_render,
+                request.precomputed_cards.as_ref(),
                 // &Arc::clone(&counter),
                 // total_notes,
             )
@@ -231,6 +239,7 @@ fn create_note_files(
     include_cards: bool,
     render: bool,
     force_render: bool,
+    precomputed_cards: Option<&HashMap<NoteId, Vec<CardData>>>,
     // _counter: &Arc<AtomicUsize>,
     // _total_notes: usize,
 ) -> Result<PathBuf, Error> {
@@ -279,7 +288,10 @@ fn create_note_files(
     } else {
         // Create card files
         if include_cards {
-            let cards = get_cards(parser, None, note_data, false, true)?;
+            let cards = match precomputed_cards.and_then(|m| m.get(note_id)) {
+                Some(cards) => cards.clone(),
+                None => get_cards(parser, None, note_data, false, true)?,
+            };
             cards
                 .par_iter()
                 .enumerate()
