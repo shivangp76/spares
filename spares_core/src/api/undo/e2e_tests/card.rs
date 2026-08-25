@@ -1,4 +1,4 @@
-// ── Card undo tests ──────────────────────────────────────────────────────────
+//! Card undo tests
 
 use chrono::Utc;
 use sqlx::SqlitePool;
