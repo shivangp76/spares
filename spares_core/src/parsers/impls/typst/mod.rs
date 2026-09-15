@@ -10,6 +10,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::config::get_cache_dir;
+use crate::config::is_test_mode;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -290,7 +291,7 @@ impl Parseable for TypstParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(test) {
+        if is_test_mode() {
             return get_cache_dir();
         }
         std::env::var("TYPST_OUT_DIR")

@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
+use crate::config::is_test_mode;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
@@ -295,7 +296,7 @@ impl Parseable for MarkdownParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(test) {
+        if is_test_mode() {
             return get_cache_dir();
         }
         std::env::var("MARKDOWN_OUT_DIR")
