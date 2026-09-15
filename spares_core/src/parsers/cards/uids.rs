@@ -110,10 +110,7 @@ fn reapply_cloze_uid<T>(
                 false,
             );
 
-            let (new_prefix, new_suffix) = parser.construct_cloze(
-                &settings_string,
-                &original_note_data[cm.start_match.end..cm.end_match.start],
-            );
+            let (new_prefix, new_suffix) = parser.construct_cloze(&settings_string);
 
             edits.push((
                 cloze_idx,

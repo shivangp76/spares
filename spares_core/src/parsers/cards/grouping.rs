@@ -438,9 +438,7 @@ pub(super) fn modify_card_settings(
                     });
                 }
             } else {
-                let cloze_body_range = cloze_data.start_delim.end..cloze_data.end_delim.start;
-                let (new_prefix, new_suffix) =
-                    output_parser.construct_cloze(&cloze_settings_string, &data[cloze_body_range]);
+                let (new_prefix, new_suffix) = output_parser.construct_cloze(&cloze_settings_string);
                 replacements.push(Replacement {
                     cloze_index,
                     range: cloze_data.start_delim.start..cloze_data.start_delim.end,

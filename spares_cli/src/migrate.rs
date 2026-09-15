@@ -61,8 +61,7 @@ fn migration_func(
         } else {
             String::new()
         };
-        let (cloze_prefix, cloze_suffix) =
-            parser.construct_cloze(cloze_settings_string.as_str(), &new_back);
+        let (cloze_prefix, cloze_suffix) = parser.construct_cloze(cloze_settings_string.as_str());
         let note_data = format!("{}{}{}{}", new_front, cloze_prefix, new_back, cloze_suffix);
         // Get cards again, adding the order as well
         cards = get_cards(parser.as_ref(), None, &note_data, true, false).unwrap();

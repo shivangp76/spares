@@ -285,7 +285,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
     let body_string = format!("\nExpected Card {}\n", node.card_number);
     cloze_body.push_str(body_string.as_str());
 
-    let (cloze_prefix, cloze_suffix) = parser.construct_cloze(&cloze_settings_string, &cloze_body);
+    let (cloze_prefix, cloze_suffix) = parser.construct_cloze(&cloze_settings_string);
     if node.card_number == 0 {
         result.push_str(&cloze_body);
     } else {
