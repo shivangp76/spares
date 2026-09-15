@@ -119,7 +119,7 @@ pub trait Parseable: Send + Sync {
     // if converting from markdown's `{{[o:1]` and `}}` to latex's `\\begin{note}[o:1]` and `\\end{note}`,
     // the length of the delimiter increases even though both have their settings strings attached
     // to the starting delimiter.
-    fn construct_cloze(&self, cloze_settings_string: &str, data: &str) -> (String, String);
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String);
 
     // fn cloze_settings_side(&self) -> ClozeSettingsSide;
 

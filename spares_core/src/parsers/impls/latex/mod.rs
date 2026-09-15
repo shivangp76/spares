@@ -81,7 +81,7 @@ impl Parseable for LatexParserNote {
         Ok(clozes)
     }
 
-    fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
         let cloze_start = if cloze_settings_string.is_empty() {
             "\\begin{cl}".to_string()
         } else {
