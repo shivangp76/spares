@@ -27,9 +27,19 @@ use crate::parsers::overlapper::OverlapperConfig;
 
 const SPARES: &str = "spares";
 
+/// True when running under a test harness. `cfg!(test)` alone is not enough: it only reflects
+/// whether *this crate* was compiled in test mode. A dependent crate's test binary (e.g.
+/// `spares_cli`'s tests) compiles `spares_core` as a normal, non-test dependency, so `cfg!(test)`
+/// is `false` there even though real tests are running — which previously caused those tests to
+/// read/write the user's actual config, cache, and data directories. `SPARES_TEST_MODE` lets such
+/// tests opt in explicitly.
+pub fn is_test_mode() -> bool {
+    cfg!(test) || std::env::var_os("SPARES_TEST_MODE").is_some()
+}
+
 #[allow(clippy::missing_panics_doc)]
 pub fn get_config_dir() -> PathBuf {
-    if cfg!(test) {
+    if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
         tmp_dir.push("config");
@@ -54,7 +64,7 @@ pub fn get_config_dir() -> PathBuf {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_cache_dir() -> PathBuf {
-    if cfg!(test) {
+    if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
         tmp_dir.push("cache");
@@ -79,7 +89,7 @@ pub fn get_cache_dir() -> PathBuf {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_data_dir() -> PathBuf {
-    if cfg!(test) {
+    if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
         tmp_dir.push("data");

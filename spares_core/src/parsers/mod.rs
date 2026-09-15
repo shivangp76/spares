@@ -18,6 +18,7 @@ use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
 use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
+use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
@@ -325,7 +326,7 @@ pub trait Parseable: Send + Sync {
         template_type: TemplateType,
     ) -> Result<(String, String), std::io::Error> {
         let body_placeholder = self.construct_comment("spares: body");
-        if cfg!(test) {
+        if is_test_mode() {
             // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));
