@@ -34,6 +34,7 @@ mod data;
 mod grouping;
 mod match_cards;
 pub mod overlapper;
+mod rewrite;
 mod uids;
 mod validation;
 
