@@ -91,7 +91,7 @@ impl Parseable for MarkdownParser {
         Ok(all_clozes.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
         let cloze_settings_string_with_delim = if cloze_settings_string.is_empty() {
             cloze_settings_string.to_string()
         } else {
