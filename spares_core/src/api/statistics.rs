@@ -12,6 +12,7 @@ use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
@@ -32,11 +33,16 @@ pub async fn get_statistics(
 
     // Get cards reviewed on `requested_date`
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+    // Only graded reviews count as study. The `kind` filter is also load-bearing for decoding:
+    // the duration columns are NULL on every other kind and would not fit the `i64`s below.
+    // `card_id IS NOT NULL` likewise excludes orphaned rows, whose card has been deleted.
     let cards_studied_on_requested_date: Vec<(CardId, i64, i64, StateId)> = sqlx::query_as(
-        r"SELECT card_id, recall_duration, rate_duration, previous_state FROM review_log WHERE reviewed_at >= ? AND reviewed_at <= ?",
+        r"SELECT card_id, recall_duration, rate_duration, previous_state FROM review_log
+          WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND card_id IS NOT NULL",
     )
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
+    .bind(ReviewLogKind::Review)
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;

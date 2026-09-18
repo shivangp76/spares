@@ -10,6 +10,7 @@ use crate::helpers::FractionalDays;
 use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::model::StateId;
 
 pub fn number_to_rating(num: RatingId) -> Option<rs_fsrs::Rating> {
@@ -117,13 +118,17 @@ pub fn fsrs_card_to_card(
     };
     let review_log = ReviewLog {
         id: 1,
-        card_id: original_card.id,
+        card_id: Some(original_card.id),
         reviewed_at: *fsrs_reviewed_date,
-        rating: rating_to_number(*fsrs_rating),
+        kind: ReviewLogKind::Review,
+        rating: Some(rating_to_number(*fsrs_rating)),
+        // The scheduler has no notion of filtered tags; `rate_card` stamps this on the row it
+        // actually inserts.
+        tag_id: None,
         scheduler_name: scheduler_name.to_string(),
-        scheduled_time: Duration::days(*fsrs_scheduled_days).num_seconds(),
-        recall_duration: recall_duration.num_seconds(),
-        rate_duration: rate_duration.num_seconds(),
+        scheduled_time: Some(Duration::days(*fsrs_scheduled_days).num_seconds()),
+        recall_duration: Some(recall_duration.num_seconds()),
+        rate_duration: Some(rate_duration.num_seconds()),
         previous_state: state_to_number(*fsrs_revlog_state),
         custom_data: serde_json::Value::Object(Map::new()),
     };

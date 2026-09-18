@@ -1,5 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
+use serde_json::Map;
+use serde_json::Value;
 use serde_json::to_value;
 use sqlx::sqlite::SqlitePool;
 
@@ -7,8 +9,10 @@ use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
+use crate::api::fetch_review_logs_for_replay;
 use crate::api::placeholders_2d;
 use crate::api::undo::insert_events;
+use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
@@ -18,9 +22,10 @@ use crate::model::CardId;
 use crate::model::EventType;
 use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
-use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
+use crate::schedulers::get_default_scheduler_name;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::FilterOptions;
 use crate::schema::card::CardResponse;
@@ -173,17 +178,12 @@ pub async fn update_cards(
             && (new_desired_retention - existing_card.desired_retention).abs() > ALLOWED_F64_ERROR
             && updated_card.state != NEW_CARD_STATE
         {
-            let review_logs: Vec<ReviewLog> = sqlx::query_as(
-                r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC",
-            )
-            .bind(updated_card.id)
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-            if !review_logs.is_empty() {
-                let latest_review_log = review_logs.last().unwrap();
-                let scheduler =
-                    get_scheduler_from_string(latest_review_log.scheduler_name.as_str())?;
+            // Forget markers are kept: `compute_memory_state` needs them to know where to
+            // restart the replay.
+            let review_logs = fetch_review_logs_for_replay(db, updated_card.id).await?;
+            // A card whose log holds nothing but forget markers has no memory state to recompute.
+            if let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) {
+                let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
 
                 let config = read_external_config()?;
                 // Reschedule card
@@ -326,6 +326,43 @@ pub async fn forget_card(
     card.due = now;
     card.state = NEW_CARD_STATE;
     card.updated_at = now;
+    // Attribute the marker to whichever scheduler last graded this card, so that anything
+    // resolving a scheduler from the newest row still finds the right one. A card that has never
+    // been reviewed falls back to the default scheduler.
+    let scheduler_name: Option<String> = sqlx::query_scalar(
+        r"SELECT scheduler_name FROM review_log WHERE card_id = ? AND kind = ?
+          ORDER BY reviewed_at DESC, id DESC LIMIT 1",
+    )
+    .bind(card_id)
+    .bind(ReviewLogKind::Review)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let scheduler_name = scheduler_name.unwrap_or_else(|| get_default_scheduler_name().to_string());
+
+    // The marker is written before the card is updated. Neither statement is transactional (the
+    // same is true of `rate_card`), and this order fails safe: an interrupted forget leaves a
+    // marker for a card that was not reset, so replay treats the card as newer than it is, rather
+    // than resetting a card whose reset leaves no trace and is later undone by a reschedule.
+    //
+    // `rating`, `scheduled_time`, `recall_duration` and `rate_duration` are NULL: a forget is not
+    // a review. `previous_state` is the state the card was in immediately before the forget.
+    let review_log_id: i64 = sqlx::query_scalar(
+        r"INSERT INTO review_log
+            (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
+             recall_duration, rate_duration, previous_state, tag_id, custom_data)
+          VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?) RETURNING id",
+    )
+    .bind(card_id)
+    .bind(now.timestamp())
+    .bind(ReviewLogKind::Forget)
+    .bind(&scheduler_name)
+    .bind(before_card.state)
+    .bind(Value::Object(Map::new()))
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
     sqlx::query("UPDATE card SET stability = ?, difficulty = ?, due = ?, state = ?, updated_at = ? WHERE id = ?")
         .bind(card.stability)
         .bind(card.difficulty)
@@ -337,7 +374,7 @@ pub async fn forget_card(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     if log {
-        let payload = vec![UpdateCardPayload {
+        let payload = UpdateCardPayload {
             card_id,
             order: None,
             back_type: None,
@@ -360,10 +397,17 @@ pub async fn forget_card(
                 after: card.state,
             }),
             custom_data: None,
-        }];
+        };
         let event_ids = insert_events(
             db,
-            &[(EventType::ForgetCard, to_value(&payload).unwrap())],
+            &[(
+                EventType::ForgetCard,
+                to_value(&ForgetCardPayload {
+                    review_log_id,
+                    card: payload,
+                })
+                .unwrap(),
+            )],
             now,
             None,
         )
@@ -584,7 +628,7 @@ mod tests {
         assert_eq!(card.special_state, Some(SpecialState::Suspended));
     }
 
-    async fn create_single_card(pool: &SqlitePool) -> CardId {
+    pub(super) async fn create_single_card(pool: &SqlitePool) -> CardId {
         let parser = create_parser_helper(pool, "markdown").await;
         let request = CreateNotesRequest {
             parser_id: parser.id,
@@ -715,5 +759,337 @@ mod tests {
             card.special_state, None,
             "unbury_cards should clear BuriedUntilLaterToday"
         );
+    }
+}
+
+#[cfg(test)]
+mod forget_tests {
+    use chrono::Duration;
+    use serde_json::Map;
+
+    use super::tests::create_single_card;
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::review::submit_study_action;
+    use crate::model::ReviewLog;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StudyAction;
+    use crate::schema::review::SubmitStudyActionRequest;
+
+    async fn rate(pool: &SqlitePool, card_id: CardId, rating: u32, at: DateTime<Utc>) {
+        submit_study_action(
+            pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id,
+                    rating,
+                    recall_duration: Duration::seconds(5),
+                    rate_duration: Duration::seconds(2),
+                    tag_id: None,
+                }),
+            },
+            at,
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn fetch_card(pool: &SqlitePool, card_id: CardId) -> Card {
+        sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn forget_card_writes_marker_row(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        rate(&pool, card_id, 3, now - Duration::days(2)).await;
+        let before = fetch_card(&pool, card_id).await;
+        assert!(before.stability > 0.0, "precondition: card was rated");
+
+        forget_card(&pool, card_id, now, true).await.unwrap();
+
+        let markers: Vec<ReviewLog> =
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? AND kind = ?")
+                .bind(card_id)
+                .bind(ReviewLogKind::Forget)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(markers.len(), 1, "exactly one marker row per forget");
+        let marker = &markers[0];
+        assert_eq!(marker.rating, None, "a forget is not a graded review");
+        assert_eq!(marker.recall_duration, None);
+        assert_eq!(marker.rate_duration, None);
+        assert_eq!(marker.scheduled_time, None);
+        assert_eq!(marker.tag_id, None);
+        assert_eq!(
+            marker.previous_state, before.state,
+            "the marker records the state the card was in before the forget"
+        );
+        assert_eq!(
+            marker.scheduler_name, "fsrs",
+            "the marker is attributed to the scheduler that last graded the card"
+        );
+    }
+
+    #[sqlx::test]
+    async fn forget_card_on_never_reviewed_card_writes_marker(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        forget_card(&pool, card_id, Utc::now(), true).await.unwrap();
+
+        let (count, scheduler_name): (i64, String) = sqlx::query_as(
+            r"SELECT COUNT(*), MAX(scheduler_name) FROM review_log WHERE card_id = ? AND kind = ?",
+        )
+        .bind(card_id)
+        .bind(ReviewLogKind::Forget)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            scheduler_name, "fsrs",
+            "with no review to attribute it to, the marker falls back to the default scheduler"
+        );
+    }
+
+    /// Guards every other `reschedule` assertion in this module. `reschedule`'s `UPDATE` once
+    /// bound its parameters out of order, so it matched zero rows and silently did nothing —
+    /// which made "forget survives reschedule" pass for entirely the wrong reason.
+    #[sqlx::test]
+    async fn reschedule_actually_updates_the_card(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        rate(&pool, card_id, 3, now - Duration::days(3)).await;
+        rate(&pool, card_id, 3, now - Duration::days(2)).await;
+
+        // Move the card somewhere a correct reschedule will not leave it.
+        let bogus_due = (now + Duration::days(3650)).timestamp();
+        sqlx::query(r"UPDATE card SET due = ? WHERE id = ?")
+            .bind(bogus_due)
+            .bind(card_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Reschedule,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+
+        let after = fetch_card(&pool, card_id).await;
+        assert_ne!(
+            after.due.timestamp(),
+            bogus_due,
+            "reschedule must actually write to the card row"
+        );
+    }
+
+    #[sqlx::test]
+    async fn forget_survives_reschedule(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        rate(&pool, card_id, 3, now - Duration::days(4)).await;
+        rate(&pool, card_id, 3, now - Duration::days(3)).await;
+        rate(&pool, card_id, 4, now - Duration::days(2)).await;
+        assert!(fetch_card(&pool, card_id).await.stability > 0.0);
+
+        forget_card(&pool, card_id, now, true).await.unwrap();
+
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Reschedule,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+
+        let after = fetch_card(&pool, card_id).await;
+        assert_eq!(
+            after.stability, 0.0,
+            "replaying the log must not resurrect pre-forget stability"
+        );
+        assert_eq!(after.difficulty, 0.0);
+        assert_eq!(after.state, NEW_CARD_STATE);
+    }
+
+    /// The other path into `reschedule`. Note the card must be rated *after* the forget: that
+    /// block is guarded on `state != NEW_CARD_STATE`, so a just-forgotten card never reaches it
+    /// and asserting on one would prove nothing.
+    #[sqlx::test]
+    async fn forget_survives_desired_retention_change(pool: SqlitePool) {
+        let now = Utc::now();
+        let (forgotten_id, fresh_id) = create_two_cards(&pool).await;
+
+        rate(&pool, forgotten_id, 3, now - Duration::days(30)).await;
+        rate(&pool, forgotten_id, 4, now - Duration::days(20)).await;
+        forget_card(&pool, forgotten_id, now - Duration::days(10), true)
+            .await
+            .unwrap();
+        rate(&pool, forgotten_id, 3, now - Duration::days(5)).await;
+
+        // The control: the same single post-forget review, with no history behind it.
+        rate(&pool, fresh_id, 3, now - Duration::days(5)).await;
+
+        update_cards(
+            &pool,
+            UpdateCardsRequest {
+                selector: CardsSelector::Ids(vec![forgotten_id, fresh_id]),
+                desired_retention: Some(0.85),
+                special_state: None,
+                due: None,
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let forgotten = fetch_card(&pool, forgotten_id).await;
+        let fresh = fetch_card(&pool, fresh_id).await;
+        assert_eq!(
+            forgotten.stability, fresh.stability,
+            "replay after a desired-retention change must not resurrect pre-forget history"
+        );
+        assert_eq!(forgotten.difficulty, fresh.difficulty);
+    }
+
+    /// Two cards on separate notes, sharing one parser (parser names must be unique).
+    async fn create_two_cards(pool: &SqlitePool) -> (CardId, CardId) {
+        let parser = create_parser_helper(pool, "markdown").await;
+        let note = |data: &str| CreateNoteRequest {
+            data: data.to_string(),
+            keywords: vec![],
+            tags: vec![],
+            is_suspended: false,
+            custom_data: Map::new(),
+        };
+        let created = create_notes(
+            pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![note("First {{1}}"), note("Second {{1}}")],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let first = get_cards(pool, created.notes[0].id).await.unwrap()[0].id;
+        let second = get_cards(pool, created.notes[1].id).await.unwrap()[0].id;
+        (first, second)
+    }
+
+    #[sqlx::test]
+    async fn rate_after_forget_schedules_as_new(pool: SqlitePool) {
+        let now = Utc::now();
+        let (forgotten_id, fresh_id) = create_two_cards(&pool).await;
+
+        // A card that was rated, forgotten, then rated again.
+        rate(&pool, forgotten_id, 3, now - Duration::days(40)).await;
+        rate(&pool, forgotten_id, 3, now - Duration::days(30)).await;
+        forget_card(&pool, forgotten_id, now - Duration::days(1), true)
+            .await
+            .unwrap();
+        rate(&pool, forgotten_id, 3, now).await;
+
+        // A card whose only review is that same one.
+        rate(&pool, fresh_id, 3, now).await;
+
+        let forgotten = fetch_card(&pool, forgotten_id).await;
+        let fresh = fetch_card(&pool, fresh_id).await;
+        assert_eq!(
+            forgotten.stability, fresh.stability,
+            "a review after a forget must be scheduled as a first review, not a lapse"
+        );
+        assert_eq!(forgotten.difficulty, fresh.difficulty);
+        assert_eq!(forgotten.state, fresh.state);
+    }
+
+    /// `copy_review_logs_on` backs the `inh:` cloze setting, which promises the new card inherits
+    /// the source's "full review history". A forget is part of that history: dropping it would
+    /// give the inheriting card the memory state the source would have had if it had never been
+    /// forgotten.
+    #[sqlx::test]
+    async fn inherited_review_logs_carry_forget_markers(pool: SqlitePool) {
+        use crate::api::note::copy_review_logs_on;
+
+        let now = Utc::now();
+        let (src_id, dst_id) = create_two_cards(&pool).await;
+        rate(&pool, src_id, 3, now - Duration::days(30)).await;
+        rate(&pool, src_id, 4, now - Duration::days(20)).await;
+        forget_card(&pool, src_id, now - Duration::days(10), true)
+            .await
+            .unwrap();
+        rate(&pool, src_id, 3, now - Duration::days(5)).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        copy_review_logs_on(&mut conn, src_id, &[dst_id])
+            .await
+            .unwrap();
+        drop(conn);
+
+        let copied = crate::api::fetch_review_logs_for_replay(&pool, dst_id)
+            .await
+            .unwrap();
+        assert_eq!(copied.len(), 4, "all four rows are inherited");
+        assert_eq!(
+            copied.iter().filter(|rl| !rl.is_review()).count(),
+            1,
+            "the forget marker is inherited too"
+        );
+
+        // The inherited history must replay to the same place as the source's.
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        let src_logs = crate::api::fetch_review_logs_for_replay(&pool, src_id)
+            .await
+            .unwrap();
+        let from_src = scheduler.compute_memory_state(src_logs).unwrap();
+        let from_dst = scheduler.compute_memory_state(copied).unwrap();
+        assert_eq!(from_dst.stability, from_src.stability);
+        assert_eq!(from_dst.difficulty, from_src.difficulty);
+    }
+
+    #[sqlx::test]
+    async fn forget_does_not_count_as_a_study(pool: SqlitePool) {
+        use crate::api::statistics::get_statistics;
+        use crate::schema::review::StatisticsRequest;
+
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        rate(&pool, card_id, 3, now).await;
+
+        let request = || StatisticsRequest {
+            scheduler_name: "fsrs".to_string(),
+            date: now,
+        };
+        let before = get_statistics(&pool, request()).await.unwrap();
+        forget_card(&pool, card_id, now, true).await.unwrap();
+        let after = get_statistics(&pool, request()).await.unwrap();
+
+        assert_eq!(
+            before.cards_studied_count, after.cards_studied_count,
+            "forgetting a card is not studying it"
+        );
+        assert_eq!(before.recall_duration, after.recall_duration);
+        assert_eq!(before.rate_duration, after.rate_duration);
     }
 }

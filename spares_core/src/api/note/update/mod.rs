@@ -1332,7 +1332,7 @@ mod tests {
             "review log count mismatch"
         );
         for (src_log, dst_log) in src_review_logs.iter().zip(dst_review_logs.iter()) {
-            assert_eq!(dst_log.card_id, dst_card2.id);
+            assert_eq!(dst_log.card_id, Some(dst_card2.id));
             assert_eq!(
                 dst_log.reviewed_at.timestamp(),
                 src_log.reviewed_at.timestamp()
@@ -1343,6 +1343,10 @@ mod tests {
             assert_eq!(dst_log.recall_duration, src_log.recall_duration);
             assert_eq!(dst_log.rate_duration, src_log.rate_duration);
             assert_eq!(dst_log.previous_state, src_log.previous_state);
+            // Forget markers must come across too: dropping them would give the inheriting card
+            // the memory state its source would have had if it had never been forgotten.
+            assert_eq!(dst_log.kind, src_log.kind);
+            assert_eq!(dst_log.tag_id, src_log.tag_id);
             assert_eq!(dst_log.custom_data, src_log.custom_data);
         }
     }
