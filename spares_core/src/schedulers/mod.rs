@@ -192,8 +192,8 @@ pub trait SrsScheduler: Send + Sync {
                 .bind(updated_card.difficulty)
                 .bind(updated_card.state)
                 .bind(updated_card.custom_data.clone())
-                .bind(updated_card.id)
                 .bind(updated_card.updated_at.timestamp())
+                .bind(updated_card.id)
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
