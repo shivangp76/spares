@@ -21,6 +21,7 @@ use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
+use crate::api::fetch_review_logs_for_replay;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
@@ -37,6 +38,7 @@ use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::model::Tag;
@@ -50,6 +52,7 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_output_raw_dir;
 use crate::schedulers::SrsScheduler;
+use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::review::CardBackRenderedPath;
 use crate::schema::review::CliReviewInfo;
@@ -299,10 +302,12 @@ async fn build_review_filter_query(
     let card_due_limit = upper_limit;
     let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
         r"SELECT COUNT(DISTINCT card_id) FROM review_log
-      WHERE reviewed_at >= ? AND reviewed_at <= ? AND previous_state = ?",
+      WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
     )
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
+    // Forgetting a new card must not consume one of today's new-card slots.
+    .bind(ReviewLogKind::Review)
     .bind(NEW_CARD_STATE)
     .fetch_one(db)
     .await
@@ -407,11 +412,14 @@ async fn get_cards_left_by_state_and_time_estimate(
         LEFT JOIN (
             SELECT card_id, AVG(recall_duration + rate_duration) as avg_duration
             FROM review_log
+            WHERE kind = {}
             GROUP BY card_id
         ) rl ON rl.card_id = c.id
         WHERE {}"
         },
-        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS, where_clause
+        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS,
+        ReviewLogKind::Review as u8,
+        where_clause
     );
     let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
     if !is_filtered_tag {
@@ -699,12 +707,13 @@ async fn fetch_siblings_with_review_logs(
         .map_err(|e| Error::Sqlx { source: e })?;
     let mut siblings_with_review_logs = Vec::with_capacity(siblings.len());
     for sibling in siblings {
-        let review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC")
-                .bind(sibling.id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+        let review_logs: Vec<ReviewLog> = sqlx::query_as(
+            r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC, id ASC",
+        )
+        .bind(sibling.id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
         siblings_with_review_logs.push((sibling, review_logs));
     }
     Ok(siblings_with_review_logs)
@@ -749,15 +758,13 @@ pub async fn rate_card(
     let card = before_card.clone();
 
     // Get review logs for this card
-    let mut review_logs: Vec<ReviewLog> =
-        sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC")
-            .bind(card_id)
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+    let mut review_logs = fetch_review_logs_for_replay(db, card_id).await?;
 
-    // Schedule card
-    let latest_review_log = review_logs.last().cloned();
+    // Schedule card.
+    // After a forget the newest row is the marker, and reviews before it were explicitly
+    // discarded. Handing either to the scheduler would make this review look like a continuation
+    // of a lapse rather than the first review of a reset card.
+    let latest_review_log = effective_review_logs(&review_logs).last().cloned();
     let (mut updated_card, new_review_log) = scheduler.schedule(
         &card,
         latest_review_log,
@@ -800,15 +807,19 @@ pub async fn rate_card(
 
     // Add entry to review_log
     let review_log_id: i64 =
-        sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+        sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
             .bind(new_review_log.card_id)
             .bind(new_review_log.reviewed_at.timestamp())
+            .bind(ReviewLogKind::Review)
             .bind(new_review_log.rating)
             .bind(new_review_log.scheduler_name)
             .bind(new_review_log.scheduled_time)
             .bind(new_review_log.recall_duration)
             .bind(new_review_log.rate_duration)
             .bind(new_review_log.previous_state)
+            // Records which filtered tag the card was answered under, if any. The scheduler has
+            // no notion of tags, so this is stamped here rather than in `schedule`.
+            .bind(tag_id)
             .bind(&new_review_log.custom_data)
             .fetch_one(db)
             .await
@@ -1016,26 +1027,30 @@ pub async fn submit_study_action(
                     .fetch_all(db)
                     .await
                     .map_err(|e| Error::Sqlx { source: e })?;
-            // Get all review logs for cards
-            let mut query = sqlx::query_as(r"SELECT * FROM review_log WHERE card_id IN (?)");
-            for card in &cards {
-                query = query.bind(card.id);
-            }
-            let all_review_logs: Vec<ReviewLog> = query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+            // Get all review logs for cards. Every card is a candidate here, so this fetches the
+            // whole table rather than building an `IN` list. Orphaned rows (deleted cards) are
+            // excluded up front rather than in Rust: there is nothing to reschedule for them, and
+            // on a long-lived database they only grow in number. Forget markers are kept for the
+            // cards that remain: `compute_memory_state` needs them to know where to restart replay.
+            let all_review_logs: Vec<ReviewLog> = sqlx::query_as(
+                r"SELECT * FROM review_log WHERE card_id IS NOT NULL
+                  ORDER BY card_id, reviewed_at ASC, id ASC",
+            )
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
             let grouped_review_logs = all_review_logs
                 .into_iter()
-                .map(|rl| (rl.card_id, rl))
+                .filter_map(|rl| rl.card_id.map(|card_id| (card_id, rl)))
                 .into_group_map();
             let cards_with_review_logs = cards
                 .into_iter()
                 .map(|card| {
-                    (
-                        card.clone(),
-                        grouped_review_logs.get(&card.id).unwrap().clone(),
-                    )
+                    let review_logs = grouped_review_logs
+                        .get(&card.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (card, review_logs)
                 })
                 .collect::<Vec<_>>();
             scheduler

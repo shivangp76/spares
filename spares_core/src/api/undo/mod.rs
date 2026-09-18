@@ -36,7 +36,18 @@ use crate::model::EventType;
 use crate::schema::undo::UndoEventRequest;
 use crate::schema::undo::UndoEventResponse;
 
-const EVENT_VERSION: i64 = 1;
+/// Version stamped on newly written events.
+///
+/// - 1: original.
+/// - 2: `ForgetCard` carries [`payloads::ForgetCardPayload`] (an object pairing the card
+///   transitions with the id of the `review_log` marker row) instead of a bare
+///   `Vec<UpdateCardPayload>`.
+///
+/// NOTE: nothing dispatches on this yet. `create_undo_event` copies the *original* event's version
+/// onto the undo event, and old rows were never backfilled, so payload readers discriminate on
+/// JSON shape instead. Real versioning would need `match (event.kind, event.version)` plus a
+/// backfill migration.
+const EVENT_VERSION: i64 = 2;
 
 mod event_actions;
 mod invert_payload;

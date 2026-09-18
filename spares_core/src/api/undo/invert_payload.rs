@@ -3,12 +3,14 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::LibraryError;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateParserPayload;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
+use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateNotePayload;
@@ -227,8 +229,48 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             }];
             Ok(serde_json::to_value(undo_payloads).unwrap())
         }
+        EventType::ForgetCard => {
+            // A version 2 payload is an object carrying the id of the `review_log` marker row that
+            // `forget_card` wrote; a version 1 payload is a bare array and has no marker to
+            // remove. `event.version` is written but never read, and `create_undo_event` copies
+            // the original event's version onto the undo event, so the shape is the reliable
+            // discriminator here. The two can never both parse.
+            let card_payload: UpdateCardPayload = if event.payload.is_array() {
+                let payloads: Vec<UpdateCardPayload> =
+                    serde_json::from_value(event.payload.clone()).unwrap();
+                payloads.into_iter().next().ok_or_else(|| {
+                    Error::Library(LibraryError::InvalidConfig(
+                        "ForgetCard event has an empty payload".to_string(),
+                    ))
+                })?
+            } else {
+                let payload: ForgetCardPayload =
+                    serde_json::from_value(event.payload.clone()).unwrap();
+                // Undoing the forget must also remove its marker, or replay would keep resetting
+                // the card at that instant. This mirrors how undoing a `RateCard` deletes the
+                // review log row it created.
+                sqlx::query(r"DELETE FROM review_log WHERE id = ?")
+                    .bind(payload.review_log_id)
+                    .execute(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+                payload.card
+            };
+            let undo_payloads = vec![UpdateCardPayload {
+                card_id: card_payload.card_id,
+                order: card_payload.order.map(|t| t.swap()),
+                back_type: card_payload.back_type.map(|t| t.swap()),
+                due: card_payload.due.map(|t| t.swap()),
+                stability: card_payload.stability.map(|t| t.swap()),
+                difficulty: card_payload.difficulty.map(|t| t.swap()),
+                desired_retention: card_payload.desired_retention.map(|t| t.swap()),
+                special_state: card_payload.special_state.map(|t| t.swap()),
+                state: card_payload.state.map(|t| t.swap()),
+                custom_data: card_payload.custom_data.map(|t| t.swap()),
+            }];
+            Ok(serde_json::to_value(undo_payloads).unwrap())
+        }
         EventType::UpdateCards
-        | EventType::ForgetCard
         | EventType::AdvanceCards
         | EventType::PostponeCards
         | EventType::BuryCards

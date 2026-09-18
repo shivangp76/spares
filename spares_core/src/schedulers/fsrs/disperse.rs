@@ -11,6 +11,7 @@ use super::utils::get_fuzz_range;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
 use crate::model::ReviewLog;
+use crate::schedulers::effective_review_logs;
 
 // DB is used to:
 // 1. get siblings of cards
@@ -113,24 +114,19 @@ pub fn disperse_siblings_distance(
     maximum_interval: Duration,
 ) -> Option<Vec<(i64, DateTime<Utc>)>> {
     let mut due_ranges = Vec::new();
-    let mut reviewed_ats = Vec::new();
     let now = Utc::now();
     for (card, review_logs) in card_siblings {
         let due_range = get_due_range(card, review_logs, maximum_interval, minimum_interval, now);
         due_ranges.push((Some(card.id), due_range));
-        let latest_review_log = review_logs.last();
-        if let Some(review_log) = latest_review_log {
-            reviewed_ats.push(review_log.reviewed_at);
-        }
         info!(
             "Card Id: {}. Due Range: {} - {}",
             card.id, due_range.0, due_range.1
         );
     }
-    // Add a pseudo-sibling with due date equal to the latest review date of a sibling
-    let latest_review = reviewed_ats.iter().max();
-    if let Some(latest_review) = latest_review {
-        due_ranges.push((None, (*latest_review, *latest_review)));
+    // Add a pseudo-sibling with due date equal to the latest review date of a sibling, so real
+    // siblings are kept spread away from it too.
+    if let Some(latest_review) = latest_effective_review(card_siblings) {
+        due_ranges.push((None, (latest_review, latest_review)));
     }
     let solution =
         maximize_siblings_due_gap(due_ranges.clone(), Duration::days(1), Duration::zero());
@@ -150,13 +146,31 @@ pub fn disperse_siblings_distance(
     None
 }
 
+/// The most recent review among `card_siblings` that still bears on any of their memory states,
+/// i.e. excluding a sibling's history before its own last forget.
+///
+/// A sibling whose log ends in a Forget marker contributes nothing: `get_due_range` for that
+/// sibling already treats it as having no effective history, so it must not anchor other
+/// siblings' due-date spread either.
+fn latest_effective_review(card_siblings: &[(Card, Vec<ReviewLog>)]) -> Option<DateTime<Utc>> {
+    card_siblings
+        .iter()
+        .filter_map(|(_card, review_logs)| effective_review_logs(review_logs).last())
+        .map(|review_log| review_log.reviewed_at)
+        .max()
+}
+
 fn get_due_range(
     card: &Card,
-    review_logs: &[ReviewLog],
+    all_review_logs: &[ReviewLog],
     maximum_interval: Duration,
     minimum_interval: Duration,
     now: DateTime<Utc>,
 ) -> (DateTime<Utc>, DateTime<Utc>) {
+    // Both the elapsed time and the interval anchor below come from this slice, so reviews from
+    // before a forget must not be visible: they would anchor the new due date on a history the
+    // user has discarded.
+    let review_logs = effective_review_logs(all_review_logs);
     let parameters = rs_fsrs::Parameters {
         request_retention: card.desired_retention,
         maximum_interval: maximum_interval.num_days() as i32,
@@ -356,11 +370,67 @@ mod tests {
     use chrono::TimeZone;
     use chrono::Utc;
     use rand::RngExt;
+    use serde_json::Map;
+    use serde_json::Value;
 
     use super::*;
     use crate::api::tests::generate_review_logs;
     use crate::config::read_external_config;
+    use crate::model::ReviewLogKind;
     use crate::schedulers::get_scheduler_from_string;
+
+    fn review_at(day: i64) -> ReviewLog {
+        ReviewLog {
+            id: day,
+            card_id: Some(1),
+            reviewed_at: Utc.timestamp_opt(1_700_000_000 + day * 86_400, 0).unwrap(),
+            kind: ReviewLogKind::Review,
+            rating: Some(3),
+            tag_id: None,
+            scheduler_name: "fsrs".to_string(),
+            scheduled_time: Some(86_400),
+            recall_duration: Some(5),
+            rate_duration: Some(2),
+            previous_state: 2,
+            custom_data: Value::Object(Map::new()),
+        }
+    }
+
+    fn forget_at(day: i64) -> ReviewLog {
+        ReviewLog {
+            kind: ReviewLogKind::Forget,
+            rating: None,
+            scheduled_time: None,
+            recall_duration: None,
+            rate_duration: None,
+            ..review_at(day)
+        }
+    }
+
+    #[test]
+    fn latest_effective_review_ignores_a_forgotten_siblings_history() {
+        // Sibling A was reviewed recently. Sibling B has a much *later* raw timestamp, but it is a
+        // Forget marker, not a review: it must not win the `max()` just because it is more recent.
+        let recent_review = [(Card::new(Utc::now()), vec![review_at(10)])];
+        let forgotten_far_future = [(Card::new(Utc::now()), vec![review_at(1), forget_at(500)])];
+
+        assert_eq!(
+            latest_effective_review(&recent_review),
+            Some(review_at(10).reviewed_at)
+        );
+        assert_eq!(
+            latest_effective_review(&forgotten_far_future),
+            None,
+            "a sibling whose log ends in a forget has no effective latest review"
+        );
+
+        let both = [recent_review[0].clone(), forgotten_far_future[0].clone()];
+        assert_eq!(
+            latest_effective_review(&both),
+            Some(review_at(10).reviewed_at),
+            "the forgotten sibling's discarded history must not out-rank the real review"
+        );
+    }
 
     #[test]
     fn test_disperse_siblings_distance() {
