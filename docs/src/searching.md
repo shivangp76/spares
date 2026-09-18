@@ -29,6 +29,9 @@
 | c.count             | u32      |
 | c.cloze             | String   |
 
+`c.rated` matches against graded reviews only. Forgetting a card is recorded in the review log too,
+but it carries no rating, so it never makes a card match `c.rated`.
+
 ## Types
 
 ### Strings

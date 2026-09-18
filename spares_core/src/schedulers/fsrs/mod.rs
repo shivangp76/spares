@@ -62,8 +62,10 @@ use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::SrsScheduler;
+use crate::schedulers::effective_review_logs;
 use crate::schedulers::stepped_range_inclusive;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
@@ -102,11 +104,13 @@ impl SrsScheduler for FSRS {
               review_log r ON r.card_id = c.id
             WHERE
               c.state = ?
+              AND r.kind = ?
               AND r.rating = ?
             GROUP BY
               c.id",
         )
         .bind(state_to_number(State::Review))
+        .bind(ReviewLogKind::Review)
         .bind(rating_to_number(rs_fsrs::Rating::Again))
         .fetch_all(db)
         .await
@@ -161,7 +165,12 @@ impl SrsScheduler for FSRS {
                         let previous_review_log = review_logs.last();
                         let reviewed_at = previous_review_log.map_or_else(
                             || first_review_date,
-                            |rl| rl.reviewed_at + Duration::new(rl.scheduled_time, 0).unwrap(),
+                            |rl| {
+                                let scheduled_time = rl
+                                    .scheduled_time
+                                    .expect("a scheduler-produced review log has a scheduled time");
+                                rl.reviewed_at + Duration::new(scheduled_time, 0).unwrap()
+                            },
                         );
                         let (new_card, new_review_log) = <FSRS as SrsScheduler>::schedule(
                             self,
@@ -183,9 +192,15 @@ impl SrsScheduler for FSRS {
                     (
                         RatingSubmission {
                             card_id: i64::from(card_id),
-                            rating: review_log.rating,
-                            recall_duration: Duration::seconds(review_log.recall_duration),
-                            rate_duration: Duration::seconds(review_log.rate_duration),
+                            // These are all produced by `schedule` just above, so they are always
+                            // a review and always fully populated.
+                            rating: review_log
+                                .rating
+                                .expect("a scheduler-produced review log has a rating"),
+                            recall_duration: Duration::seconds(
+                                review_log.recall_duration.unwrap_or(0),
+                            ),
+                            rate_duration: Duration::seconds(review_log.rate_duration.unwrap_or(0)),
                             tag_id: None,
                         },
                         review_log.reviewed_at,
@@ -421,7 +436,11 @@ impl SrsScheduler for FSRS {
         siblings_with_review_logs: &[(Card, Vec<ReviewLog>)],
         _at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, Error> {
-        let (main_card, main_review_logs) = data;
+        let (main_card, all_main_review_logs) = data;
+        // Intervals are derived from the log below, so a forget must hide everything before it.
+        // When the card was just forgotten this leaves an empty slice and the early return keeps
+        // the due date `forget_card` set, which is what a reset card should have.
+        let main_review_logs = effective_review_logs(all_main_review_logs);
         if main_review_logs.is_empty() {
             return Ok(main_card.due);
         }

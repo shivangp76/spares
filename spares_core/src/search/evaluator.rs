@@ -15,6 +15,7 @@ use crate::model::Card;
 use crate::model::CardId;
 use crate::model::Note;
 use crate::model::NoteId;
+use crate::model::ReviewLogKind;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
@@ -452,7 +453,8 @@ impl Field {
                 }
                 CardField::Rated => {
                     format!(
-                        "EXISTS (SELECT 1 FROM review_log rl WHERE rl.card_id = c.id AND rl.rating {})",
+                        "EXISTS (SELECT 1 FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {} AND rl.rating {})",
+                        ReviewLogKind::Review as u8,
                         value_str
                     )
                 }

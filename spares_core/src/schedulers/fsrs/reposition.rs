@@ -13,6 +13,7 @@ use crate::helpers::FractionalDays;
 use crate::helpers::mean;
 use crate::model::Card;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::schedulers::MoveCardsResult;
 
 #[derive(Debug)]
@@ -100,17 +101,23 @@ async fn get_all_cards_internal<'a>(
 ) -> Result<Vec<CardInternal<'a>>, Error> {
     let mut cards_internal = Vec::new();
     for card in cards {
-        // Get latest review for this card
-        let review_log_res: Option<ReviewLog> =
-            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC")
-                .bind(card.id)
-                .fetch_optional(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+        // Get latest review for this card.
+        // Only graded reviews carry a `scheduled_time`, and a forget marker would anchor the
+        // elapsed time below on a history the user discarded.
+        let review_log_res: Option<ReviewLog> = sqlx::query_as(
+            r"SELECT * FROM review_log WHERE card_id = ? AND kind = ?
+              ORDER BY reviewed_at DESC, id DESC LIMIT 1",
+        )
+        .bind(card.id)
+        .bind(ReviewLogKind::Review)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
         // Fix type
         let scheduled_time = review_log_res
             .as_ref()
-            .map(|r| Duration::seconds(r.scheduled_time));
+            .and_then(|r| r.scheduled_time)
+            .map(Duration::seconds);
 
         // Advance
         let current_elapsed_time = review_log_res
@@ -289,4 +296,92 @@ pub async fn move_cards(
         card_payloads: card_changes,
         message,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    use super::*;
+
+    /// A minimal card with two graded reviews, inserted directly so this test does not depend on
+    /// the note/parser creation pipeline.
+    async fn seed_card_with_two_reviews(
+        pool: &SqlitePool,
+        older: DateTime<Utc>,
+        newer: DateTime<Utc>,
+    ) -> Card {
+        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO note (data, custom_data, parser_id) VALUES ('n', '{}', 1)")
+            .execute(pool)
+            .await
+            .unwrap();
+        let card_id: i64 = sqlx::query_scalar(
+            r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
+               desired_retention, state, custom_data)
+               VALUES (1, 1, 1, ?, 5.0, 4.0, 0.9, 2, '{}') RETURNING id"#,
+        )
+        .bind(newer.timestamp())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        for (reviewed_at, scheduled_time) in [(older, 86_400_i64), (newer, 172_800_i64)] {
+            sqlx::query(
+                r"INSERT INTO review_log
+                    (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
+                     recall_duration, rate_duration, previous_state, custom_data)
+                  VALUES (?, ?, 0, 3, 'fsrs', ?, 5, 2, 2, '{}')",
+            )
+            .bind(card_id)
+            .bind(reviewed_at.timestamp())
+            .bind(scheduled_time)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query_as("SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// `get_all_cards_internal` fetches "the latest review" to compute elapsed time. Before the
+    /// fix, `ORDER BY reviewed_at ASC` with no `LIMIT` returned the OLDEST matching row instead,
+    /// so a card with more than one review had its elapsed time computed against its first-ever
+    /// review rather than its most recent one.
+    #[sqlx::test]
+    async fn uses_the_latest_review_not_the_oldest(pool: SqlitePool) {
+        let now = Utc::now();
+        let older = now - Duration::days(30);
+        let newer = now - Duration::days(3);
+        let card = seed_card_with_two_reviews(&pool, older, newer).await;
+
+        let cards_internal = get_all_cards_internal(
+            &pool,
+            std::slice::from_ref(&card),
+            &MoveCardAction::Advance,
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cards_internal.len(), 1);
+
+        let elapsed = cards_internal[0].current_elapsed_time;
+        let expected_from_newer = now - newer;
+        let would_be_from_older = now - older;
+        assert_eq!(
+            elapsed.num_seconds(),
+            expected_from_newer.num_seconds(),
+            "elapsed time must be computed against the most recent review"
+        );
+        assert_ne!(
+            elapsed.num_seconds(),
+            would_be_from_older.num_seconds(),
+            "must not fall back to the oldest review"
+        );
+    }
 }

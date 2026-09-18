@@ -15,6 +15,7 @@ use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::card::create_card_tags;
 use crate::api::execute_batched_query;
 use crate::api::fetch_batched_query;
+use crate::api::fetch_review_logs_for_replay;
 use crate::api::max_rows_for;
 use crate::api::note::basic::fetch_note_snapshot;
 use crate::api::parser::get_parser_name;
@@ -38,7 +39,6 @@ use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
-use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::parsers::Parseable;
@@ -684,26 +684,30 @@ pub(crate) async fn copy_review_logs_on(
     src_card_id: CardId,
     dst_card_ids: &[CardId],
 ) -> Result<(), Error> {
-    let review_logs: Vec<ReviewLog> = sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
-        .bind(src_card_id)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+    // Ordered so the copies get ids in the same relative order as the source rows, which
+    // `effective_review_logs` relies on to break ties within the same second.
+    let review_logs = fetch_review_logs_for_replay(&mut *conn, src_card_id).await?;
     for dst_card_id in dst_card_ids {
         for log in &review_logs {
+            // `kind` is copied along with the rest: dropping forget markers here would give the
+            // inheriting card the memory state its source would have had if it had never been
+            // forgotten.
             sqlx::query(
-                r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
-                   scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
+                   scheduled_time, recall_duration, rate_duration, previous_state, tag_id,
+                   custom_data)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(dst_card_id)
             .bind(log.reviewed_at.timestamp())
+            .bind(log.kind)
             .bind(log.rating)
             .bind(&log.scheduler_name)
             .bind(log.scheduled_time)
             .bind(log.recall_duration)
             .bind(log.rate_duration)
             .bind(log.previous_state)
+            .bind(log.tag_id)
             .bind(&log.custom_data)
             .execute(&mut *conn)
             .await
@@ -814,6 +818,7 @@ mod tests {
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::review::submit_study_action;
     use crate::model::Card;
+    use crate::model::ReviewLog;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
@@ -942,7 +947,7 @@ mod tests {
             "review log count mismatch"
         );
         for (src_log, dst_log) in src_review_logs.iter().zip(dst_review_logs.iter()) {
-            assert_eq!(dst_log.card_id, dst_card.id);
+            assert_eq!(dst_log.card_id, Some(dst_card.id));
             assert_eq!(
                 dst_log.reviewed_at.timestamp(),
                 src_log.reviewed_at.timestamp()
@@ -953,6 +958,10 @@ mod tests {
             assert_eq!(dst_log.recall_duration, src_log.recall_duration);
             assert_eq!(dst_log.rate_duration, src_log.rate_duration);
             assert_eq!(dst_log.previous_state, src_log.previous_state);
+            // Forget markers must come across too: dropping them would give the inheriting card
+            // the memory state its source would have had if it had never been forgotten.
+            assert_eq!(dst_log.kind, src_log.kind);
+            assert_eq!(dst_log.tag_id, src_log.tag_id);
             assert_eq!(dst_log.custom_data, src_log.custom_data);
         }
     }
