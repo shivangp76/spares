@@ -35,6 +35,8 @@ use sqlx::SqlitePool;
 use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
+use crate::model::CardId;
+use crate::model::ReviewLog;
 use crate::model::SpecialState;
 
 pub(crate) fn placeholders(rows: usize) -> String {
@@ -112,6 +114,28 @@ where
         query_fn(db, chunk).await?;
     }
     Ok(())
+}
+
+/// Fetches a card's review log ordered for replay.
+///
+/// This is `reviewed_at ASC`, with `id` breaking ties within the same second — required because a
+/// forget and a review can land in the same second, and both `effective_review_logs` and
+/// `compute_memory_state` depend on seeing them in the order they actually happened. Every fetch
+/// of a card's review log destined for either of those must go through this helper rather than a
+/// one-off query, so that tie-break can't be silently dropped by a copy-pasted `ORDER BY
+/// reviewed_at ASC` with no second key.
+pub(crate) async fn fetch_review_logs_for_replay<'e, E>(
+    db: E,
+    card_id: CardId,
+) -> Result<Vec<ReviewLog>, Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC, id ASC")
+        .bind(card_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
 }
 
 pub(crate) fn validate_bury_target(special_state: Option<SpecialState>) -> Result<(), Error> {

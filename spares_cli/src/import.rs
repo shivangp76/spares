@@ -581,6 +581,20 @@ mod tests {
 
     use super::*;
 
+    /// `spares_core` is compiled as a normal (non-test) dependency of this test binary, so its
+    /// own `cfg!(test)` checks are `false` here. Without this, note-file generation writes to the
+    /// user's real config/cache/data directories instead of test-local temp dirs. See
+    /// `spares_core::config::is_test_mode`.
+    fn enable_test_mode() {
+        // SAFETY: `cargo test` runs tests concurrently in one process, so other tests may read
+        // this env var while it's being set. That's benign here: every value ever written is "1",
+        // and any test observing it only becomes more isolated from the user's real directories,
+        // never less.
+        unsafe {
+            std::env::set_var("SPARES_TEST_MODE", "1");
+        }
+    }
+
     fn test_file_content() -> &'static str {
         "<!--- spares: start --->\n\
          <!--- # live-sync-name: lecture_notes_501 --->\n\
@@ -611,6 +625,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_mixed_live_and_normal_notes(pool: SqlitePool) {
+        enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 
@@ -700,6 +715,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_two_live_syncs_in_one_file(pool: SqlitePool) {
+        enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 
@@ -793,6 +809,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_non_live_file_not_written(pool: SqlitePool) {
+        enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 
@@ -876,6 +893,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_live_note_reimport_updates(pool: SqlitePool) {
+        enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 
@@ -995,6 +1013,8 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_live_note_import_preserves_inter_cloze_content(pool: SqlitePool) {
+        enable_test_mode();
+
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 
@@ -1100,6 +1120,8 @@ mod tests {
         use spares_core::parsers::get_all_parsers;
         use spares_core::schema::parser::CreateParserRequest;
 
+        enable_test_mode();
+
         create_parser(
             &pool,
             CreateParserRequest {
@@ -1182,6 +1204,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_strip_liveness_removes_all_live_fields(pool: SqlitePool) {
+        enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
 

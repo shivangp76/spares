@@ -18,6 +18,7 @@ use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
 use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
+use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
@@ -119,7 +120,7 @@ pub trait Parseable: Send + Sync {
     // if converting from markdown's `{{[o:1]` and `}}` to latex's `\\begin{note}[o:1]` and `\\end{note}`,
     // the length of the delimiter increases even though both have their settings strings attached
     // to the starting delimiter.
-    fn construct_cloze(&self, cloze_settings_string: &str, data: &str) -> (String, String);
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String);
 
     // fn cloze_settings_side(&self) -> ClozeSettingsSide;
 
@@ -325,7 +326,7 @@ pub trait Parseable: Send + Sync {
         template_type: TemplateType,
     ) -> Result<(String, String), std::io::Error> {
         let body_placeholder = self.construct_comment("spares: body");
-        if cfg!(test) {
+        if is_test_mode() {
             // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));

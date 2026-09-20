@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use itertools::Itertools;
 
+use super::rewrite::RangeReplacement;
+use super::rewrite::rewrite_ranges;
 use crate::CardErrorKind;
 use crate::LibraryError;
 use crate::helpers::GroupByInsertion;
@@ -438,9 +440,8 @@ pub(super) fn modify_card_settings(
                     });
                 }
             } else {
-                let cloze_body_range = cloze_data.start_delim.end..cloze_data.end_delim.start;
                 let (new_prefix, new_suffix) =
-                    output_parser.construct_cloze(&cloze_settings_string, &data[cloze_body_range]);
+                    output_parser.construct_cloze(&cloze_settings_string);
                 replacements.push(Replacement {
                     cloze_index,
                     range: cloze_data.start_delim.start..cloze_data.start_delim.end,
@@ -460,19 +461,17 @@ pub(super) fn modify_card_settings(
     // Sort by range start — delimiter ranges never overlap, so this is safe.
     replacements.sort_unstable_by_key(|r| r.range.start);
 
-    // Single forward pass: build the new `data` string and record new absolute positions.
+    // Position-bookkeeping pass: pure arithmetic over the sorted replacements (no
+    // string construction) recording new absolute positions.
     // Text cloze positions are keyed by cloze_index.
     // IO cloze positions are keyed by original start_delim.start (all clozes from the same IO
     // block share that value, so they all get the same updated positions).
     let mut text_new_pos: HashMap<usize, NewPosition> = HashMap::with_capacity(seen.len());
     let mut io_new_pos: HashMap<usize, NewPosition> =
         HashMap::with_capacity(seen_io_range_start.len());
-    let mut new_data = String::with_capacity(data.len());
-    let mut prev_end = 0usize;
     let mut offset: i64 = 0;
 
     for replacement in &replacements {
-        new_data.push_str(&data[prev_end..replacement.range.start]);
         let new_range_start = (i64::try_from(replacement.range.start).unwrap() + offset) as usize;
         match replacement.kind {
             ReplacementKind::TextStart => {
@@ -511,13 +510,19 @@ pub(super) fn modify_card_settings(
                 );
             }
         }
-        new_data.push_str(&replacement.new_text);
         offset += i64::try_from(replacement.new_text.len()).unwrap()
             - i64::try_from(replacement.range.len()).unwrap();
-        prev_end = replacement.range.end;
     }
-    new_data.push_str(&data[prev_end..]);
-    *data = new_data;
+
+    // String construction via the shared range-rewrite primitive.
+    let range_edits = replacements
+        .into_iter()
+        .map(|r| RangeReplacement {
+            range: r.range,
+            new_text: r.new_text,
+        })
+        .collect();
+    *data = rewrite_ranges(data, range_edits);
 
     // Update all cloze positions in cards_raw.
     for card in &mut *cards_raw {

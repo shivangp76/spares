@@ -193,6 +193,18 @@ pub struct UpdateNotesPayload {
     pub notes: Vec<UpdateNotePayload>,
 }
 
+/// Payload for a `ForgetCard` event.
+///
+/// Version 1 events stored a bare `Vec<UpdateCardPayload>` here, shared with `UpdateCards`, and
+/// wrote no `review_log` marker row. Those events are still in users' databases, so
+/// `invert_payload` distinguishes the two by JSON shape (array = v1, object = v2) rather than by
+/// `event.version`, which nothing reads.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ForgetCardPayload {
+    pub review_log_id: i64,
+    pub card: UpdateCardPayload,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RateCardPayload {
     pub review_log_id: i64,

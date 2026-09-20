@@ -1,4 +1,4 @@
-// ── Card undo tests ──────────────────────────────────────────────────────────
+//! Card undo tests
 
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -8,8 +8,10 @@ use crate::api::card::forget_card;
 use crate::api::card::unbury_cards;
 use crate::api::card::update_cards;
 use crate::api::review::submit_study_action;
+use crate::api::undo::insert_events;
 use crate::api::undo::undo_event;
 use crate::model::Card;
+use crate::model::EventType;
 use crate::model::SpecialState;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::SpecialStateUpdate;
@@ -608,5 +610,155 @@ async fn e2e_undo_update_card_does_not_log_when_no_change(pool: SqlitePool) {
         event_count_after,
         event_count_before + 1,
         "update_card with log=true must log an event even when fields are unchanged"
+    );
+}
+
+#[sqlx::test]
+async fn e2e_undo_forget_card_deletes_review_log(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 3,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    let log_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    forget_card(&pool, card_id, Utc::now(), true).await.unwrap();
+
+    let log_count_after_forget: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        log_count_after_forget,
+        log_count_before + 1,
+        "forgetting must create a marker row"
+    );
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    let log_count_after_undo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        log_count_after_undo, log_count_before,
+        "undoing a forget must delete its marker row"
+    );
+    let markers_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE kind != 0")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(markers_left, 0);
+}
+
+/// Before the `kind` column existed, a `ForgetCard` event stored a bare `Vec<UpdateCardPayload>`
+/// and wrote no marker row. Those events are still in users' databases, so undo must keep working
+/// on them rather than failing to deserialize.
+#[sqlx::test]
+async fn e2e_undo_forget_card_v1_payload(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 4,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    let before: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
+        .bind(card_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Forget the card by hand, the way the old code did: reset the row, log the old-shape event,
+    // and write no marker.
+    sqlx::query("UPDATE card SET stability = 0.0, difficulty = 0.0, state = 0 WHERE id = ?")
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // `Transition` serializes its fields as "b" and "a".
+    let legacy_payload = serde_json::json!([{
+        "card_id": card_id,
+        "stability": { "b": before.stability, "a": 0.0 },
+        "difficulty": { "b": before.difficulty, "a": 0.0 },
+        "state": { "b": before.state, "a": 0 },
+    }]);
+    insert_events(
+        &pool,
+        &[(EventType::ForgetCard, legacy_payload)],
+        Utc::now(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let log_count_before_undo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    let restored: Card = sqlx::query_as("SELECT * FROM card WHERE id = ?")
+        .bind(card_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(restored.stability, before.stability);
+    assert_eq!(restored.difficulty, before.difficulty);
+    assert_eq!(restored.state, before.state);
+
+    let log_count_after_undo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        log_count_after_undo, log_count_before_undo,
+        "a v1 forget has no marker row, so undo must not delete anything"
     );
 }

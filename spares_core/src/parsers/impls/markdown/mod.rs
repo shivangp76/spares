@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
+use crate::config::is_test_mode;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
@@ -91,7 +92,7 @@ impl Parseable for MarkdownParser {
         Ok(all_clozes.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
         let cloze_settings_string_with_delim = if cloze_settings_string.is_empty() {
             cloze_settings_string.to_string()
         } else {
@@ -295,7 +296,7 @@ impl Parseable for MarkdownParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(test) {
+        if is_test_mode() {
             return get_cache_dir();
         }
         std::env::var("MARKDOWN_OUT_DIR")

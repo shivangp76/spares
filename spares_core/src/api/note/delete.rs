@@ -17,6 +17,7 @@ use crate::api::placeholders;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::NoteSnapshot;
+use crate::config::is_test_mode;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
 use crate::model::EventType;
@@ -34,7 +35,7 @@ use crate::parsers::image_occlusion::parse_image_occlusion_data;
 use crate::schema::note::DeleteNotesRequest;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
-    if cfg!(test) {
+    if is_test_mode() {
         // Don't clutter the Trash with testing files
         std::fs::remove_file(file_path).map_err(|e| Error::Io {
             source: e,

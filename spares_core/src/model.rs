@@ -127,6 +127,35 @@ pub enum SpecialState {
     BuriedUntilLaterToday = 4,
 }
 
+/// What a `review_log` row records.
+///
+/// Discriminants are explicit and **must never change**: they are persisted in `review_log.kind`.
+/// `2..=15` are reserved for future kinds that, like `Forget`, change how a scheduler replays a
+/// card — for example `SetMemoryState`, `SchedulerChanged` or `Created`. The column carries a
+/// matching `CHECK (kind BETWEEN 0 AND 15)`.
+///
+/// Only actions a scheduler must *replay* belong in `review_log`. The test is whether replaying
+/// the row changes the card's memory state. Audit-only actions — suspend, bury, set due date,
+/// advance, postpone — do not, and belong in the `event` table (see [`EventType`]) instead.
+///
+/// A row whose `kind` is not a known variant fails to decode. That is deliberate: a database
+/// written by a newer version should not be silently misread as a stream of plain reviews.
+///
+/// Unlike Anki's `revlog.type`, this does *not* encode the card's state (that is
+/// [`ReviewLog::previous_state`]) or whether the review happened under a filtered tag (that is
+/// [`ReviewLog::tag_id`]).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, sqlx::Type)]
+#[repr(u8)]
+pub enum ReviewLogKind {
+    /// A graded review. `rating`, `scheduled_time`, `recall_duration` and `rate_duration` are all
+    /// meaningful.
+    #[default]
+    Review = 0,
+    /// The card's memory state was reset to new by [`crate::api::forget_card`]. Replay restarts
+    /// its fold here, and the rating and duration columns are all `NULL`.
+    Forget = 1,
+}
+
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct NoteLink {
     // pub id: Option<i64>,
@@ -177,30 +206,47 @@ pub struct Parser {
 //     pub name: String, // NOTE: name matches that in `src/schedulers/mod.rs::get_scheduler()`
 // }
 
-/// This contains a row for every review ever done. Thus, each card has multiple entries in this table.
+/// This contains a row for every review ever done, plus a marker row for each action that changes
+/// a card's memory state without being a review (see [`ReviewLogKind`]). Thus, each card has
+/// multiple entries in this table.
+///
+/// Consumers that count or average over reviews must filter on `kind`; the rating and duration
+/// columns are `NULL` for every non-`Review` row.
 #[derive(Clone, Debug, Default, Deserialize, Eq, FromRow, Hash, PartialEq, Serialize)]
 pub struct ReviewLog {
     pub id: i64,
-    pub card_id: CardId,
+    /// `None` once the card has been deleted. Review logs are deliberately *not* deleted with
+    /// their card, so that historical review counts survive; the row is orphaned instead.
+    pub card_id: Option<CardId>,
     /// It is comparable to Anki's `revlog.id` column.
     #[serde(with = "ts_seconds")]
     pub reviewed_at: DateTime<Utc>,
+    /// What the card was recorded as, if this row is a review. `None` for every other
+    /// [`ReviewLogKind`].
+    ///
     /// The integer value is in relation to the scheduler specified by `scheduler_id`.
     /// It is comparable to Anki's `revlog.ease` column.
-    pub rating: RatingId,
+    pub rating: Option<RatingId>,
+    /// Why this row exists. See [`ReviewLogKind`].
+    pub kind: ReviewLogKind,
+    /// The filtered tag this row was produced under, if any. `None` for an ordinary review.
+    ///
+    /// Set to `None` rather than deleted when the tag is deleted, for the same reason `card_id`
+    /// is: the review still happened.
+    pub tag_id: Option<TagId>,
     // pub scheduler_id: i64,
     pub scheduler_name: String,
     /// Duration, stored in seconds.
     /// It is comparable to Anki's `revlog.ivl` column.
     // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
-    pub scheduled_time: i64,
+    pub scheduled_time: Option<i64>,
     /// How long the review took, stored in seconds
     /// It is comparable to Anki's `revlog.time` column.
     // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
-    pub recall_duration: i64,
+    pub recall_duration: Option<i64>,
     /// How long it took the rate the card. Useful to provide time estimates for reviews.
     // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
-    pub rate_duration: i64,
+    pub rate_duration: Option<i64>,
     // It is comparable to Anki's `revlog.lastIvl` column.
     // pub elapsed_time: i64, // Unix Time. Equivalent to `self.reviewed_at - previous_review.reviewed_at` or 0 if card is new.
     /// To see how many reviews were done for each state on a given day.
@@ -212,6 +258,13 @@ pub struct ReviewLog {
 }
 
 impl ReviewLog {
+    /// Whether this row is a graded review, as opposed to a marker for some other action that
+    /// affects replay. Use this rather than comparing `kind` inline, so that adding a variant
+    /// surfaces every site that assumed two kinds.
+    pub fn is_review(&self) -> bool {
+        self.kind == ReviewLogKind::Review
+    }
+
     pub fn new() -> Self {
         Self {
             custom_data: Value::Object(Map::new()),
@@ -233,8 +286,11 @@ pub enum EventType {
     UpdateNotes, // Plural
     DeleteNotes, // Plural
     UpdateCards,
-    /// Shares payload schema with `UpdateCards`
-    // Even though it shares a payload with `UpdateCards`, we need to preserve the event type so the user can be given a description of the action they are undoing.
+    /// Carries `ForgetCardPayload`, which pairs the card transitions with the id of the
+    /// `review_log` marker row so undo can delete it.
+    // Version 1 events stored a bare `Vec<UpdateCardPayload>` here, shared with `UpdateCards`, and
+    // wrote no marker row. Those rows are still in users' databases; `invert_payload` tells the
+    // two apart by JSON shape.
     ForgetCard,
     UnburyCards,
     RateCard,
@@ -254,4 +310,108 @@ pub struct Event {
     pub version: i64,
     pub group_id: Option<i64>, // Maybe set this to the id of the first event in the group
     pub payload: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use sqlx::SqlitePool;
+    use sqlx::migrate::Migrate;
+    use sqlx::migrate::Migrator;
+
+    fn migrator_path() -> &'static Path {
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+    }
+
+    /// The `review_log` rebuild in `20260918120000_review_log_kind` drops and recreates the one
+    /// table in this schema that cannot be reconstructed from the note files, so the upgrade path
+    /// is tested against a database that already holds rows rather than only against a fresh one
+    /// (which is all `#[sqlx::test]` ever builds).
+    #[sqlx::test(migrations = false)]
+    async fn migration_review_log_kind_preserves_existing_rows(pool: SqlitePool) {
+        let migrator = Migrator::new(migrator_path()).await.unwrap();
+        // `Migrator::iter()` yields both up and down migrations; only the up side applies here.
+        let base = migrator
+            .iter()
+            .find(|m| m.migration_type.is_up_migration())
+            .expect("base migration exists");
+
+        // Bring the database up to the state a user on the previous release would have.
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        conn.apply(base).await.unwrap();
+
+        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO note (data, custom_data, parser_id) VALUES ('n', '{}', 1)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
+               desired_retention, state, custom_data) VALUES (1, 1, 1, 100, 5.5, 4.2, 0.9, 2, '{}')"#,
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        for (reviewed_at, rating) in [(1000, 3), (2000, 4)] {
+            sqlx::query(
+                r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
+                   scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+                   VALUES (1, ?, ?, 'fsrs', 86400, 5, 2, 0, '{}')",
+            )
+            .bind(reviewed_at)
+            .bind(rating)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+        // An orphan, i.e. a review of a card that has since been deleted. These are deliberately
+        // kept (`ON DELETE SET NULL`) and must survive the rebuild.
+        sqlx::query(
+            r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+               VALUES (NULL, 3000, 1, 'fsrs', 600, 9, 4, 2, '{}')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        // Now apply the rest, which is what a user's next `spares serve` does.
+        migrator.run(&pool).await.unwrap();
+
+        let (count, max_id, orphans, non_review): (i64, i64, i64, i64) = sqlx::query_as(
+            r"SELECT COUNT(*), COALESCE(MAX(id), 0), SUM(card_id IS NULL), SUM(kind != 0)
+              FROM review_log",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 3, "every pre-existing review log row must survive");
+        assert_eq!(
+            max_id, 3,
+            "ids must be preserved: undo payloads reference them"
+        );
+        assert_eq!(orphans, 1, "orphaned rows must survive the rebuild");
+        assert_eq!(
+            non_review, 0,
+            "pre-existing rows must all backfill to kind = Review"
+        );
+
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let fk_violations: Vec<(String, i64, String, i64)> =
+            sqlx::query_as("PRAGMA foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(fk_violations.is_empty(), "{:?}", fk_violations);
+    }
 }

@@ -10,6 +10,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::config::get_cache_dir;
+use crate::config::is_test_mode;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -79,7 +80,7 @@ impl Parseable for TypstParser {
         Ok(parser.clozes.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
         let cloze_settings_string_with_delim = if cloze_settings_string.is_empty() {
             cloze_settings_string.to_string()
         } else {
@@ -290,7 +291,7 @@ impl Parseable for TypstParser {
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if cfg!(test) {
+        if is_test_mode() {
             return get_cache_dir();
         }
         std::env::var("TYPST_OUT_DIR")

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use rand::RngExt;
 
+use super::rewrite::RangeReplacement;
+use super::rewrite::rewrite_ranges;
 use crate::Error;
 use crate::parsers::ClozeGroupingSettings;
 use crate::parsers::ClozeSettings;
@@ -29,15 +31,6 @@ fn mint_cloze_uid(rng: &mut impl rand::Rng) -> ClozeUid {
     uid_bytes[10] = HEX[((val >> 4) & 0x0f) as usize];
     uid_bytes[11] = HEX[(val & 0x0f) as usize];
     ClozeUid(uid_bytes)
-}
-
-struct ClozeEdit {
-    start_match_start: usize,
-    start_match_end: usize,
-    end_match_start: usize,
-    end_match_end: usize,
-    new_prefix: String,
-    new_suffix: String,
 }
 
 /// Internal: iterate over clozes, select those matching `select`,
@@ -82,8 +75,13 @@ fn reapply_cloze_uid<T>(
         return Ok((original_note_data.to_owned(), selected));
     }
 
-    // Build edits sorted by position (ascending) for a single left-to-right pass.
-    let mut edits: Vec<(usize, ClozeEdit)> = Vec::new();
+    // Build delimiter-only edits: one for each cloze's start delimiter and one for
+    // its end delimiter, never touching the body in between. This keeps edit ranges
+    // non-overlapping regardless of cloze nesting depth (a nested cloze's delimiters
+    // always sit strictly inside its parent's untouched body span, never inside the
+    // parent's own delimiters), so a single sorted forward pass can rebuild the
+    // string safely even when both an outer and an inner cloze are selected.
+    let mut edits: Vec<RangeReplacement> = Vec::new();
     {
         let mut indices: Vec<usize> = selected.keys().copied().collect();
         indices.sort_unstable();
@@ -110,38 +108,20 @@ fn reapply_cloze_uid<T>(
                 false,
             );
 
-            let (new_prefix, new_suffix) = parser.construct_cloze(
-                &settings_string,
-                &original_note_data[cm.start_match.end..cm.end_match.start],
-            );
+            let (new_prefix, new_suffix) = parser.construct_cloze(&settings_string);
 
-            edits.push((
-                cloze_idx,
-                ClozeEdit {
-                    start_match_start: cm.start_match.start,
-                    start_match_end: cm.start_match.end,
-                    end_match_start: cm.end_match.start,
-                    end_match_end: cm.end_match.end,
-                    new_prefix,
-                    new_suffix,
-                },
-            ));
+            edits.push(RangeReplacement {
+                range: cm.start_match.clone(),
+                new_text: new_prefix,
+            });
+            edits.push(RangeReplacement {
+                range: cm.end_match.clone(),
+                new_text: new_suffix,
+            });
         }
     }
 
-    // Single left-to-right pass building the output string.
-    edits.sort_unstable_by_key(|(_, e)| e.start_match_start);
-    let mut data = String::with_capacity(original_note_data.len());
-    let mut last_end = 0;
-    for (_, edit) in &edits {
-        data.push_str(&original_note_data[last_end..edit.start_match_start]);
-        data.push_str(&edit.new_prefix);
-        data.push_str(&original_note_data[edit.start_match_end..edit.end_match_start]);
-        data.push_str(&edit.new_suffix);
-        last_end = edit.end_match_end;
-    }
-    data.push_str(&original_note_data[last_end..]);
-
+    let data = rewrite_ranges(original_note_data, edits);
     Ok((data, selected))
 }
 
@@ -251,6 +231,30 @@ mod tests {
                 "pre \\begin{cl}[o:1] A B \\end{cl} C \\begin{cl}[g:1] D E \\end{cl} post"
             }
             ("typst", "surrounding") => "pre #cl[A B][o:1] C #cl[D E][g:1] post",
+
+            ("markdown", "nested_two_no_ids") => "Test {{[o:1] outer {{inner}}}} complex",
+            ("latex", "nested_two_no_ids") => {
+                r"\begin{cl}[o:1]outer \begin{cl}inner\end{cl}\end{cl}"
+            }
+            ("typst", "nested_two_no_ids") => "test #cl[#cl[b][g:1]][g:1] test",
+
+            ("markdown", "nested_outer_has_id") => {
+                "Test {{[id:abc123def456] outer {{inner}}}} complex"
+            }
+            ("latex", "nested_outer_has_id") => {
+                r"\begin{cl}[id:abc123def456]outer \begin{cl}inner\end{cl}\end{cl}"
+            }
+            ("typst", "nested_outer_has_id") => "test #cl[#cl[b][g:1]][id:abc123def456] test",
+
+            ("markdown", "nested_both_have_ids") => {
+                "Test {{[id:abc111111111] outer {{[id:abc222222222] inner }}}} complex"
+            }
+            ("latex", "nested_both_have_ids") => {
+                r"\begin{cl}[id:abc111111111]outer \begin{cl}[id:abc222222222]inner\end{cl}\end{cl}"
+            }
+            ("typst", "nested_both_have_ids") => {
+                "test #cl[#cl[b][id:abc222222222]][id:abc111111111] test"
+            }
 
             _ => return None,
         })
@@ -430,6 +434,95 @@ mod tests {
                 assert!(
                     !stripped.contains("id:"),
                     "strip {pname}: id: keys should be stripped"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nested_clozes_both_no_ids_minted() {
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let pname = parser.get_parser_name();
+
+            if let Some(data) = sample(pname, "nested_two_no_ids") {
+                let (result, mint_map) = add_cloze_uid_to_note_data(parser.as_ref(), data).unwrap();
+                assert_eq!(mint_map.len(), 2, "add: {pname}");
+                assert_eq!(
+                    result.matches("id:").count(),
+                    2,
+                    "add {pname}: result: {result}"
+                );
+                for uid in mint_map.values() {
+                    assert_eq!(uid.0.len(), 12, "add: {pname}");
+                    assert!(uid.0.iter().all(|c| c.is_ascii_hexdigit()), "add: {pname}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nested_cloze_only_inner_no_id() {
+        // Sanity check: when only the inner cloze is selected (outer already has an
+        // id), there is a single edit and no nesting-interleaving hazard — this path
+        // already worked before the fix and must keep working after it.
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let pname = parser.get_parser_name();
+
+            if let Some(data) = sample(pname, "nested_outer_has_id") {
+                let (result, mint_map) = add_cloze_uid_to_note_data(parser.as_ref(), data).unwrap();
+                assert_eq!(mint_map.len(), 1, "add: {pname}");
+                assert!(
+                    result.contains("abc123def456"),
+                    "add {pname}: outer id should be preserved; result: {result}"
+                );
+                assert_eq!(
+                    result.matches("id:").count(),
+                    2,
+                    "add {pname}: result: {result}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nested_clozes_both_ids_stripped() {
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let pname = parser.get_parser_name();
+
+            if let Some(data) = sample(pname, "nested_both_have_ids") {
+                let (result, stripped) =
+                    remove_cloze_uid_from_note_data(parser.as_ref(), data).unwrap();
+                assert_eq!(stripped.len(), 2, "strip: {pname}");
+                assert!(!result.contains("id:"), "strip {pname}: result: {result}");
+            }
+        }
+    }
+
+    #[test]
+    fn nested_clozes_idempotent_and_round_trip() {
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let pname = parser.get_parser_name();
+
+            if let Some(data) = sample(pname, "nested_two_no_ids") {
+                let (result1, mint_map1) =
+                    add_cloze_uid_to_note_data(parser.as_ref(), data).unwrap();
+                assert_eq!(mint_map1.len(), 2, "add first: {pname}");
+
+                let (result2, mint_map2) =
+                    add_cloze_uid_to_note_data(parser.as_ref(), &result1).unwrap();
+                assert_eq!(result1, result2, "add second: {pname}");
+                assert!(mint_map2.is_empty(), "add second: {pname}");
+
+                let (stripped, stripped_indices) =
+                    remove_cloze_uid_from_note_data(parser.as_ref(), &result1).unwrap();
+                assert_eq!(stripped_indices.len(), 2, "strip: {pname}");
+                assert_eq!(
+                    stripped, data,
+                    "strip(add(original)) should equal original: {pname}"
                 );
             }
         }

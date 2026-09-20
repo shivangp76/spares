@@ -21,6 +21,7 @@ use crate::api::note::update_notes;
 use crate::api::parser::list_parsers;
 use crate::config::Environment;
 use crate::config::get_env_config;
+use crate::config::is_test_mode;
 use crate::model::CustomData;
 use crate::model::NoteId;
 use crate::parsers::NoteImportAction;
@@ -300,7 +301,7 @@ impl SrsAdapter for SparesAdapter {
             // If testing, then we
             // - do not want to render notes to save time. We can explicitly call render notes if we need to.
             // - want to render notes in a different directory, so we don't overwrite user data.
-            if !cfg!(test) {
+            if !is_test_mode() {
                 let mut all_render_ids = created_note_ids;
                 all_render_ids.extend(live_update_note_ids);
                 if !all_render_ids.is_empty() {

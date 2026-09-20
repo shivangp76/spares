@@ -12,6 +12,7 @@ use data_parser::LatexDataParser;
 use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
+use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::NoteId;
 use crate::parsers::ClozeHiddenReplacement;
@@ -81,7 +82,7 @@ impl Parseable for LatexParserNote {
         Ok(clozes)
     }
 
-    fn construct_cloze(&self, cloze_settings_string: &str, _data: &str) -> (String, String) {
+    fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
         let cloze_start = if cloze_settings_string.is_empty() {
             "\\begin{cl}".to_string()
         } else {
@@ -444,7 +445,7 @@ fn construct_image_occlusion(
 }
 
 fn get_output_rendered_dir(_: &impl Parseable, _output_type: RenderOutputDirectoryType) -> PathBuf {
-    if cfg!(test) {
+    if is_test_mode() {
         return get_cache_dir();
     }
     std::env::var("LATEX_OUT_DIR")
