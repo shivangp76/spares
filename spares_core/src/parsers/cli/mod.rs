@@ -17,6 +17,20 @@
 //! The only required key is `exec`. The surrounding note text outside the
 //! block is displayed in the terminal before exec runs.
 //!
+//! ## Block identity
+//! An optional `id` key holds a 12-hex-character uid identifying the block:
+//! ```md
+//! <!--- spares: cli start --->
+//! <!--- exec = "pytest tests/" --->
+//! <!--- id = "a1b2c3d4e5f6" --->
+//! <!--- spares: cli end --->
+//! ```
+//! It plays the same role as a cloze's `id:` setting — it is what keeps a
+//! block's card (and its review history) attached to *this* command when
+//! blocks are added, removed, or reordered, rather than to a position in the
+//! note. You do not write it yourself: it is minted into the note text the
+//! first time spares is allowed to rewrite the note.
+//!
 //! ## Score contract
 //! The child process owns stdin/stderr (so it may prompt interactively) and
 //! must emit a single trailing JSON object on stdout of the form
@@ -30,6 +44,7 @@ use toml_edit::DocumentMut;
 
 use crate::LibraryError;
 use crate::NoteErrorKind;
+use crate::parsers::ClozeUid;
 use crate::parsers::Parseable;
 
 /// Structured data parsed from a CLI block body.
@@ -38,6 +53,12 @@ use crate::parsers::Parseable;
 pub struct CliData {
     /// The shell command (`sh -c "<exec>"`) run at review time.
     pub exec: String,
+    /// A stable, globally-unique 12-hex identifier for this block, serving the same purpose as a
+    /// cloze's `id:` setting: it keeps the block's card attached to this command when blocks are
+    /// added, removed, or reordered. Minted automatically on the paths that are allowed to rewrite
+    /// note data, so it is optional in hand-written notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<ClozeUid>,
 }
 
 /// A range match for a CLI block, mirroring [`crate::parsers::image_occlusion::ImageOcclusionMatch`].

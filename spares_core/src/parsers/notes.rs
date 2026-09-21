@@ -77,7 +77,7 @@ pub enum NotePart {
     /// the surrounding text in the note is printed in the terminal before
     /// exec runs.
     Cli {
-        exec: String,
+        data: CliData,
     },
 }
 
@@ -203,7 +203,7 @@ fn complete_note(
                 | NotePart::ClozeData(text, _) => text,
                 NotePart::ImageOcclusion { data, .. } => output_parser
                     .construct_image_occlusion(&data, ConstructImageOcclusionType::Note),
-                NotePart::Cli { exec } => output_parser.construct_cli_block(&CliData { exec }),
+                NotePart::Cli { data } => output_parser.construct_cli_block(&data),
             })
             .collect::<String>()
     } else {

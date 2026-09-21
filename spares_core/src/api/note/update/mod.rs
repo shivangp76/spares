@@ -893,6 +893,156 @@ mod tests {
         .unwrap();
     }
 
+    /// Renders a markdown CLI note from `(exec, id)` pairs, one block each.
+    fn cli_note_data(blocks: &[(&str, &str)]) -> String {
+        use std::fmt::Write;
+
+        let mut out = String::from("Run these.\n");
+        for (exec, id) in blocks {
+            out.push_str("<!--- spares: cli start --->\n");
+            let _ = write!(
+                out,
+                "<!--- exec = \"{exec}\" --->\n<!--- id = \"{id}\" --->\n"
+            );
+            out.push_str("<!--- spares: cli end --->\n");
+        }
+        out
+    }
+
+    /// CLI-block cards follow their block's `id`, not its position in the note.
+    ///
+    /// A CLI block's `previous_order` is synthesised from its document position, so without a uid
+    /// an appended block claims an order no card has (which `match_cards` rejects) and a removed
+    /// block shifts every later card onto someone else's command.
+    #[sqlx::test]
+    async fn test_update_note_matches_cli_cards_by_block_id(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let note_id = create_test_note(
+            &pool,
+            parser.id,
+            &cli_note_data(&[("task one", "aaaaaaaaaaaa"), ("task two", "bbbbbbbbbbbb")]),
+            Vec::new(),
+        )
+        .await;
+
+        let original = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            original
+                .iter()
+                .map(|(uid, _)| uid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["aaaaaaaaaaaa", "bbbbbbbbbbbb"],
+        );
+
+        // Append a block. Positionally it claims order 3, which no existing card has.
+        update_note_data(
+            &pool,
+            note_id,
+            &cli_note_data(&[
+                ("task one", "aaaaaaaaaaaa"),
+                ("task two", "bbbbbbbbbbbb"),
+                ("task three", "cccccccccccc"),
+            ]),
+        )
+        .await;
+
+        let after_append = cards_by_uid(&pool, note_id).await;
+        assert_eq!(after_append.len(), 3, "appending a block adds one card");
+        assert_eq!(
+            &after_append[..2],
+            &original[..],
+            "the two existing cards keep their ids when a block is appended"
+        );
+
+        // Delete the middle block. Positionally, the last card shifts up by one.
+        update_note_data(
+            &pool,
+            note_id,
+            &cli_note_data(&[("task one", "aaaaaaaaaaaa"), ("task three", "cccccccccccc")]),
+        )
+        .await;
+
+        let after_delete = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            after_delete,
+            vec![original[0].clone(), after_append[2].clone()],
+            "deleting a block deletes only its own card"
+        );
+
+        // Swap the two remaining blocks.
+        update_note_data(
+            &pool,
+            note_id,
+            &cli_note_data(&[("task three", "cccccccccccc"), ("task one", "aaaaaaaaaaaa")]),
+        )
+        .await;
+
+        let after_swap = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            after_swap,
+            vec![after_append[2].clone(), original[0].clone()],
+            "reordering blocks moves cards with them rather than reassigning commands"
+        );
+
+        // `card.order` still tracks document position, which is how the review API resolves a
+        // CLI card back to its command (see `api::review`).
+        let cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            cards.iter().map(|c| c.order).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    /// A CLI note stored before `id` keys existed has no uid on its old side, so matching falls
+    /// back to position. That migrates it cleanly: cards survive and ids are written into the text.
+    #[sqlx::test]
+    async fn test_update_note_cli_note_without_ids_migrates(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let legacy_data = indoc! {r#"
+            Run these.
+            <!--- spares: cli start --->
+            <!--- exec = "task one" --->
+            <!--- spares: cli end --->
+        "#};
+        let note_id = create_test_note(&pool, parser.id, legacy_data, Vec::new()).await;
+
+        // Roll the stored text back to its pre-`id` form, as an existing note would have it.
+        sqlx::query(r"UPDATE note SET data = ? WHERE id = ?")
+            .bind(legacy_data)
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let card_id_before: i64 = sqlx::query_scalar(r"SELECT id FROM card WHERE note_id = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        update_note_data(&pool, note_id, legacy_data).await;
+
+        let after = cards_by_uid(&pool, note_id).await;
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].1, card_id_before,
+            "the existing card must survive the migration"
+        );
+        let stored: String = sqlx::query_scalar(r"SELECT data FROM note WHERE id = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            stored.contains(&format!(r#"id = "{}""#, after[0].0)),
+            "the migrated note text should carry the minted id: {stored}"
+        );
+    }
+
     /// Cards follow their `id:` cloze uid, not their position in the note.
     ///
     /// Live notes are submitted without `o:` markers, so their `previous_order` values are pure
