@@ -337,6 +337,30 @@ async fn handle_strip_liveness(
     Ok(Some(result))
 }
 
+/// Points `local_settings` at the live note occupying `block_order` within `lsn`, or marks it as a
+/// new note when the sync group has nothing at that position.
+async fn resolve_live_note_by_block_order(
+    local_settings: &mut NoteSettings,
+    agg: &mut ParserAggregate<'_>,
+    adapter: &mut dyn SrsAdapter,
+    lsn: &str,
+    block_order: i64,
+) -> Result<(), Error> {
+    match adapter
+        .find_live_note_by_block_order(lsn, block_order)
+        .await?
+    {
+        Some(note_id) => {
+            local_settings.action = NoteImportAction::Update(note_id);
+            agg.update_note_ids.push(note_id);
+        }
+        None => {
+            local_settings.action = NoteImportAction::Add;
+        }
+    }
+    Ok(())
+}
+
 async fn aggregate_note_into_parser_group(
     mut local_settings: NoteSettings,
     note_data_res: Option<String>,
@@ -350,21 +374,53 @@ async fn aggregate_note_into_parser_group(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
     {
-        let bo = file_counters.entry(lsn.clone()).or_insert(0);
-        let block_order = *bo;
-        *bo += 1;
+        // Position-based matching is only meaningful for the live *source* file, whose blocks
+        // carry neither a note id nor a `live_block_order`. A generated per-note file carries
+        // both, and since `file_counters` restarts at 0 for every file, re-deriving the position
+        // there would resolve a single-note file to whichever note sits at block 0 of the sync
+        // group and overwrite it.
+        let explicit_note_id = match local_settings.action {
+            NoteImportAction::Update(note_id) => Some(note_id),
+            NoteImportAction::Add | NoteImportAction::Delete(_) => None,
+        };
+        let explicit_block_order = local_settings
+            .custom_data
+            .get("live_block_order")
+            .and_then(Value::as_i64);
 
-        let existing_note_id = adapter
-            .find_live_note_by_block_order(&lsn, block_order)
-            .await?;
-
-        match existing_note_id {
-            Some(note_id) => {
-                local_settings.action = NoteImportAction::Update(note_id);
+        match (explicit_note_id, explicit_block_order) {
+            // The file names its note: trust it, and leave `live_block_order` as parsed.
+            (Some(note_id), _) => {
                 agg.update_note_ids.push(note_id);
             }
-            None => {
-                local_settings.action = NoteImportAction::Add;
+            // No note id, but the file states its position: trust that over the counter.
+            (None, Some(block_order)) => {
+                resolve_live_note_by_block_order(
+                    &mut local_settings,
+                    agg,
+                    adapter,
+                    &lsn,
+                    block_order,
+                )
+                .await?;
+            }
+            // A live source file block: its position within the file is its identity.
+            (None, None) => {
+                let bo = file_counters.entry(lsn.clone()).or_insert(0);
+                let block_order = *bo;
+                *bo += 1;
+                resolve_live_note_by_block_order(
+                    &mut local_settings,
+                    agg,
+                    adapter,
+                    &lsn,
+                    block_order,
+                )
+                .await?;
+                local_settings.custom_data.insert(
+                    "live_block_order".to_string(),
+                    Value::Number(block_order.into()),
+                );
             }
         }
 
@@ -372,11 +428,6 @@ async fn aggregate_note_into_parser_group(
         if !local_settings.tags.iter().any(|t| t == &live_tag) {
             local_settings.tags.push(live_tag);
         }
-
-        local_settings.custom_data.insert(
-            "live_block_order".to_string(),
-            Value::Number(block_order.into()),
-        );
     }
 
     agg.notes.push((local_settings, note_data_res));
@@ -997,6 +1048,170 @@ mod tests {
                 .and_then(|v| v.as_i64()),
             Some(0),
             "live note should still have block_order 0 after re-import"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Three live notes. Block 0 has one cloze, block 2 has three, so routing a per-note file for
+    /// block 2 to block 0 trips `match_cards`' range check rather than failing silently.
+    fn test_file_three_live_notes() -> &'static str {
+        "<!--- spares: start --->\n\
+         <!--- # g-live-sync-name: per_note_sync --->\n\
+         <!--- spares: note start --->\n\
+         Block zero {{ alpha }}\n\
+         <!--- spares: note end --->\n\
+         <!--- spares: note start --->\n\
+         Block one {{ beta }}\n\
+         <!--- spares: note end --->\n\
+         <!--- spares: note start --->\n\
+         Block two {{ gamma }} and {{ delta }} and {{ epsilon }}\n\
+         <!--- spares: note end --->\n\
+         <!--- spares: end --->\n"
+    }
+
+    /// Importing a generated per-note file must update the note it names. `live_block_order` is
+    /// re-derived from a counter that restarts at 0 for every file, so before this was fixed a
+    /// single-note file always resolved to block 0 of its sync group and overwrote that note.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn test_per_note_file_updates_note_it_names(pool: SqlitePool) {
+        enable_test_mode();
+        let mut adapter =
+            SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
+        let all_parsers = get_all_parsers()
+            .into_iter()
+            .map(|x| x())
+            .collect::<Vec<_>>();
+        let markdown = all_parsers
+            .iter()
+            .find(|p| p.get_parser_name() == "markdown")
+            .unwrap();
+
+        let dir = std::env::temp_dir().join(format!("spares_test_per_note_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live_file = dir.join("live_source.md");
+        std::fs::write(&live_file, test_file_three_live_notes()).unwrap();
+
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &[live_file.as_path()],
+            false,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let notes = list_notes(
+            &pool,
+            FilterOptions {
+                page: Some(1),
+                limit: Some(9999),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(notes.len(), 3, "expected 3 live notes after first import");
+
+        let note_at = |block_order: i64| {
+            notes
+                .iter()
+                .find(|n| {
+                    n.custom_data
+                        .get("live_block_order")
+                        .and_then(|v| v.as_i64())
+                        == Some(block_order)
+                })
+                .unwrap_or_else(|| panic!("expected a note at block_order {block_order}"))
+                .clone()
+        };
+        let block_zero = note_at(0);
+        let block_two = note_at(2);
+        let block_zero_data_before = block_zero.data.clone();
+
+        // A per-note file as `spares note generate` writes it: explicit note id plus the live
+        // custom data. It is the only note in the file, so the block counter would say 0.
+        let per_note_file = dir.join("block_two.md");
+        std::fs::write(
+            &per_note_file,
+            format!(
+                "<!--- spares: start --->\n\
+                 <!--- # note-id: {} --->\n\
+                 <!--- # custom-data: {{\"live_sync_name\":\"per_note_sync\",\"live_block_order\":2}} --->\n\
+                 <!--- spares: note start --->\n\
+                 Block two edited {{{{ gamma }}}} and {{{{ delta }}}} and {{{{ epsilon }}}}\n\
+                 <!--- spares: note end --->\n\
+                 <!--- spares: end --->\n",
+                block_two.id
+            ),
+        )
+        .unwrap();
+
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &[per_note_file.as_path()],
+            false,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let notes_after = list_notes(
+            &pool,
+            FilterOptions {
+                page: Some(1),
+                limit: Some(9999),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            notes_after.len(),
+            3,
+            "per-note import must not create a new note"
+        );
+
+        let block_two_after = notes_after
+            .iter()
+            .find(|n| n.id == block_two.id)
+            .expect("note named by the file should still exist");
+        assert!(
+            block_two_after.data.contains("Block two edited"),
+            "the note named by the file should have been updated, got `{}`",
+            block_two_after.data
+        );
+        assert_eq!(
+            block_two_after
+                .custom_data
+                .get("live_block_order")
+                .and_then(|v| v.as_i64()),
+            Some(2),
+            "live_block_order must not be renumbered by a per-note import"
+        );
+
+        let block_zero_after = notes_after
+            .iter()
+            .find(|n| n.id == block_zero.id)
+            .expect("block 0 note should still exist");
+        assert_eq!(
+            block_zero_after.data, block_zero_data_before,
+            "importing a per-note file must leave block 0 of the sync group untouched"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

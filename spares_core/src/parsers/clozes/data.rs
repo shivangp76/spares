@@ -10,7 +10,7 @@ use crate::parsers::image_occlusion::ImageOcclusionCloze;
 
 /// A fixed-size 12-byte UID (always 12 ASCII hex characters).
 /// Avoids the heap allocation of `Option<String>`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ClozeUid(pub [u8; 12]);
 
 impl fmt::Display for ClozeUid {
