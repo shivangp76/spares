@@ -15,7 +15,7 @@ use crate::parsers::parse_card_settings;
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Internal: mint a 12-hex-char cloze uid using a single `random::<u64>()` call.
-fn mint_cloze_uid(rng: &mut impl rand::Rng) -> ClozeUid {
+pub(super) fn mint_cloze_uid(rng: &mut impl rand::Rng) -> ClozeUid {
     let val: u64 = rng.random();
     let mut uid_bytes = [0u8; 12];
     uid_bytes[0] = HEX[((val >> 44) & 0x0f) as usize];

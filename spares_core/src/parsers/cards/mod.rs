@@ -9,7 +9,6 @@ use super::FrontConceal;
 use crate::Error;
 use crate::LibraryError;
 use crate::helpers::merge_by_key;
-use crate::parsers::CliData;
 use crate::parsers::ClozeData;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeGroupingSettings;
@@ -45,6 +44,7 @@ use grouping::apply_conceal_and_reveal;
 use grouping::group_clozes;
 use grouping::modify_card_settings;
 pub use match_cards::*;
+use uids::mint_cloze_uid;
 pub use uids::*;
 pub use validation::*;
 
@@ -580,54 +580,82 @@ pub fn add_order_to_note_data(
                     NotePart::ImageOcclusion { data, .. } => {
                         parser.construct_image_occlusion(data, ConstructImageOcclusionType::Note)
                     }
-                    NotePart::Cli { exec } => {
-                        parser.construct_cli_block(&CliData { exec: exec.clone() })
-                    }
+                    NotePart::Cli { data } => parser.construct_cli_block(data),
                 })
                 .collect::<String>()
         });
     Ok((note_data, card_datas))
 }
 
-/// Build one [`CardData`] per CLI block. Each card's `data` consists of the
-/// surrounding text (everything outside the block, joined) followed by a
-/// [`NotePart::Cli`] with the parsed `exec`. Cards are sequenced 1..N in the
-/// order the blocks appear in the note so the database can reference them by
-/// `(note_id, order)`.
+/// Build one [`CardData`] per CLI block. Cards are sequenced 1..N in the order the blocks appear
+/// in the note so the database can reference them by `(note_id, order)`.
 ///
-/// `_add_order` is ignored because CLI blocks have no grouping or order
-/// markers to inject — ordering is always sequential from the block's
-/// position in the note. Callers pass the same `add_order` value that would
-/// be used for cloze-grouped cards; for CLI cards it is a safe no-op.
+/// Every card's `data` is the *whole* note, interleaved as
+/// `SurroundingData, Cli, SurroundingData, Cli, …, SurroundingData`. Note text is rebuilt from the
+/// first card's parts alone (see [`add_order_to_note_data`] and `complete_note`), so a card that
+/// carried only its own block would drop every other block from the stored note — and, when a
+/// single block sat mid-note, move it to the end. Nothing renders a CLI card from its parts (the
+/// terminal preamble is recomputed by the review API via [`cli::compute_surrounding_text`]), so
+/// giving each card the same full-note parts costs nothing.
+///
+/// When `add_order` is set the caller is rewriting the note, so any block missing an `id` is given
+/// a freshly minted one. That uid is what lets [`CardData::cloze_uid`] reconcile cards across an
+/// edit; without it a block's card is identified only by its position, and inserting or removing a
+/// block silently re-points existing cards at other commands. Parses that only *read* stored data
+/// (`add_order == false`) must never mint, or the old and new sides of an update would each invent
+/// their own uids and match nothing.
 fn build_cli_cards(
     _parser: &dyn Parseable,
     data: &str,
     cli_blocks: &[(cli::CliData, Range<usize>)],
-    _add_order: bool,
+    add_order: bool,
 ) -> Vec<CardData> {
-    let surrounding_text = cli::compute_surrounding_text(data, cli_blocks);
-    let mut cards: Vec<CardData> = Vec::with_capacity(cli_blocks.len());
-    for (order_n, (cli_data, _range)) in cli_blocks.iter().enumerate() {
-        let order_n = order_n + 1;
-        let grouping = ClozeGrouping::Auto(order_n as u32);
-        cards.push(CardData {
-            order: Some(order_n),
-            previous_order: Some(order_n),
-            grouping,
-            is_suspended: None,
-            front_conceal: FrontConceal::default(),
-            back_reveal: BackReveal::default(),
-            back_emphasis: DEFAULT_BACK_EMPHASIS,
-            back_type: BackType::Cli,
-            inherit: None,
-            cloze_uid: None,
-            data: vec![
-                NotePart::SurroundingData(surrounding_text.clone()),
-                NotePart::Cli {
-                    exec: cli_data.exec.clone(),
-                },
-            ],
+    let mut rng = rand::rng();
+    let blocks: Vec<cli::CliData> = cli_blocks
+        .iter()
+        .map(|(cli_data, _range)| {
+            let mut cli_data = cli_data.clone();
+            if add_order && cli_data.id.is_none() {
+                cli_data.id = Some(mint_cloze_uid(&mut rng));
+            }
+            cli_data
+        })
+        .collect();
+
+    // The full note, with each block's text replaced by its (possibly newly minted) `CliData`.
+    let mut note_parts: Vec<NotePart> = Vec::with_capacity(blocks.len() * 2 + 1);
+    let mut last_end = 0;
+    for (cli_data, (_, range)) in blocks.iter().zip(cli_blocks.iter()) {
+        note_parts.push(NotePart::SurroundingData(
+            data[last_end..range.start].to_string(),
+        ));
+        note_parts.push(NotePart::Cli {
+            data: cli_data.clone(),
         });
+        last_end = range.end;
     }
-    cards
+    note_parts.push(NotePart::SurroundingData(data[last_end..].to_string()));
+
+    blocks
+        .into_iter()
+        .enumerate()
+        .map(|(i, cli_data)| {
+            let order_n = i + 1;
+            CardData {
+                order: Some(order_n),
+                // Only consulted when no old card carries a uid, i.e. when migrating a note whose
+                // stored text predates `id` keys. Position is the right answer there.
+                previous_order: Some(order_n),
+                grouping: ClozeGrouping::Auto(order_n as u32),
+                is_suspended: None,
+                front_conceal: FrontConceal::default(),
+                back_reveal: BackReveal::default(),
+                back_emphasis: DEFAULT_BACK_EMPHASIS,
+                back_type: BackType::Cli,
+                inherit: None,
+                cloze_uid: cli_data.id,
+                data: note_parts.clone(),
+            }
+        })
+        .collect()
 }

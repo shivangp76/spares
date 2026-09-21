@@ -250,6 +250,10 @@ pub trait Parseable: Send + Sync {
         let mut out = String::new();
         out.push_str(&self.construct_comment("spares: cli start"));
         out.push_str(&self.construct_comment(&exec_line));
+        // A uid is always 12 hex characters, so it needs no escaping.
+        if let Some(ref id) = cli_data.id {
+            out.push_str(&self.construct_comment(&format!(r#"id = "{id}""#)));
+        }
         out.push_str(&self.construct_comment("spares: cli end"));
         out
     }
