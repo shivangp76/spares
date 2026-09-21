@@ -174,11 +174,7 @@ pub trait Parseable: Send + Sync {
     fn get_cli_blocks(&self, data: &str) -> Result<Vec<CliBlockMatch>, LibraryError> {
         let start = self.construct_comment("spares: cli start");
         let end = self.construct_comment("spares: cli end");
-        let regex_string = format!(
-            "(?s){}(.*?)\n{}",
-            fancy_regex::escape(&start),
-            fancy_regex::escape(&end),
-        );
+        let regex_string = cli::cli_block_regex_string(&start, &end);
         let cli_regex = get_or_compile_regex(&regex_string).map_err(|e| {
             LibraryError::Note(crate::NoteErrorKind::Other {
                 description: e.to_string(),
