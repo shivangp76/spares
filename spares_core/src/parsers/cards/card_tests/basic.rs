@@ -483,3 +483,107 @@ fn test_get_cards_cli_block_mix_with_cloze_errors() {
         "unexpected error: {msg}"
     );
 }
+
+/// Every CLI block in a note gets its own card, each with its own uid.
+#[test]
+fn test_get_cards_cli_multi_block_produces_one_card_each() {
+    use indoc::indoc;
+    let data = indoc! {r#"
+        First task.
+        <!--- spares: cli start --->
+        <!--- exec = "task one" --->
+        <!--- spares: cli end --->
+        Second task.
+        <!--- spares: cli start --->
+        <!--- exec = "task two" --->
+        <!--- spares: cli end --->
+    "#};
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    assert_eq!(cards.len(), 2);
+    assert_eq!(cards[0].order, Some(1));
+    assert_eq!(cards[1].order, Some(2));
+    let uids = cards
+        .iter()
+        .map(|c| c.cloze_uid.expect("every block should be given a uid"))
+        .collect::<Vec<_>>();
+    assert_ne!(uids[0], uids[1], "each block gets its own uid");
+}
+
+/// Note text must survive card assembly untouched apart from the minted `id` lines. Card parts are
+/// what the note is rebuilt from, so a card carrying only its own block would drop the others.
+#[test]
+fn test_add_order_to_note_data_cli_preserves_all_blocks_and_positions() {
+    use crate::parsers::add_order_to_note_data;
+    use crate::parsers::cli::parse_cli_data;
+    use indoc::indoc;
+
+    let data = indoc! {r#"
+        Intro text.
+        <!--- spares: cli start --->
+        <!--- exec = "task one" --->
+        <!--- spares: cli end --->
+        Text between the blocks.
+        <!--- spares: cli start --->
+        <!--- exec = "task two" --->
+        <!--- spares: cli end --->
+        Trailing text.
+    "#};
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, cards) = add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    assert_eq!(cards.len(), 2);
+
+    // Both blocks survive, in order, with their surrounding text still in place.
+    let blocks = parse_cli_data(parser.as_ref(), &new_data).unwrap();
+    assert_eq!(blocks.len(), 2, "both blocks must survive: {new_data}");
+    assert_eq!(blocks[0].0.exec, "task one");
+    assert_eq!(blocks[1].0.exec, "task two");
+    for text in ["Intro text.", "Text between the blocks.", "Trailing text."] {
+        assert!(new_data.contains(text), "lost `{text}`: {new_data}");
+    }
+    let between = new_data.find("Text between the blocks.").unwrap();
+    assert!(
+        blocks[0].1.end <= between && between <= blocks[1].1.start,
+        "text between the blocks must stay between them: {new_data}"
+    );
+
+    // The only difference from the input is the minted `id` lines.
+    let stripped = new_data
+        .lines()
+        .filter(|line| !line.contains("id = "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(stripped.trim_end(), data.trim_end());
+
+    // Each card's uid matches its own block, so cards stay bound to their own command.
+    assert_eq!(cards[0].cloze_uid, blocks[0].0.id);
+    assert_eq!(cards[1].cloze_uid, blocks[1].0.id);
+}
+
+/// A parse that only reads stored data must not invent uids: minting on both sides of an update
+/// would give the old and new cards different uids and match nothing.
+#[test]
+fn test_get_cards_cli_without_add_order_does_not_mint() {
+    use indoc::indoc;
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- spares: cli end --->
+    "#};
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards = get_cards(parser.as_ref(), None, data, false, MOVE_FILES).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert!(cards[0].cloze_uid.is_none());
+
+    // An id already in the text is read back on both paths.
+    let with_id = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- id = "a1b2c3d4e5f6" --->
+        <!--- spares: cli end --->
+    "#};
+    for add_order in [false, true] {
+        let cards = get_cards(parser.as_ref(), None, with_id, add_order, MOVE_FILES).unwrap();
+        assert_eq!(cards[0].cloze_uid.unwrap().to_string(), "a1b2c3d4e5f6");
+    }
+}

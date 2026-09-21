@@ -185,6 +185,41 @@ The new card is created with the same scheduling and review history as note 5's 
 - Each cloze in a note can carry its own `inh:` pointing at a different source card.
 - `inh:` is ephemeral: it is consumed when the note is created or updated and is stripped from the stored note data, so it will not be re-applied on subsequent imports.
 
+## CLI cards
+
+A CLI card is reviewed by running a command rather than by flipping a rendered document. Mark one
+with a `spares: cli` block, written in the host parser's comment syntax:
+
+```md
+Have the tests been kept green?
+<!--- spares: cli start --->
+<!--- exec = "pytest tests/" --->
+<!--- spares: cli end --->
+```
+
+At review time the text outside the block is printed in the terminal, then `exec` runs under
+`sh -c`. The command owns stdin, so it may prompt you. It must finish by writing a single JSON
+object to stdout — `{"score": 0.87}`, a float in `[0, 1]` — which is converted to a scheduler
+rating.
+
+A note may hold several blocks; each one is a separate card. A note cannot mix CLI blocks with
+clozes or image occlusions — give the CLI block its own note.
+
+### Block identity
+
+Blocks carry an `id`, which spares mints for you the first time it writes the note:
+
+```md
+<!--- spares: cli start --->
+<!--- exec = "pytest tests/" --->
+<!--- id = "a1b2c3d4e5f6" --->
+<!--- spares: cli end --->
+```
+
+It does the same job as a cloze's `id:` key. A card is bound to the `id` of its block, not to the
+block's position, so you can add, remove, and reorder blocks in a note and every remaining card
+keeps its own command and review history.
+
 ## Fast note creation
 
 Using snippets, such as through [LuaSnip](https://github.com/L3MON4D3/LuaSnip), can speed up note creation.

@@ -195,3 +195,67 @@ fn test_compute_surrounding_text_multi_block() {
     assert!(surrounding.contains("End."));
     assert!(!surrounding.contains("exec"));
 }
+
+#[test]
+fn test_parse_cli_block_id() {
+    let parser = MarkdownParser::new();
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- id = "a1b2c3d4e5f6" --->
+        <!--- spares: cli end --->
+    "#};
+    let blocks = parse_cli_data(&parser, data).unwrap();
+    assert_eq!(blocks.len(), 1);
+    let (cli_data, _range) = &blocks[0];
+    assert_eq!(cli_data.exec, "pytest");
+    assert_eq!(cli_data.id.unwrap().to_string(), "a1b2c3d4e5f6");
+}
+
+#[test]
+fn test_parse_cli_block_without_id_is_none() {
+    let parser = MarkdownParser::new();
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- spares: cli end --->
+    "#};
+    let blocks = parse_cli_data(&parser, data).unwrap();
+    assert!(blocks[0].0.id.is_none(), "`id` is optional");
+}
+
+#[test]
+fn test_parse_cli_block_malformed_id_errors() {
+    let parser = MarkdownParser::new();
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- id = "nothex" --->
+        <!--- spares: cli end --->
+    "#};
+    let result = parse_cli_data(&parser, data);
+    assert!(result.is_err(), "expected error for a malformed uid");
+    let msg = format!("{}", result.unwrap_err());
+    assert!(msg.contains("invalid cloze uid"), "unexpected error: {msg}");
+}
+
+#[test]
+fn test_construct_cli_block_round_trips_id() {
+    let parser = MarkdownParser::new();
+    let data = indoc! {r#"
+        <!--- spares: cli start --->
+        <!--- exec = "pytest" --->
+        <!--- id = "a1b2c3d4e5f6" --->
+        <!--- spares: cli end --->
+    "#};
+    let blocks = parse_cli_data(&parser, data).unwrap();
+    let (cli_data, _range) = &blocks[0];
+    let reconstructed = parser.construct_cli_block(cli_data);
+    let reparsed = parse_cli_data(&parser, &reconstructed).unwrap();
+    assert_eq!(reparsed.len(), 1);
+    assert_eq!(reparsed[0].0, *cli_data);
+    assert!(
+        reconstructed.contains(r#"id = "a1b2c3d4e5f6""#),
+        "id should be written back: {reconstructed}"
+    );
+}

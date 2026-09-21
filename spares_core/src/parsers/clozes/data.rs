@@ -33,6 +33,37 @@ impl TryFrom<&str> for ClozeUid {
     }
 }
 
+// Serialized as its 12-character hex string rather than as a byte array, so that a uid written
+// into note text (such as a CLI block's `id` key) reads the same as a cloze's `id:` setting.
+// Deserialization goes through `TryFrom<&str>` to keep the length and hex-digit validation.
+impl Serialize for ClozeUid {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ClozeUid {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ClozeUidVisitor;
+
+        impl serde::de::Visitor<'_> for ClozeUidVisitor {
+            type Value = ClozeUid;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string of 12 hexadecimal characters")
+            }
+
+            // Takes `&str` rather than `String` so it works with deserializers that cannot hand
+            // out borrowed data (such as `toml_edit`'s, which owns its parsed strings).
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Self::Value, E> {
+                ClozeUid::try_from(s).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(ClozeUidVisitor)
+    }
+}
+
 /// See [`ClozeGroupingSettings`] for documentation.
 pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
 
