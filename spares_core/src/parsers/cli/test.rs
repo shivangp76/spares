@@ -259,3 +259,49 @@ fn test_construct_cli_block_round_trips_id() {
         "id should be written back: {reconstructed}"
     );
 }
+
+/// Note data is trimmed before parsing, so a block that is the last thing in a note has no
+/// newline after its end marker. It must still parse.
+#[test]
+fn test_parse_cli_block_at_end_of_note_without_trailing_newline() {
+    let parser = MarkdownParser::new();
+    let data = indoc! {r#"
+        Some prompt text.
+        <!--- spares: cli start --->
+        <!--- exec = "pytest tests/" --->
+        <!--- spares: cli end --->
+    "#}
+    .trim_end()
+    .to_string();
+    assert!(!data.ends_with('\n'), "the fixture must end at the marker");
+
+    let blocks = parse_cli_data(&parser, &data).unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].0.exec, "pytest tests/");
+    assert_eq!(
+        blocks[0].1.end,
+        data.len(),
+        "the block should run to the end of the note"
+    );
+    assert_eq!(
+        compute_surrounding_text(&data, &blocks),
+        "Some prompt text.\n"
+    );
+}
+
+/// The end marker still has to be the whole line — an optional trailing newline must not let
+/// trailing text on the marker's line slip through.
+#[test]
+fn test_cli_block_end_marker_must_end_the_line() {
+    let parser = MarkdownParser::new();
+    let data = concat!(
+        "<!--- spares: cli start --->\n",
+        "<!--- exec = \"pytest\" --->\n",
+        "<!--- spares: cli end ---> trailing junk\n",
+    );
+    let result = parse_cli_data(&parser, data);
+    assert!(
+        result.is_err(),
+        "an end marker with trailing text should not terminate the block"
+    );
+}

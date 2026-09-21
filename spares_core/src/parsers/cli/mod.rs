@@ -138,6 +138,25 @@ pub(crate) fn check_unterminated_blocks(
     Ok(())
 }
 
+/// Build the regex matching a single `spares: cli start…end` block, given the host parser's
+/// rendered start and end markers.
+///
+/// `construct_comment` terminates every marker with a newline, but note data is trimmed before it
+/// is parsed (see `complete_note`), so a block sitting at the very end of a note has nothing after
+/// its end marker. The trailing newline is therefore matched as "a newline *or* end of input" —
+/// requiring the newline outright makes such a block read as unterminated, which is how a note
+/// whose only block is its last line becomes unparseable.
+///
+/// Shared by [`get_cli_blocks`] and the `Parseable::get_cli_blocks` trait default, which cannot
+/// delegate to each other (object safety) and must not drift apart.
+pub(crate) fn cli_block_regex_string(start: &str, end: &str) -> String {
+    format!(
+        "(?s){}(.*?)\n{}(?:\n|\\z)",
+        fancy_regex::escape(start),
+        fancy_regex::escape(end.strip_suffix('\n').unwrap_or(end)),
+    )
+}
+
 /// Parse all `spares: cli start…end` blocks out of `data`. Returns one
 /// [`CliBlockMatch`] per block, ordered by occurrence. The host parser's
 /// `construct_comment` / `extract_comment` are used so this works for any
@@ -152,11 +171,7 @@ pub fn get_cli_blocks(
 ) -> Result<Vec<CliBlockMatch>, LibraryError> {
     let start = parser.construct_comment("spares: cli start");
     let end = parser.construct_comment("spares: cli end");
-    let regex_string = format!(
-        "(?s){}(.*?)\n{}",
-        fancy_regex::escape(&start),
-        fancy_regex::escape(&end),
-    );
+    let regex_string = cli_block_regex_string(&start, &end);
     let cli_regex = crate::helpers::get_or_compile_regex(&regex_string).map_err(|e| {
         LibraryError::Note(NoteErrorKind::Other {
             description: e.to_string(),
