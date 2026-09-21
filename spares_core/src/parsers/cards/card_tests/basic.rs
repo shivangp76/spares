@@ -514,9 +514,10 @@ fn test_get_cards_cli_multi_block_produces_one_card_each() {
 /// what the note is rebuilt from, so a card carrying only its own block would drop the others.
 #[test]
 fn test_add_order_to_note_data_cli_preserves_all_blocks_and_positions() {
+    use indoc::indoc;
+
     use crate::parsers::add_order_to_note_data;
     use crate::parsers::cli::parse_cli_data;
-    use indoc::indoc;
 
     let data = indoc! {r#"
         Intro text.

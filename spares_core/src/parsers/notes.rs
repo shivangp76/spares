@@ -579,4 +579,44 @@ mod tests {
             }
         }
     }
+
+    /// A note whose CLI block is its last line. `complete_note` trims note data before parsing, so
+    /// there is no newline after the end marker; requiring one made the block read as unterminated
+    /// and the whole note unparseable.
+    #[test]
+    fn test_get_notes_cli_block_at_end_of_note() {
+        let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
+        let adapter = get_adapter_from_string("spares").unwrap();
+        let data = indoc! {r#"
+            // spares: note start
+            This is a test
+            // spares: cli start
+            // exec = "prompt_score"
+            // spares: cli end
+
+            // spares: note end
+        "#};
+        let notes = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None).unwrap();
+        assert_eq!(notes.len(), 1);
+        let (settings, note_data) = notes.first().unwrap();
+        assert!(
+            settings.errors_and_warnings.is_empty(),
+            "expected a clean parse, got {:?}",
+            settings
+                .errors_and_warnings
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        let note_data = note_data.as_ref().expect("note should have parseable data");
+        assert_eq!(settings.cards_count, Some(1));
+        assert!(
+            note_data.contains(r#"exec = "prompt_score""#),
+            "block should survive: {note_data}"
+        );
+        assert!(
+            note_data.contains("id = "),
+            "a uid should be minted into the block: {note_data}"
+        );
+    }
 }
