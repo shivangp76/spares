@@ -852,6 +852,141 @@ mod tests {
             .id
     }
 
+    /// Returns each of the note's cards as `(cloze_uid, card_id)`, ordered by `"order"`.
+    async fn cards_by_uid(pool: &SqlitePool, note_id: NoteId) -> Vec<(String, i64)> {
+        let cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        cards
+            .iter()
+            .map(|card| {
+                let uid = card
+                    .custom_data
+                    .get("cloze_uid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("card {} has no cloze_uid", card.id))
+                    .to_string();
+                (uid, card.id)
+            })
+            .collect()
+    }
+
+    async fn update_note_data(pool: &SqlitePool, note_id: NoteId, data: &str) {
+        update_notes(
+            pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                data: Some(data.to_string()),
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::None,
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Cards follow their `id:` cloze uid, not their position in the note.
+    ///
+    /// Live notes are submitted without `o:` markers, so their `previous_order` values are pure
+    /// document positions. Matching on those alone makes an appended cloze claim an order no
+    /// existing card has, and makes an inserted or removed cloze shift every card after it onto
+    /// someone else's material.
+    #[sqlx::test]
+    async fn test_update_note_matches_cards_by_cloze_uid(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let note_id = create_test_note(
+            &pool,
+            parser.id,
+            indoc! {r"
+            {{[id:aaaaaaaaaaaa] First cloze }}
+            {{[id:bbbbbbbbbbbb] Second cloze }}
+            {{[id:cccccccccccc] Third cloze }}"},
+            Vec::new(),
+        )
+        .await;
+
+        let original = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            original
+                .iter()
+                .map(|(uid, _)| uid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"],
+        );
+
+        // Append a cloze. Positionally it claims order 4, which no existing card has.
+        update_note_data(
+            &pool,
+            note_id,
+            indoc! {r"
+            {{[id:aaaaaaaaaaaa] First cloze }}
+            {{[id:bbbbbbbbbbbb] Second cloze }}
+            {{[id:cccccccccccc] Third cloze }}
+            {{[id:dddddddddddd] Fourth cloze }}"},
+        )
+        .await;
+
+        let after_append = cards_by_uid(&pool, note_id).await;
+        assert_eq!(after_append.len(), 4, "appending a cloze adds one card");
+        assert_eq!(
+            &after_append[..3],
+            &original[..],
+            "the three existing cards keep their ids when a cloze is appended"
+        );
+
+        // Delete the middle cloze. Positionally, every following card shifts up by one.
+        update_note_data(
+            &pool,
+            note_id,
+            indoc! {r"
+            {{[id:aaaaaaaaaaaa] First cloze }}
+            {{[id:cccccccccccc] Third cloze }}
+            {{[id:dddddddddddd] Fourth cloze }}"},
+        )
+        .await;
+
+        let after_delete = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            after_delete,
+            vec![
+                original[0].clone(),
+                original[2].clone(),
+                after_append[3].clone(),
+            ],
+            "deleting a cloze deletes only its own card; the rest keep their ids"
+        );
+
+        // Swap the first and last clozes.
+        update_note_data(
+            &pool,
+            note_id,
+            indoc! {r"
+            {{[id:dddddddddddd] Fourth cloze }}
+            {{[id:cccccccccccc] Third cloze }}
+            {{[id:aaaaaaaaaaaa] First cloze }}"},
+        )
+        .await;
+
+        let after_swap = cards_by_uid(&pool, note_id).await;
+        assert_eq!(
+            after_swap,
+            vec![
+                after_append[3].clone(),
+                original[2].clone(),
+                original[0].clone(),
+            ],
+            "reordering clozes moves cards with them rather than reassigning material"
+        );
+    }
+
     #[sqlx::test]
     async fn test_update_note_match_cards(pool: SqlitePool) -> () {
         // Tests that:

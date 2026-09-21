@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -19,9 +20,47 @@ use crate::model::CardId;
 use crate::model::NoteId;
 use crate::model::SpecialState;
 use crate::parsers::CardData;
+use crate::parsers::ClozeUid;
 use crate::parsers::MatchCardsResult;
 use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::match_cards;
+
+/// Works out, for each new card, which old card it continues — the input `match_cards` needs to
+/// reconcile the submitted note against the cards already in the database.
+///
+/// `id:` cloze uids are preferred over `previous_order`. `previous_order` holds the `o:` markers
+/// found in the submitted text, so it encodes a card's *position*: inserting a cloze shifts every
+/// following card, and appending one claims an order that no old card has. Uids are minted per
+/// cloze and survive edits, so matching on them keeps a card attached to its own material when
+/// clozes are added, removed, or reordered.
+///
+/// Positional matching remains the fallback for notes whose cards carry no uid (notes predating uid
+/// minting, and CLI-block cards).
+fn resolve_previous_orders(old_cards: &[CardData], new_cards: &[CardData]) -> Vec<Option<usize>> {
+    // An `r:` cloze yields a forward and a backward card sharing one uid, so a uid can map to more
+    // than one order. Hand them out in document order.
+    let mut old_orders_by_uid: HashMap<ClozeUid, VecDeque<usize>> = HashMap::new();
+    for card in old_cards {
+        if let (Some(uid), Some(order)) = (card.cloze_uid, card.order) {
+            old_orders_by_uid.entry(uid).or_default().push_back(order);
+        }
+    }
+    if old_orders_by_uid.is_empty() {
+        return new_cards.iter().map(|x| x.previous_order).collect();
+    }
+
+    new_cards
+        .iter()
+        .map(|new_card| match new_card.cloze_uid {
+            // A uid with no match among the old cards is a cloze that did not exist before, so it
+            // has no previous order and `match_cards` will create a card for it.
+            Some(uid) => old_orders_by_uid
+                .get_mut(&uid)
+                .and_then(VecDeque::pop_front),
+            None => new_card.previous_order,
+        })
+        .collect()
+}
 
 #[expect(clippy::too_many_lines)]
 pub(super) async fn update_cards(
@@ -34,12 +73,7 @@ pub(super) async fn update_cards(
     // Line up cards
     // The card's id in the database cannot change since they are referred to in `review_log`.
     let old_cards_orders = old_cards.iter().map(|x| x.order).collect::<Vec<_>>();
-    // `previous_order` holds the order references from the submitted note text (before
-    // sequential renumbering), which is what `match_cards` needs to reconcile with old DB cards.
-    let new_cards_orders = new_cards
-        .iter()
-        .map(|x| x.previous_order)
-        .collect::<Vec<_>>();
+    let new_cards_orders = resolve_previous_orders(old_cards, new_cards);
     let match_cards_result = match_cards(&old_cards_orders, &new_cards_orders)?;
     let MatchCardsResult {
         move_card_indices,
@@ -99,6 +133,29 @@ pub(super) async fn update_cards(
                 || old_card.cloze_uid != new_card.cloze_uid
         })
         .collect();
+
+    // Resolve the cards to delete to their ids *before* anything is moved. Moves renumber cards
+    // into orders that may be slated for deletion (removing a cloze from the middle of a note
+    // shifts a later card onto the removed card's order), so deleting by `"order"` afterwards
+    // would take the moved card with it.
+    let mut delete_card_ids: Vec<CardId> = Vec::new();
+    for chunk in delete_card_indices.chunks(MAX_ROWS_IN_QUERY) {
+        let query_str = format!(
+            "SELECT id FROM card WHERE note_id = ? AND \"order\" IN ({})",
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_scalar::<_, CardId>(&query_str);
+        query = query.bind(note_id);
+        for card_index in chunk {
+            query = query.bind(*card_index as u32);
+        }
+        delete_card_ids.extend(
+            query
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?,
+        );
+    }
 
     // Update moved cards (or cards with the same index where their `back_type`, `special_state`, or `cloze_uid` changed)
     let indices = move_card_indices
@@ -185,15 +242,14 @@ pub(super) async fn update_cards(
     }
 
     // Delete cards
-    for chunk in delete_card_indices.chunks(MAX_ROWS_IN_QUERY) {
+    for chunk in delete_card_ids.chunks(MAX_ROWS_IN_QUERY) {
         let query_str = format!(
-            "DELETE FROM card WHERE note_id = ? AND \"order\" IN ({})",
+            "DELETE FROM card WHERE id IN ({})",
             placeholders(chunk.len())
         );
         let mut query = sqlx::query(query_str.as_str());
-        query = query.bind(note_id);
-        for card_index in chunk {
-            query = query.bind(*card_index as u32);
+        for card_id in chunk {
+            query = query.bind(*card_id);
         }
         query
             .execute(&mut *conn)
