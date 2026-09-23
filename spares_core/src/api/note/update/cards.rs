@@ -37,6 +37,13 @@ use crate::parsers::match_cards;
 /// Positional matching remains the fallback for notes whose cards carry no uid (notes predating uid
 /// minting, and CLI-block cards).
 fn resolve_previous_orders(old_cards: &[CardData], new_cards: &[CardData]) -> Vec<Option<usize>> {
+    // With no old cards there is nothing to continue, so every new card is created. The submitted
+    // `o:` markers cannot refer to anything here; live notes are submitted with positional orders,
+    // so trusting them would make a note's first cloze claim an old card `1` that does not exist.
+    if old_cards.is_empty() {
+        return vec![None; new_cards.len()];
+    }
+
     // An `r:` cloze yields a forward and a backward card sharing one uid, so a uid can map to more
     // than one order. Hand them out in document order.
     let mut old_orders_by_uid: HashMap<ClozeUid, VecDeque<usize>> = HashMap::new();

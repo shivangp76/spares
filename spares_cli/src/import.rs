@@ -942,6 +942,66 @@ mod tests {
          <!--- spares: end --->\n"
     }
 
+    /// A live note imported without any clozes has no cards. Adding its first cloze must create a
+    /// card; the importer's positional `o:1` must not be read as a reference to an old card.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn test_live_note_reimport_first_cloze(pool: SqlitePool) {
+        enable_test_mode();
+        let mut adapter =
+            SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let all_parsers = get_all_parsers()
+            .into_iter()
+            .map(|x| x())
+            .collect::<Vec<_>>();
+        let markdown = all_parsers
+            .iter()
+            .find(|p| p.get_parser_name() == "markdown")
+            .unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("spares_test_first_cloze_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("live.md");
+        std::fs::write(&file_path, live_only_file_content()).unwrap();
+        let paths = [file_path.as_path()];
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &paths,
+            false,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+        std::fs::write(
+            &file_path,
+            live_only_file_content().replace("a live note", "a {{ live }} note"),
+        )
+        .unwrap();
+        let res = import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &paths,
+            false,
+            true,
+            false,
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+        res.unwrap();
+    }
+
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn test_live_note_reimport_updates(pool: SqlitePool) {
         enable_test_mode();
