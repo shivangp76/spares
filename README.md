@@ -47,7 +47,6 @@ See our [Getting Started Guide](https://github.com/shivangp76/spares/blob/main/d
 
 - [Getting Started](https://github.com/shivangp76/spares/blob/main/docs/src/getting_started.md)
 - [Concepts](https://github.com/shivangp76/spares/blob/main/docs/src/concepts.md)
-- [Searching](https://github.com/shivangp76/spares/blob/main/docs/src/searching.md)
 - [Workflows](https://github.com/shivangp76/spares/blob/main/docs/src/workflows.md)
 - [Comparison with Anki](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md)
 - [Roadmap](https://github.com/shivangp76/spares/blob/main/docs/src/roadmap.md)
