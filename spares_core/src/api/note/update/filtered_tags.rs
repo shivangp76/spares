@@ -27,7 +27,7 @@ pub(super) async fn rebuild_filtered_tags_for_updated_notes(
     let created_card_ids: Vec<CardId> =
         fetch_batched_query(db, note_responses, MAX_ROWS_IN_QUERY, async |db, chunk| {
             let query_str = format!(
-                "SELECT id FROM cards WHERE note_id IN ({})",
+                "SELECT id FROM card WHERE note_id IN ({})",
                 placeholders(chunk.len())
             );
             let mut query = sqlx::query_scalar(query_str.as_str());
