@@ -43,7 +43,7 @@ use crate::schedulers::effective_review_logs;
 //         sqlx::query_as(
 //             r"SELECT * FROM card
 //              WHERE note_id IN (
-//                 SELECT note_id FROM cards
+//                 SELECT note_id FROM card
 //                 WHERE state = ?
 //                   AND special_state IS NULL
 //                   GROUP BY note_id
