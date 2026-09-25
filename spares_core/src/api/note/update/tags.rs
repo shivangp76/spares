@@ -74,14 +74,16 @@ pub(super) async fn add_tags_to_note(
     // Create missing tags sequentially on the transaction connection (tags are rare, and the
     // connection can't be shared by concurrent tasks anyway).
     for tag in new_tags {
-        let tag_id = create_tag_row(&mut *conn, tag).await?;
-        new_tag_ids.push(tag_id);
+        let created_tag = create_tag_row(&mut *conn, tag).await?;
+        new_tag_ids.push(created_tag.id);
         new_tag_payloads.push(CreateTagPayload {
-            id: Some(tag_id),
+            id: Some(created_tag.id),
             name: (*tag).clone(),
             description: String::new(),
             query: None,
             auto_delete: DEFAULT_TAG_AUTO_DELETE,
+            created_at: created_tag.created_at,
+            updated_at: created_tag.updated_at,
             note_ids: vec![],
             card_ids: vec![],
         });

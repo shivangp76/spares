@@ -137,6 +137,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                created_at: payload.created_at,
+                updated_at: payload.updated_at,
                 note_ids,
                 card_ids,
             };
@@ -163,6 +165,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                created_at: payload.created_at,
+                updated_at: payload.updated_at,
                 note_ids: payload.note_ids,
                 card_ids: payload.card_ids,
             };
@@ -449,7 +453,15 @@ mod tests {
         .await
         .unwrap();
         let at = Utc::now();
-        let payload = json!({"id": tag.id, "name": tag.name, "description": tag.description, "query": null, "auto_delete": false});
+        let payload = json!({
+            "id": tag.id,
+            "name": tag.name,
+            "description": tag.description,
+            "query": null,
+            "auto_delete": false,
+            "created_at": tag.created_at.timestamp(),
+            "updated_at": tag.updated_at.timestamp(),
+        });
         let ids = insert_events(&pool, &[(EventType::CreateTag, payload)], at, None)
             .await
             .unwrap();
@@ -531,7 +543,9 @@ mod tests {
             "name": tag.name,
             "description": tag.description,
             "query": null,
-            "auto_delete": false
+            "auto_delete": false,
+            "created_at": tag.created_at.timestamp(),
+            "updated_at": tag.updated_at.timestamp(),
         });
         let ids = insert_events(&pool, &[(EventType::DeleteTag, payload)], Utc::now(), None)
             .await

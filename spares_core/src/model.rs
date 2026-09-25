@@ -180,6 +180,13 @@ pub struct Tag {
     /// query to be saved and the tag to be rebuilt so those cards can be reviewed again in the
     /// future.
     pub auto_delete: bool,
+    #[serde(with = "ts_seconds")]
+    pub created_at: DateTime<Utc>,
+    /// Bumped when the tag's definition changes or its filtered card set is rebuilt, but not when
+    /// individual cards join or leave the tag. Review snapshots rely on this to tell whether the
+    /// tag was built today.
+    #[serde(with = "ts_seconds")]
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]

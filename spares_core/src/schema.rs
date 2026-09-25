@@ -51,6 +51,9 @@ pub mod parser {
 }
 
 pub mod tag {
+    use chrono::DateTime;
+    use chrono::Utc;
+    use chrono::serde::ts_seconds;
     use serde::Deserialize;
     use serde::Serialize;
 
@@ -92,6 +95,10 @@ pub mod tag {
         pub description: String,
         pub query: Option<String>,
         pub auto_delete: bool,
+        #[serde(with = "ts_seconds")]
+        pub created_at: DateTime<Utc>,
+        #[serde(with = "ts_seconds")]
+        pub updated_at: DateTime<Utc>,
     }
 
     impl TagResponse {
@@ -102,6 +109,8 @@ pub mod tag {
                 description: tag.description.clone(),
                 query: tag.query.clone(),
                 auto_delete: tag.auto_delete,
+                created_at: tag.created_at,
+                updated_at: tag.updated_at,
             }
         }
     }
