@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS tag (
     name VARCHAR NOT NULL,
     description TEXT NOT NULL,
     query TEXT,
-    auto_delete INTEGER NOT NULL CHECK (auto_delete IN (0, 1))
+    auto_delete INTEGER NOT NULL CHECK (auto_delete IN (0, 1)),
+    created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL, -- Store as Unix Time
+    updated_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL -- Store as Unix Time
 );
 
 CREATE TABLE IF NOT EXISTS note (

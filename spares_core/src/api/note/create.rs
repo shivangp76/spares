@@ -794,6 +794,8 @@ async fn add_note_tags(
                 description: String::new(),
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                created_at: tag_response.created_at,
+                updated_at: tag_response.updated_at,
                 note_ids: vec![],
                 card_ids: vec![],
             });
