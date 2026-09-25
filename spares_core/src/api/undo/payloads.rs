@@ -1,5 +1,6 @@
 use chrono::DateTime;
 use chrono::Utc;
+use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -19,6 +20,10 @@ pub struct CreateTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
+    #[serde(with = "ts_seconds")]
+    pub created_at: DateTime<Utc>,
+    #[serde(with = "ts_seconds")]
+    pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub note_ids: Vec<NoteId>,
     #[serde(default)]
@@ -45,6 +50,10 @@ pub struct DeleteTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
+    #[serde(with = "ts_seconds")]
+    pub created_at: DateTime<Utc>,
+    #[serde(with = "ts_seconds")]
+    pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub note_ids: Vec<NoteId>,
     #[serde(default)]

@@ -32,28 +32,31 @@ pub async fn create_tag(
     body: CreateTagRequest,
     log: bool,
 ) -> Result<TagResponse, Error> {
+    let now = Utc::now();
     let payload = CreateTagPayload {
         id: None,
         name: body.name,
         description: body.description,
         query: body.query,
         auto_delete: body.auto_delete,
+        created_at: now,
+        updated_at: now,
         note_ids: vec![],
         card_ids: vec![],
     };
     create_tag_event(db, payload, log).await
 }
 
-/// Inserts a new tag row and returns its id. The caller must have already verified that a tag
+/// Inserts a new tag row and returns it. The caller must have already verified that a tag
 /// with this name does not exist (and deduplicated names), e.g. `update_tags` pre-filters
 /// existing tags. Unlike [`create_tag`], it only supports the `query = None` case and runs on a
 /// supplied connection so it can participate in a surrounding transaction.
 pub(crate) async fn create_tag_row(
     conn: &mut sqlx::sqlite::SqliteConnection,
     name: &str,
-) -> Result<TagId, Error> {
-    sqlx::query_scalar(
-        r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, '', NULL, ?) RETURNING id",
+) -> Result<Tag, Error> {
+    sqlx::query_as(
+        r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, '', NULL, ?) RETURNING *",
     )
     .bind(name)
     .bind(DEFAULT_TAG_AUTO_DELETE)
@@ -84,38 +87,23 @@ pub async fn create_tag_event(
         verify_filtered_tag_query(db, query.as_str()).await?;
     }
 
-    let id: i64 = if let Some(id) = payload.id {
-        sqlx::query(
-            r"INSERT INTO tag (id, name, description, query, auto_delete) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(&payload.name)
-        .bind(&payload.description)
-        .bind(&payload.query)
-        .bind(payload.auto_delete)
-        .execute(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        id
-    } else {
-        sqlx::query_scalar(
-            r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, ?, ?, ?) RETURNING id",
-        )
-        .bind(&payload.name)
-        .bind(&payload.description)
-        .bind(&payload.query)
-        .bind(payload.auto_delete)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?
-    };
-    let tag = Tag {
-        id,
-        name: payload.name.clone(),
-        description: payload.description.clone(),
-        query: payload.query.clone(),
-        auto_delete: payload.auto_delete,
-    };
+    // A NULL `id` makes SQLite assign one. Undoing a `DeleteTag` supplies it, along with the
+    // original timestamps, so the tag comes back exactly as it was.
+    let tag: Tag = sqlx::query_as(
+        r"INSERT INTO tag (id, name, description, query, auto_delete, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING *",
+    )
+    .bind(payload.id)
+    .bind(&payload.name)
+    .bind(&payload.description)
+    .bind(&payload.query)
+    .bind(payload.auto_delete)
+    .bind(payload.created_at.timestamp())
+    .bind(payload.updated_at.timestamp())
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
 
     if let Some(ref query) = payload.query {
         // Execute query and add tag to all notes that match query
@@ -149,6 +137,8 @@ pub async fn create_tag_event(
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            created_at: tag.created_at,
+            updated_at: tag.updated_at,
             note_ids: payload.note_ids.clone(),
             card_ids: payload.card_ids.clone(),
         };
@@ -257,6 +247,8 @@ async fn merge_tag_into(
         description: source_tag.description.clone(),
         query: source_tag.query.clone(),
         auto_delete: source_tag.auto_delete,
+        created_at: source_tag.created_at,
+        updated_at: source_tag.updated_at,
         note_ids,
         card_ids,
     };
@@ -317,24 +309,17 @@ pub async fn update_tag(
         tag_cards_from_query(db, query.as_str(), existing_tag.id).await?;
     }
 
-    let _update_result = sqlx::query(
-        r"UPDATE tag SET name = ?, description = ?, query = ?, auto_delete = ? WHERE id = ?",
+    let updated_tag: Tag = sqlx::query_as(
+        r"UPDATE tag SET name = ?, description = ?, query = ?, auto_delete = ?, updated_at = strftime('%s', 'now') WHERE id = ? RETURNING *",
     )
     .bind(&new_name)
     .bind(&new_description)
     .bind(&new_query)
     .bind(new_auto_delete)
     .bind(id)
-    .execute(db)
+    .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let updated_tag = Tag {
-        id,
-        name: new_name,
-        description: new_description,
-        query: new_query,
-        auto_delete: new_auto_delete,
-    };
     let tag_response = TagResponse::new(&updated_tag);
 
     // Log event
@@ -396,6 +381,8 @@ pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error
         description: tag.description,
         query: tag.query,
         auto_delete: tag.auto_delete,
+        created_at: tag.created_at,
+        updated_at: tag.updated_at,
         note_ids,
         card_ids,
     };
@@ -841,6 +828,104 @@ pub(crate) mod tests {
         assert_eq!(event_count(&pool).await, n_before + 1);
     }
 
+    async fn set_tag_timestamps(pool: &SqlitePool, id: TagId, ts: i64) {
+        sqlx::query(r"UPDATE tag SET created_at = ?, updated_at = ? WHERE id = ?")
+            .bind(ts)
+            .bind(ts)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn tag_timestamps_bump_on_update_and_rebuild_only(pool: SqlitePool) {
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "filtered".to_string(),
+                description: String::new(),
+                query: Some("dog".to_string()),
+                auto_delete: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        let old = 1_000_000;
+        set_tag_timestamps(&pool, tag.id, old).await;
+
+        rebuild_tag(&pool, tag.id).await.unwrap();
+        let rebuilt = get_tag(&pool, tag.id).await.unwrap();
+        assert_eq!(rebuilt.created_at.timestamp(), old);
+        assert!(rebuilt.updated_at.timestamp() > old);
+
+        set_tag_timestamps(&pool, tag.id, old).await;
+        let updated = update_tag(
+            &pool,
+            UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(tag.id),
+                name: None,
+                description: Some("new".to_string()),
+                query: None,
+                auto_delete: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.created_at.timestamp(), old);
+        assert!(updated.updated_at.timestamp() > old);
+        // The response reflects the stored row.
+        let stored = get_tag(&pool, tag.id).await.unwrap();
+        assert_eq!(stored.updated_at, updated.updated_at);
+    }
+
+    #[sqlx::test]
+    async fn undo_delete_tag_restores_timestamps(pool: SqlitePool) {
+        let tag = create_tag_helper(&pool, "restore_me", "desc").await;
+        set_tag_timestamps(&pool, tag.id, 1_000_000).await;
+        delete_tag(&pool, tag.id, true).await.unwrap();
+
+        crate::api::undo::undo_event(
+            &pool,
+            crate::schema::undo::UndoEventRequest {
+                event_id: None,
+                undo_group: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let restored = get_tag(&pool, tag.id).await.unwrap();
+        assert_eq!(restored.created_at.timestamp(), 1_000_000);
+        assert_eq!(restored.updated_at.timestamp(), 1_000_000);
+    }
+
+    #[sqlx::test]
+    async fn create_tag_logs_stored_timestamps(pool: SqlitePool) {
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "logged".to_string(),
+                description: String::new(),
+                query: None,
+                auto_delete: false,
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let payload: serde_json::Value =
+            sqlx::query_scalar(r"SELECT payload FROM event ORDER BY id DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let payload: CreateTagPayload = serde_json::from_value(payload).unwrap();
+        assert_eq!(payload.created_at, tag.created_at);
+        assert_eq!(payload.updated_at, tag.updated_at);
+    }
+
     #[sqlx::test]
     async fn tag_delete_logs_event_when_log_true(pool: SqlitePool) {
         let tag = create_tag_helper(&pool, "to_delete", "desc").await;
@@ -867,6 +952,8 @@ pub(crate) mod tests {
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            created_at: tag.created_at,
+            updated_at: tag.updated_at,
             note_ids: vec![],
             card_ids: vec![],
         };
