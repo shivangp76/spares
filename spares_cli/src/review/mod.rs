@@ -27,9 +27,12 @@ use spares_core::schema::review::GetReviewCardRequest;
 use spares_core::schema::review::GetReviewCardResponse;
 use spares_core::schema::review::Rating;
 use spares_core::schema::review::RatingSubmission;
+use spares_core::schema::review::ReviewSnapshotRequest;
+use spares_core::schema::review::ReviewSnapshotResponse;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::tag::TagResponse;
+use spares_core::search::query_has_limit;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -83,7 +86,9 @@ pub(crate) struct ReviewArgs {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct FilterArgs {
-    /// Filter the cards due today with the supplied query
+    /// Filter the cards due today with the supplied query. If the query uses `limit`, e.g.
+    /// `(tag=a limit=5) or (tag=b c.state=0 limit=10)`, the due cards it picks are saved to a
+    /// filtered tag once per day, and running the same query again later that day resumes it.
     #[arg(short, long)]
     pub(crate) query: Option<String>,
     /// Study a filtered tag with the supplied id
@@ -203,6 +208,59 @@ async fn get_review_card(
         // No cards left to review
         None => Ok(None),
     }
+}
+
+/// Resolves a limited query or a tag name to a filtered tag id, once, before the session starts.
+/// Submissions need the tag id so each card's filtered-tag progress is recorded and it leaves
+/// the tag when done, and a limited query must not be re-evaluated on every card fetch.
+async fn resolve_filtered_tag_id(
+    filter_args: &mut FilterArgs,
+    base_url: &str,
+    client: &Client,
+) -> Result<(), String> {
+    if let Some(query) = filter_args.query.as_ref()
+        && query_has_limit(query)
+    {
+        let url = format!("{}/api/review/snapshot", base_url);
+        let request = ReviewSnapshotRequest {
+            query: query.clone(),
+        };
+        let response = client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("{}", e))?;
+        let status = response.status();
+        if status != StatusCode::OK {
+            let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+            let message = response_json
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(message.to_string());
+        }
+        let snapshot: ReviewSnapshotResponse =
+            response.json().await.map_err(|e| format!("{}", e))?;
+        let status = if snapshot.rebuilt {
+            "built for today"
+        } else {
+            "resumed from earlier today"
+        };
+        println!(
+            "Reviewing filtered tag `{}` ({status}, {} cards left)",
+            snapshot.tag_name, snapshot.card_count
+        );
+        filter_args.query = None;
+        filter_args.tag_id = Some(snapshot.tag_id);
+    } else if filter_args.tag_name.is_some()
+        && let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) =
+            filter_args_to_filter(filter_args, base_url, client).await?
+    {
+        filter_args.tag_name = None;
+        filter_args.tag_id = Some(tag_id);
+    }
+    Ok(())
 }
 
 async fn filter_args_to_filter(
@@ -501,10 +559,11 @@ fn apply_cli_setup_state(
 
 #[expect(clippy::too_many_lines)]
 pub(crate) async fn review_cards(
-    review_args: ReviewArgs,
+    mut review_args: ReviewArgs,
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
+    resolve_filtered_tag_id(&mut review_args.filter_args, base_url, client).await?;
     let open_command = review_args.open_command.as_deref();
     let open_command_card = review_args.open_command_card.as_deref();
     let open_command_card_used = open_command_card.or(open_command);

@@ -167,6 +167,18 @@
 //! - `c.cloze` cannot be used inside a limited branch, since cloze matching runs after the
 //!   database query.
 //!
+//! #### Limits when reviewing
+//!
+//! When `spares card review --query` uses `limit`, the limits count only the cards due today, and
+//! the cards they pick are saved to a filtered tag named `review-<hash of the query>`:
+//! - Running the same query again later that day resumes that set, including after finishing it,
+//!   so finishing doesn't make room for more cards.
+//! - The first run on a later day rebuilds the set from the cards due that day.
+//! - Explicit limits take precedence over the daily new-card limit, which only stops new cards once
+//!   it has already been reached today.
+//! - `spares card review --tag-name review-<hash>` also resumes the set, but doesn't rebuild it on a
+//!   new day.
+//!
 //! ### Other Operators
 //!
 //! - **Exclusion:** `-QUALIFIER`

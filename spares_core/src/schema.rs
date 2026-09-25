@@ -472,6 +472,23 @@ pub mod review {
         FilteredTag { tag_id: TagId },
     }
 
+    /// Resolves a review query that uses `limit` into a filtered tag that can be reviewed with
+    /// [`GetReviewCardFilterRequest::FilteredTag`].
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ReviewSnapshotRequest {
+        pub query: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ReviewSnapshotResponse {
+        pub tag_id: TagId,
+        pub tag_name: String,
+        /// `false` when an existing snapshot built earlier on the same day was resumed.
+        pub rebuilt: bool,
+        /// Cards currently in the snapshot.
+        pub card_count: u32,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub enum CardBackRenderedPath {
         CardBack(PathBuf),
