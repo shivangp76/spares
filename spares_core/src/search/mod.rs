@@ -145,9 +145,27 @@
 //! - It applies to whatever is being searched (notes or cards).
 //! - Restrictions:
 //!   - Only the `=` operator is allowed (`limit>=10` and `limit~10` are errors).
-//!   - It can only be specified once (`limit=10 limit=20` is an error).
-//!   - It cannot be negated (`-limit=10` is an error).
-//!   - It cannot be used on either side of an `or`, including inside a group that is part of an `or` (`dog or limit=10` and `c.stability>=2 or (a limit=20)` are errors).
+//!   - It can only be specified once per group (`limit=10 limit=20` is an error).
+//!   - It cannot be negated (`-limit=10` and `-(dog limit=5)` are errors).
+//!
+//! #### Limits per `or` branch
+//!
+//! - Each parenthesized branch of an `or` can have its own limit, and each branch keeps at most
+//!   that many results.
+//!   - Example: `(tag=chess limit=5) or (tag="measure-theory:grad" limit=30)`
+//! - Combine this with `c.state` to limit by card state. FSRS states are `0` (new), `1` (learning),
+//!   `2` (review), and `3` (relearning).
+//!   - Example: `(tag=a c.state=0 limit=10) or (tag=a c.state=2 limit=10) or (tag=b c.state=0 limit=20)`
+//! - A sort inside a branch decides which results its limit keeps. Without one, a branch keeps the
+//!   cards review would show first (`c.due`, then the note's `created_at`), or, when searching
+//!   notes, the lowest note ids.
+//!   - Example: `(tag=chess sort_by_desc=c.difficulty limit=5) or (tag=math limit=5)`
+//! - A limit outside the parentheses still caps the combined result:
+//!   `((tag=a limit=5) or (tag=b limit=5)) limit=8`.
+//! - The limited conditions must be wrapped in parentheses: `dog limit=5 or cat` is an error.
+//! - A sort in an `or` branch without a limit is still an error.
+//! - `c.cloze` cannot be used inside a limited branch, since cloze matching runs after the
+//!   database query.
 //!
 //! ### Other Operators
 //!
@@ -265,6 +283,14 @@ pub(crate) enum TokenKind {
     // Grouping
     LeftParen,
     RightParen,
+}
+
+/// Returns true if `query` uses `limit` anywhere, either globally or in a limited `or` branch. An
+/// unparseable query returns false; evaluating it reports the parse error.
+pub fn query_has_limit(query: &str) -> bool {
+    parser::Parser::new(query)
+        .parse_expression()
+        .is_ok_and(|tree| evaluator::tree_has_limit(&tree))
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
