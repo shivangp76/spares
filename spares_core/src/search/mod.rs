@@ -4,27 +4,27 @@
 //! |---------------------|----------|
 //! | id                  | i64      |
 //! | data                | String   |
-//! | created_at          | DateTime |
-//! | updated_at          | DateTime |
-//! | parser_name         | String   |
+//! | `created_at`          | `DateTime` |
+//! | `updated_at`          | `DateTime` |
+//! | `parser_name`         | String   |
 //! | tag                 | String   |
 //! | keyword             | String   |
-//! | custom_data         | Json     |
+//! | `custom_data`         | Json     |
 //! | c.id                | i64      |
-//! | c.created_at        | DateTime |
-//! | c.updated_at        | DateTime |
-//! | c.due               | DateTime |
+//! | `c.created_at`        | `DateTime` |
+//! | `c.updated_at`        | `DateTime` |
+//! | c.due               | `DateTime` |
 //! | c.stability         | f64      |
 //! | c.difficulty        | f64      |
-//! | c.desired_retention | f64      |
+//! | `c.desired_retention` | f64      |
 //! | c.suspended         | bool     |
-//! | c.user_buried       | bool     |
-//! | c.scheduler_buried  | bool     |
+//! | `c.user_buried`       | bool     |
+//! | `c.scheduler_buried`  | bool     |
 //! | c.state             | u32      |
-//! | c.custom_data       | Json     |
-//! | linked_to_note      | i64      |
-//! | linked_to_keyword   | String   |
-//! | linked_from_note    | i64      |
+//! | `c.custom_data`       | Json     |
+//! | `linked_to_note`      | i64      |
+//! | `linked_to_keyword`   | String   |
+//! | `linked_from_note`    | i64      |
 //! | c.rated             | u32      |
 //! | c.count             | u32      |
 //! | c.cloze             | String   |
@@ -130,7 +130,7 @@
 //!
 //! ### Sorting
 //!
-//! - Use sorting keys to order results by numeric or DateTime fields:
+//! - Use sorting keys to order results by numeric or `DateTime` fields:
 //!   - Ascending: `sort_by_asc=created_at`
 //!   - Descending: `sort_by_desc=c.stability`
 //! - Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to_note`, `linked_from_note`, `linked_to_keyword`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
