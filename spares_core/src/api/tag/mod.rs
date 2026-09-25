@@ -20,6 +20,7 @@ use crate::schema::tag::CreateTagRequest;
 use crate::schema::tag::TagResponse;
 use crate::schema::tag::TagSelector;
 use crate::schema::tag::UpdateTagRequest;
+use crate::search::query_has_limit;
 
 mod query;
 pub use query::*;
@@ -106,8 +107,13 @@ pub async fn create_tag_event(
     .map_err(|e| Error::Sqlx { source: e })?;
 
     if let Some(ref query) = payload.query {
-        // Execute query and add tag to all notes that match query
-        tag_cards_from_query(db, query, tag.id).await?;
+        // When undo restores a limited tag, its saved `card_ids` are the exact set to bring back.
+        // Re-running the query would add whichever items the limit picks today.
+        let restoring_limited_tag = payload.id.is_some() && query_has_limit(query);
+        if !restoring_limited_tag {
+            // Execute query and add tag to all notes that match query
+            tag_cards_from_query(db, query, tag.id).await?;
+        }
     }
 
     // Restore note_tag associations (for undo of DeleteTag)

@@ -12,6 +12,7 @@ use crate::model::CardId;
 use crate::model::TagId;
 use crate::schema::note::NoteResponse;
 use crate::search::evaluator::Evaluator;
+use crate::search::query_has_limit;
 
 /// Re-evaluates all filtered-tag queries against the given notes' cards, adding or removing
 /// card-tag associations as appropriate.  Must be called after cards and manual tags are committed.
@@ -43,6 +44,12 @@ pub(super) async fn rebuild_filtered_tags_for_updated_notes(
     let mut card_filtered_tag_entries = Vec::new();
     let mut delete_card_tag_entries = Vec::new();
     for (tag_id, query) in existing_filtered_tags {
+        // A limited query picks the top N items across the whole collection, so re-evaluating it
+        // on every note edit would keep reshuffling the tag. Such tags only change on an explicit
+        // rebuild.
+        if query_has_limit(&query) {
+            continue;
+        }
         let evaluator = Evaluator::new(query.as_str());
         let search_card_ids = evaluator.get_card_ids(db).await?;
         let (card_ids_to_add_tag, card_ids_to_remove_tag): (Vec<_>, Vec<_>) = created_card_ids

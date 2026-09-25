@@ -27,6 +27,9 @@ use crate::search::parser::Parser;
 pub(crate) struct Evaluator<'de> {
     // whole: &'de str,
     parser: Parser<'de>,
+    /// Extra SQL condition that every result must satisfy. It is applied inside each limited `or`
+    /// branch *before* that branch's LIMIT, so limits count only in-scope items.
+    scope: Option<String>,
 }
 
 impl<'de> Evaluator<'de> {
@@ -34,25 +37,43 @@ impl<'de> Evaluator<'de> {
         Self {
             // whole: input,
             parser: Parser::new(input),
+            scope: None,
         }
+    }
+
+    /// Restricts results to items matching `scope`, a raw SQL condition over the `c`/`n` aliases.
+    pub(crate) fn with_scope(mut self, scope: String) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     fn evaluate(self, internal_output_type: EvaluatorReturnItemType) -> Result<String, Report> {
         let token_tree = self.parser.parse_expression()?;
-        Self::build_query_from_tree(&token_tree, internal_output_type, false)
+        Self::build_query_from_tree(
+            &token_tree,
+            internal_output_type,
+            false,
+            self.scope.as_deref(),
+        )
     }
 
     fn build_query_from_tree(
         token_tree: &TokenTree,
         internal_output_type: EvaluatorReturnItemType,
         needs_parser: bool,
+        scope: Option<&str>,
     ) -> Result<String, Report> {
-        let mut context = EvaluationContext::new();
+        let mut context = EvaluationContext::new(internal_output_type, scope.map(str::to_string));
         context.root_context = true;
         if needs_parser {
             context.table_requirements.needs_parser = true;
         }
         token_tree.evaluate(&mut context)?;
+        if let Some(scope) = scope {
+            // Scoping card fields requires the card table even for note output.
+            context.table_requirements.needs_card = true;
+            context.add_where_clause(format!("({scope})"));
+        }
         Ok(context.build_query(internal_output_type))
     }
 
@@ -71,9 +92,13 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
-        let query_str =
-            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Notes, true)
-                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        let query_str = Self::build_query_from_tree(
+            &token_tree,
+            EvaluatorReturnItemType::Notes,
+            true,
+            self.scope.as_deref(),
+        )
+        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", query_str);
         let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -116,12 +141,16 @@ impl<'de> Evaluator<'de> {
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
 
         if has_cloze_field(&token_tree) {
-            return Self::get_cards_cloze_path(&token_tree, db).await;
+            return Self::get_cards_cloze_path(&token_tree, self.scope.as_deref(), db).await;
         }
 
-        let query_str =
-            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::Cards, true)
-                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        let query_str = Self::build_query_from_tree(
+            &token_tree,
+            EvaluatorReturnItemType::Cards,
+            true,
+            self.scope.as_deref(),
+        )
+        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", query_str);
         let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -141,16 +170,22 @@ impl<'de> Evaluator<'de> {
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
 
         if has_cloze_field(&token_tree) {
-            return Ok(Self::get_cards_cloze_path(&token_tree, db)
-                .await?
-                .into_iter()
-                .map(|(card, _)| card.id)
-                .collect());
+            return Ok(
+                Self::get_cards_cloze_path(&token_tree, self.scope.as_deref(), db)
+                    .await?
+                    .into_iter()
+                    .map(|(card, _)| card.id)
+                    .collect(),
+            );
         }
 
-        let query_str =
-            Self::build_query_from_tree(&token_tree, EvaluatorReturnItemType::CardIds, false)
-                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        let query_str = Self::build_query_from_tree(
+            &token_tree,
+            EvaluatorReturnItemType::CardIds,
+            false,
+            self.scope.as_deref(),
+        )
+        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", query_str);
         let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
@@ -163,6 +198,7 @@ impl<'de> Evaluator<'de> {
     /// optional in-memory cloze filtering, and union the results.
     async fn get_cards_cloze_path(
         token_tree: &TokenTree<'_>,
+        scope: Option<&str>,
         db: &SqlitePool,
     ) -> Result<Vec<(Card, String)>, crate::Error> {
         #[derive(sqlx::FromRow)]
@@ -190,9 +226,13 @@ impl<'de> Evaluator<'de> {
             if has_cloze_field(disjunct) {
                 // Cloze disjunct: fetch with note_data, then post-filter in memory.
                 let cloze_patterns = extract_cloze_patterns(disjunct);
-                let query_str =
-                    Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
-                        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                let query_str = Self::build_query_from_tree(
+                    disjunct,
+                    EvaluatorReturnItemType::Cards,
+                    true,
+                    scope,
+                )
+                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
                 info!("{}", query_str);
                 let candidates: Vec<EnrichedCardWithNoteData> = sqlx::query_as(&query_str)
                     .fetch_all(db)
@@ -218,9 +258,13 @@ impl<'de> Evaluator<'de> {
                 }
             } else {
                 // No cloze in this disjunct — pure SQL path, no note_data needed.
-                let query_str =
-                    Self::build_query_from_tree(disjunct, EvaluatorReturnItemType::Cards, true)
-                        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                let query_str = Self::build_query_from_tree(
+                    disjunct,
+                    EvaluatorReturnItemType::Cards,
+                    true,
+                    scope,
+                )
+                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
                 info!("{}", query_str);
                 let cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
                     .fetch_all(db)
@@ -630,10 +674,14 @@ struct EvaluationContext<'a> {
     root_context: bool,
     order_by: Vec<String>,
     limit: Option<u64>,
+    /// The item type of the outermost query. Limited `or` branches select this item type's ids.
+    output_type: EvaluatorReturnItemType,
+    /// See [`Evaluator::scope`].
+    scope_clause: Option<String>,
 }
 
 impl EvaluationContext<'_> {
-    fn new() -> Self {
+    fn new(output_type: EvaluatorReturnItemType, scope_clause: Option<String>) -> Self {
         Self {
             query_builder: QueryBuilder::new(""),
             params: Vec::new(),
@@ -644,7 +692,52 @@ impl EvaluationContext<'_> {
             root_context: false,
             order_by: Vec::new(),
             limit: None,
+            output_type,
+            scope_clause,
         }
+    }
+
+    /// A fresh context for evaluating a subtree of this one's expression.
+    fn child(&self) -> Self {
+        Self::new(self.output_type, self.scope_clause.clone())
+    }
+
+    /// Compiles this context, which holds an `or` branch that set its own `limit`, into an
+    /// `id IN (subquery)` clause, so the limit applies to that branch alone.
+    fn into_limited_branch_clause(mut self) -> Result<String, Error> {
+        if self.table_requirements.needs_note_data {
+            return Err(miette!(
+                "c.cloze cannot be used inside a limited group. Cloze matching happens after the database query, so it can't be limited per group."
+            ));
+        }
+        if let Some(scope) = self.scope_clause.clone() {
+            self.table_requirements.needs_card = true;
+            self.add_where_clause(format!("({scope})"));
+        }
+        let (id_column, subquery_type) = match self.output_type {
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => {
+                if self.order_by.is_empty() {
+                    self.order_by.push("n.id ASC".to_string());
+                }
+                ("n.id", EvaluatorReturnItemType::NoteIds)
+            }
+            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
+                if self.order_by.is_empty() {
+                    // Same order review uses, so a limited branch picks the cards that would be
+                    // shown first.
+                    self.order_by.extend([
+                        "c.due ASC".to_string(),
+                        "n.created_at ASC".to_string(),
+                        "c.id ASC".to_string(),
+                    ]);
+                }
+                ("c.id", EvaluatorReturnItemType::CardIds)
+            }
+        };
+        Ok(format!(
+            "{id_column} IN ({})",
+            self.build_query(subquery_type)
+        ))
     }
 
     fn build_query(&mut self, output_type: EvaluatorReturnItemType) -> String {
@@ -752,18 +845,27 @@ impl Evaluate for TokenTree<'_> {
                         return Err(miette!("Found nil atom inside op."));
                     }
                     for tree in trees {
-                        let mut inner_context = EvaluationContext::new();
+                        let mut inner_context = context.child();
                         tree.evaluate(&mut inner_context)?;
+                        // A parenthesized `or` branch with its own limit, like
+                        // `(tag=a limit=5) or (tag=b limit=10)`, becomes a self-contained
+                        // subquery. Any sort inside it decides which items the limit keeps.
+                        if matches!(op, Op::Or) && inner_context.limit.is_some() {
+                            if !matches!(tree, TokenTree::Cons(Op::Group, _)) {
+                                return Err(miette!(
+                                    "A limit inside an 'or' must be wrapped in parentheses with the conditions it limits, e.g. `(tag=a limit=5) or (tag=b limit=10)`."
+                                ));
+                            }
+                            context
+                                .table_requirements
+                                .merge(&inner_context.table_requirements);
+                            clauses.push(inner_context.into_limited_branch_clause()?);
+                            continue;
+                        }
                         // Cannot use sort operations with 'or' operator
                         if matches!(op, Op::Or) && !inner_context.order_by.is_empty() {
                             return Err(miette!(
-                                "Cannot use sort operations with 'or' operator. Sort operations cannot be used in alternative conditions."
-                            ));
-                        }
-                        // Cannot use limit with 'or' operator
-                        if matches!(op, Op::Or) && inner_context.limit.is_some() {
-                            return Err(miette!(
-                                "Cannot use limit with 'or' operator. Limit cannot be used in alternative conditions."
+                                "Cannot use sort operations with 'or' operator without a limit. Sort operations cannot be used in alternative conditions unless the alternative is a parenthesized group with its own limit."
                             ));
                         }
                         if let Some(clause) = inner_context.where_clauses.first() {
@@ -842,7 +944,7 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     if trees.len() != 1 {
         return Err(miette!("Minus operation requires exactly one operand"));
     }
-    let mut inner_context = EvaluationContext::new();
+    let mut inner_context = context.child();
     if !matches!(
         trees[0],
         TokenTree::Cons(
@@ -888,13 +990,13 @@ fn evaluate_colon(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     if trees.len() != 2 {
         return Err(miette!("Colon operation requires exactly two operands"));
     }
-    let mut field_context = EvaluationContext::new();
+    let mut field_context = context.child();
     trees[0].evaluate(&mut field_context)?;
     if field_context.params.len() != 1 {
         return Err(miette!("Expected 1 field param in colon operator"));
     }
 
-    let mut data_context = EvaluationContext::new();
+    let mut data_context = context.child();
     trees[1].evaluate(&mut data_context)?;
     if data_context.params.len() != 1 {
         return Err(miette!("Expected 1 data param in colon operator"));
@@ -966,7 +1068,7 @@ fn evaluate_field_value(
     }
 
     // First tree should be the field
-    let mut field_context = EvaluationContext::new();
+    let mut field_context = context.child();
     if !matches!(
         trees[0],
         // `Op::Colon` is for Json
@@ -981,7 +1083,7 @@ fn evaluate_field_value(
     let field_type = field.get_field_type();
 
     // Second tree should be the value
-    let mut value_context = EvaluationContext::new();
+    let mut value_context = context.child();
     trees[1].evaluate(&mut value_context)?;
     let value_type = value_context
         .value_type
@@ -1125,6 +1227,9 @@ impl ClozePattern {
 /// preserving correct AND/OR semantics across compound queries.
 fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
     match tree {
+        // A limited group compiles to its own subquery, so distributing into it would change
+        // which items its limit keeps.
+        TokenTree::Cons(Op::Group, _) if tree_has_limit(&tree) => vec![tree],
         TokenTree::Cons(Op::Or, children) => {
             // Each child is its own set of disjuncts — collect them all.
             children.into_iter().flat_map(to_dnf).collect()
@@ -1158,6 +1263,15 @@ fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
         }
         // Atoms and all other Cons nodes (comparisons, Minus) are literals.
         other => vec![other],
+    }
+}
+
+/// Returns true if the token tree contains a `limit` field anywhere.
+pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
+    match tree {
+        TokenTree::Atom(Atom::Field(f)) => f.as_ref() == "limit",
+        TokenTree::Atom(_) => false,
+        TokenTree::Cons(_, children) => children.iter().any(tree_has_limit),
     }
 }
 
@@ -1586,6 +1700,102 @@ mod tests {
     }
 
     #[test]
+    fn test_limit_per_or_branch() {
+        let inputs = [
+            // Two limited branches, card output uses review order by default
+            (
+                "(dog limit=5) or (c.state=0 limit=3)",
+                EvaluatorReturnItemType::CardIds,
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3))",
+            ),
+            // A limited branch next to an unlimited one, note output orders by id by default
+            (
+                "(dog limit=5) or cat",
+                EvaluatorReturnItemType::NoteIds,
+                "SELECT DISTINCT n.id FROM note n WHERE (\
+n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC LIMIT 5) OR \
+n.data LIKE '%cat%')",
+            ),
+            // A sort inside a limited branch picks which items the limit keeps, and a global
+            // limit still caps the whole result
+            (
+                "(dog sort_by_desc=c.stability limit=2) or (cat limit=1) limit=10",
+                EvaluatorReturnItemType::CardIds,
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.stability DESC LIMIT 2) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%cat%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) LIMIT 10",
+            ),
+            // Limited groups can nest
+            (
+                "((dog limit=1) or cat limit=4) or (c.state=2 limit=2)",
+                EvaluatorReturnItemType::CardIds,
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
+n.data LIKE '%cat%') ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2))",
+            ),
+        ];
+        for (input, output_type, expected_sql) in inputs {
+            let query_str = Evaluator::new(input).evaluate(output_type).unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_limit_with_scope() {
+        // The scope is applied inside each limited branch, before its LIMIT, and to the whole
+        // result, so unlimited branches are scoped too.
+        let query_str = Evaluator::new("(dog limit=5) or cat")
+            .with_scope("c.due <= 100".to_string())
+            .evaluate(EvaluatorReturnItemType::CardIds)
+            .unwrap();
+        assert_eq!(
+            query_str,
+            "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+n.data LIKE '%cat%') AND (c.due <= 100)"
+        );
+
+        // Note output needs the card join for a card-level scope.
+        let query_str = Evaluator::new("dog")
+            .with_scope("c.due <= 100".to_string())
+            .evaluate(EvaluatorReturnItemType::NoteIds)
+            .unwrap();
+        assert_eq!(
+            query_str,
+            "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100)"
+        );
+    }
+
+    #[test]
+    fn test_limited_group_cloze_error() {
+        let query_str_res = Evaluator::new(r#"(c.cloze~"x" limit=5) or dog"#)
+            .evaluate(EvaluatorReturnItemType::CardIds);
+        assert!(query_str_res.is_err());
+    }
+
+    #[test]
+    fn test_to_dnf_keeps_limited_group_whole() {
+        let tree = Parser::new(r#"(dog or cat limit=3) c.cloze~"x""#)
+            .parse_expression()
+            .unwrap();
+        // Distributing would split the limited group into `dog` and `cat limit=3`.
+        assert_eq!(to_dnf(tree).len(), 1);
+    }
+
+    #[test]
+    fn test_query_has_limit() {
+        assert!(crate::search::query_has_limit("(dog limit=5) or cat"));
+        assert!(crate::search::query_has_limit("dog limit=5"));
+        assert!(!crate::search::query_has_limit("dog or cat"));
+        assert!(!crate::search::query_has_limit("limited"));
+        assert!(!crate::search::query_has_limit("(unterminated"));
+    }
+
+    #[test]
     fn test_limit_errors() {
         let inputs = [
             // Cannot use non-equal operator for limit
@@ -1593,12 +1803,14 @@ mod tests {
             "limit~10",
             // Cannot negate limit
             "-limit=10",
-            // Cannot use limit with 'or' operator
+            // A limit inside 'or' must be parenthesized with the conditions it limits
             "dog or limit=10",
+            "dog limit=5 or cat",
             // limit can only be specified once
             "limit=10 limit=20",
-            // Cannot use limit inside grouping
-            "c.stability>=2 or (a limit=20)",
+            "(dog limit=5 limit=6) or cat",
+            // Cannot negate a limited group
+            "-(dog limit=5)",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);
@@ -1761,6 +1973,7 @@ mod tests {
             &disjuncts[0],
             EvaluatorReturnItemType::CardIds,
             false,
+            None,
         )
         .unwrap();
         // Cloze becomes "1", stability condition stays.
@@ -1777,6 +1990,7 @@ mod tests {
             &disjuncts[1],
             EvaluatorReturnItemType::CardIds,
             false,
+            None,
         )
         .unwrap();
         // Second disjunct is c.suspended=false — no cloze tautology at the WHERE level.
