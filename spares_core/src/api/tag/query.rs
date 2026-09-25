@@ -66,6 +66,12 @@ pub async fn rebuild_tag(db: &SqlitePool, id: i64) -> Result<(), Error> {
 
             // Execute query and add tag to all notes that match query
             tag_cards_from_query(db, query.as_str(), id).await?;
+
+            sqlx::query(r"UPDATE tag SET updated_at = strftime('%s', 'now') WHERE id = ?")
+                .bind(id)
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
         }
         None => {
             return Err(Error::Library(LibraryError::Tag(
