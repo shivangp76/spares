@@ -39,6 +39,7 @@ use crate::handlers::parser::get_parser_handler;
 use crate::handlers::parser::list_parsers_handler;
 use crate::handlers::parser::update_parser_handler;
 use crate::handlers::require_api_key;
+use crate::handlers::review::create_review_snapshot_handler;
 use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
 use crate::handlers::review::get_statistics_handler;
@@ -115,6 +116,7 @@ pub(crate) fn create_router(
         .route("/api/review", post(get_review_card_handler))
         .route("/api/review/card/{id}", post(get_review_card_by_id_handler))
         .route("/api/review/submit", post(submit_study_action_handler))
+        .route("/api/review/snapshot", post(create_review_snapshot_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
         // Scheduler
         .route(

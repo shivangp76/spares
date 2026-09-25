@@ -19,9 +19,11 @@ use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
+use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
@@ -61,9 +63,12 @@ use crate::schema::review::GetReviewCardRequest;
 use crate::schema::review::GetReviewCardResponse;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::ReviewLinkedNote;
+use crate::schema::review::ReviewSnapshotRequest;
+use crate::schema::review::ReviewSnapshotResponse;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
+use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
 fn maybe_relativize(path: PathBuf) -> PathBuf {
     if let Ok(base) = std::env::var("SPARES_FILES_DIR") {
@@ -282,6 +287,148 @@ fn build_review_card_response(
 
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
+/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up, otherwise an empty
+/// string.
+async fn not_new_card_clause(
+    db: &SqlitePool,
+    requested_date: DateTime<Utc>,
+) -> Result<String, Error> {
+    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
+        r"SELECT COUNT(DISTINCT card_id) FROM review_log
+      WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
+    )
+    .bind(lower_limit.timestamp())
+    .bind(upper_limit.timestamp())
+    // Forgetting a new card must not consume one of today's new-card slots.
+    .bind(ReviewLogKind::Review)
+    .bind(NEW_CARD_STATE)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let config = read_external_config()?;
+    Ok(
+        if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
+            format!("\nAND c.state != {}", NEW_CARD_STATE)
+        } else {
+            String::new()
+        },
+    )
+}
+
+/// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
+/// limit inlined. Matches the default `where_clause` built in [`build_review_filter_query`].
+async fn review_eligibility_clause(
+    db: &SqlitePool,
+    requested_date: DateTime<Utc>,
+) -> Result<String, Error> {
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
+    let not_new_card_str = not_new_card_clause(db, requested_date).await?;
+    let buried_state = SpecialState::BuriedUntilLaterToday as u8;
+    Ok(format!(
+        "(c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})",
+        card_due_limit.timestamp()
+    ))
+}
+
+/// Name of the filtered tag that holds the review snapshot for `query`. Whitespace is normalized
+/// so trivially different spellings of a query share a snapshot.
+fn review_snapshot_tag_name(query: &str) -> String {
+    let normalized = query.split_whitespace().join(" ");
+    let hash = blake3::hash(normalized.as_bytes()).to_hex();
+    format!("review-{}", &hash[..8])
+}
+
+/// Resolves `query` against the cards due on `requested_date`, applying any per-group limits, and
+/// stores the result in a filtered tag that review then works through with
+/// [`GetReviewCardFilterRequest::FilteredTag`].
+///
+/// A query always maps to the same tag. The first call on a new local day rebuilds the tag's card
+/// set; later calls that day return it unchanged, so a session can be resumed, and finishing it
+/// doesn't make room for more cards.
+pub async fn create_review_snapshot_tag(
+    db: &SqlitePool,
+    body: ReviewSnapshotRequest,
+    requested_date: DateTime<Utc>,
+) -> Result<ReviewSnapshotResponse, Error> {
+    let ReviewSnapshotRequest { query } = body;
+    let tag_name = review_snapshot_tag_name(&query);
+    let existing_tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
+        .bind(&tag_name)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    let (start_of_day, _) = get_start_end_local_date(&requested_date);
+    let (tag_id, rebuilt) = match existing_tag {
+        Some(tag) if tag.updated_at >= start_of_day => (tag.id, false),
+        Some(tag) => (tag.id, true),
+        None => {
+            // `auto_delete` stays off: if finishing the snapshot deleted the tag, running the
+            // same query again that day would build a fresh set and exceed the limits.
+            let tag = create_tag(
+                db,
+                CreateTagRequest {
+                    name: tag_name.clone(),
+                    description: format!("Review snapshot for `{query}`"),
+                    query: Some(query.clone()),
+                    auto_delete: false,
+                },
+                true,
+            )
+            .await?;
+            (tag.id, true)
+        }
+    };
+
+    if rebuilt {
+        let scope = review_eligibility_clause(db, requested_date).await?;
+        let card_ids = Evaluator::new(&query)
+            .with_scope(scope)
+            .get_card_ids(db)
+            .await?;
+        // Leftovers from an earlier day are dropped along with their filtered-tag scheduler
+        // data, as happens when a card finishes a filtered tag. They come back if still due.
+        sqlx::query(
+            r"UPDATE card SET custom_data = json_remove(custom_data, '$.' || json_quote(?))
+            WHERE json_extract(custom_data, '$.' || json_quote(?)) IS NOT NULL",
+        )
+        .bind(tag_id.to_string())
+        .bind(tag_id.to_string())
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        sqlx::query(r"DELETE FROM card_tag WHERE tag_id = ?")
+            .bind(tag_id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let card_tag_entries = card_ids
+            .into_iter()
+            .map(|card_id| (card_id, tag_id))
+            .collect::<Vec<_>>();
+        create_card_tags(db, &card_tag_entries).await?;
+        sqlx::query(r"UPDATE tag SET updated_at = ? WHERE id = ?")
+            .bind(requested_date.timestamp())
+            .bind(tag_id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    }
+
+    let card_count: u32 = sqlx::query_scalar(r"SELECT COUNT(*) FROM card_tag WHERE tag_id = ?")
+        .bind(tag_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(ReviewSnapshotResponse {
+        tag_id,
+        tag_name,
+        rebuilt,
+        card_count,
+    })
+}
+
 struct ReviewFilterQuery {
     where_clause: String,
     is_filtered_tag: bool,
@@ -298,26 +445,8 @@ async fn build_review_filter_query(
     filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
-    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let card_due_limit = upper_limit;
-    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
-        r"SELECT COUNT(DISTINCT card_id) FROM review_log
-      WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
-    )
-    .bind(lower_limit.timestamp())
-    .bind(upper_limit.timestamp())
-    // Forgetting a new card must not consume one of today's new-card slots.
-    .bind(ReviewLogKind::Review)
-    .bind(NEW_CARD_STATE)
-    .fetch_one(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-    let config = read_external_config()?;
-    let not_new_card_str = if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
-        format!("\nAND c.state != {}", NEW_CARD_STATE)
-    } else {
-        String::new()
-    };
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
+    let not_new_card_str = not_new_card_clause(db, requested_date).await?;
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
@@ -1065,13 +1194,17 @@ pub async fn submit_study_action(
 mod tests {
     use super::*;
     use crate::api::note::tests::tests::create_note_helper;
+    use crate::api::note::update_notes;
     use crate::api::statistics::get_statistics;
     use crate::api::tag::create_tag;
     use crate::model::Card;
+    use crate::model::TagId;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::NoteResponse;
+    use crate::schema::note::NotesSelector;
+    use crate::schema::note::UpdateNotesRequest;
+    use crate::schema::note::UpdateTags;
     use crate::schema::review::StatisticsRequest;
-    use crate::schema::tag::CreateTagRequest;
 
     async fn create_note(pool: &sqlx::SqlitePool) -> (NoteResponse, Vec<Card>) {
         // Create note
@@ -1553,5 +1686,200 @@ mod tests {
         .unwrap();
         let total_filtered: u32 = response.cards_left_by_state.values().sum();
         assert_eq!(total_filtered, 2);
+    }
+
+    /// Three cards, one per note from `create_note_helper`:
+    /// - `due`: new, due an hour ago, tagged `tag 1`
+    /// - `review`: in review state, due an hour ago, tagged `tag 1`
+    /// - `suspended`: new, due a day ago (so it sorts first), suspended, untagged
+    ///
+    /// An unscoped `c.state=0 limit=1` picks `suspended`; a review snapshot must pick `due`.
+    async fn setup_snapshot_cards(
+        pool: &SqlitePool,
+        now: DateTime<Utc>,
+    ) -> (CardId, CardId, CardId) {
+        create_note_helper(pool).await;
+        let card_ids: Vec<CardId> = sqlx::query_scalar(r"SELECT id FROM card ORDER BY id ASC")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        let [due, review, suspended] = card_ids[..] else {
+            panic!("expected 3 cards, got {}", card_ids.len());
+        };
+        let hour_ago = (now - Duration::hours(1)).timestamp();
+        let day_ago = (now - Duration::days(1)).timestamp();
+        for (card_id, state, due_at, special_state) in [
+            (due, NEW_CARD_STATE, hour_ago, None),
+            (review, 2, hour_ago, None),
+            (
+                suspended,
+                NEW_CARD_STATE,
+                day_ago,
+                Some(SpecialState::Suspended as u8),
+            ),
+        ] {
+            sqlx::query(r"UPDATE card SET state = ?, due = ?, special_state = ? WHERE id = ?")
+                .bind(state)
+                .bind(due_at)
+                .bind(special_state)
+                .bind(card_id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        (due, review, suspended)
+    }
+
+    async fn snapshot(pool: &SqlitePool, query: &str, at: DateTime<Utc>) -> ReviewSnapshotResponse {
+        create_review_snapshot_tag(
+            pool,
+            ReviewSnapshotRequest {
+                query: query.to_string(),
+            },
+            at,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn tag_card_ids(pool: &SqlitePool, tag_id: TagId) -> Vec<CardId> {
+        sqlx::query_scalar(r"SELECT card_id FROM card_tag WHERE tag_id = ? ORDER BY card_id")
+            .bind(tag_id)
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn test_review_snapshot_limits_count_due_cards_only(pool: SqlitePool) -> () {
+        let now = Utc::now();
+        let (due, review, _suspended) = setup_snapshot_cards(&pool, now).await;
+
+        let response = snapshot(&pool, "(c.state=0 limit=1) or (c.state=2 limit=5)", now).await;
+        assert!(response.rebuilt);
+        assert_eq!(response.card_count, 2);
+        assert_eq!(
+            tag_card_ids(&pool, response.tag_id).await,
+            vec![due, review]
+        );
+
+        // The snapshot is reviewed through the regular filtered-tag path.
+        let review_card = get_review_card(
+            &pool,
+            GetReviewCardRequest {
+                filter: Some(GetReviewCardFilterRequest::FilteredTag {
+                    tag_id: response.tag_id,
+                }),
+            },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(review_card.cards_left_by_state.values().sum::<u32>(), 2);
+    }
+
+    #[sqlx::test]
+    async fn test_review_snapshot_resumes_same_day_and_rebuilds_next_day(pool: SqlitePool) -> () {
+        let now = Utc::now();
+        let (due, review, _suspended) = setup_snapshot_cards(&pool, now).await;
+        let query = "(c.state=0 limit=1) or (c.state=2 limit=5)";
+
+        let first = snapshot(&pool, query, now).await;
+        assert!(first.rebuilt);
+
+        // Whitespace differences map to the same snapshot, which is resumed unchanged.
+        let resumed = snapshot(&pool, "(c.state=0  limit=1)  or (c.state=2 limit=5)", now).await;
+        assert_eq!(resumed.tag_id, first.tag_id);
+        assert_eq!(resumed.tag_name, first.tag_name);
+        assert!(!resumed.rebuilt);
+        assert_eq!(tag_card_ids(&pool, first.tag_id).await, vec![due, review]);
+
+        // Finishing today's set must not make room for more cards today.
+        sqlx::query(r"DELETE FROM card_tag WHERE tag_id = ?")
+            .bind(first.tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let finished = snapshot(&pool, query, now).await;
+        assert!(!finished.rebuilt);
+        assert_eq!(finished.card_count, 0);
+
+        // The next day, the tag is rebuilt from what is due then, and stale filtered-tag
+        // scheduler data is dropped.
+        let tag_key = first.tag_id.to_string();
+        sqlx::query(r"UPDATE card SET custom_data = json_set(custom_data, '$.' || json_quote(?), json('{}')) WHERE id = ?")
+            .bind(&tag_key)
+            .bind(review)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tomorrow = now + Duration::days(1);
+        let next_day = snapshot(&pool, query, tomorrow).await;
+        assert_eq!(next_day.tag_id, first.tag_id);
+        assert!(next_day.rebuilt);
+        assert_eq!(tag_card_ids(&pool, first.tag_id).await, vec![due, review]);
+        let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
+            .bind(first.tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tag.updated_at.timestamp(), tomorrow.timestamp());
+        let review_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(review)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(review_card.custom_data.get(&tag_key).is_none());
+    }
+
+    #[sqlx::test]
+    async fn test_review_snapshot_is_not_reshuffled_by_note_edits(pool: SqlitePool) -> () {
+        let now = Utc::now();
+        let (due, _review, suspended) = setup_snapshot_cards(&pool, now).await;
+
+        let response = snapshot(&pool, "(c.state=0 limit=1) or (c.state=2 limit=0)", now).await;
+        assert_eq!(tag_card_ids(&pool, response.tag_id).await, vec![due]);
+        let tag_before: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
+            .bind(response.tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Unscoped, `c.state=0 limit=1` picks the suspended card, so re-evaluating the query on
+        // this edit would pull it into the tag. Automatic filtered-tag rebuilds are currently off
+        // (`AUTOMATIC_REBUILD`), and `rebuild_filtered_tags_for_updated_notes` skips limited
+        // queries in case they are turned on.
+        let suspended_note_id: NoteId =
+            sqlx::query_scalar(r"SELECT note_id FROM card WHERE id = ?")
+                .bind(suspended)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![suspended_note_id]),
+                parser_id: None,
+                data: None,
+                keywords: Some(vec!["edited".to_string()]),
+                tags: UpdateTags::None,
+                custom_data: None,
+            },
+            now,
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(tag_card_ids(&pool, response.tag_id).await, vec![due]);
+        let tag_after: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
+            .bind(response.tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tag_after.updated_at, tag_before.updated_at);
     }
 }
