@@ -348,7 +348,7 @@ fn test_get_cards_no_clozes() {
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
     assert!(cards_res.is_ok());
     if let Ok(cards) = cards_res {
-        assert!(cards.is_empty());
+        assert!(cards.is_empty(), "{cards:?}");
     }
 }
 

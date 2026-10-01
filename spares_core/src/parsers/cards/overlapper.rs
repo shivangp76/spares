@@ -241,7 +241,7 @@ mod tests {
         OverlapperConfig::default()
     }
 
-    /// Summarises assignments as (card_group, is_first_prompt, is_hidden) for readability.
+    /// Summarises assignments as (`card_group`, `is_first_prompt`, `is_hidden`) for readability.
     fn summarise(assignments: &[Vec<OverlapperGroupAssignment>]) -> Vec<Vec<(u32, bool, bool)>> {
         assignments
             .iter()
@@ -338,7 +338,7 @@ mod tests {
         );
     }
 
-    /// start_and_end_gradually with P=3 produces 2 extra cards at start and 2 at end.
+    /// `start_and_end_gradually` with P=3 produces 2 extra cards at start and 2 at end.
     #[test]
     fn test_start_and_end_gradually_p3() {
         let config = OverlapperConfig {
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(result.len(), 6);
     }
 
-    /// no_cues_for_first_item suppresses context on the first card.
+    /// `no_cues_for_first_item` suppresses context on the first card.
     #[test]
     fn test_no_cues_for_first_item() {
         let config = OverlapperConfig {

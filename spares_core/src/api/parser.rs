@@ -238,7 +238,7 @@ pub(crate) mod tests {
         assert!(parser_res.is_ok());
         let parser = parser_res.unwrap();
         assert_eq!(parser.name, parser_name);
-        return parser;
+        parser
     }
 
     #[sqlx::test]

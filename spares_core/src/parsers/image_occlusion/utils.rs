@@ -402,7 +402,7 @@ mod tests {
     /// An empty group has no bounding box, so the fallback (0.0, 0.0) is returned.
     #[test]
     fn test_group_center_empty_group() {
-        let group = parse(r#"<g/>"#);
+        let group = parse(r"<g/>");
         let (cx, cy) = get_center_of_shape(SvgClozeType::Group, &group);
         assert_eq!(cx, 0.0);
         assert_eq!(cy, 0.0);

@@ -117,7 +117,7 @@ fn bench_update_notes(c: &mut Criterion) {
                     .unwrap(),
                 )
             })
-        })
+        });
     });
 
     group.bench_function("tags_only_update_500", |b| {
@@ -146,7 +146,7 @@ fn bench_update_notes(c: &mut Criterion) {
                     .unwrap(),
                 )
             })
-        })
+        });
     });
 
     group.finish();
