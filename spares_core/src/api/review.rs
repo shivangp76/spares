@@ -1279,9 +1279,7 @@ mod tests {
         );
         assert_eq!(
             statistics_response
-                .due_count_by_state
-                .iter()
-                .map(|(_, x)| x)
+                .due_count_by_state.values()
                 .sum::<u32>(),
             3
         );

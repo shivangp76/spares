@@ -341,6 +341,7 @@ fn test_get_cards_grouping_all_2() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_get_cards_grouping_all_3() {
     // Grouping "*" should be _nearly_ identical to manually specifying the groupings.
     let data = r"a{{[g:1]b}}c{{[g:2]d}}e{{[g:1,2]f}}g";

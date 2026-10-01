@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_implied_and() {
-        let input = r##"tag=math test and tag"##;
+        let input = r"tag=math test and tag";
         let lexer = Lexer::new(input);
         let tokens = lexer
             .into_iter()
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_date() {
-        let input = r##"created_at>=2020-01-01 and c.stability>=-2.0"##;
+        let input = r"created_at>=2020-01-01 and c.stability>=-2.0";
         let lexer = Lexer::new(input);
         let tokens = lexer
             .into_iter()
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_date_with_time() {
-        let input = r##"created_at>=2020-01-01T12:12:12Z and c.stability>=2.0"##;
+        let input = r"created_at>=2020-01-01T12:12:12Z and c.stability>=2.0";
         let lexer = Lexer::new(input);
         let tokens = lexer
             .into_iter()
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_invalid_time() {
-        let input = r##"created_at>=2020-01-01T12: and c.stability>=2.0"##;
+        let input = r"created_at>=2020-01-01T12: and c.stability>=2.0";
         let lexer = Lexer::new(input);
         let tokens = lexer
             .into_iter()

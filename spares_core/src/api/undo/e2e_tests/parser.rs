@@ -1,5 +1,5 @@
 //! End-to-end undo tests: create/update/delete parser flows, with and without groups,
-//! including dependency error paths. Also covers apply_event for parser events (via undo flow).
+//! including dependency error paths. Also covers `apply_event` for parser events (via undo flow).
 
 use chrono::Utc;
 use serde_json::json;

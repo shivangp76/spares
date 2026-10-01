@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn test_parsers_validation() {
         let all_parsers = get_all_parsers();
-        assert!(!all_parsers.is_empty());
+        assert!(!all_parsers.is_empty(), "no parsers registered");
         let mut all_parser_names = Vec::new();
         for parser_fn in all_parsers {
             let parser = parser_fn();

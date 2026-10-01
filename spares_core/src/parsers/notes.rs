@@ -446,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "test data is long")]
     fn test_get_notes_convert_parser_advanced() {
         // This tests:
         // - Image occlusion

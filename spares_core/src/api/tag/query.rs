@@ -374,7 +374,7 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(card_tags.len(), 2);
-        assert_eq!((&card_tags[0]).card_id, cards[0].id);
-        assert_eq!((&card_tags[1]).card_id, cards_2[0].id);
+        assert_eq!(card_tags[0].card_id, cards[0].id);
+        assert_eq!(card_tags[1].card_id, cards_2[0].id);
     }
 }

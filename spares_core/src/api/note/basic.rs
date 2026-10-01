@@ -251,6 +251,7 @@ pub(crate) mod tests {
         vec1.iter().all(|item| vec2.contains(item))
     }
 
+    #[allow(clippy::type_complexity, reason = "test fixture tuples")]
     pub async fn create_note_helper(pool: &SqlitePool) -> Vec<NoteResponse> {
         let parser = create_parser_helper(pool, "markdown").await;
 
@@ -348,7 +349,7 @@ pub(crate) mod tests {
                 // Verify linked_notes in database
                 // NOTE: Linked notes are only matched after calling the render endpoint, but the searched_keyword should be inserted
                 let note_link_res: Result<Vec<NoteLink>, sqlx::Error> =
-                    sqlx::query_as(r#"SELECT * FROM note_link WHERE parent_note_id = ?"#)
+                    sqlx::query_as(r"SELECT * FROM note_link WHERE parent_note_id = ?")
                         .bind(note.id)
                         .fetch_all(pool)
                         .await;
@@ -395,7 +396,7 @@ pub(crate) mod tests {
         let id = last_note.id;
         let request = UpdateNotesRequest {
             selector: NotesSelector::Ids(vec![id]),
-            data: Some(created_notes[1].data.to_string()),
+            data: Some(created_notes[1].data.clone()),
             parser_id: None,
             keywords: None,
             tags: UpdateTags::None,

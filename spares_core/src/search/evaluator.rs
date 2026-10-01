@@ -1370,6 +1370,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "test data is long")]
     fn test_search_queries() {
         let inputs = vec![
             (

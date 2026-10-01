@@ -143,14 +143,14 @@ impl SrsScheduler for FSRS {
         num_siblings: u32,
         num_reviews: u32,
         first_review_date: DateTime<Utc>,
-        mut rng: &mut ThreadRng,
+        rng: &mut ThreadRng,
     ) -> Vec<Vec<(RatingSubmission, DateTime<Utc>)>> {
         // Again = 1, Hard = 2, Good = 3, Easy = 4,
         // let weights = [0, 0, 0, 3]; // Weights favoring 3
         let weights = [1, 3, 5, 3]; // Weights favoring 3
         let dist = WeightedIndex::new(weights).unwrap();
         let ratings: Vec<u32> = (1..=num_reviews)
-            .map(|_| (dist.sample(&mut rng) + 1) as u32) // Add 1 to map to 1..=4
+            .map(|_| (dist.sample(rng) + 1) as u32) // Add 1 to map to 1..=4
             .collect::<Vec<_>>();
 
         let mut all_review_histories = Vec::new();
