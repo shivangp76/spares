@@ -348,10 +348,11 @@ fn get_linked_notes_string(
         // Order all linked notes in `note_data` sequentially
         let mut count = 0;
         let linked_notes_regex = get_linked_notes_regex();
-        let new_note_data = linked_notes_regex.replace_all(note_data, |caps: &Captures| {
-            count += 1;
-            format!("[{}][li{}]", &caps[1], count)
-        });
+        let new_note_data =
+            linked_notes_regex.replace_all(note_data, |caps: &Captures<'_, str>| {
+                count += 1;
+                format!("[{}][li{}]", &caps[1], count)
+            });
 
         let linked_notes_string = linked_notes
             .iter()

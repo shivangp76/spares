@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import wasm from 'vite-plugin-wasm'
-import topLevelAwait from 'vite-plugin-top-level-await'
 
 export default defineConfig({
   optimizeDeps: {
@@ -17,7 +16,7 @@ export default defineConfig({
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [react(), wasm(), topLevelAwait(), {
+  plugins: [react(), wasm(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files
