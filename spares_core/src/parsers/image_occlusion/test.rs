@@ -761,11 +761,12 @@ fn test_image_occlusion_parallel_performance() {
     // Test that parallel processing is faster than sequential processing
     // for multiple image occlusion cards
 
+    use image::Rgba;
+    use image::RgbaImage;
+
     use crate::config::read_external_config;
     use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
     use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
-    use image::Rgba;
-    use image::RgbaImage;
 
     let seed = "perf-test";
     let num_cards = 8; // Create 8 cards to test parallelism

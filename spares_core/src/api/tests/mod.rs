@@ -367,9 +367,7 @@ async fn simulate_reviews(
         assert!(statistics_res.is_ok());
         let statistics = statistics_res.unwrap();
         let config = read_external_config().unwrap();
-        let mut total_due = statistics
-            .due_count_by_state.values()
-            .sum::<u32>();
+        let mut total_due = statistics.due_count_by_state.values().sum::<u32>();
         if day_offset == 0 {
             assert_eq!(
                 statistics.due_count_by_state.get(&NEW_CARD_STATE),
@@ -399,9 +397,7 @@ async fn simulate_reviews(
             let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
             let new_statistics = new_statistics_res.unwrap();
-            let new_total_due = new_statistics
-                .due_count_by_state.values()
-                .sum::<u32>();
+            let new_total_due = new_statistics.due_count_by_state.values().sum::<u32>();
             assert_eq!(total_due + statistics.advance_safe_count, new_total_due);
             assert!(statistics.advance_safe_count >= new_statistics.advance_safe_count);
             assert_eq!(new_statistics.advance_safe_count, 0);
@@ -425,9 +421,7 @@ async fn simulate_reviews(
             let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
             let new_statistics = new_statistics_res.unwrap();
-            let new_total_due = new_statistics
-                .due_count_by_state.values()
-                .sum::<u32>();
+            let new_total_due = new_statistics.due_count_by_state.values().sum::<u32>();
             assert_eq!(total_due - statistics.postpone_safe_count, new_total_due);
             assert!(statistics.postpone_safe_count >= new_statistics.postpone_safe_count);
             assert_eq!(new_statistics.postpone_safe_count, 0);
