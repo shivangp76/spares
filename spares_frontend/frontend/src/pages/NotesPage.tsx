@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { listNotes, searchNotes, updateNote } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import Navbar from '../components/Navbar';
@@ -23,14 +23,6 @@ function NoteDetail({ note, onClose, onNoteUpdated }: { note: NoteResponse; onCl
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDataContent(note.data);
-    setTagsContent(note.tags.join('\n'));
-    setKeywordsContent(note.keywords.join('\n'));
-    setSaveStatus('idle');
-    setSaveError(null);
-  }, [note.id]);
 
   async function handleSave() {
     setSaveStatus('saving');
@@ -136,6 +128,7 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     setLoading(true);
     listNotes(page, PAGE_SIZE)
       .then(data => { setNotes(data); setError(null); })
@@ -248,6 +241,7 @@ export default function NotesPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {selectedNote
             ? <NoteDetail
+                key={selectedNote.id}
                 note={selectedNote}
                 onClose={() => setSelectedNote(null)}
                 onNoteUpdated={(updated) => {
