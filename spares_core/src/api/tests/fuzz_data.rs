@@ -37,7 +37,7 @@ use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::NotesResponse;
 
 fn generate_next_cloze_options(mut input: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
-    input.sort();
+    input.sort_unstable();
     let last = input.last().copied().unwrap_or((0, 0));
     let mut result = vec![(last.0 + 1, 1)];
     let mut seen_majors = HashSet::new();
@@ -175,7 +175,7 @@ fn get_last_children(current: &Rc<ClozeEntry>) -> Vec<Rc<ClozeEntry>> {
     if children.is_empty() {
         return vec![Rc::clone(current)];
     }
-    result.push(Rc::clone(&current));
+    result.push(Rc::clone(current));
     let last_child = children.last().unwrap();
     result.extend(get_last_children(&Rc::clone(last_child)));
     result
@@ -184,7 +184,7 @@ fn get_last_children(current: &Rc<ClozeEntry>) -> Vec<Rc<ClozeEntry>> {
 fn generate_note_structure(
     clozes_count: usize,
     max_nesting_level: usize,
-    mut rng: &mut ThreadRng,
+    rng: &mut ThreadRng,
 ) -> Rc<ClozeEntry> {
     let root = Rc::new(ClozeEntry {
         card_number: 0,
@@ -197,7 +197,7 @@ fn generate_note_structure(
         // Nesting level
         let ancestors = get_last_children(&root);
         let capped_ancestors = ancestors.iter().take(max_nesting_level).collect::<Vec<_>>();
-        let parent = *capped_ancestors.choose(&mut rng).unwrap();
+        let parent = *capped_ancestors.choose(rng).unwrap();
 
         // Card and cloze number
         let mut card_cloze_options = generate_next_cloze_options(current_used_clozes.clone());
@@ -208,7 +208,7 @@ fn generate_note_structure(
                 .find(|x| x.card_number == *card_number)
                 .is_none()
         });
-        let card_cloze = card_cloze_options.choose(&mut rng).unwrap();
+        let card_cloze = card_cloze_options.choose(rng).unwrap();
         current_used_clozes.push(*card_cloze);
 
         let new_cloze = Rc::new(ClozeEntry {
@@ -217,7 +217,7 @@ fn generate_note_structure(
             parent: RefCell::new(Weak::new()),
             children: RefCell::new(Vec::new()),
         });
-        *new_cloze.parent.borrow_mut() = Rc::downgrade(&parent);
+        *new_cloze.parent.borrow_mut() = Rc::downgrade(parent);
         parent.children.borrow_mut().push(Rc::clone(&new_cloze));
     }
     root
@@ -228,22 +228,22 @@ fn generate_tags() -> Vec<String> {
     let max_options = all_tags.len().min(MAX_TAGS);
     let mut rng = rand::rng();
     let chosen_num_tags = rng.random_range(0..=max_options);
-    let mut sampled = all_tags.to_vec();
+    let mut sampled = all_tags.clone();
     sampled.shuffle(&mut rng);
     sampled.truncate(chosen_num_tags);
     sampled
 }
 
-fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut ThreadRng) -> String {
+fn generate_note(node: &ClozeEntry, parser: &dyn Parseable, rng: &mut ThreadRng) -> String {
     let mut result = String::new();
     let children = node.children.borrow();
-    let include_forward_card = *[true, false].choose(&mut rng).unwrap();
-    let include_backward_card = if !include_forward_card {
-        true
+    let include_forward_card = *[true, false].choose(rng).unwrap();
+    let include_backward_card = if include_forward_card {
+        *[true, false].choose(rng).unwrap()
     } else {
-        *[true, false].choose(&mut rng).unwrap()
+        true
     };
-    let is_suspended = *[true, false].choose(&mut rng).unwrap();
+    let is_suspended = *[true, false].choose(rng).unwrap();
     let cloze_settings = ClozeSettings::default();
     let grouping_settings = ClozeGroupingSettings {
         grouping: ClozeGrouping::Custom(node.card_number.to_string()),
@@ -279,7 +279,7 @@ fn generate_note(node: Rc<ClozeEntry>, parser: &dyn Parseable, mut rng: &mut Thr
 
     let mut cloze_body = String::new();
     for child in children.iter() {
-        let child_string = generate_note(Rc::clone(child), parser, rng);
+        let child_string = generate_note(child, parser, rng);
         cloze_body.push_str(child_string.as_str());
     }
     let body_string = format!("\nExpected Card {}\n", node.card_number);
@@ -311,16 +311,16 @@ pub async fn generate_notes(
         max_nesting_level,
         num_reviews,
     } = generate_notes_request;
-    let scheduler = get_scheduler_from_string(&scheduler_name).unwrap();
-    let parser_response = create_parser_helper(&pool, &parser_name).await;
-    let parser = find_parser(&parser_name, &get_all_parsers()).unwrap();
+    let scheduler = get_scheduler_from_string(scheduler_name).unwrap();
+    let parser_response = create_parser_helper(pool, parser_name).await;
+    let parser = find_parser(parser_name, &get_all_parsers()).unwrap();
     let mut rng = rand::rng();
     let create_note_requests = (1..=*note_count)
         .into_iter()
         .map(|_| {
             let note_structure =
                 generate_note_structure(*clozes_count, *max_nesting_level, &mut rng);
-            generate_note(note_structure, parser.as_ref(), &mut rng)
+            generate_note(&note_structure, parser.as_ref(), &mut rng)
         })
         .map(|note_data| CreateNoteRequest {
             data: note_data,
@@ -335,7 +335,7 @@ pub async fn generate_notes(
         requests: create_note_requests,
     };
     let note_responses_res =
-        create_notes(&pool, request, *start_date, &get_all_parsers(), false).await;
+        create_notes(pool, request, *start_date, &get_all_parsers(), false).await;
     assert!(note_responses_res.is_ok());
     let mut note_responses = note_responses_res.unwrap();
 
@@ -384,13 +384,13 @@ pub async fn generate_notes(
 pub fn generate_review_logs(
     scheduler: &dyn SrsScheduler,
     initial_card: Card,
-    mut rng: &mut ThreadRng,
+    rng: &mut ThreadRng,
 ) -> (Card, Vec<ReviewLog>) {
     let num_siblings = 1;
     let num_reviews = rng.random_range(3..=5);
     let first_review_date = initial_card.created_at;
     let review_histories_all =
-        scheduler.generate_review_history(num_siblings, num_reviews, first_review_date, &mut rng);
+        scheduler.generate_review_history(num_siblings, num_reviews, first_review_date, rng);
     let review_histories = &review_histories_all[0];
     let (card, review_logs) =
         review_histories

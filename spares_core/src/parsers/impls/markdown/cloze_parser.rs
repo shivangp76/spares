@@ -86,7 +86,7 @@ impl<'a> ClozeParser<'a> {
         if all_clozes.is_empty() {
             None
         } else {
-            assert!(current_clozes.is_empty());
+            assert!(current_clozes.is_empty(), "unclosed clozes: {current_clozes:?}");
             all_clozes.sort_by_key(|x| x.start_match.start);
             Some(all_clozes)
         }

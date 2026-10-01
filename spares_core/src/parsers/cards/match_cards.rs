@@ -163,9 +163,9 @@ mod tests {
             same_indices,
         }) = match_cards_res
         {
-            assert!(move_card_indices.is_empty());
-            assert!(delete_card_indices.is_empty());
-            assert!(create_card_indices.is_empty());
+            assert!(move_card_indices.is_empty(), "{move_card_indices:?}");
+            assert!(delete_card_indices.is_empty(), "{delete_card_indices:?}");
+            assert!(create_card_indices.is_empty(), "{create_card_indices:?}");
             assert_eq!(same_indices, vec![1, 2, 3]);
         }
     }
@@ -228,9 +228,9 @@ mod tests {
         }) = match_cards_res
         {
             assert_eq!(move_card_indices, vec![(2, 1), (1, 2)]);
-            assert!(delete_card_indices.is_empty());
-            assert!(create_card_indices.is_empty());
-            assert!(same_indices.is_empty());
+            assert!(delete_card_indices.is_empty(), "{delete_card_indices:?}");
+            assert!(create_card_indices.is_empty(), "{create_card_indices:?}");
+            assert!(same_indices.is_empty(), "{same_indices:?}");
         }
     }
 }

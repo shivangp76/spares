@@ -1280,13 +1280,13 @@ mod tests {
             is_suspended: false,
             custom_data: Map::new(),
         };
-        let parser = create_parser_helper(&pool, "markdown").await;
+        let parser = create_parser_helper(pool, "markdown").await;
         let request = CreateNotesRequest {
             parser_id: parser.id,
             requests: vec![create_note_request.clone()],
         };
         let create_notes_res =
-            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+            create_notes(pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_ok());
         let created_notes = create_notes_res.unwrap();
         assert_eq!(created_notes.notes.len(), 1);
@@ -1295,7 +1295,7 @@ mod tests {
         // Submit review for a card
         let cards_res: Result<Vec<Card>, sqlx::Error> =
             sqlx::query_as(r"SELECT * FROM card WHERE note_id = ? ORDER BY due ASC")
-                .bind(&created_note.id)
+                .bind(created_note.id)
                 .fetch_all(pool)
                 .await;
         assert!(cards_res.is_ok());
@@ -1311,13 +1311,13 @@ mod tests {
                 tag_id: None,
             }),
         };
-        let submit_review_res = submit_study_action(&pool, request, Utc::now()).await;
+        let submit_review_res = submit_study_action(pool, request, Utc::now()).await;
         assert!(submit_review_res.is_ok());
 
         // Get cards
         let cards_res: Result<Vec<Card>, sqlx::Error> =
             sqlx::query_as(r"SELECT * FROM card WHERE note_id = ? ORDER BY due ASC")
-                .bind(&created_note.id)
+                .bind(created_note.id)
                 .fetch_all(pool)
                 .await;
         assert!(cards_res.is_ok());
@@ -1344,7 +1344,7 @@ mod tests {
             tags: UpdateTags::None,
             custom_data: None,
         };
-        let notes_res = update_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
+        let notes_res = update_notes(pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(notes_res.is_ok());
         let UpdateNotesResponse { notes, .. } = notes_res.unwrap();
         assert_eq!(notes.len(), 1);
@@ -1354,7 +1354,7 @@ mod tests {
         // Get cards
         let cards_res: Result<Vec<Card>, sqlx::Error> =
             sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
-                .bind(&created_note.id)
+                .bind(created_note.id)
                 .fetch_all(pool)
                 .await;
         assert!(cards_res.is_ok());
@@ -1372,9 +1372,9 @@ mod tests {
 
         // Since the card was changed to reverse only, a new card should be created since these cards aren't correlated.
         // `new_card[0]` should be new, so the due dates should be different.
-        assert!(old_cards[0].due != new_cards[0].due);
-        assert!(old_cards[0].stability != new_cards[0].stability);
-        assert!(old_cards[0].difficulty != new_cards[0].difficulty);
+        assert_ne!(old_cards[0].due, new_cards[0].due);
+        assert_ne!(old_cards[0].stability, new_cards[0].stability);
+        assert_ne!(old_cards[0].difficulty, new_cards[0].difficulty);
 
         assert_eq!(new_cards[0].stability, Card::new(Utc::now()).stability);
         assert_eq!(new_cards[0].difficulty, Card::new(Utc::now()).difficulty);
@@ -1393,8 +1393,8 @@ mod tests {
         assert!(updated_note.contains("o:1,2"));
 
         // `new_card[1]` should be new
-        assert!(new_cards[0].stability != new_cards[1].stability);
-        assert!(new_cards[0].difficulty != new_cards[1].difficulty);
+        assert_ne!(new_cards[0].stability, new_cards[1].stability);
+        assert_ne!(new_cards[0].difficulty, new_cards[1].difficulty);
         assert_eq!(new_cards[1].stability, Card::new(Utc::now()).stability);
         assert_eq!(new_cards[1].difficulty, Card::new(Utc::now()).difficulty);
     }
@@ -1522,7 +1522,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let src_card_after_review: Card = sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
+        let src_card_after_review: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(src_card.id)
             .fetch_one(&pool)
             .await
@@ -1600,13 +1600,13 @@ mod tests {
 
         // Step 6: Verify the review history was also inherited.
         let src_review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
                 .bind(src_card.id)
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         let dst_review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
                 .bind(dst_card2.id)
                 .fetch_all(&pool)
                 .await

@@ -66,7 +66,7 @@ fn migration_func(
         // Get cards again, adding the order as well
         cards = get_cards(parser.as_ref(), None, &note_data, true, false).unwrap();
     }
-    assert!(!cards.is_empty());
+    assert_ne!(cards, [] as [spares_core::parsers::CardData; 0]);
     let card = cards.first().unwrap();
     let first_cloze_index = card
         .data

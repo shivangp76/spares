@@ -30,6 +30,7 @@ use crate::parsers::impls::markdown::MarkdownParser;
 const MOVE_FILES: bool = false;
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_get_cards_image_occlusion_1() {
     // Tests
     // - Basics
@@ -214,6 +215,7 @@ fn test_get_cards_image_occlusion_1() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_get_cards_image_occlusion_2() {
     // This tests:
     // - Clozes that are hidden, but don't need to be answered are color differently
@@ -355,7 +357,7 @@ fn test_get_cards_image_occlusion_2() {
     let mut clozes = get_clozes_from_svg(&mut clozes_svg_element).unwrap();
     let config = ImageOcclusionConfig::default();
     modify_clozes_for_card(
-        &cloze_indices,
+        cloze_indices,
         &mut clozes,
         image_occlusion_1.front_conceal,
         image_occlusion_1.back_reveal,
@@ -390,6 +392,7 @@ fn test_get_cards_image_occlusion_2() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_get_cards_image_occlusion_front_conceal() {
     // Tests
     // - Front conceal
@@ -556,7 +559,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
     let mut clozes = get_clozes_from_svg(&mut clozes_svg_element).unwrap();
     let config = ImageOcclusionConfig::default();
     modify_clozes_for_card(
-        &cloze_indices,
+        cloze_indices,
         &mut clozes,
         image_occlusion_1.front_conceal,
         image_occlusion_1.back_reveal,
@@ -606,7 +609,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
     let mut clozes_svg_element = Element::parse(new_clozes_filedata_1.as_bytes()).unwrap();
     let mut clozes = get_clozes_from_svg(&mut clozes_svg_element).unwrap();
     modify_clozes_for_card(
-        &cloze_indices,
+        cloze_indices,
         &mut clozes,
         image_occlusion_1.front_conceal,
         image_occlusion_1.back_reveal,
@@ -636,6 +639,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_get_cards_image_occlusion_grouping() {
     // Tests:
     // - Creating a text cloze with no settings and an image occlusion cloze with no settings should create 2 cards (1 per cloze, since they are not grouped)
@@ -752,6 +756,7 @@ fn test_get_cards_image_occlusion_grouping() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 fn test_image_occlusion_parallel_performance() {
     // Test that parallel processing is faster than sequential processing
     // for multiple image occlusion cards
@@ -759,6 +764,8 @@ fn test_image_occlusion_parallel_performance() {
     use crate::config::read_external_config;
     use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
     use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
+    use image::Rgba;
+    use image::RgbaImage;
 
     let seed = "perf-test";
     let num_cards = 8; // Create 8 cards to test parallelism
@@ -775,8 +782,6 @@ fn test_image_occlusion_parallel_performance() {
         original_image_filepath.push(format!("{}.png", file_stem));
 
         // Create a simple PNG image (400x400 orange rectangle)
-        use image::Rgba;
-        use image::RgbaImage;
         let mut img = RgbaImage::new(400, 400);
         for pixel in img.pixels_mut() {
             *pixel = Rgba([249, 115, 22, 255]); // Orange color
@@ -787,8 +792,7 @@ fn test_image_occlusion_parallel_performance() {
         clozes_filepath.push(format!("{}_clozes.svg", file_stem));
 
         // Create clozes SVG
-        let clozes_svg = format!(
-            r##"<?xml version="1.0" encoding="UTF-8"?>
+        let clozes_svg = r##"<?xml version="1.0" encoding="UTF-8"?>
         <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="350">
           <g class="layer" id="markup-group">
             <title>Markup</title>
@@ -798,8 +802,7 @@ fn test_image_occlusion_parallel_performance() {
             <rect fill="#FFEBA2" height="75" width="123.21429" stroke="#2D2D2D" y="65.17857" id="svg_1" x="53.67857" />
             <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" />
           </g>
-        </svg>"##
-        );
+        </svg>"##.to_string();
         std::fs::write(&clozes_filepath, clozes_svg).unwrap();
 
         let image_occlusion = Arc::new(ImageOcclusionData {
@@ -897,7 +900,7 @@ fn test_image_occlusion_parallel_performance() {
         .enumerate()
         .collect();
 
-    for (i, (cloze_indices, image_occlusion_data)) in image_occlusions_seq.iter() {
+    for (i, (cloze_indices, image_occlusion_data)) in &image_occlusions_seq {
         let image_occlusion_order_in_card = i + 1;
         let card_filepath = get_image_occlusion_card_filepath(
             &output_path,

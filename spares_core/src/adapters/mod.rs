@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn test_adapters_validation() {
         let all_adapters = get_all_adapters();
-        assert!(!all_adapters.is_empty());
+        assert!(!all_adapters.is_empty(), "no adapters registered");
         let mut all_adapter_names = Vec::new();
         for adapter_fn in all_adapters {
             let adapter = adapter_fn();

@@ -621,7 +621,7 @@ mod tests {
     fn test_get_notes_custom_data_2() {
         let parser: Box<dyn Parseable> = Box::new(LatexParserNote::new());
         let adapter = get_adapter_from_string("spares").unwrap();
-        let data = indoc! { r#"
+        let data = indoc! { r"
             \se{action: update}
             \se{note-id: 10}
             \se{anki-note-id: 99}
@@ -631,7 +631,7 @@ mod tests {
             b
             \end{cl}
             \end{note}
-            "#};
+            "};
         let notes_res = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None);
         assert!(notes_res.is_ok());
         let notes = notes_res.unwrap();

@@ -18,7 +18,7 @@ fn default_config() -> OverlapperConfig {
     OverlapperConfig::default()
 }
 
-fn make_cards(data: &str, config: OverlapperConfig) -> Vec<CardData> {
+fn make_cards(data: &str, config: &OverlapperConfig) -> Vec<CardData> {
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     get_cards_main(
         parser.as_ref(),
@@ -27,13 +27,13 @@ fn make_cards(data: &str, config: OverlapperConfig) -> Vec<CardData> {
         false,
         MOVE_FILES,
         (FrontConceal::default(), BackReveal::default(), false),
-        Some(&config),
+        Some(config),
         false,
     )
     .unwrap()
 }
 
-fn make_cards_with_order(data: &str, config: OverlapperConfig) -> Vec<CardData> {
+fn make_cards_with_order(data: &str, config: &OverlapperConfig) -> Vec<CardData> {
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     get_cards_main(
         parser.as_ref(),
@@ -42,7 +42,7 @@ fn make_cards_with_order(data: &str, config: OverlapperConfig) -> Vec<CardData> 
         true,
         MOVE_FILES,
         (FrontConceal::default(), BackReveal::default(), false),
-        Some(&config),
+        Some(config),
         false,
     )
     .unwrap()
@@ -89,7 +89,7 @@ fn surrounding(text: &str) -> NotePart {
 const OV: &str = "{{[ov:]";
 const END: &str = "}}";
 
-/// Build a single cloze block: [ClozeStart, ClozeData(...), ClozeEnd]
+/// Build a single cloze block: [`ClozeStart`, `ClozeData`(...), `ClozeEnd`]
 fn prompt(text: &str) -> Vec<NotePart> {
     vec![cs(OV), to_answer(text), ce(END)]
 }
@@ -104,9 +104,9 @@ fn hidden(text: &str) -> Vec<NotePart> {
 ///
 /// Expected cards (sequential order):
 ///   Card 0 (group 5): prompt=a, hidden=b,c,d
-///   Card 1 (group 6): context=a (SurroundingData), prompt=b, hidden=c,d
-///   Card 2 (group 7): hidden=a, context=b (SurroundingData), prompt=c, hidden=d
-///   Card 3 (group 8): hidden=a,b, context=c (SurroundingData), prompt=d
+///   Card 1 (group 6): context=a (`SurroundingData`), prompt=b, hidden=c,d
+///   Card 2 (group 7): hidden=a, context=b (`SurroundingData`), prompt=c, hidden=d
+///   Card 3 (group 8): hidden=a,b, context=c (`SurroundingData`), prompt=d
 ///
 /// The 4 ov: clozes consume Auto groups 1–4 during parsing; overlapper then
 /// assigns groups 5–8. That is why groupings start at Auto(5).
@@ -114,7 +114,7 @@ fn hidden(text: &str) -> Vec<NotePart> {
 fn test_overlapper_4_items_standard() {
     // Input: 4 adjacent ov: clozes with no separating text
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}{{[ov:]d}}";
-    let cards = make_cards(data, default_config());
+    let cards = make_cards(data, &default_config());
 
     assert_eq!(cards.len(), 4);
 
@@ -178,7 +178,7 @@ fn test_overlapper_4_items_standard() {
 #[test]
 fn test_overlapper_order_written_back() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}";
-    let cards = make_cards_with_order(data, default_config());
+    let cards = make_cards_with_order(data, &default_config());
 
     assert_eq!(cards.len(), 3);
 
@@ -225,7 +225,7 @@ fn test_overlapper_order_written_back() {
     );
 }
 
-/// context_before_item=2: the two items preceding the prompt are visible context.
+/// `context_before_item=2`: the two items preceding the prompt are visible context.
 #[test]
 fn test_overlapper_context_before_2() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}{{[ov:]d}}{{[ov:]e}}";
@@ -235,7 +235,7 @@ fn test_overlapper_context_before_2() {
         context_after_item: 0,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     assert_eq!(cards.len(), 5);
 
@@ -257,7 +257,7 @@ fn test_overlapper_context_before_2() {
     assert!(card2_data.contains(&not_to_answer("e")));
 }
 
-/// context_after_item=1: the item immediately following the prompt is visible context.
+/// `context_after_item=1`: the item immediately following the prompt is visible context.
 #[test]
 fn test_overlapper_context_after_1() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}{{[ov:]d}}";
@@ -267,7 +267,7 @@ fn test_overlapper_context_after_1() {
         context_after_item: 1,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     assert_eq!(cards.len(), 4);
 
@@ -295,7 +295,7 @@ fn test_overlapper_context_after_1() {
     assert!(card1_data.contains(&not_to_answer("d")));
 }
 
-/// no_cues_for_first_item: the very first card has no visible context (no SurroundingData prefix).
+/// `no_cues_for_first_item`: the very first card has no visible context (no `SurroundingData` prefix).
 #[test]
 fn test_overlapper_no_cues_for_first_item() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}{{[ov:]d}}";
@@ -305,7 +305,7 @@ fn test_overlapper_no_cues_for_first_item() {
         no_cues_for_first_item: true,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     assert_eq!(cards.len(), 4);
 
@@ -332,7 +332,7 @@ fn test_overlapper_no_cues_for_first_item() {
     assert!(has_surrounding_a, "card 1 should have a as SurroundingData");
 }
 
-/// no_cues_for_last_item: the very last card has no visible context after.
+/// `no_cues_for_last_item`: the very last card has no visible context after.
 #[test]
 fn test_overlapper_no_cues_for_last_item() {
     let data = "{{[ov:]a}}{{[ov:]b}}{{[ov:]c}}{{[ov:]d}}";
@@ -343,7 +343,7 @@ fn test_overlapper_no_cues_for_last_item() {
         no_cues_for_last_item: true,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     assert_eq!(cards.len(), 4);
 
@@ -372,7 +372,7 @@ fn test_overlapper_no_cues_for_last_item() {
     );
 }
 
-/// start_and_end_gradually with P=2: generates 2*(P-1)=2 extra cards.
+/// `start_and_end_gradually` with P=2: generates 2*(P-1)=2 extra cards.
 /// n=4, P=2 → regular=3, extra=2 → total=5 cards.
 #[test]
 fn test_overlapper_start_and_end_gradually() {
@@ -384,7 +384,7 @@ fn test_overlapper_start_and_end_gradually() {
         start_and_end_gradually: true,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // 4 items, P=2: regular = 4-2+1 = 3, extra = 2*(2-1) = 2, total = 5
     assert_eq!(cards.len(), 5);
@@ -412,7 +412,7 @@ fn test_overlapper_prompts_2() {
         context_after_item: 0,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // n=5, P=2 → 4 cards
     assert_eq!(cards.len(), 4);
@@ -447,7 +447,7 @@ fn test_overlapper_n_less_than_p() {
     };
     // With overlapper disabled (n<p), the 2 clozes should be treated as regular ungrouped clozes
     // and produce 2 individual cards (one per cloze).
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
     assert_eq!(cards.len(), 2);
 }
 
@@ -461,7 +461,7 @@ fn test_overlapper_n_equals_p() {
         context_after_item: 0,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // n=3, P=3 → exactly 1 regular card
     assert_eq!(cards.len(), 1);
@@ -475,7 +475,7 @@ fn test_overlapper_n_equals_p() {
 #[test]
 fn test_overlapper_single_item() {
     let data = "{{[ov:]a}}";
-    let cards = make_cards(data, default_config());
+    let cards = make_cards(data, &default_config());
     assert_eq!(cards.len(), 1);
     assert!(cards[0].data.contains(&to_answer("a")));
 }
@@ -492,7 +492,7 @@ fn test_overlapper_mixed_with_regular_cloze() {
         context_after_item: 0,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // 3 overlapper cards + 1 regular card = 4 total
     assert_eq!(cards.len(), 4);
@@ -524,7 +524,7 @@ fn test_overlapper_mixed_with_custom_group() {
         prompts: 1,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // 2 overlapper cards + 1 custom-group card = 3 total
     assert_eq!(cards.len(), 3);
@@ -538,7 +538,7 @@ fn test_overlapper_mixed_with_custom_group() {
     assert!(custom_card.data.contains(&to_answer("d")));
 }
 
-/// Combining ov: with r: (include_reverse).
+/// Combining ov: with r: (`include_reverse`).
 /// The r: flag should be silently overridden by the overlapper — only forward cards are generated.
 #[test]
 fn test_overlapper_ignores_reverse_flag() {
@@ -548,7 +548,7 @@ fn test_overlapper_ignores_reverse_flag() {
         prompts: 1,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // Only 3 forward overlapper cards — the r: on item a is overridden
     assert_eq!(cards.len(), 3);
@@ -563,7 +563,7 @@ fn test_overlapper_ignores_reverse_flag() {
     assert_eq!(asks_a, 1, "a should be a prompt in exactly 1 card");
 }
 
-/// Combining ov: with ro: (reverse_only).
+/// Combining ov: with ro: (`reverse_only`).
 /// The ro: flag should also be overridden by the overlapper.
 #[test]
 fn test_overlapper_ignores_reverse_only_flag() {
@@ -573,7 +573,7 @@ fn test_overlapper_ignores_reverse_only_flag() {
         prompts: 1,
         ..default_config()
     };
-    let cards = make_cards(data, config);
+    let cards = make_cards(data, &config);
 
     // Only 3 forward overlapper cards
     assert_eq!(cards.len(), 3);
@@ -594,7 +594,7 @@ fn test_overlapper_coexists_with_reverse_cloze() {
         prompts: 1,
         ..default_config()
     };
-    let cards = make_cards_with_order(data, config);
+    let cards = make_cards_with_order(data, &config);
 
     // 1 forward + 1 backward (from r:x) + 2 overlapper = 4 cards
     assert_eq!(cards.len(), 4);
@@ -613,7 +613,7 @@ fn test_overlapper_coexists_with_reverse_cloze() {
     assert!(bwd_x, "should have backward card for x");
 }
 
-/// Verify with add_order=true that ov: clozes without a group tag still round-trip cleanly:
+/// Verify with `add_order=true` that ov: clozes without a group tag still round-trip cleanly:
 /// the output note data should contain `ov:` and sequential order numbers.
 #[test]
 fn test_overlapper_order_round_trip() {

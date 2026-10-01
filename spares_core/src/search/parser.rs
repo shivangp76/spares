@@ -299,7 +299,7 @@ mod tests {
             "dog and tag or tag~math or -card.special_state=scheduler_buried a b",
             r##"tag~"math \"test" and tag~#"math "test"# and (c.stability>=2 or -c.special_state=suspended)"##,
             r#"a="b"=c"#,
-            r#"-(tag=how-a-car-works parser_name=markdown)"#,
+            r"-(tag=how-a-car-works parser_name=markdown)",
             "",
         ];
         for input in inputs {
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_parser_minus_precedence() {
-        let input = r#"-tag=how-a-car-works parser_name=markdown"#;
+        let input = r"-tag=how-a-car-works parser_name=markdown";
         let parser = Parser::new(input);
         let token_tree_res = parser.parse_expression();
         assert!(token_tree_res.is_ok());

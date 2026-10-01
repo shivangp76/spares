@@ -42,4 +42,4 @@ missing_panics_doc = { level = "allow", priority = 5 }
 # To allow different dependencies to have different versions of their dependencies.
 multiple_crate_versions = { level = "allow", priority = 5 }
 # To allow functions that only accept `Range`s, not `RangeInclusive`s
-range-plus-one = { level = "allow", priority = 5 }
+range_plus_one = { level = "allow", priority = 5 }

@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_other_func_in_cloze_1() {
-        let input = indoc! { r#"#cl[ - mnemonic: #strong[c]url = #strong[c]ross product ]"# };
+        let input = indoc! { r"#cl[ - mnemonic: #strong[c]url = #strong[c]ross product ]" };
         let parser = TypstDataParser::new(input);
         assert_eq!(
             parser.clozes,
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn test_other_func_in_cloze_2() {
-        let input = indoc! { r#"#cl[ #lin[upper envelope] test ][o:1] "# };
+        let input = indoc! { r"#cl[ #lin[upper envelope] test ][o:1] " };
         let parser = TypstDataParser::new(input);
         assert_eq!(
             parser.clozes,

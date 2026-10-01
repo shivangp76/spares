@@ -880,7 +880,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let src_card_after_review: Card = sqlx::query_as(r#"SELECT * FROM card WHERE id = ?"#)
+        let src_card_after_review: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(src_card.id)
             .fetch_one(&pool)
             .await
@@ -932,13 +932,13 @@ mod tests {
 
         // Step 4: Verify the review history was also inherited.
         let src_review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
                 .bind(src_card.id)
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         let dst_review_logs: Vec<ReviewLog> =
-            sqlx::query_as(r#"SELECT * FROM review_log WHERE card_id = ?"#)
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
                 .bind(dst_card.id)
                 .fetch_all(&pool)
                 .await

@@ -551,8 +551,10 @@ mod tests {
     #[test]
     fn test_construct_cloze_string_1() {
         let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-        let mut global_settings = ClozeSettings::default();
-        global_settings.hint = Some("Test".to_string());
+        let global_settings = ClozeSettings {
+            hint: Some("Test".to_string()),
+            ..Default::default()
+        };
 
         let mut grouping_setting = ClozeGroupingSettings::default(&mut 1, None);
         grouping_setting.orders = Some(vec![1]);
@@ -581,8 +583,10 @@ mod tests {
     #[test]
     fn test_construct_cloze_string_2() {
         let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-        let mut global_settings = ClozeSettings::default();
-        global_settings.hint = Some("Test".to_string());
+        let global_settings = ClozeSettings {
+            hint: Some("Test".to_string()),
+            ..Default::default()
+        };
 
         let grouping_setting = ClozeGroupingSettings::default(&mut 1, None);
         let all_grouping_settings = vec![grouping_setting];

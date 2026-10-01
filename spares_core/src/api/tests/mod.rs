@@ -84,7 +84,7 @@ async fn read_generated_notes(
     parser_name: &str,
 ) -> (NotesResponse, DateTime<Utc>) {
     // Create parser
-    let _parser_response = create_parser_helper(&pool, parser_name).await;
+    let _parser_response = create_parser_helper(pool, parser_name).await;
 
     let parser = find_parser(parser_name, &get_all_parsers()).unwrap();
     let mut adapter = Box::new(SparesAdapter::new(SparesRequestProcessor::Database {
@@ -92,7 +92,7 @@ async fn read_generated_notes(
     }));
     let file_contents = read_to_string(file_path)
         .map_err(|e| Error::Io {
-            description: format!("Failed to read {}", &file_path.display()),
+            description: format!("Failed to read {}", file_path.display()),
             source: e,
         })
         .unwrap();
@@ -140,7 +140,7 @@ async fn read_generated_notes(
 }
 
 #[sqlx::test]
-#[ignore] // ignored because takes too long
+#[ignore = "takes too long"]
 // ../../../spares/test_data/note_generator/
 async fn test_simulate_reviews_1(pool: SqlitePool) {
     let output_rendered_filename = "test-9dc23620-1383-4fb1-9e41-e0cf0a4c7f0a".to_string();
@@ -153,7 +153,7 @@ async fn test_simulate_reviews_1(pool: SqlitePool) {
 }
 
 #[sqlx::test]
-#[ignore] // ignored because takes too long
+#[ignore = "takes too long"]
 async fn test_simulate_reviews_2(pool: SqlitePool) {
     let output_rendered_filename = "test-b72d8bba-cce9-4a40-b4a5-16eb5da26586".to_string();
     let parser_name = "markdown";
@@ -176,7 +176,7 @@ fn get_notes_fuzz_test(
     }
     output_text_filepath.push("test_data");
     output_text_filepath.push("note_generator");
-    output_text_filepath.push(&output_rendered_filename);
+    output_text_filepath.push(output_rendered_filename);
     output_text_filepath.set_extension(file_extension);
     output_text_filepath
 }
@@ -193,7 +193,7 @@ async fn test_simulate_reviews_from_file(
         output_text_filepath.display()
     );
     let (notes_response, start_date) =
-        read_generated_notes(&pool, &output_text_filepath, parser_name).await;
+        read_generated_notes(pool, &output_text_filepath, parser_name).await;
     let num_days_to_simulate_value = notes_response
         .notes
         .first()
@@ -204,7 +204,7 @@ async fn test_simulate_reviews_from_file(
     let num_days_to_simulate: i64 =
         serde_json::from_value(num_days_to_simulate_value.clone()).unwrap();
     simulate_reviews(
-        &pool,
+        pool,
         notes_response,
         scheduler_name,
         start_date,
@@ -214,7 +214,7 @@ async fn test_simulate_reviews_from_file(
 }
 
 #[sqlx::test]
-#[ignore] // ignored because takes too long
+#[ignore = "takes too long"]
 async fn test_note_generator(pool: SqlitePool) {
     let filtered_tag_query_opt = Some("tag=a or tag=b or tag=c".to_string());
     let generate_notes_request = if filtered_tag_query_opt.is_some() {
@@ -328,6 +328,7 @@ struct SimulatedReview {
     recall_duration: Duration,
 }
 
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 async fn simulate_reviews(
     pool: &SqlitePool,
     notes_response: NotesResponse,
@@ -354,7 +355,7 @@ async fn simulate_reviews(
 
     let mut advanced_once = false;
     let mut postponed_once = false;
-    for day_offset in 0..=(num_days_to_simulate - 1) {
+    for day_offset in 0..num_days_to_simulate {
         let requested_date = start_date + Duration::days(day_offset);
 
         // Get statistics at the start of the day
@@ -362,14 +363,12 @@ async fn simulate_reviews(
             scheduler_name: scheduler_name.to_string(),
             date: requested_date,
         };
-        let statistics_res = get_statistics(&pool, request).await;
+        let statistics_res = get_statistics(pool, request).await;
         assert!(statistics_res.is_ok());
         let statistics = statistics_res.unwrap();
         let config = read_external_config().unwrap();
         let mut total_due = statistics
-            .due_count_by_state
-            .iter()
-            .map(|(_, x)| x)
+            .due_count_by_state.values()
             .sum::<u32>();
         if day_offset == 0 {
             assert_eq!(
@@ -391,19 +390,17 @@ async fn simulate_reviews(
                     query: None,
                 },
             };
-            let advance_res = submit_study_action(&pool, request, requested_date).await;
+            let advance_res = submit_study_action(pool, request, requested_date).await;
             assert!(advance_res.is_ok());
             let request = StatisticsRequest {
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
             };
-            let new_statistics_res = get_statistics(&pool, request).await;
+            let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
             let new_statistics = new_statistics_res.unwrap();
             let new_total_due = new_statistics
-                .due_count_by_state
-                .iter()
-                .map(|(_, x)| x)
+                .due_count_by_state.values()
                 .sum::<u32>();
             assert_eq!(total_due + statistics.advance_safe_count, new_total_due);
             assert!(statistics.advance_safe_count >= new_statistics.advance_safe_count);
@@ -419,19 +416,17 @@ async fn simulate_reviews(
                     query: None,
                 },
             };
-            let postpone_res = submit_study_action(&pool, request, requested_date).await;
+            let postpone_res = submit_study_action(pool, request, requested_date).await;
             assert!(postpone_res.is_ok());
             let request = StatisticsRequest {
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
             };
-            let new_statistics_res = get_statistics(&pool, request).await;
+            let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
             let new_statistics = new_statistics_res.unwrap();
             let new_total_due = new_statistics
-                .due_count_by_state
-                .iter()
-                .map(|(_, x)| x)
+                .due_count_by_state.values()
                 .sum::<u32>();
             assert_eq!(total_due - statistics.postpone_safe_count, new_total_due);
             assert!(statistics.postpone_safe_count >= new_statistics.postpone_safe_count);
@@ -445,7 +440,7 @@ async fn simulate_reviews(
         loop {
             // Get review
             let review_res = get_review_card(
-                &pool,
+                pool,
                 GetReviewCardRequest { filter: None },
                 requested_date,
                 &get_all_parsers(),
@@ -475,7 +470,7 @@ async fn simulate_reviews(
                         tag_id: None,
                     }),
                 };
-                let submit_review_res = submit_study_action(&pool, request, requested_date).await;
+                let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());
                 flips_count += 1;
             } else {
@@ -491,7 +486,7 @@ async fn simulate_reviews(
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
             };
-            let statistics_res = get_statistics(&pool, request).await;
+            let statistics_res = get_statistics(pool, request).await;
             assert!(statistics_res.is_ok());
             let statistics = statistics_res.unwrap();
             assert!(statistics.cards_studied_count > 0);
@@ -506,6 +501,7 @@ async fn simulate_reviews(
     // - smart schedule: Examine the distribution of reviews on different days to see if it lines up with the workload_percentage
 }
 
+#[allow(clippy::too_many_lines, reason = "test data is long")]
 async fn simulate_filtered_tag_reviews(
     pool: &SqlitePool,
     notes_response: NotesResponse,
@@ -532,17 +528,17 @@ async fn simulate_filtered_tag_reviews(
         query: Some(filtered_tag_query.to_string()),
         auto_delete: true,
     };
-    let tag_res = create_tag(&pool, request, false).await;
+    let tag_res = create_tag(pool, request, false).await;
     assert!(tag_res.is_ok());
     let filtered_tag_id = tag_res.unwrap().id;
 
     // Get total number of cards that are a part of the filtered tag. Use this to test searching by filtered tag.
     let query = "tag=\"test-filtered-tag\"";
     let evaluator = Evaluator::new(query);
-    let cards_matching_filtered_tag = evaluator.get_card_ids(&pool).await.unwrap();
+    let cards_matching_filtered_tag = evaluator.get_card_ids(pool).await.unwrap();
 
     let mut reviewed_card_ids = HashSet::new();
-    for day_offset in 0..=(num_days_to_simulate - 1) {
+    for day_offset in 0..num_days_to_simulate {
         let requested_date = start_date + Duration::days(day_offset);
 
         // Submit reviews
@@ -550,7 +546,7 @@ async fn simulate_filtered_tag_reviews(
         loop {
             // Get review
             let review_res = get_review_card(
-                &pool,
+                pool,
                 GetReviewCardRequest {
                     filter: Some(GetReviewCardFilterRequest::FilteredTag {
                         tag_id: filtered_tag_id,
@@ -584,7 +580,7 @@ async fn simulate_filtered_tag_reviews(
                         tag_id: Some(filtered_tag_id),
                     }),
                 };
-                let submit_review_res = submit_study_action(&pool, request, requested_date).await;
+                let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());
                 review_count += 1;
                 reviewed_card_ids.insert(review_card.card_id);
@@ -609,7 +605,7 @@ async fn simulate_filtered_tag_reviews(
                         // Validate that there is at least 1 less card that is a part of the filtered tag
                         let evaluator = Evaluator::new(query);
                         let cards_matching_filtered_tag_after =
-                            evaluator.get_card_ids(&pool).await.unwrap();
+                            evaluator.get_card_ids(pool).await.unwrap();
                         assert!(
                             cards_matching_filtered_tag_after.len()
                                 < cards_matching_filtered_tag.len()
