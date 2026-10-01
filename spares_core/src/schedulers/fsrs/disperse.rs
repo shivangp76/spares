@@ -475,10 +475,7 @@ mod tests {
                 // dbg!(&changed_cards_ids.len());
             } else {
                 none_count += 1;
-                let mut dues = card_siblings
-                    .iter()
-                    .map(|(x, _)| x.due)
-                    .collect::<Vec<_>>();
+                let mut dues = card_siblings.iter().map(|(x, _)| x.due).collect::<Vec<_>>();
                 dues.sort();
                 // dbg!(&dues);
             }

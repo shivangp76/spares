@@ -1278,9 +1278,7 @@ mod tests {
             Some(&3)
         );
         assert_eq!(
-            statistics_response
-                .due_count_by_state.values()
-                .sum::<u32>(),
+            statistics_response.due_count_by_state.values().sum::<u32>(),
             3
         );
         assert_eq!(statistics_response.advance_safe_count, 0);

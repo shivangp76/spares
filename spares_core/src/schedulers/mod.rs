@@ -227,7 +227,10 @@ pub trait SrsScheduler: Send + Sync {
     /// replay to start over, and dropping it would reconstruct the state the card would have had
     /// if it had never been forgotten.
     fn compute_memory_state(&self, review_logs: Vec<ReviewLog>) -> Result<Card, Error> {
-        assert!(!review_logs.is_empty(), "no review logs to compute memory state from");
+        assert!(
+            !review_logs.is_empty(),
+            "no review logs to compute memory state from"
+        );
         // Seeded from the first entry whatever its kind, so that a card forgotten before it was
         // ever reviewed replays to a card created at that instant rather than at the epoch.
         let mut card = Card::new(review_logs.first().unwrap().reviewed_at);
@@ -495,7 +498,10 @@ mod tests {
     fn effective_review_logs_without_forget_is_everything() {
         let logs = vec![review_at(0, 3), review_at(1, 3)];
         assert_eq!(effective_review_logs(&logs).len(), 2);
-        assert!(effective_review_logs(&[]).is_empty(), "no logs means no effective logs");
+        assert!(
+            effective_review_logs(&[]).is_empty(),
+            "no logs means no effective logs"
+        );
     }
 
     #[test]
@@ -514,10 +520,16 @@ mod tests {
 
         // A trailing forget leaves nothing effective at all.
         let logs = vec![review_at(0, 3), forget_at(1)];
-        assert!(effective_review_logs(&logs).is_empty(), "a trailing forget leaves nothing");
+        assert!(
+            effective_review_logs(&logs).is_empty(),
+            "a trailing forget leaves nothing"
+        );
 
         // Consecutive forgets behave like one.
         let logs = vec![review_at(0, 3), forget_at(1), forget_at(2)];
-        assert!(effective_review_logs(&logs).is_empty(), "consecutive forgets act as one");
+        assert!(
+            effective_review_logs(&logs).is_empty(),
+            "consecutive forgets act as one"
+        );
     }
 }
