@@ -443,6 +443,12 @@ export default function ReviewPage() {
     if (panelNoteId !== undefined) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [panelNoteId]);
 
+  // Load the Typst compiler while the filter is picked, so the first Typst card isn't delayed by it
+  const onLanding = phase === 'landing';
+  useEffect(() => {
+    if (onLanding) import('../typst/compiler').then(({ warmUpTypst }) => warmUpTypst()).catch(console.error);
+  }, [onLanding]);
+
   // After leaving a session, focus the prefilled filter so a new one can be typed straight away
   const returnedToLanding = phase === 'landing' && sessionStart !== null;
   useEffect(() => {
