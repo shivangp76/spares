@@ -9,6 +9,8 @@ const NAV_LINKS = [
   { to: '/review', label: 'Review' },
   { to: '/notes', label: 'Notes' },
   { to: '/cards', label: 'Cards' },
+  { to: '/tags', label: 'Tags' },
+  { to: '/parsers', label: 'Parsers' },
   { to: '/statistics', label: 'Statistics' },
 ];
 
