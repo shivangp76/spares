@@ -32,6 +32,7 @@ use crate::LibraryError;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
+use crate::api::review::maybe_relativize;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::Parseable;
@@ -40,9 +41,12 @@ use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
+use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::generate_files::construct_card_file_contents;
 use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_cards;
+use crate::schema::note::NoteRenderResponse;
 use crate::schema::review::BrowserRenderSources;
 use crate::schema::review::CardBackRenderedPath;
 use crate::schema::review::GetReviewCardResponse;
@@ -65,16 +69,7 @@ pub async fn add_browser_render_sources(
         return Ok(());
     }
     let note_id = response.note_id;
-    let not_found = |description: String| {
-        Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(description)))
-    };
-    let note_data = get_render_note_data(db, Some(vec![note_id]))
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| not_found(format!("Note {note_id} not found.")))?;
-    let note_links = get_note_links_map(db, &[note_id]).await?;
-    let request = render_note_data_to_generate_files_request(&note_data, Some(&note_links));
+    let request = get_generate_files_request(db, note_id).await?;
 
     let card_order = response.card_order as usize;
     let cards = get_cards(parser.as_ref(), None, &request.note_data, false, false)?;
@@ -83,17 +78,7 @@ pub async fn add_browser_render_sources(
         .and_then(|i| cards.get(i))
         .ok_or_else(|| not_found(format!("Note {note_id} has no card {card_order}.")))?;
 
-    let template = |template_type| {
-        parser
-            .get_template_data(template_type)
-            .map_err(|e| Error::Io {
-                description: format!(
-                    "Failed to read template for parser {}",
-                    parser.get_parser_name()
-                ),
-                source: e,
-            })
-    };
+    let template = |template_type| get_template(parser.as_ref(), template_type);
     let (card_template, body_placeholder) = template(TemplateType::Card)?;
     let card_side = |side| {
         construct_card_file_contents(
@@ -123,6 +108,80 @@ pub async fn add_browser_render_sources(
         card_back,
     });
     Ok(())
+}
+
+/// How a client shows note `note_id` rendered: the rendered file, or the raw source to compile
+/// itself if its parser renders in the browser.
+pub async fn get_note_render(
+    db: &SqlitePool,
+    note_id: NoteId,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<NoteRenderResponse, Error> {
+    let parser_name: String = sqlx::query_scalar(
+        r"SELECT p.name FROM note n JOIN parser p ON n.parser_id = p.id WHERE n.id = ?",
+    )
+    .bind(note_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?
+    .ok_or_else(|| not_found(format!("Note {note_id} not found.")))?;
+    let parser = find_parser(&parser_name, all_parsers)?;
+
+    let mut rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
+    rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
+
+    let browser_source = if parser.renders_in_browser() {
+        let request = get_generate_files_request(db, note_id).await?;
+        let (note_template, body_placeholder) = get_template(parser.as_ref(), TemplateType::Note)?;
+        Some(construct_note_file_contents(
+            parser.as_ref(),
+            &note_template,
+            &body_placeholder,
+            &request,
+        ))
+    } else {
+        None
+    };
+    Ok(NoteRenderResponse {
+        parser_name,
+        rendered_path: maybe_relativize(rendered_path),
+        browser_source,
+    })
+}
+
+fn not_found(description: String) -> Error {
+    Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(description)))
+}
+
+async fn get_generate_files_request(
+    db: &SqlitePool,
+    note_id: NoteId,
+) -> Result<GenerateNoteFilesRequest, Error> {
+    let note_data = get_render_note_data(db, Some(vec![note_id]))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| not_found(format!("Note {note_id} not found.")))?;
+    let note_links = get_note_links_map(db, &[note_id]).await?;
+    Ok(render_note_data_to_generate_files_request(
+        &note_data,
+        Some(&note_links),
+    ))
+}
+
+fn get_template(
+    parser: &dyn Parseable,
+    template_type: TemplateType,
+) -> Result<(String, String), Error> {
+    parser
+        .get_template_data(template_type)
+        .map_err(|e| Error::Io {
+            description: format!(
+                "Failed to read template for parser {}",
+                parser.get_parser_name()
+            ),
+            source: e,
+        })
 }
 
 #[derive(Debug, FromRow)]

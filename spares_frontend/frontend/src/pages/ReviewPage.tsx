@@ -11,7 +11,6 @@ import {
   getStatistics,
   getTagByName,
   postReview,
-  renderNote,
   searchNotes,
   submitAction,
   tagNote,
@@ -397,7 +396,7 @@ export default function ReviewPage() {
     setPanelNote(updated);
     if (!card || updated.id !== card.note_id) return;
     try {
-      await renderNote(updated.id);
+      // NoteDetail has already regenerated the note's rendered files
       const refreshed = await getReviewCardById(card.card_id, activeFilter);
       if (refreshed) {
         setCard(refreshed);
