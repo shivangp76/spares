@@ -7,7 +7,7 @@ import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { td, th } from '../utils';
 
 const PAGE_SIZE = 500;
-const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 };
+const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 const smallButton: React.CSSProperties = { padding: '2px 8px', fontSize: 12 };
 
 async function listAllTags(): Promise<TagResponse[]> {
@@ -57,9 +57,9 @@ function TagTree({ node, path, tagsByName }: { node: TreeNode; path: string; tag
         const tag = tagsByName.get(fullName);
         return (
           <li key={key} style={{ fontSize: 14, lineHeight: 1.8 }}>
-            <span style={{ color: tag ? undefined : '#999' }}>{key || '(empty)'}</span>
+            <span style={{ color: tag ? undefined : 'var(--text-faint)' }}>{key || '(empty)'}</span>
             {tag && (
-              <span style={{ fontSize: 12, color: '#888', marginLeft: 8 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
                 #{tag.id}{tag.query !== null && ' · filtered'} · <Link to={reviewLink(tag)}>Review</Link>
               </span>
             )}
@@ -104,7 +104,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
   }
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16, background: '#fafafa' }}>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginBottom: 16, background: 'var(--surface)' }}>
       <h3 style={{ marginTop: 0, fontSize: 16 }}>{tag ? `Edit tag #${tag.id}` : 'New tag'}</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center', fontSize: 14 }}>
         <label htmlFor="tag-name">Name</label>
@@ -122,7 +122,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
         <button onClick={save} disabled={saving}>{saving ? 'Saving…' : tag ? 'Save' : 'Create'}</button>
         <button onClick={onCancel} disabled={saving}>Cancel</button>
-        {error && <span style={{ color: 'red', fontSize: 13 }}>{error}</span>}
+        {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
       </div>
     </div>
   );
@@ -199,8 +199,8 @@ export default function TagsPage() {
       </div>
 
       {editing && <TagForm key={editing.tag?.id ?? 'new'} tag={editing.tag} onSaved={onSaved} onCancel={() => setEditing(null)} />}
-      {status && <div style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>{status}</div>}
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>Error: {error}</div>}
+      {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
+      {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
       {!tags && !error && <div>Loading…</div>}
 
       {tags && view === 'tree' && (
@@ -232,13 +232,13 @@ export default function TagsPage() {
                     <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
                     <button onClick={() => setEditing({ tag })} style={smallButton}>Edit</button>
                     {tag.query !== null && <button onClick={() => rebuild(tag)} style={smallButton}>Rebuild</button>}
-                    <button onClick={() => remove(tag)} style={{ ...smallButton, color: '#b00' }}>Delete</button>
+                    <button onClick={() => remove(tag)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
                   </span>
                 </td>
               </tr>
             ))}
             {shown.length === 0 && (
-              <tr><td colSpan={6} style={{ ...td, color: '#888', textAlign: 'center' }}>No tags found</td></tr>
+              <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No tags found</td></tr>
             )}
           </tbody>
         </table>

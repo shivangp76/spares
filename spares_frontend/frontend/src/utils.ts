@@ -14,9 +14,9 @@ export function formatDuration(totalSeconds: number): string {
   return parts.join(' ');
 }
 
-export const sectionLabel: React.CSSProperties = { fontSize: 12, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 };
-export const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #ccc' };
-export const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid #eee' };
+export const sectionLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 };
+export const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--border-strong)' };
+export const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid var(--border-subtle)' };
 
 /** The rendered file shown as a card's back: its own back, or the whole note. */
 export function backPath(card: GetReviewCardResponse): string {

@@ -31,7 +31,7 @@ export default function ActionResult({ outcome, onUndone }: { outcome: ActionOut
   }
 
   return (
-    <div style={{ marginTop: 8, fontSize: 13, color: '#555', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <span>{outcome.message}</span>
       {outcome.eventIds.length > 0 && undoStatus === null && (
         <button onClick={undo} disabled={undoing} style={{ padding: '2px 8px', fontSize: 12 }}>

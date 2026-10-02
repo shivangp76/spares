@@ -15,6 +15,7 @@ const NAV_LINKS = [
   { to: '/parsers', label: 'Parsers' },
   { to: '/keywords', label: 'Keywords' },
   { to: '/statistics', label: 'Statistics' },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export default function Navbar({ onLogout, extra }: NavbarProps) {
@@ -36,7 +37,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
     <nav style={{ marginBottom: 20, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
       {NAV_LINKS.map(({ to, label }) =>
         pathname === to ? (
-          <span key={to} style={{ color: '#999', cursor: 'default' }}>{label}</span>
+          <span key={to} style={{ color: 'var(--text-faint)', cursor: 'default' }}>{label}</span>
         ) : (
           <Link key={to} to={to}>{label}</Link>
         )
@@ -48,7 +49,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
         <button onClick={onLogout}>Logout</button>
       </div>
       {undoStatus && (
-        <div style={{ flexBasis: '100%', fontSize: 13, color: '#555', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ flexBasis: '100%', fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span>{undoStatus}</span>
           {/* Pages don't know what the undone event changed, so offer to refetch everything */}
           <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>

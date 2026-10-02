@@ -8,6 +8,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'))
 const NotesPage = lazy(() => import('./pages/NotesPage'))
 const ParsersPage = lazy(() => import('./pages/ParsersPage'))
 const ReviewPage = lazy(() => import('./pages/ReviewPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const TagsPage = lazy(() => import('./pages/TagsPage'))
 
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/statistics" element={<StatisticsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>
     </Suspense>
