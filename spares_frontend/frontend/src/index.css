@@ -78,6 +78,8 @@ a:visited {
 
 /* Typst pages are transparent and written for a white page, so give them a white page in dark mode */
 .typst-viewer svg {
+  /* Inline SVGs sit on the text baseline, leaving a gap below them for descenders */
+  display: block;
   width: 100%;
   height: auto;
   background: light-dark(transparent, #fff);

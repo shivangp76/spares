@@ -714,7 +714,7 @@ export default function ReviewPage() {
                 </p>
               </div>
             ) : (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16 }}>
                 <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
               </div>
             )}
@@ -722,7 +722,7 @@ export default function ReviewPage() {
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
-              <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16, background: 'var(--surface)' }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
                 <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
               </div>
             </div>
