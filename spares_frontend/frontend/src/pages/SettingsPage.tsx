@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
+import { setShowReviewTimer, useShowReviewTimer } from '../preferences';
 import { setThemePreference, useThemePreference, type ThemePreference } from '../theme';
 import { sectionLabel } from '../utils';
 
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
   const theme = useThemePreference();
+  const showReviewTimer = useShowReviewTimer();
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -42,6 +44,21 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>
+        <legend style={{ ...sectionLabel, padding: 0 }}>Review</legend>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showReviewTimer}
+            onChange={e => setShowReviewTimer(e.target.checked)}
+          />
+          Show the running recall and rate timer
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Both durations are still recorded, and shown after each card is rated.
+        </p>
       </fieldset>
     </div>
   );
