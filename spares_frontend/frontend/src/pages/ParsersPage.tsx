@@ -67,7 +67,7 @@ export default function ParsersPage() {
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
+    <div className="page">
       <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 16 }}>Parsers</h2>
 
@@ -87,50 +87,52 @@ export default function ParsersPage() {
       {!parsers && !error && <div>Loading…</div>}
 
       {parsers && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead>
-            <tr>
-              <th style={th}>ID</th>
-              <th style={th}>Name</th>
-              <th style={th} />
-            </tr>
-          </thead>
-          <tbody>
-            {parsers.map(parser => (
-              <tr key={parser.id}>
-                <td style={td}>{parser.id}</td>
-                <td style={td}>
-                  {renaming?.id === parser.id ? (
-                    <input
-                      autoFocus
-                      value={renaming.name}
-                      onChange={e => setRenaming({ id: parser.id, name: e.target.value })}
-                      onKeyDown={e => { if (e.key === 'Enter') rename(); if (e.key === 'Escape') setRenaming(null); }}
-                      aria-label="Parser name"
-                      style={input}
-                    />
-                  ) : parser.name}
-                </td>
-                <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
-                  <span style={{ display: 'inline-flex', gap: 4 }}>
-                    {renaming?.id === parser.id ? (
-                      <>
-                        <button onClick={rename} style={smallButton}>Save</button>
-                        <button onClick={() => setRenaming(null)} style={smallButton}>Cancel</button>
-                      </>
-                    ) : (
-                      <button onClick={() => setRenaming({ id: parser.id, name: parser.name })} style={smallButton}>Rename</button>
-                    )}
-                    <button onClick={() => remove(parser)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
-                  </span>
-                </td>
+        <div className="table-scroll">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr>
+                <th style={th}>ID</th>
+                <th style={th}>Name</th>
+                <th style={th} />
               </tr>
-            ))}
-            {parsers.length === 0 && (
-              <tr><td colSpan={3} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No parsers</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {parsers.map(parser => (
+                <tr key={parser.id}>
+                  <td style={td}>{parser.id}</td>
+                  <td style={td}>
+                    {renaming?.id === parser.id ? (
+                      <input
+                        autoFocus
+                        value={renaming.name}
+                        onChange={e => setRenaming({ id: parser.id, name: e.target.value })}
+                        onKeyDown={e => { if (e.key === 'Enter') rename(); if (e.key === 'Escape') setRenaming(null); }}
+                        aria-label="Parser name"
+                        style={input}
+                      />
+                    ) : parser.name}
+                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <span style={{ display: 'inline-flex', gap: 4 }}>
+                      {renaming?.id === parser.id ? (
+                        <>
+                          <button onClick={rename} style={smallButton}>Save</button>
+                          <button onClick={() => setRenaming(null)} style={smallButton}>Cancel</button>
+                        </>
+                      ) : (
+                        <button onClick={() => setRenaming({ id: parser.id, name: parser.name })} style={smallButton}>Rename</button>
+                      )}
+                      <button onClick={() => remove(parser)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {parsers.length === 0 && (
+                <tr><td colSpan={3} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No parsers</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

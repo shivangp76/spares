@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { undoEvent } from '../api/client';
 
@@ -21,6 +21,12 @@ const NAV_LINKS = [
 export default function Navbar({ onLogout, extra }: NavbarProps) {
   const { pathname } = useLocation();
   const [undoStatus, setUndoStatus] = useState<string | null>(null);
+  const currentLinkRef = useRef<HTMLSpanElement>(null);
+
+  // On phones the links scroll sideways, so keep the current page's link in view
+  useEffect(() => {
+    currentLinkRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [pathname]);
 
   /** `spares event undo`: undoes the latest event of any kind, with the rest of its group. */
   async function undoLatest() {
@@ -35,14 +41,16 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
 
   return (
     <nav className="navbar">
-      {NAV_LINKS.map(({ to, label }) =>
-        pathname === to ? (
-          <span key={to} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
-        ) : (
-          <Link key={to} to={to} className="navbar-link">{label}</Link>
-        )
-      )}
-      <a href="/svgedit/src/editor/index.html?storagePrompt=false" className="navbar-link">Image Occlusion Editor</a>
+      <div className="navbar-links">
+        {NAV_LINKS.map(({ to, label }) =>
+          pathname === to ? (
+            <span key={to} ref={currentLinkRef} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
+          ) : (
+            <Link key={to} to={to} className="navbar-link">{label}</Link>
+          )
+        )}
+        <a href="/svgedit/src/editor/index.html?storagePrompt=false" className="navbar-link">Image Occlusion Editor</a>
+      </div>
       <div className="navbar-actions">
         {extra}
         <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change">Undo last change</button>

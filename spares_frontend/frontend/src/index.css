@@ -101,6 +101,13 @@ button:disabled {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.navbar-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
 .navbar-link,
 .navbar-link:visited {
   padding: 4px 10px;
@@ -146,4 +153,143 @@ button:disabled {
 .navbar-button:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+/* Mobile. Most styling is inline, so pieces that change by screen size or input get a class here.
+   Narrow screens are phones; a coarse pointer without hover is a touchscreen. */
+
+/* Remove the double-tap-to-zoom delay on taps */
+button, a, summary, label, input[type="radio"], input[type="checkbox"] {
+  touch-action: manipulation;
+}
+
+/* The common page wrapper */
+.page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* The page wrapper for pages with a list beside a detail panel, which use the full width */
+.page-wide {
+  padding: 24px;
+}
+
+/* Wide tables scroll inside their own box instead of widening the page */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* A list beside a detail panel, stacked on narrower screens */
+.split {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+  margin-bottom: 16px;
+}
+
+/* Keyboard shortcut hints on buttons */
+.key-hint {
+  opacity: 0.6;
+}
+
+/* Secondary review actions are collapsed behind this summary on phones only */
+.review-more-actions > summary {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .split {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .page,
+  .page-wide {
+    padding: 12px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* iOS zooms into inputs with text smaller than 16px when they are focused. `!important`
+     overrides the inline font sizes. */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* The links scroll sideways on one row instead of wrapping onto several */
+  .navbar-links {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-basis: 100%;
+  }
+
+  .navbar-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .navbar-link {
+    white-space: nowrap;
+  }
+
+  /* Show Answer and the ratings are pinned to the bottom of the screen within thumb reach,
+     however short or tall the card is */
+  .review-answer-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  /* Room to scroll the end of the page out from under the pinned bar */
+  .page:has(.review-answer-bar) {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .review-more-actions > summary {
+    display: list-item;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .review-meta-right {
+    margin-left: 0 !important;
+  }
+
+  .review-filter-row {
+    flex-wrap: wrap;
+  }
+
+  .review-filter-row > input {
+    flex-basis: 100% !important;
+  }
+
+  .review-filter-row > button {
+    flex: 1;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* There is no keyboard to press them with */
+  .key-hint {
+    display: none;
+  }
+
+  .touch-target {
+    min-height: 44px;
+  }
 }

@@ -22,6 +22,7 @@ import CardRenderer from '../components/CardRenderer';
 import RecentSearches from '../components/RecentSearches';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useShowReviewTimer } from '../preferences';
 import {
@@ -88,8 +89,6 @@ function ActionGroup({ label, tone, children }: { label: string; tone: Tone; chi
     </div>
   );
 }
-
-const keyHint: React.CSSProperties = { opacity: 0.6 };
 
 // Hides a rendered side without changing its width, so a Typst side compiled for the hidden
 // viewer's width is not recompiled when it is shown.
@@ -199,6 +198,9 @@ export default function ReviewPage() {
     rateStart: rateStart.current,
     rateMs: rateDuration.current,
   }), []);
+
+  // Phones collapse the less common actions so the card and ratings get the screen
+  const isNarrow = useMediaQuery('(max-width: 640px)');
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
@@ -537,6 +539,15 @@ export default function ReviewPage() {
     }
   }
 
+  /** Tapping the front shows the answer, for touchscreens without the Space shortcut. */
+  function onFrontClick(e: React.MouseEvent) {
+    if (phase !== 'front' || card?.cli) return;
+    if (e.target instanceof Element && e.target.closest('a, button, input, select, textarea, summary, .cm-editor')) return;
+    // Selecting text shouldn't flip the card
+    if (window.getSelection()?.toString()) return;
+    showAnswer();
+  }
+
   async function browseKeyword(keyword: string) {
     try {
       const notes = await searchNotes(`linked_to_keyword="${keyword}"`);
@@ -607,11 +618,8 @@ export default function ReviewPage() {
   );
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
-      <Navbar
-        onLogout={logout}
-        extra={cardCounts ? <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{cardCounts}</span> : undefined}
-      />
+    <div className="page">
+      <Navbar onLogout={logout} />
 
       {phase === 'landing' && (
         <div style={{ marginTop: 48 }}>
@@ -645,7 +653,7 @@ export default function ReviewPage() {
               </label>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div className="review-filter-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             <input
               ref={filterInputRef}
               type={filterMode === 'tagId' ? 'number' : 'text'}
@@ -655,7 +663,7 @@ export default function ReviewPage() {
               onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
               style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
             />
-            <button onClick={() => startReview(filterMode, filterInput)} style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
+            <button onClick={() => startReview(filterMode, filterInput)} className="touch-target" style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
               Start Review
             </button>
           </div>
@@ -701,7 +709,8 @@ export default function ReviewPage() {
           {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>{sessionInfo}</div>}
           <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>Note {card.note_id} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
-            <span style={{ marginLeft: 'auto' }}>
+            {cardCounts && <span style={{ color: 'var(--text-secondary)' }}>{cardCounts}</span>}
+            <span className="review-meta-right" style={{ marginLeft: 'auto' }}>
               Reviewed {reviewedCount} · ~{formatDuration(card.time_estimate)} left
             </span>
             {showTimer && stopwatch && <ReviewTimer stopwatch={stopwatch} flipped={phase === 'back'} />}
@@ -718,7 +727,7 @@ export default function ReviewPage() {
                 </p>
               </div>
             ) : (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16 }}>
+              <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
                 <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
               </div>
             )}
@@ -732,20 +741,22 @@ export default function ReviewPage() {
             </div>
           )}
 
-          {phase === 'front' && !card.cli && (
-            <button onClick={showAnswer} style={{ ...primaryButton, width: '100%', padding: 12, fontSize: 15, fontWeight: 600 }}>
-              Show Answer <span style={{ ...keyHint, fontSize: 12, fontWeight: 400 }}>(Space)</span>
-            </button>
-          )}
-
-          {phase === 'back' && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              {ratings.map((r, i) => (
-                <button key={r.id} onClick={() => rate(r.id)} style={{ ...toned(ratingTone(r, i, ratings.length), { flex: 1, padding: 12, fontSize: 15, fontWeight: 600 }) }}>
-                  {r.description}
-                  <span style={{ ...keyHint, display: 'block', fontSize: 12, fontWeight: 400 }}>({i + 1})</span>
+          {((phase === 'front' && !card.cli) || phase === 'back') && (
+            <div className="review-answer-bar">
+              {phase === 'front' ? (
+                <button onClick={showAnswer} className="touch-target" style={{ ...primaryButton, width: '100%', padding: 12, fontSize: 15, fontWeight: 600 }}>
+                  Show Answer <span className="key-hint" style={{ fontSize: 12, fontWeight: 400 }}>(Space)</span>
                 </button>
-              ))}
+              ) : (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {ratings.map((r, i) => (
+                    <button key={r.id} onClick={() => rate(r.id)} className="touch-target" style={{ ...toned(ratingTone(r, i, ratings.length), { flex: 1, padding: 12, fontSize: 15, fontWeight: 600 }) }}>
+                      {r.description}
+                      <span className="key-hint" style={{ display: 'block', fontSize: 12, fontWeight: 400 }}>({i + 1})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -766,43 +777,57 @@ export default function ReviewPage() {
           )}
 
           <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <div style={{ flex: 1 }}>
-                <ActionGroup label="Note" tone={TONES.blue}>
-                  <button onClick={undo} style={toned(TONES.gray)}>Undo <span style={keyHint}>(u)</span></button>
-                  <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span style={keyHint}>(e)</span></button>
-                  <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
-                    Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
-                  </button>
+            {isNarrow && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={undo} className="touch-target" style={toned(TONES.gray)}>Undo</button>
+                <button onClick={toggleCardNote} className="touch-target" style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'}</button>
+                <button onClick={buryCard} className="touch-target" style={toned(TONES.orange)}>Bury Card</button>
+                <button onClick={suspendCard} className="touch-target" style={toned(TONES.purple)}>Suspend Card</button>
+              </div>
+            )}
+            {/* Remount when the width class changes so it opens by default on wide screens */}
+            <details key={String(isNarrow)} open={!isNarrow} className="review-more-actions">
+              <summary>More actions</summary>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: isNarrow ? 8 : 0 }}>
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1 }}>
+                    <ActionGroup label="Note" tone={TONES.blue}>
+                      {!isNarrow && <button onClick={undo} style={toned(TONES.gray)}>Undo <span className="key-hint">(u)</span></button>}
+                      {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
+                      <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
+                        Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
+                      </button>
+                    </ActionGroup>
+                  </div>
+                  <ActionGroup label="Session" tone={TONES.gray}>
+                    <button onClick={switchQuery} style={toned(TONES.gray)}>Switch query <span className="key-hint">(q)</span></button>
+                    <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={toned(TONES.gray)}>End session</button>
+                  </ActionGroup>
+                </div>
+                <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
+                  {!isNarrow && <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span className="key-hint">(b)</span></button>}
+                  <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings)</button>
+                  <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today</button>
+                  {!isNarrow && <button onClick={suspendCard} style={toned(TONES.purple)}>Suspend Card <span className="key-hint">(s)</span></button>}
+                  <button onClick={suspendNote} style={toned(TONES.purple)}>Suspend Note (card + siblings)</button>
+                  <button onClick={forget} style={toned(TONES.red)}>Forget Card</button>
+                </ActionGroup>
+                <ActionGroup label="Reschedule" tone={TONES.teal}>
+                  <button onClick={() => setDueDatePicker('card')} style={toned(TONES.teal)}>Set Card Due Date…</button>
+                  <button onClick={() => setDueDateIn('card')} disabled={!config} style={toned(TONES.teal)}>Set Card Due Date in {dueInLabel}</button>
+                  <button onClick={() => setDueDatePicker('note')} style={toned(TONES.teal)}>Set Note Due Date…</button>
+                  <button onClick={() => setDueDateIn('note')} disabled={!config} style={toned(TONES.teal)}>Set Note Due Date in {dueInLabel}</button>
+                  {dueDatePicker && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, flexBasis: '100%' }}>
+                      <span>{dueDatePicker === 'card' ? 'Card' : 'Note'} due date:</span>
+                      <input type="date" value={dueDateValue} onChange={e => setDueDateValue(e.target.value)} />
+                      <button onClick={setDueDateFromPicker} disabled={!dueDateValue} style={toned(TONES.teal)}>Set</button>
+                      <button onClick={() => setDueDatePicker(null)} style={toned(TONES.gray)}>Cancel</button>
+                    </div>
+                  )}
                 </ActionGroup>
               </div>
-              <ActionGroup label="Session" tone={TONES.gray}>
-                <button onClick={switchQuery} style={toned(TONES.gray)}>Switch query <span style={keyHint}>(q)</span></button>
-                <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={toned(TONES.gray)}>End session</button>
-              </ActionGroup>
-            </div>
-            <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
-              <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span style={keyHint}>(b)</span></button>
-              <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings)</button>
-              <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today</button>
-              <button onClick={suspendCard} style={toned(TONES.purple)}>Suspend Card <span style={keyHint}>(s)</span></button>
-              <button onClick={suspendNote} style={toned(TONES.purple)}>Suspend Note (card + siblings)</button>
-              <button onClick={forget} style={toned(TONES.red)}>Forget Card</button>
-            </ActionGroup>
-            <ActionGroup label="Reschedule" tone={TONES.teal}>
-              <button onClick={() => setDueDatePicker('card')} style={toned(TONES.teal)}>Set Card Due Date…</button>
-              <button onClick={() => setDueDateIn('card')} disabled={!config} style={toned(TONES.teal)}>Set Card Due Date in {dueInLabel}</button>
-              <button onClick={() => setDueDatePicker('note')} style={toned(TONES.teal)}>Set Note Due Date…</button>
-              <button onClick={() => setDueDateIn('note')} disabled={!config} style={toned(TONES.teal)}>Set Note Due Date in {dueInLabel}</button>
-              {dueDatePicker && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, flexBasis: '100%' }}>
-                  <span>{dueDatePicker === 'card' ? 'Card' : 'Note'} due date:</span>
-                  <input type="date" value={dueDateValue} onChange={e => setDueDateValue(e.target.value)} />
-                  <button onClick={setDueDateFromPicker} disabled={!dueDateValue} style={toned(TONES.teal)}>Set</button>
-                  <button onClick={() => setDueDatePicker(null)} style={toned(TONES.gray)}>Cancel</button>
-                </div>
-              )}
-            </ActionGroup>
+            </details>
 
             {card.keywords.length > 0 && (
               <details>

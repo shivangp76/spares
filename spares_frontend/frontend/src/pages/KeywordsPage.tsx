@@ -66,17 +66,19 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           {unique.map(k => <li key={k}>{k}</li>)}
         </ul>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead><tr><th style={th}>Note</th><th style={th}>Keyword</th></tr></thead>
-          <tbody>
-            {shown.map(([id, k], i) => (
-              <tr key={`${id}-${k}-${i}`}>
-                <td style={td}><NoteLinkButton id={id} onOpen={onOpen} /></td>
-                <td style={td}>{k}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead><tr><th style={th}>Note</th><th style={th}>Keyword</th></tr></thead>
+            <tbody>
+              {shown.map(([id, k], i) => (
+                <tr key={`${id}-${k}-${i}`}>
+                  <td style={td}><NoteLinkButton id={id} onOpen={onOpen} /></td>
+                  <td style={td}>{k}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );
@@ -121,19 +123,21 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
       ) : (
         <>
           <p style={hint}>Ranked best first; the first row is what a link to “{results.keyword}” resolves to.</p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead><tr><th style={th}>#</th><th style={th}>Matched keyword</th><th style={th}>Note</th><th style={th}>Score</th></tr></thead>
-            <tbody>
-              {results.matches.map((m, i) => (
-                <tr key={`${m.note_id}-${m.matched_keyword}`} style={i === 0 ? { background: 'var(--selected)' } : undefined}>
-                  <td style={td}>{i + 1}</td>
-                  <td style={td}>{m.matched_keyword}</td>
-                  <td style={td}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(m.score)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead><tr><th style={th}>#</th><th style={th}>Matched keyword</th><th style={th}>Note</th><th style={th}>Score</th></tr></thead>
+              <tbody>
+                {results.matches.map((m, i) => (
+                  <tr key={`${m.note_id}-${m.matched_keyword}`} style={i === 0 ? { background: 'var(--selected)' } : undefined}>
+                    <td style={td}>{i + 1}</td>
+                    <td style={td}>{m.matched_keyword}</td>
+                    <td style={td}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
+                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(m.score)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ))}
     </>
@@ -154,18 +158,20 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   return (
     <>
       <p style={hint}>Keywords that notes link to, but that no note has.</p>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-        <thead><tr><th style={th}>Note</th><th style={th}>Searched keyword</th></tr></thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.note_id}-${r.searched_keyword}-${i}`}>
-              <td style={td}><NoteLinkButton id={r.note_id} onOpen={onOpen} /></td>
-              <td style={td}>{r.searched_keyword}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No unmatched keywords</td></tr>}
-        </tbody>
-      </table>
+      <div className="table-scroll">
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <thead><tr><th style={th}>Note</th><th style={th}>Searched keyword</th></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={`${r.note_id}-${r.searched_keyword}-${i}`}>
+                <td style={td}><NoteLinkButton id={r.note_id} onOpen={onOpen} /></td>
+                <td style={td}>{r.searched_keyword}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No unmatched keywords</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -184,22 +190,24 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   return (
     <>
       <p style={hint}>Keywords on more than one note.</p>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-        <thead><tr><th style={th}>Keyword</th><th style={th}>Notes</th></tr></thead>
-        <tbody>
-          {rows.map(([k, ids]) => (
-            <tr key={k}>
-              <td style={td}>{k}</td>
-              <td style={td}>
-                <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-                  {ids.map(id => <NoteLinkButton key={id} id={id} onOpen={onOpen} />)}
-                </span>
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No duplicate keywords</td></tr>}
-        </tbody>
-      </table>
+      <div className="table-scroll">
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <thead><tr><th style={th}>Keyword</th><th style={th}>Notes</th></tr></thead>
+          <tbody>
+            {rows.map(([k, ids]) => (
+              <tr key={k}>
+                <td style={td}>{k}</td>
+                <td style={td}>
+                  <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+                    {ids.map(id => <NoteLinkButton key={id} id={id} onOpen={onOpen} />)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No duplicate keywords</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -240,31 +248,33 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
       {links && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead>
-            <tr>
-              <th style={th}>Note</th>
-              <th style={th}>Searched keyword</th>
-              <th style={th}>Matched keyword</th>
-              <th style={th}>Linked note</th>
-              <th style={th}>Score</th>
-            </tr>
-          </thead>
-          <tbody>
-            {links.links.map(l => (
-              <tr key={`${l.parent_note_id}-${l.order}`}>
-                <td style={td}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
-                <td style={td}>{l.searched_keyword}</td>
-                <td style={td}>{l.matched_keyword ?? '—'}</td>
-                <td style={td}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
-                <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(l.score)}</td>
+        <div className="table-scroll">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr>
+                <th style={th}>Note</th>
+                <th style={th}>Searched keyword</th>
+                <th style={th}>Matched keyword</th>
+                <th style={th}>Linked note</th>
+                <th style={th}>Score</th>
               </tr>
-            ))}
-            {links.links.length === 0 && (
-              <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {links.links.map(l => (
+                <tr key={`${l.parent_note_id}-${l.order}`}>
+                  <td style={td}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
+                  <td style={td}>{l.searched_keyword}</td>
+                  <td style={td}>{l.matched_keyword ?? '—'}</td>
+                  <td style={td}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
+                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(l.score)}</td>
+                </tr>
+              ))}
+              {links.links.length === 0 && (
+                <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );
@@ -291,18 +301,14 @@ export default function KeywordsPage() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <style>{`
-        .keywords-split { display: flex; flex-direction: row; gap: 24px; align-items: flex-start; }
-        @media (max-width: 768px) { .keywords-split { flex-direction: column; } }
-      `}</style>
+    <div className="page-wide">
 
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
         <Navbar onLogout={logout} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Keywords</h2>
 
-      <div className="keywords-split">
+      <div className="split">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
             {TABS.map(t => (

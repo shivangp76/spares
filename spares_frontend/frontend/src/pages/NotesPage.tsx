@@ -116,10 +116,8 @@ export default function NotesPage() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="page-wide">
       <style>{`
-        .notes-split { display: flex; flex-direction: row; gap: 24px; align-items: flex-start; }
-        @media (max-width: 768px) { .notes-split { flex-direction: column; } }
         .notes-row:hover { background-color: var(--hover); }
         .notes-row-selected { background-color: var(--selected) !important; }
       `}</style>
@@ -129,7 +127,7 @@ export default function NotesPage() {
       </div>
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
 
-      <div className="notes-split">
+      <div className="split">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
             <input
@@ -156,43 +154,45 @@ export default function NotesPage() {
           {loading && <div>Loading…</div>}
 
           {!loading && (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>ID</th>
-                  <th style={th}>Data</th>
-                  <th style={th}>Tags</th>
-                  <th style={th}>Keywords</th>
-                  <th style={th}>Cards</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayedNotes.map(note => (
-                  <tr
-                    key={note.id}
-                    className={`notes-row${selectedNote?.id === note.id ? ' notes-row-selected' : ''}`}
-                    onClick={() => selectNote(selectedNote?.id === note.id ? null : note)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td style={td}>{note.id}</td>
-                    <td style={dataTd} title={note.data}>
-                      {note.data.length > DATA_PREVIEW_LEN
-                        ? note.data.slice(0, DATA_PREVIEW_LEN) + '…'
-                        : note.data}
-                    </td>
-                    <td style={td}>{note.tags.join(', ') || '—'}</td>
-                    <td style={td}>
-                      {note.keywords.slice(0, 4).join(', ')}
-                      {note.keywords.length > 4 ? '…' : ''}
-                    </td>
-                    <td style={td}>{note.card_count}</td>
+            <div className="table-scroll">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={th}>ID</th>
+                    <th style={th}>Data</th>
+                    <th style={th}>Tags</th>
+                    <th style={th}>Keywords</th>
+                    <th style={th}>Cards</th>
                   </tr>
-                ))}
-                {displayedNotes.length === 0 && (
-                  <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No notes found</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {displayedNotes.map(note => (
+                    <tr
+                      key={note.id}
+                      className={`notes-row${selectedNote?.id === note.id ? ' notes-row-selected' : ''}`}
+                      onClick={() => selectNote(selectedNote?.id === note.id ? null : note)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <td style={td}>{note.id}</td>
+                      <td style={dataTd} title={note.data}>
+                        {note.data.length > DATA_PREVIEW_LEN
+                          ? note.data.slice(0, DATA_PREVIEW_LEN) + '…'
+                          : note.data}
+                      </td>
+                      <td style={td}>{note.tags.join(', ') || '—'}</td>
+                      <td style={td}>
+                        {note.keywords.slice(0, 4).join(', ')}
+                        {note.keywords.length > 4 ? '…' : ''}
+                      </td>
+                      <td style={td}>{note.card_count}</td>
+                    </tr>
+                  ))}
+                  {displayedNotes.length === 0 && (
+                    <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No notes found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {searchResults === null && (

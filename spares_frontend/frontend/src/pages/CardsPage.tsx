@@ -95,10 +95,8 @@ export default function CardsPage() {
   const selected = browse ? browse.cards[browse.index] : null;
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="page-wide">
       <style>{`
-        .cards-split { display: flex; flex-direction: row; gap: 24px; align-items: flex-start; }
-        @media (max-width: 768px) { .cards-split { flex-direction: column; } }
         .cards-row:hover { background-color: var(--hover); }
         .cards-row-selected { background-color: var(--selected) !important; }
       `}</style>
@@ -108,7 +106,7 @@ export default function CardsPage() {
       </div>
       <h2 style={{ marginBottom: 16 }}>Cards</h2>
 
-      <div className="cards-split">
+      <div className="split">
         <div style={{ flex: 1, minWidth: 0 }}>
           <details style={{ marginBottom: 16 }}>
             <summary style={{ cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>Bulk tools (unbury, forget, edit, leeches)</summary>
@@ -139,40 +137,42 @@ export default function CardsPage() {
           {loading && <div>Loading…</div>}
 
           {!loading && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr>
-                  <th style={th}>ID</th>
-                  <th style={th}>Note</th>
-                  <th style={th}>Order</th>
-                  <th style={th}>State</th>
-                  <th style={th}>Due</th>
-                  <th style={th}>Retention</th>
-                  <th style={th}>Special</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayedCards.map((card, i) => (
-                  <tr
-                    key={card.id}
-                    className={`cards-row${selected?.id === card.id ? ' cards-row-selected' : ''}`}
-                    onClick={() => setBrowse(selected?.id === card.id ? null : { cards: displayedCards, index: i })}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td style={td}>{card.id}</td>
-                    <td style={td}>{card.note_id}</td>
-                    <td style={td}>{card.order}</td>
-                    <td style={td}>{STATE_LABELS[card.state] ?? card.state}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>
-                    <td style={td}>{card.desired_retention}</td>
-                    <td style={td}>{card.special_state ?? '—'}</td>
+            <div className="table-scroll">
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>ID</th>
+                    <th style={th}>Note</th>
+                    <th style={th}>Order</th>
+                    <th style={th}>State</th>
+                    <th style={th}>Due</th>
+                    <th style={th}>Retention</th>
+                    <th style={th}>Special</th>
                   </tr>
-                ))}
-                {displayedCards.length === 0 && (
-                  <tr><td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No cards found</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {displayedCards.map((card, i) => (
+                    <tr
+                      key={card.id}
+                      className={`cards-row${selected?.id === card.id ? ' cards-row-selected' : ''}`}
+                      onClick={() => setBrowse(selected?.id === card.id ? null : { cards: displayedCards, index: i })}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <td style={td}>{card.id}</td>
+                      <td style={td}>{card.note_id}</td>
+                      <td style={td}>{card.order}</td>
+                      <td style={td}>{STATE_LABELS[card.state] ?? card.state}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>
+                      <td style={td}>{card.desired_retention}</td>
+                      <td style={td}>{card.special_state ?? '—'}</td>
+                    </tr>
+                  ))}
+                  {displayedCards.length === 0 && (
+                    <tr><td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No cards found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {searchResults === null && (
