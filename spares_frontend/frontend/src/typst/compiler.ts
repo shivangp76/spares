@@ -12,6 +12,10 @@ import { $typst, TypstSnippet } from '@myriaddreamin/typst.ts/contrib/snippet';
 import { MemoryAccessModel } from '@myriaddreamin/typst.ts/fs/memory';
 import compilerWasmUrl from '@myriaddreamin/typst-ts-web-compiler/wasm?url';
 import rendererWasmUrl from '@myriaddreamin/typst-ts-renderer/wasm?url';
+import herosRegularUrl from './fonts/texgyreheros-regular.otf?url';
+import herosBoldUrl from './fonts/texgyreheros-bold.otf?url';
+import herosItalicUrl from './fonts/texgyreheros-italic.otf?url';
+import herosBoldItalicUrl from './fonts/texgyreheros-bolditalic.otf?url';
 import { fetchRenderAsset, listRenderPackages } from '../api/client';
 
 const MAIN_FILE_PATH = '/main.typ';
@@ -73,6 +77,8 @@ function init(): Promise<void> {
       TypstSnippet.withAccessModel(accessModel),
       TypstSnippet.fetchPackageBy(accessModel, (_spec, url) =>
         packageTarballs.get(url) ?? fetchPackageSync(url)),
+      // The browser has no system fonts, so fonts that sources set are bundled.
+      TypstSnippet.preloadFonts([herosRegularUrl, herosBoldUrl, herosItalicUrl, herosBoldItalicUrl]),
       TypstSnippet.preloadFontAssets({ assets: ['text'] }),
     );
     const specs = await listRenderPackages();
