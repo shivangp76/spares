@@ -18,7 +18,8 @@ export default function CardRenderer({ path, parserName, source, version, onRead
   if (source !== undefined) return <TypstViewer source={source} onReady={onReady} />;
 
   const url = version === undefined ? fileUrl(path) : `${fileUrl(path)}?v=${version}`;
+  // Chosen by the rendered file, since a parser's template decides its output, e.g. markdown to PDF
   const name = parserName.toLowerCase();
-  if (name.includes('latex')) return <PdfViewer url={url} onReady={onReady} />;
+  if (name.includes('latex') || path.toLowerCase().endsWith('.pdf')) return <PdfViewer url={url} onReady={onReady} />;
   return <MarkdownViewer url={url} onReady={onReady} />;
 }
