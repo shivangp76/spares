@@ -10,13 +10,15 @@ interface Props {
   source?: string;
   /** Changing it refetches the rendered file, e.g. after it was regenerated. */
   version?: number;
+  /** Called once the card is displayed, or has failed to. */
+  onReady?: () => void;
 }
 
-export default function CardRenderer({ path, parserName, source, version }: Props) {
-  if (source !== undefined) return <TypstViewer source={source} />;
+export default function CardRenderer({ path, parserName, source, version, onReady }: Props) {
+  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} />;
 
   const url = version === undefined ? fileUrl(path) : `${fileUrl(path)}?v=${version}`;
   const name = parserName.toLowerCase();
-  if (name.includes('latex')) return <PdfViewer url={url} />;
-  return <MarkdownViewer url={url} />;
+  if (name.includes('latex')) return <PdfViewer url={url} onReady={onReady} />;
+  return <MarkdownViewer url={url} onReady={onReady} />;
 }
