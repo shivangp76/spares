@@ -296,7 +296,7 @@ pub(crate) async fn sync_notes(
     let filter_note_ids = resolve_filter(sync_args.ids.as_ref(), sync_args.files.as_ref())?;
 
     match sync_args.subcommand {
-        Some(SyncSubcommand::Cloud) => cloud::sync_cloud(),
+        Some(SyncSubcommand::Cloud) => cloud::sync_cloud().await,
         None => {
             // Non-interactive: print changed note file paths and exit
             if sync_args.print_files {
