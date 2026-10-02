@@ -199,6 +199,25 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   opacity: 0.6;
 }
 
+/* Show Answer and the ratings are pinned to the bottom of the screen (within thumb reach on
+   phones), however short or tall the card is. The side padding lines the buttons up with the
+   .page column. */
+.review-answer-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  padding: 12px max(24px, (100% - 800px) / 2) calc(12px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Room to scroll the end of the page out from under the pinned bar */
+.page:has(.review-answer-bar) {
+  padding-bottom: calc(120px + env(safe-area-inset-bottom));
+}
+
 /* Secondary review actions are collapsed behind this summary on phones only */
 .review-more-actions > summary {
   display: none;
@@ -244,20 +263,10 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
     white-space: nowrap;
   }
 
-  /* Show Answer and the ratings are pinned to the bottom of the screen within thumb reach,
-     however short or tall the card is */
   .review-answer-bar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 1;
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-    background: var(--bg);
-    border-top: 1px solid var(--border-subtle);
   }
 
-  /* Room to scroll the end of the page out from under the pinned bar */
   .page:has(.review-answer-bar) {
     padding-bottom: calc(96px + env(safe-area-inset-bottom));
   }
