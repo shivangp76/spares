@@ -4,16 +4,9 @@ import { getSchedulerRatings, getStatistics, postReview, submitAction } from '..
 import CardRenderer from '../components/CardRenderer';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
-import type { GetReviewCardResponse, Rating, StatisticsResponse } from '../types/spares';
+import { STATE_LABELS, type GetReviewCardResponse, type Rating, type StatisticsResponse } from '../types/spares';
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'error';
-
-const STATE_LABELS: Record<number, string> = {
-  0: 'New',
-  1: 'Learning',
-  2: 'Review',
-  3: 'Relearning',
-};
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));

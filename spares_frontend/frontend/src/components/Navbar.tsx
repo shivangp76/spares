@@ -8,6 +8,7 @@ interface NavbarProps {
 const NAV_LINKS = [
   { to: '/review', label: 'Review' },
   { to: '/notes', label: 'Notes' },
+  { to: '/statistics', label: 'Statistics' },
 ];
 
 export default function Navbar({ onLogout, extra }: NavbarProps) {
