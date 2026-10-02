@@ -43,9 +43,9 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
-// Hides the prerendered back without changing its width, so a Typst back compiled for the hidden
+// Hides a rendered side without changing its width, so a Typst side compiled for the hidden
 // viewer's width is not recompiled when it is shown.
-const hiddenBack: React.CSSProperties = { height: 0, overflow: 'hidden', visibility: 'hidden' };
+const hiddenSide: React.CSSProperties = { height: 0, overflow: 'hidden', visibility: 'hidden' };
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
@@ -640,21 +640,25 @@ export default function ReviewPage() {
             </span>
           </div>
 
-          {card.cli ? (
-            <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
-              <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{card.cli.surrounding}</pre>
-              <p style={{ color: '#a60', fontSize: 13, marginBottom: 0 }}>
-                This card is reviewed by running <code>{card.cli.exec}</code>, which only the CLI can do. Bury it or review it with <code>spares card review</code>.
-              </p>
-            </div>
-          ) : (
-            <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
-              <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
-            </div>
-          )}
+          {/* Like the CLI, the front is closed when the card is flipped. It stays mounted so undoing
+              the flip shows it again without rerendering. */}
+          <div style={phase === 'back' ? hiddenSide : undefined} aria-hidden={phase === 'back'}>
+            {card.cli ? (
+              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+                <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{card.cli.surrounding}</pre>
+                <p style={{ color: '#a60', fontSize: 13, marginBottom: 0 }}>
+                  This card is reviewed by running <code>{card.cli.exec}</code>, which only the CLI can do. Bury it or review it with <code>spares card review</code>.
+                </p>
+              </div>
+            ) : (
+              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+                <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
+              </div>
+            )}
+          </div>
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
-            <div style={phase === 'back' ? undefined : hiddenBack} aria-hidden={phase !== 'back'}>
+            <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
               <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16, background: '#fafafa' }}>
                 <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
               </div>
