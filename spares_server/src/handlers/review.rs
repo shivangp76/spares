@@ -9,9 +9,11 @@ use spares_core::api::review::get_review_card;
 use spares_core::api::review::get_review_card_by_id;
 use spares_core::api::review::submit_study_action;
 use spares_core::api::statistics::get_statistics;
+use spares_core::config::read_external_config;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::review::GetReviewCardRequest;
+use spares_core::schema::review::ReviewConfigResponse;
 use spares_core::schema::review::ReviewSnapshotRequest;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::SubmitStudyActionRequest;
@@ -74,4 +76,13 @@ pub(crate) async fn get_statistics_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(stats_response))
+}
+
+pub(crate) async fn get_review_config_handler()
+-> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let config = read_external_config().map_err(error_to_response)?;
+    Ok(Json(ReviewConfigResponse {
+        flagged_tag_name: config.flagged_tag_name,
+        set_card_due_date_duration: config.set_card_due_date_duration,
+    }))
 }

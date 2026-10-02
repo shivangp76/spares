@@ -643,6 +643,15 @@ pub mod review {
         pub advance_safe_count: u32,
         pub postpone_safe_count: u32,
     }
+
+    /// Config values that review clients need to offer the same actions as the CLI.
+    #[serde_with::serde_as]
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ReviewConfigResponse {
+        pub flagged_tag_name: String,
+        #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+        pub set_card_due_date_duration: Duration,
+    }
 }
 
 pub mod undo {
