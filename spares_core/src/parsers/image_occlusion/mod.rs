@@ -18,7 +18,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use construct::get_clozes_from_svg_str;
+pub(crate) use construct::get_clozes_from_svg_str;
 use construct::read_image_occlusion_data;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -45,8 +45,8 @@ pub use construct::combine_image_occlusion_clozes;
 pub use construct::construct_image_occlusion_from_image;
 pub use construct::create_image_occlusion_cards;
 pub use construct::update_cloze_settings;
+pub use utils::append_to_stem;
 pub use utils::get_image_occlusion_card_filepath;
-#[cfg(test)]
 pub use utils::get_image_occlusion_directory;
 pub use utils::get_image_occlusion_rendered_directory;
 
@@ -154,7 +154,7 @@ pub struct ImageOcclusionData {
     pub back_emphasis: bool,
 }
 
-fn back_emphasis_image_occlusion_default() -> bool {
+pub(crate) fn back_emphasis_image_occlusion_default() -> bool {
     true
 }
 
@@ -213,37 +213,48 @@ enum SvgClozeType {
     Group,
 }
 
-pub fn parse_image_occlusion_data(
+/// Reads the settings of every image occlusion block in `data`, in order, alongside where each
+/// block is.
+pub fn read_image_occlusions(
     data: &str,
     parser: &dyn Parseable,
     move_files: bool,
-    current_grouping_number: &mut u32,
-) -> Result<Vec<ParsedImageOcclusionData>, LibraryError> {
+) -> Result<Vec<(ImageOcclusionMatch, ImageOcclusionData)>, LibraryError> {
     let start = parser.construct_comment("(.*)");
     let regex_string = format!(r"(?m){}", start.trim());
     let image_occlusion_settings_regex = get_or_compile_regex(&regex_string).unwrap();
     let image_occlusion_ranges = parser.get_image_occlusions(data)?;
-    let image_occlusion_range_with_settings = image_occlusion_ranges
+    image_occlusion_ranges
         .into_iter()
         .map(|range| {
-            let settings = image_occlusion_settings_regex
+            let setting_ranges = image_occlusion_settings_regex
                 .captures_iter(&data[range.settings_range.start..range.settings_range.end])
                 .map(|c| c.unwrap().get(1).map(|x| x.start()..x.end()).unwrap())
                 .map(|r| {
                     (r.start + range.settings_range.start)..(r.end + range.settings_range.start)
                 })
                 .collect::<Vec<_>>();
-            (range, settings)
+            let image_occlusion_data = read_image_occlusion_data(
+                data,
+                &setting_ranges,
+                range.settings_range.clone(),
+                move_files,
+            )?;
+            Ok((range, image_occlusion_data))
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+pub fn parse_image_occlusion_data(
+    data: &str,
+    parser: &dyn Parseable,
+    move_files: bool,
+    current_grouping_number: &mut u32,
+) -> Result<Vec<ParsedImageOcclusionData>, LibraryError> {
     let mut clozes = Vec::new();
-    for (image_occlusion_range, setting_ranges) in image_occlusion_range_with_settings {
-        let image_occlusion_data = read_image_occlusion_data(
-            data,
-            &setting_ranges,
-            image_occlusion_range.settings_range,
-            move_files,
-        )?;
+    for (image_occlusion_range, image_occlusion_data) in
+        read_image_occlusions(data, parser, move_files)?
+    {
         let clozes_file_contents =
             read_to_string(&image_occlusion_data.clozes_filepath).map_err(|_| {
                 LibraryError::Note(NoteErrorKind::InvalidSettings {

@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { Vim } from '@replit/codemirror-vim';
-import { getNoteRender, renderNote, updateNote } from '../api/client';
+import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { useEditorSetup } from '../hooks/useEditorSetup';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useResolvedTheme } from '../theme';
-import type { NoteRenderResponse, NoteResponse } from '../types/spares';
+import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
+import { insertBlock } from '../utils';
 import CardRenderer from './CardRenderer';
+import ImageOcclusionEditor from './ImageOcclusionEditor';
+import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -30,6 +34,13 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   const theme = useResolvedTheme();
   const editor = useEditorSetup();
   const [dataContent, setDataContent] = useState(note.data);
+  // The editor's data as last saved, so edits made since can be told apart
+  const [savedData, setSavedData] = useState(note.data);
+  const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
+  const isNarrow = useMediaQuery('(max-width: 640px)');
+  const [imageOcclusions, setImageOcclusions] = useState<ImageOcclusionData[]>([]);
+  const [imageOcclusionsError, setImageOcclusionsError] = useState<string | null>(null);
+  const [editingOcclusion, setEditingOcclusion] = useState<{ index: number; occlusion: ImageOcclusionData } | null>(null);
   const [tagsContent, setTagsContent] = useState(note.tags.join('\n'));
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -47,6 +58,15 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     return () => { cancelled = true; };
   }, [note.id, renderVersion]);
 
+  useEffect(() => {
+    let cancelled = false;
+    listNoteImageOcclusions(note.id).then(
+      list => { if (!cancelled) { setImageOcclusions(list); setImageOcclusionsError(null); } },
+      (e: unknown) => { if (!cancelled) setImageOcclusionsError(String(e)); },
+    );
+    return () => { cancelled = true; };
+  }, [note.id, savedData]);
+
   // Re-bound on every render so the handler sees the current contents
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -57,6 +77,33 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     return () => root.removeEventListener(VIM_WRITE_EVENT, onWrite);
   });
 
+  /** Renders the updated note and hands it to the caller. Returns the render error, if any. */
+  async function renderAndNotify(updated: NoteResponse): Promise<string | null> {
+    // Render before notifying so callers see the regenerated files
+    let renderError: string | null = null;
+    try {
+      await renderNote(note.id);
+    } catch (e) {
+      renderError = String(e);
+    }
+    onNoteUpdated(updated);
+    setRenderVersion(v => v + 1);
+    return renderError;
+  }
+
+  /** The server stores the edited clozes as new files and updates the note's text to use them. */
+  async function saveImageOcclusion(index: number, clozesSvg: string) {
+    const updated = await updateNoteImageOcclusion(note.id, index, clozesSvg);
+    setSavedData(updated.data);
+    setDataContent(updated.data);
+    setEditingOcclusion(null);
+    const renderError = await renderAndNotify(updated);
+    if (renderError) {
+      setSaveError(`Saved the image occlusion, but ${renderError}`);
+      setSaveStatus('error');
+    }
+  }
+
   async function handleSave() {
     setSaveStatus('saving');
     setSaveError(null);
@@ -64,15 +111,9 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     const keywords = keywordsContent.split('\n').map(s => s.trim()).filter(Boolean);
     try {
       const updated = await updateNote(note.id, dataContent, tags, keywords);
-      // Render before notifying so callers see the regenerated files
-      let renderError: string | null = null;
-      try {
-        await renderNote(note.id);
-      } catch (e) {
-        renderError = String(e);
-      }
-      onNoteUpdated(updated);
-      setRenderVersion(v => v + 1);
+      // The editor keeps the text as typed, though the server may have added card orders to it
+      setSavedData(dataContent);
+      const renderError = await renderAndNotify(updated);
       if (renderError) {
         setSaveError(`Saved, but ${renderError}`);
         setSaveStatus('error');
@@ -97,8 +138,15 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note #{note.id}</h3>
 
       <div style={{ marginBottom: 16 }}>
-        <div style={fieldLabel}>Data</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <div style={fieldLabel}>Data</div>
+          <InsertImageOcclusionButton
+            parserId={note.parser_id}
+            onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
+          />
+        </div>
         <CodeMirror
+          ref={dataEditorRef}
           theme={theme}
           value={dataContent}
           onChange={setDataContent}
@@ -148,6 +196,35 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           <div style={{ fontSize: 13 }}>{new Date(note.updated_at).toLocaleString()}</div>
         </div>
       </div>
+
+      {(imageOcclusions.length > 0 || imageOcclusionsError) && !isNarrow && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={metaLabel}>Image Occlusions</div>
+          {imageOcclusionsError && <div style={{ fontSize: 13, color: 'var(--error)' }}>{imageOcclusionsError}</div>}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+            {imageOcclusions.map((occlusion, index) => (
+              <button
+                key={occlusion.clozes_filepath}
+                onClick={() => setEditingOcclusion({ index, occlusion })}
+                // The server edits the saved text, which would drop unsaved edits
+                disabled={dataContent !== savedData}
+                title={dataContent !== savedData ? 'Save or undo your changes to the data first' : occlusion.original_image_filepath}
+                style={{ padding: '4px 8px', fontSize: 12 }}
+              >
+                Edit image occlusion {index + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {editingOcclusion && (
+        <ImageOcclusionEditor
+          mode="edit"
+          occlusion={editingOcclusion.occlusion}
+          onSave={svg => saveImageOcclusion(editingOcclusion.index, svg)}
+          onClose={() => setEditingOcclusion(null)}
+        />
+      )}
 
       {onOpenNote && note.linked_notes && note.linked_notes.length > 0 && (
         <div style={{ marginBottom: 16 }}>

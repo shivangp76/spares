@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import { useEffect, useRef, useState } from 'react';
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { createNotes, listParsers, renderNote } from '../api/client';
 import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
+import { insertBlock } from '../utils';
+import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13, background: 'var(--bg)' };
@@ -21,6 +23,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
   const [data, setData] = useState('');
+  const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
   const [tags, setTags] = useState('');
   const [keywords, setKeywords] = useState('');
   const [isSuspended, setIsSuspended] = useState(false);
@@ -78,8 +81,11 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <div style={fieldLabel}>Data</div>
-        <CodeMirror theme={theme} value={data} onChange={setData} extensions={editor.extensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <div style={fieldLabel}>Data</div>
+          <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
+        </div>
+        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} extensions={editor.extensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
       </div>
 
       <div className="form-grid">
