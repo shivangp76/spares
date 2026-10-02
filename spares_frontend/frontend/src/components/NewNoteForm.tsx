@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { vim } from '@replit/codemirror-vim';
 import { createNotes, listParsers, renderNote } from '../api/client';
+import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
 
@@ -17,6 +17,7 @@ function lines(value: string): string[] {
 /** `spares note add`, followed by rendering the note as the CLI does when syncing it. */
 export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note: NoteResponse) => void; onCancel: () => void }) {
   const theme = useResolvedTheme();
+  const editor = useEditorSetup();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
   const [data, setData] = useState('');
@@ -78,17 +79,17 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
 
       <div style={{ marginBottom: 16 }}>
         <div style={fieldLabel}>Data</div>
-        <CodeMirror theme={theme} value={data} onChange={setData} extensions={[vim()]} basicSetup={{ lineNumbers: true }} minHeight="120px" style={cmStyle} />
+        <CodeMirror theme={theme} value={data} onChange={setData} extensions={editor.extensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
       </div>
 
       <div className="form-grid">
         <div>
           <div style={fieldLabel}>Tags <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
-          <CodeMirror theme={theme} value={tags} onChange={setTags} extensions={[vim()]} basicSetup={{ lineNumbers: false }} style={cmStyle} />
+          <CodeMirror theme={theme} value={tags} onChange={setTags} extensions={editor.extensions} basicSetup={{ lineNumbers: false }} style={cmStyle} />
         </div>
         <div>
           <div style={fieldLabel}>Keywords <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
-          <CodeMirror theme={theme} value={keywords} onChange={setKeywords} extensions={[vim()]} basicSetup={{ lineNumbers: false }} style={cmStyle} />
+          <CodeMirror theme={theme} value={keywords} onChange={setKeywords} extensions={editor.extensions} basicSetup={{ lineNumbers: false }} style={cmStyle} />
         </div>
       </div>
 
@@ -98,10 +99,10 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
       </label>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={create} disabled={saving || parserId === null} style={{ padding: '5px 14px', fontSize: 13 }}>
+        <button onClick={create} disabled={saving || parserId === null} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>
           {saving ? 'Creating…' : 'Create'}
         </button>
-        <button onClick={onCancel} disabled={saving} style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
+        <button onClick={onCancel} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
         {error && <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>}
       </div>
     </div>

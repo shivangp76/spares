@@ -71,7 +71,7 @@ export default function ParsersPage() {
       <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 16 }}>Parsers</h2>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input
           value={newName}
           onChange={e => setNewName(e.target.value)}
@@ -79,7 +79,7 @@ export default function ParsersPage() {
           placeholder="New parser name, e.g. markdown"
           style={{ ...input, flex: 1, maxWidth: 300 }}
         />
-        <button onClick={add} disabled={!newName.trim()}>Add</button>
+        <button onClick={add} disabled={!newName.trim()} className="touch-target-small">Add</button>
       </div>
 
       {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
@@ -116,13 +116,13 @@ export default function ParsersPage() {
                     <span style={{ display: 'inline-flex', gap: 4 }}>
                       {renaming?.id === parser.id ? (
                         <>
-                          <button onClick={rename} style={smallButton}>Save</button>
-                          <button onClick={() => setRenaming(null)} style={smallButton}>Cancel</button>
+                          <button onClick={rename} className="touch-target-small" style={smallButton}>Save</button>
+                          <button onClick={() => setRenaming(null)} className="touch-target-small" style={smallButton}>Cancel</button>
                         </>
                       ) : (
-                        <button onClick={() => setRenaming({ id: parser.id, name: parser.name })} style={smallButton}>Rename</button>
+                        <button onClick={() => setRenaming({ id: parser.id, name: parser.name })} className="touch-target-small" style={smallButton}>Rename</button>
                       )}
-                      <button onClick={() => remove(parser)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
+                      <button onClick={() => remove(parser)} className="touch-target-small" style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
                     </span>
                   </td>
                 </tr>

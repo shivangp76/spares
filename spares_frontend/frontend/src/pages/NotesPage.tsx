@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
@@ -92,6 +93,8 @@ export default function NotesPage() {
     setPaneStatus(null);
   }
 
+  const detail = useDetailView(selectedNote !== null || creating, () => selectNote(null));
+
   async function openLinkedNote(noteId: number) {
     try {
       selectNote(await getNote(noteId));
@@ -128,8 +131,9 @@ export default function NotesPage() {
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
 
       <div className="split">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
+        {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
+        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
             <input
               type="text"
               value={query}
@@ -138,9 +142,9 @@ export default function NotesPage() {
               placeholder="Search notes…"
               style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
             />
-            <button onClick={() => handleSearch()}>Search</button>
-            {searchResults !== null && <button onClick={handleClear}>Clear</button>}
-            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); }} style={{ marginLeft: 'auto' }}>New note</button>
+            <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
+            {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
+            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); }} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
           </div>
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
@@ -161,8 +165,8 @@ export default function NotesPage() {
                     <th style={th}>ID</th>
                     <th style={th}>Data</th>
                     <th style={th}>Tags</th>
-                    <th style={th}>Keywords</th>
-                    <th style={th}>Cards</th>
+                    <th style={th} className="hide-narrow">Keywords</th>
+                    <th style={th} className="hide-narrow">Cards</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -174,17 +178,19 @@ export default function NotesPage() {
                       style={{ cursor: 'pointer' }}
                     >
                       <td style={td}>{note.id}</td>
-                      <td style={dataTd} title={note.data}>
-                        {note.data.length > DATA_PREVIEW_LEN
-                          ? note.data.slice(0, DATA_PREVIEW_LEN) + '…'
-                          : note.data}
+                      <td style={dataTd} className="clamp-narrow" title={note.data}>
+                        <span>
+                          {note.data.length > DATA_PREVIEW_LEN
+                            ? note.data.slice(0, DATA_PREVIEW_LEN) + '…'
+                            : note.data}
+                        </span>
                       </td>
                       <td style={td}>{note.tags.join(', ') || '—'}</td>
-                      <td style={td}>
+                      <td style={td} className="hide-narrow">
                         {note.keywords.slice(0, 4).join(', ')}
                         {note.keywords.length > 4 ? '…' : ''}
                       </td>
-                      <td style={td}>{note.card_count}</td>
+                      <td style={td} className="hide-narrow">{note.card_count}</td>
                     </tr>
                   ))}
                   {displayedNotes.length === 0 && (
@@ -197,14 +203,15 @@ export default function NotesPage() {
 
           {searchResults === null && (
             <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button disabled={page <= 1} onClick={() => setSearchParams({ page: String(page - 1) })}>Prev</button>
+              <button disabled={page <= 1} className="touch-target-small" onClick={() => setSearchParams({ page: String(page - 1) })}>Prev</button>
               <span style={{ fontSize: 13 }}>Page {page}</span>
-              <button disabled={notes.length < PAGE_SIZE} onClick={() => setSearchParams({ page: String(page + 1) })}>Next</button>
+              <button disabled={notes.length < PAGE_SIZE} className="touch-target-small" onClick={() => setSearchParams({ page: String(page + 1) })}>Next</button>
             </div>
           )}
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
+          {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to notes</button>}
           {paneStatus && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{paneStatus}</div>}
           {creating ? (
             <NewNoteForm
@@ -212,25 +219,25 @@ export default function NotesPage() {
                 selectNote(note);
                 setPaneStatus(`Note ${note.id} created.`);
               }}
-              onCancel={() => setCreating(false)}
+              onCancel={detail.back}
             />
           ) : selectedNote ? (
             <>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, fontSize: 13 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 13 }}>
                 {selectedIndex >= 0 && (
                   <>
                     {/* Wraps around at either end, as in the CLI */}
-                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + displayedNotes.length - 1) % displayedNotes.length])} disabled={displayedNotes.length < 2}>Previous</button>
+                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + displayedNotes.length - 1) % displayedNotes.length])} disabled={displayedNotes.length < 2} className="touch-target-small">Previous</button>
                     <span>Note {selectedIndex + 1} of {displayedNotes.length}</span>
-                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + 1) % displayedNotes.length])} disabled={displayedNotes.length < 2}>Next</button>
+                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + 1) % displayedNotes.length])} disabled={displayedNotes.length < 2} className="touch-target-small">Next</button>
                   </>
                 )}
-                <button onClick={deleteSelected} style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
+                <button onClick={deleteSelected} className="touch-target-small" style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
               </div>
               <NoteDetail
                 key={selectedNote.id}
                 note={selectedNote}
-                onClose={() => selectNote(null)}
+                onClose={detail.back}
                 onNoteUpdated={(updated) => {
                   setSelectedNote(updated);
                   setNotes(prev => prev.map(n => n.id === updated.id ? updated : n));
@@ -239,7 +246,7 @@ export default function NotesPage() {
                 onOpenNote={openLinkedNote}
               />
             </>
-          ) : (
+          ) : !detail.isNarrow && (
             <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note to see details.</div>
           )}
         </div>
