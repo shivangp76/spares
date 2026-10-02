@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createReviewSnapshot,
@@ -19,7 +19,6 @@ import {
 } from '../api/client';
 import CardRenderer from '../components/CardRenderer';
 import Navbar from '../components/Navbar';
-import NoteDetail from '../components/NoteDetail';
 import { useAuth } from '../hooks/useAuth';
 import {
   STATE_LABELS,
@@ -40,6 +39,10 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
   { mode: 'tagName', label: 'Tag name', placeholder: 'Filtered tag name' },
   { mode: 'tagId', label: 'Tag id', placeholder: 'Filtered tag id' },
 ];
+
+// The note editor (CodeMirror) is only needed once a note is opened, so it is loaded separately
+const loadNoteDetail = () => import('../components/NoteDetail');
+const NoteDetail = lazy(loadNoteDetail);
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
@@ -449,6 +452,12 @@ export default function ReviewPage() {
     if (onLanding) import('../typst/compiler').then(({ warmUpTypst }) => warmUpTypst()).catch(console.error);
   }, [onLanding]);
 
+  // Load the note editor while a card is shown, so opening the note isn't delayed by it
+  const reviewing = phase === 'front' || phase === 'back';
+  useEffect(() => {
+    if (reviewing) loadNoteDetail().catch(console.error);
+  }, [reviewing]);
+
   // After leaving a session, focus the prefilled filter so a new one can be typed straight away
   const returnedToLanding = phase === 'landing' && sessionStart !== null;
   useEffect(() => {
@@ -693,12 +702,14 @@ export default function ReviewPage() {
           {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: '#888' }}>Loading note…</div>}
           {panelNote && (
             <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
-              <NoteDetail
-                key={panelNote.id}
-                note={panelNote}
-                onClose={() => setPanelNote(null)}
-                onNoteUpdated={onNoteUpdated}
-              />
+              <Suspense fallback={<div style={{ fontSize: 13, color: '#888' }}>Loading note…</div>}>
+                <NoteDetail
+                  key={panelNote.id}
+                  note={panelNote}
+                  onClose={() => setPanelNote(null)}
+                  onNoteUpdated={onNoteUpdated}
+                />
+              </Suspense>
             </div>
           )}
 
