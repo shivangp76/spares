@@ -160,7 +160,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
 
       <div>
         <div style={fieldLabel}>Compiled</div>
-        <div style={{ border: '1px solid #eee', borderRadius: 4, padding: 16, backgroundColor: '#fff' }}>
+        <div style={{ border: '1px solid #eee', borderRadius: 4, padding: 4, backgroundColor: '#fff' }}>
           {render === null && <div>Loading…</div>}
           {render && 'error' in render && <div style={{ color: 'red', fontSize: 13 }}>{render.error}</div>}
           {render && 'result' in render && (
