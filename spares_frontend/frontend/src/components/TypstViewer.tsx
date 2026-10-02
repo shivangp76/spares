@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-interface Props { source: string }
+interface Props { source: string; onReady?: () => void }
 
 type State =
   | { source: string; width: number; svg: string; error?: undefined }
@@ -34,7 +34,7 @@ function useStepWidth() {
   return [ref, width] as const;
 }
 
-export default function TypstViewer({ source }: Props) {
+export default function TypstViewer({ source, onReady }: Props) {
   const [ref, width] = useStepWidth();
   const [result, setResult] = useState<State | null>(null);
 
@@ -48,6 +48,11 @@ export default function TypstViewer({ source }: Props) {
     );
     return () => { cancelled = true; };
   }, [source, width]);
+
+  const done = result?.source === source;
+  useEffect(() => {
+    if (done) onReady?.();
+  }, [done, onReady]);
 
   let content;
   // Ignore the result of a previous source while the current one compiles. A result for a previous
