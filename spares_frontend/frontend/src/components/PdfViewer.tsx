@@ -1,6 +1,11 @@
-interface Props { url: string }
+import { useEffect } from 'react';
 
-export default function PdfViewer({ url }: Props) {
+interface Props { url: string; onReady?: () => void }
+
+export default function PdfViewer({ url, onReady }: Props) {
+  // The embedded PDF viewer has no reliable load event, so the PDF counts as ready once embedded
+  useEffect(() => { onReady?.(); }, [url, onReady]);
+
   return (
     <div>
       <embed src={url} type="application/pdf" width="100%" height="600px" />

@@ -43,6 +43,10 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
+// Hides the prerendered back without changing its width, so a Typst back compiled for the hidden
+// viewer's width is not recompiled when it is shown.
+const hiddenBack: React.CSSProperties = { height: 0, overflow: 'hidden', visibility: 'hidden' };
+
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
 }
@@ -106,6 +110,9 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
+  // The back is rendered hidden once the front is done, so Show Answer only has to reveal it
+  const [frontRendered, setFrontRendered] = useState(false);
+  const onFrontRendered = useCallback(() => setFrontRendered(true), []);
 
   // Filter, resolved once per session like the CLI's `resolve_filtered_tag_id`. Prefilled from
   // `?tagId=`, `?tagName=` or `?query=`, e.g. by a tag's Review link, and written back on start.
@@ -145,6 +152,7 @@ export default function ReviewPage() {
 
   const loadCard = useCallback(async (filter: ReviewFilter | undefined) => {
     setPhase('loading');
+    setFrontRendered(false);
     setPanelNote(null);
     setKeywordResults(null);
     setDueDatePicker(null);
@@ -641,7 +649,15 @@ export default function ReviewPage() {
             </div>
           ) : (
             <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
-              <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} />
+              <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
+            </div>
+          )}
+
+          {(phase === 'back' || (frontRendered && !card.cli)) && (
+            <div style={phase === 'back' ? undefined : hiddenBack} aria-hidden={phase !== 'back'}>
+              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16, background: '#fafafa' }}>
+                <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
+              </div>
             </div>
           )}
 
@@ -652,19 +668,14 @@ export default function ReviewPage() {
           )}
 
           {phase === 'back' && (
-            <>
-              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16, background: '#fafafa' }}>
-                <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {ratings.map((r, i) => (
-                  <button key={r.id} onClick={() => rate(r.id)} style={{ flex: 1, padding: 12 }}>
-                    {r.description}
-                    <span style={{ display: 'block', color: '#999', fontSize: 12 }}>({i + 1})</span>
-                  </button>
-                ))}
-              </div>
-            </>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {ratings.map((r, i) => (
+                <button key={r.id} onClick={() => rate(r.id)} style={{ flex: 1, padding: 12 }}>
+                  {r.description}
+                  <span style={{ display: 'block', color: '#999', fontSize: 12 }}>({i + 1})</span>
+                </button>
+              ))}
+            </div>
           )}
 
           {status && <div style={{ marginTop: 12, fontSize: 13, color: '#555' }}>{status}</div>}

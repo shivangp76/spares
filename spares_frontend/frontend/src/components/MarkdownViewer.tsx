@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
-interface Props { url: string }
+interface Props { url: string; onReady?: () => void }
 
-export default function MarkdownViewer({ url }: Props) {
+export default function MarkdownViewer({ url, onReady }: Props) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,6 +20,10 @@ export default function MarkdownViewer({ url }: Props) {
       .catch(e => { if (!cancelled) setError(String(e)); });
     return () => { cancelled = true; };
   }, [url]);
+
+  useEffect(() => {
+    if (html !== null || error !== null) onReady?.();
+  }, [html, error, onReady]);
 
   if (error) return <div style={{ color: 'red' }}>Error loading markdown: {error}</div>;
   if (html === null) return <div>Loading…</div>;
