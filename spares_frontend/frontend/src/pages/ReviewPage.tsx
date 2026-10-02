@@ -60,6 +60,11 @@ function initialFilter(params: URLSearchParams): { mode: FilterMode; input: stri
   return { mode: 'query', input: params.get('query') ?? '' };
 }
 
+/** Inverse of `initialFilter`, so a session's URL can be bookmarked to prefill the same filter. */
+function filterParams(mode: FilterMode, input: string): URLSearchParams {
+  return input ? new URLSearchParams({ [mode]: input }) : new URLSearchParams();
+}
+
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -73,8 +78,8 @@ export default function ReviewPage() {
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
 
   // Filter, resolved once per session like the CLI's `resolve_filtered_tag_id`. Prefilled from
-  // `?tagId=`, `?tagName=` or `?query=`, e.g. by a tag's Review link.
-  const [searchParams] = useSearchParams();
+  // `?tagId=`, `?tagName=` or `?query=`, e.g. by a tag's Review link, and written back on start.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filterMode, setFilterMode] = useState<FilterMode>(() => initialFilter(searchParams).mode);
   const [filterInput, setFilterInput] = useState(() => initialFilter(searchParams).input);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter | undefined>(undefined);
@@ -170,6 +175,7 @@ export default function ReviewPage() {
       setPhase('error');
       return;
     }
+    setSearchParams(filterParams(filterMode, input), { replace: true });
     setActiveFilter(filter);
     setReviewedCount(0);
     setSessionRecallMs(0);
