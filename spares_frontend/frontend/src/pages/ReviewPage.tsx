@@ -500,6 +500,9 @@ export default function ReviewPage() {
       if (target instanceof Element && target.closest('.cm-editor')) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (phase !== 'front' && phase !== 'back') return;
+      // Space shows the answer, so it must not also click a button (or toggle a section) left
+      // focused by a mouse click, e.g. Bury Card when pressed on the back
+      if (e.code === 'Space' && target instanceof Element && target.closest('button, summary')) e.preventDefault();
       if (phase === 'front' && e.code === 'Space') {
         e.preventDefault();
         showAnswer();
