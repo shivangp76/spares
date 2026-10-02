@@ -36,10 +36,42 @@ export function getCredentials(): Credentials {
 
 export function saveCredentials(creds: Credentials): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
+  clearCaches();
 }
 
 export function clearCredentials(): void {
   localStorage.removeItem(STORAGE_KEY);
+  clearCaches();
+}
+
+// Responses kept in memory until a reload or a credentials change, so revisiting a page doesn't wait
+// on the server. Ratings and the review config rarely change, so they are fetched once.
+const memoized = new Map<string, Promise<unknown>>();
+// List pages are shown from here while they are refetched. Any change may affect them, so they are
+// dropped on every request that isn't a GET.
+const listPages = new Map<string, unknown[]>();
+
+function clearCaches(): void {
+  memoized.clear();
+  listPages.clear();
+}
+
+function memoize<T>(key: string, fetch: () => Promise<T>): Promise<T> {
+  let result = memoized.get(key) as Promise<T> | undefined;
+  if (!result) {
+    const fetched = fetch();
+    // Allow retrying after e.g. a network error
+    fetched.catch(() => { if (memoized.get(key) === fetched) memoized.delete(key); });
+    memoized.set(key, fetched);
+    result = fetched;
+  }
+  return result;
+}
+
+async function cacheListPage<T>(key: string, fetch: Promise<T[]>): Promise<T[]> {
+  const page = await fetch;
+  listPages.set(key, page);
+  return page;
 }
 
 function authHeaders(): HeadersInit {
@@ -73,6 +105,7 @@ async function apiFetch<T>(label: string, path: string, init: RequestInit = {}):
 /** Like `apiFetch`, for endpoints whose response body is empty. */
 async function apiSend(label: string, path: string, init: RequestInit = {}): Promise<Response> {
   const { serverUrl } = getCredentials();
+  if ((init.method ?? 'GET') !== 'GET') listPages.clear();
   const res = await fetch(`${serverUrl}${path}`, { ...init, headers: authHeaders() });
   await throwIfNotOk(res, label);
   return res;
@@ -130,7 +163,7 @@ export async function createReviewSnapshot(query: string): Promise<ReviewSnapsho
 }
 
 export async function getReviewConfig(): Promise<ReviewConfig> {
-  return apiFetch('Review config fetch', '/api/review/config');
+  return memoize('reviewConfig', () => apiFetch('Review config fetch', '/api/review/config'));
 }
 
 export async function getTagByName(name: string): Promise<TagResponse> {
@@ -202,7 +235,7 @@ export async function getStatistics(schedulerName: string, date: Date = new Date
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {
-  return apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`);
+  return memoize(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`));
 }
 
 export async function submitAction(req: SubmitStudyActionRequest): Promise<SubmitStudyActionResponse> {
@@ -232,7 +265,12 @@ export async function searchNotes(query: string): Promise<NoteResponse[]> {
 }
 
 export async function listNotes(page: number, limit: number): Promise<NoteResponse[]> {
-  return apiFetch('Notes fetch', `/api/notes?${pageQuery(page, limit)}`);
+  return cacheListPage(`notes?${pageQuery(page, limit)}`, apiFetch('Notes fetch', `/api/notes?${pageQuery(page, limit)}`));
+}
+
+/** The page `listNotes` last returned, if it hasn't been invalidated since. */
+export function cachedNotesPage(page: number, limit: number): NoteResponse[] | undefined {
+  return listPages.get(`notes?${pageQuery(page, limit)}`) as NoteResponse[] | undefined;
 }
 
 export async function updateNote(id: number, data: string, tags: string[], keywords: string[]): Promise<NoteResponse> {
@@ -263,7 +301,12 @@ export async function deleteNotes(selector: NotesSelector): Promise<void> {
 // Cards
 
 export async function listCards(page: number, limit: number): Promise<CardResponse[]> {
-  return apiFetch('Cards fetch', `/api/cards?${pageQuery(page, limit)}`);
+  return cacheListPage(`cards?${pageQuery(page, limit)}`, apiFetch('Cards fetch', `/api/cards?${pageQuery(page, limit)}`));
+}
+
+/** The page `listCards` last returned, if it hasn't been invalidated since. */
+export function cachedCardsPage(page: number, limit: number): CardResponse[] | undefined {
+  return listPages.get(`cards?${pageQuery(page, limit)}`) as CardResponse[] | undefined;
 }
 
 export async function getCard(id: number): Promise<CardResponse> {
