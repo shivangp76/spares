@@ -16,11 +16,19 @@ export interface GetReviewCardResponse {
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
   parser_name: string;
+  keywords: string[];
+  // Present iff the card is reviewed by running an external command (CLI only)
+  cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_sources?: BrowserRenderSources;
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
+}
+
+export interface CliReviewInfo {
+  exec: string;
+  surrounding: string;
 }
 
 export interface BrowserRenderSources {
@@ -52,6 +60,63 @@ export interface RatingSubmission {
 export interface SubmitStudyActionRequest {
   scheduler_name: string;
   action: { Rate: RatingSubmission } | { Bury: { card_id: number } };
+}
+
+export interface SubmitStudyActionResponse {
+  event_id: number | null;
+}
+
+// Externally-tagged serde enum
+export type ReviewFilter = { Query: string } | { FilteredTag: { tag_id: number } };
+
+export interface ReviewSnapshotResponse {
+  tag_id: number;
+  tag_name: string;
+  // `false` when an existing snapshot built earlier on the same day was resumed
+  rebuilt: boolean;
+  card_count: number;
+}
+
+export interface ReviewConfig {
+  flagged_tag_name: string;
+  set_card_due_date_duration: number; // seconds
+}
+
+export interface TagResponse {
+  id: number;
+  name: string;
+}
+
+export type SpecialState = 'Suspended' | 'UserBuried' | 'SchedulerBuried' | 'BuriedUntilLaterToday';
+export type SpecialStateUpdate = 'Suspended' | 'Buried' | 'BuriedUntilLaterToday';
+
+export interface CardResponse {
+  id: number;
+  note_id: number;
+  order: number;
+  due: string;
+  special_state: SpecialState | null;
+  state: number;
+}
+
+export interface UpdateCardsRequest {
+  selector: { Ids: number[] } | { Query: string };
+  special_state?: SpecialStateUpdate | null;
+  due?: string;
+}
+
+export interface UpdateCardsResponse {
+  cards: CardResponse[];
+  event_id: number | null;
+}
+
+export interface ForgetCardResponse {
+  card: CardResponse;
+  event_id: number | null;
+}
+
+export interface UndoEventResponse {
+  undone_event_ids: number[];
 }
 
 export const STATE_LABELS: Record<number, string> = {

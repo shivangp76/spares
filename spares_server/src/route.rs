@@ -44,6 +44,7 @@ use crate::handlers::require_api_key;
 use crate::handlers::review::create_review_snapshot_handler;
 use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
+use crate::handlers::review::get_review_config_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::submit_study_action_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
@@ -120,6 +121,7 @@ pub(crate) fn create_router(
         .route("/api/review/submit", post(submit_study_action_handler))
         .route("/api/review/snapshot", post(create_review_snapshot_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
+        .route("/api/review/config", get(get_review_config_handler))
         // Scheduler
         .route(
             "/api/scheduler/{name}/ratings",
