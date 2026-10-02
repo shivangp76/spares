@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
+import { cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import Navbar from '../components/Navbar';
 import NewNoteForm from '../components/NewNoteForm';
@@ -28,12 +28,23 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
+    // Show the page from an earlier visit straight away while it is refetched
+    const cached = cachedNotesPage(page, PAGE_SIZE);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
-    setLoading(true);
+    if (cached) setNotes(cached);
+    setLoading(cached === undefined);
+    let cancelled = false;
     listNotes(page, PAGE_SIZE)
-      .then(data => { setNotes(data); setError(null); })
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false));
+      .then(data => {
+        if (cancelled) return;
+        setNotes(data);
+        setError(null);
+        // Prefetch the next page so Next shows it straight away
+        if (data.length === PAGE_SIZE) listNotes(page + 1, PAGE_SIZE).catch(() => {});
+      })
+      .catch(e => { if (!cancelled) setError(String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [credentials, navigate, page]);
 
   function handleSearch() {
