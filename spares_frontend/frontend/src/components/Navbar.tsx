@@ -34,22 +34,22 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
   }
 
   return (
-    <nav style={{ marginBottom: 20, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+    <nav className="navbar">
       {NAV_LINKS.map(({ to, label }) =>
         pathname === to ? (
-          <span key={to} style={{ color: 'var(--text-faint)', cursor: 'default' }}>{label}</span>
+          <span key={to} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
         ) : (
-          <Link key={to} to={to}>{label}</Link>
+          <Link key={to} to={to} className="navbar-link">{label}</Link>
         )
       )}
-      <a href="/svgedit/src/editor/index.html?storagePrompt=false">Image Occlusion Editor</a>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
+      <a href="/svgedit/src/editor/index.html?storagePrompt=false" className="navbar-link">Image Occlusion Editor</a>
+      <div className="navbar-actions">
         {extra}
-        <button onClick={undoLatest} title="Undo the most recent change">Undo last change</button>
-        <button onClick={onLogout}>Logout</button>
+        <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change">Undo last change</button>
+        <button onClick={onLogout} className="navbar-button">Logout</button>
       </div>
       {undoStatus && (
-        <div style={{ flexBasis: '100%', fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ flexBasis: '100%', marginTop: 4, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span>{undoStatus}</span>
           {/* Pages don't know what the undone event changed, so offer to refetch everything */}
           <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>

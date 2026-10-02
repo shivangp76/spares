@@ -9,7 +9,7 @@
   --text-secondary: light-dark(#555, #b4b4bb);
   /* Labels and hints */
   --text-muted: light-dark(#888, #8e8e96);
-  /* Placeholders and the current page in the navbar */
+  /* Placeholders */
   --text-faint: light-dark(#999, #6e6e76);
   --border: light-dark(#ddd, #3a3b3f);
   --border-strong: light-dark(#ccc, #4a4b50);
@@ -89,4 +89,61 @@ a:visited {
 button:disabled {
   opacity: 0.5;
   cursor: default !important;
+}
+
+.navbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.navbar-link,
+.navbar-link:visited {
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 15px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.navbar-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.navbar-link-current,
+.navbar-link-current:hover {
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+
+.navbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navbar-button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.navbar-button:hover {
+  background: var(--hover);
+  color: var(--text);
 }
