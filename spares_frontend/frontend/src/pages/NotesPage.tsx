@@ -5,11 +5,10 @@ import { useAuth } from '../hooks/useAuth';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
+import { td, th } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
-const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #ccc' };
-const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid #eee' };
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
 export default function NotesPage() {
