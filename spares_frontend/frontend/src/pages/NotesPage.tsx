@@ -60,7 +60,9 @@ export default function NotesPage() {
         .notes-row-selected { background-color: #f0f4ff !important; }
       `}</style>
 
-      <Navbar onLogout={logout} />
+      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+        <Navbar onLogout={logout} />
+      </div>
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
 
       <div className="notes-split">

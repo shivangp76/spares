@@ -1,3 +1,8 @@
+/* Reserve scrollbar space so centered content doesn't shift between pages */
+html {
+  scrollbar-gutter: stable;
+}
+
 .typst-viewer svg {
   width: 100%;
   height: auto;
