@@ -14,6 +14,8 @@ use log::warn;
 use spares_core::config::Environment;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_env_config;
+use spares_core::parsers::RenderOutputDirectoryType;
+use spares_core::parsers::get_all_parsers;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -57,6 +59,15 @@ async fn start_server(args: Args) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to migrate the database: {:?}", e))?;
     info!("Migration successful.");
+    for parser in get_all_parsers().iter().map(|p| p()) {
+        info!(
+            "Parser `{}` renders to {}",
+            parser.get_parser_name(),
+            parser
+                .get_output_rendered_dir(RenderOutputDirectoryType::Note)
+                .display()
+        );
+    }
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
