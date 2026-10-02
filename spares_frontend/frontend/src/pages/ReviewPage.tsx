@@ -30,7 +30,7 @@ import {
   type ReviewFilter,
   type StatisticsResponse,
 } from '../types/spares';
-import { formatDuration, sectionLabel } from '../utils';
+import { backPath, formatDuration, sectionLabel } from '../utils';
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
@@ -45,11 +45,6 @@ const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
-}
-
-function backPath(card: GetReviewCardResponse): string {
-  const b = card.card_back_rendered_path;
-  return 'CardBack' in b ? b.CardBack : b.Note;
 }
 
 /** Heuristic mirror of `spares_core::search::query_has_limit`. A false positive only means the snapshot endpoint reports the error. */
