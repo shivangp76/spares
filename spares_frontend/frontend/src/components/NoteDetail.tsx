@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { Vim, vim } from '@replit/codemirror-vim';
+import { Vim } from '@replit/codemirror-vim';
 import { getNoteRender, renderNote, updateNote } from '../api/client';
+import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteRenderResponse, NoteResponse } from '../types/spares';
 import CardRenderer from './CardRenderer';
@@ -27,6 +28,7 @@ interface Props {
 
 export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
   const theme = useResolvedTheme();
+  const editor = useEditorSetup();
   const [dataContent, setDataContent] = useState(note.data);
   const [tagsContent, setTagsContent] = useState(note.tags.join('\n'));
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
@@ -90,6 +92,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         onClick={onClose}
         style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
         aria-label="Close detail"
+        className="tap-area"
       >×</button>
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note #{note.id}</h3>
 
@@ -99,8 +102,8 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           theme={theme}
           value={dataContent}
           onChange={setDataContent}
-          extensions={[vim()]}
-          basicSetup={{ lineNumbers: true }}
+          extensions={editor.extensions}
+          basicSetup={{ lineNumbers: editor.lineNumbers }}
           style={cmStyle}
         />
       </div>
@@ -112,7 +115,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
             theme={theme}
             value={tagsContent}
             onChange={setTagsContent}
-            extensions={[vim()]}
+            extensions={editor.extensions}
             basicSetup={{ lineNumbers: false }}
             style={cmStyle}
           />
@@ -123,7 +126,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
             theme={theme}
             value={keywordsContent}
             onChange={setKeywordsContent}
-            extensions={[vim()]}
+            extensions={editor.extensions}
             basicSetup={{ lineNumbers: false }}
             style={cmStyle}
           />
@@ -172,6 +175,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         <button
           onClick={handleSave}
           disabled={saveStatus === 'saving'}
+          className="touch-target-small"
           style={{ padding: '5px 14px', fontSize: 13, cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer' }}
         >
           {saveStatus === 'saving' ? 'Saving…' : 'Save'}

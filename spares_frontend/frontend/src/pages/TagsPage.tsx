@@ -79,6 +79,7 @@ function TagTree({ node, path, tagsByName, collapsed, onToggle }: TagTreeProps) 
                 onClick={() => onToggle(fullName)}
                 aria-expanded={!isCollapsed}
                 aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${fullName}`}
+                className="tap-area"
                 style={treeToggle}
               >
                 {isCollapsed ? '▶' : '▼'}
@@ -137,7 +138,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginBottom: 16, background: 'var(--surface)' }}>
       <h3 style={{ marginTop: 0, fontSize: 16 }}>{tag ? `Edit tag #${tag.id}` : 'New tag'}</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center', fontSize: 14 }}>
+      <div className="label-grid" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center', fontSize: 14 }}>
         <label htmlFor="tag-name">Name</label>
         <input id="tag-name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. math:algebra" style={input} />
         <label htmlFor="tag-description">Description</label>
@@ -151,8 +152,8 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
         </label>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
-        <button onClick={save} disabled={saving}>{saving ? 'Saving…' : tag ? 'Save' : 'Create'}</button>
-        <button onClick={onCancel} disabled={saving}>Cancel</button>
+        <button onClick={save} disabled={saving} className="touch-target-small">{saving ? 'Saving…' : tag ? 'Save' : 'Create'}</button>
+        <button onClick={onCancel} disabled={saving} className="touch-target-small">Cancel</button>
         {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
       </div>
     </div>
@@ -227,7 +228,7 @@ export default function TagsPage() {
       </div>
       <h2 style={{ marginBottom: 16 }}>Tags</h2>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+      <div className="search-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
         <label style={{ fontSize: 14 }}>
           <input type="radio" name="tag-view" checked={view === 'table'} onChange={() => setView('table')} style={{ marginRight: 4 }} />Table
@@ -235,7 +236,7 @@ export default function TagsPage() {
         <label style={{ fontSize: 14 }}>
           <input type="radio" name="tag-view" checked={view === 'tree'} onChange={() => setView('tree')} style={{ marginRight: 4 }} />Tree
         </label>
-        <button onClick={() => setEditing({ tag: null })} style={{ marginLeft: 'auto' }}>New tag</button>
+        <button onClick={() => setEditing({ tag: null })} className="touch-target-small" style={{ marginLeft: 'auto' }}>New tag</button>
       </div>
 
       {editing && <TagForm key={editing.tag?.id ?? 'new'} tag={editing.tag} onSaved={onSaved} onCancel={() => setEditing(null)} />}
@@ -258,28 +259,28 @@ export default function TagsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr>
-                <th style={th}>ID</th>
+                <th style={th} className="hide-narrow">ID</th>
                 <th style={th}>Name</th>
-                <th style={th}>Description</th>
-                <th style={th}>Query</th>
-                <th style={th}>Auto delete</th>
+                <th style={th} className="hide-narrow">Description</th>
+                <th style={th} className="hide-narrow">Query</th>
+                <th style={th} className="hide-narrow">Auto delete</th>
                 <th style={th} />
               </tr>
             </thead>
             <tbody>
               {shown.map(tag => (
                 <tr key={tag.id}>
-                  <td style={td}>{tag.id}</td>
-                  <td style={td}>{tag.name}</td>
-                  <td style={td}>{tag.description || '—'}</td>
-                  <td style={td}>{tag.query !== null ? <code>{tag.query}</code> : '—'}</td>
-                  <td style={td}>{tag.auto_delete ? 'Yes' : 'No'}</td>
+                  <td style={td} className="hide-narrow">{tag.id}</td>
+                  <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
+                  <td style={td} className="hide-narrow">{tag.description || '—'}</td>
+                  <td style={td} className="hide-narrow">{tag.query !== null ? <code>{tag.query}</code> : '—'}</td>
+                  <td style={td} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', gap: 4 }}>
                       <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
-                      <button onClick={() => setEditing({ tag })} style={smallButton}>Edit</button>
-                      {tag.query !== null && <button onClick={() => rebuild(tag)} style={smallButton}>Rebuild</button>}
-                      <button onClick={() => remove(tag)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
+                      <button onClick={() => setEditing({ tag })} className="touch-target-small" style={smallButton}>Edit</button>
+                      {tag.query !== null && <button onClick={() => rebuild(tag)} className="touch-target-small" style={smallButton}>Rebuild</button>}
+                      <button onClick={() => remove(tag)} className="touch-target-small" style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
                     </span>
                   </td>
                 </tr>

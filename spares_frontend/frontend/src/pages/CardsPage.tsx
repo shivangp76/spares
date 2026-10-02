@@ -6,6 +6,7 @@ import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import { useAuth } from '../hooks/useAuth';
+import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
 import { td, th, withSearch } from '../utils';
@@ -91,6 +92,8 @@ export default function CardsPage() {
     setBrowse(prev => (prev ? { ...prev, cards: replaceCard(prev.cards, card) } : prev));
   }
 
+  const detail = useDetailView(browse !== null, () => setBrowse(null));
+
   const displayedCards = searchResults ?? cards;
   const selected = browse ? browse.cards[browse.index] : null;
 
@@ -107,13 +110,14 @@ export default function CardsPage() {
       <h2 style={{ marginBottom: 16 }}>Cards</h2>
 
       <div className="split">
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
+        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <details style={{ marginBottom: 16 }}>
             <summary style={{ cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>Bulk tools (unbury, forget, edit, leeches)</summary>
             <CardTools onOpenCard={(index, list) => setBrowse({ cards: list, index })} />
           </details>
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
+          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
             <input
               type="text"
               value={query}
@@ -122,8 +126,8 @@ export default function CardsPage() {
               placeholder="Search cards, e.g. tag=a c.state=2"
               style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
             />
-            <button onClick={() => handleSearch()}>Search</button>
-            {searchResults !== null && <button onClick={handleClear}>Clear</button>}
+            <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
+            {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
           </div>
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
@@ -143,11 +147,11 @@ export default function CardsPage() {
                   <tr>
                     <th style={th}>ID</th>
                     <th style={th}>Note</th>
-                    <th style={th}>Order</th>
+                    <th style={th} className="hide-narrow">Order</th>
                     <th style={th}>State</th>
                     <th style={th}>Due</th>
-                    <th style={th}>Retention</th>
-                    <th style={th}>Special</th>
+                    <th style={th} className="hide-narrow">Retention</th>
+                    <th style={th} className="hide-narrow">Special</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -160,11 +164,11 @@ export default function CardsPage() {
                     >
                       <td style={td}>{card.id}</td>
                       <td style={td}>{card.note_id}</td>
-                      <td style={td}>{card.order}</td>
+                      <td style={td} className="hide-narrow">{card.order}</td>
                       <td style={td}>{STATE_LABELS[card.state] ?? card.state}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>
-                      <td style={td}>{card.desired_retention}</td>
-                      <td style={td}>{card.special_state ?? '—'}</td>
+                      <td style={td} className="hide-narrow">{card.desired_retention}</td>
+                      <td style={td} className="hide-narrow">{card.special_state ?? '—'}</td>
                     </tr>
                   ))}
                   {displayedCards.length === 0 && (
@@ -177,14 +181,15 @@ export default function CardsPage() {
 
           {searchResults === null && (
             <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button disabled={page <= 1} onClick={() => { setBrowse(null); setSearchParams({ page: String(page - 1) }); }}>Prev</button>
+              <button disabled={page <= 1} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams({ page: String(page - 1) }); }}>Prev</button>
               <span style={{ fontSize: 13 }}>Page {page}</span>
-              <button disabled={cards.length < PAGE_SIZE} onClick={() => { setBrowse(null); setSearchParams({ page: String(page + 1) }); }}>Next</button>
+              <button disabled={cards.length < PAGE_SIZE} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams({ page: String(page + 1) }); }}>Next</button>
             </div>
           )}
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
+          {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to cards</button>}
           {browse && selected
             ? <CardDetail
                 key={selected.id}
@@ -192,10 +197,10 @@ export default function CardsPage() {
                 index={browse.index}
                 total={browse.cards.length}
                 onGoTo={index => setBrowse({ ...browse, index })}
-                onClose={() => setBrowse(null)}
+                onClose={detail.back}
                 onCardChanged={onCardChanged}
               />
-            : <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a card to view it.</div>
+            : !detail.isNarrow && <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a card to view it.</div>
           }
         </div>
       </div>

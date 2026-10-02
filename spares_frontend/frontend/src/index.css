@@ -207,6 +207,8 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 @media (max-width: 768px) {
   .split {
     flex-direction: column;
+    /* Stacked columns take the full width rather than their content's */
+    align-items: stretch;
   }
 }
 
@@ -270,16 +272,70 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
     margin-left: 0 !important;
   }
 
-  .review-filter-row {
+  /* A search box with its buttons: the box takes the whole row and the buttons go below it */
+  .search-row {
     flex-wrap: wrap;
   }
 
-  .review-filter-row > input {
+  .search-row > input {
     flex-basis: 100% !important;
+    max-width: none !important;
   }
 
-  .review-filter-row > button {
+  .search-row > button {
     flex: 1;
+  }
+
+  /* Tabs scroll sideways on one row, like the navbar */
+  .tab-row {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tab-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-row > * {
+    white-space: nowrap;
+  }
+
+  /* Table columns that are left out on phones, where the detail view still shows them */
+  .hide-narrow {
+    display: none;
+  }
+
+  /* Long cell text wraps onto at most two lines instead of being cut off */
+  .clamp-narrow {
+    white-space: normal !important;
+    max-width: none !important;
+    overflow-wrap: anywhere;
+  }
+
+  .clamp-narrow > span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+
+  /* Labels go above their inputs */
+  .label-grid {
+    grid-template-columns: 1fr !important;
+    gap: 4px !important;
+  }
+
+  .label-grid > label:not(:first-child) {
+    margin-top: 8px;
+  }
+
+  .tile {
+    padding: 10px 12px !important;
+  }
+
+  .login {
+    margin-top: 24px !important;
   }
 }
 
@@ -291,5 +347,22 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 
   .touch-target {
     min-height: 44px;
+  }
+
+  /* Plainer buttons in lists and forms, a little smaller than the main actions */
+  .touch-target-small {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  /* Enlarges the tap area of small toggles without moving anything */
+  .tap-area {
+    position: relative;
+  }
+
+  .tap-area::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
   }
 }
