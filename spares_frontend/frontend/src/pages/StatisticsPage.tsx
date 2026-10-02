@@ -4,11 +4,10 @@ import { getStatistics } from '../api/client';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type StatisticsResponse } from '../types/spares';
+import { formatDuration, td, th } from '../utils';
 
 const sectionTitle: React.CSSProperties = { fontSize: 12, color: '#888', margin: '32px 0 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const tile: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 6, padding: '12px 20px', textAlign: 'center', minWidth: 96 };
-const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #ccc' };
-const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid #eee' };
 
 /** `YYYY-MM-DD` for `date` in local time, the format `<input type="date">` uses. */
 function toDateInputValue(date: Date): string {
@@ -21,20 +20,6 @@ function requestDate(value: string): Date {
   if (value === toDateInputValue(new Date())) return new Date();
   const [year, month, day] = value.split('-').map(Number);
   return new Date(year, month - 1, day, 12);
-}
-
-/** Matches the CLI's `format_duration`, e.g. `1h 0m 5s`. */
-function formatDuration(totalSeconds: number): string {
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0 || parts.length) parts.push(`${hours}h`);
-  if (minutes > 0 || parts.length) parts.push(`${minutes}m`);
-  parts.push(`${seconds}s`);
-  return parts.join(' ');
 }
 
 function stateLabel(stateId: string): string {

@@ -57,9 +57,16 @@ export interface RatingSubmission {
   tag_id: number | null;
 }
 
+// Externally-tagged serde enum
+export type StudyAction =
+  | { Rate: RatingSubmission }
+  | { Bury: { card_id: number } }
+  | { Advance: { count: number; query: string | null } }
+  | { Postpone: { count: number; query: string | null } };
+
 export interface SubmitStudyActionRequest {
   scheduler_name: string;
-  action: { Rate: RatingSubmission } | { Bury: { card_id: number } };
+  action: StudyAction;
 }
 
 export interface SubmitStudyActionResponse {
@@ -85,6 +92,35 @@ export interface ReviewConfig {
 export interface TagResponse {
   id: number;
   name: string;
+  description: string;
+  // Present iff the tag is a filtered tag, whose membership is defined by the query
+  query: string | null;
+  auto_delete: boolean;
+  created_at: number; // unix seconds
+  updated_at: number; // unix seconds
+}
+
+export type TagSelector = { Id: number } | { Name: string };
+
+export interface CreateTagRequest {
+  name: string;
+  description: string;
+  query: string | null;
+  auto_delete: boolean;
+}
+
+export interface UpdateTagRequest {
+  tag_to_modify: TagSelector;
+  name?: string;
+  description?: string;
+  // Omit to leave unchanged, `null` to clear
+  query?: string | null;
+  auto_delete?: boolean;
+}
+
+export interface ParserResponse {
+  id: number;
+  name: string;
 }
 
 export type SpecialState = 'Suspended' | 'UserBuried' | 'SchedulerBuried' | 'BuriedUntilLaterToday';
@@ -94,13 +130,23 @@ export interface CardResponse {
   id: number;
   note_id: number;
   order: number;
+  created_at: string;
+  updated_at: string;
   due: string;
+  stability: number;
+  difficulty: number;
+  desired_retention: number;
   special_state: SpecialState | null;
   state: number;
+  custom_data: unknown;
 }
 
+export type CardsSelector = { Ids: number[] } | { Query: string };
+
 export interface UpdateCardsRequest {
-  selector: { Ids: number[] } | { Query: string };
+  selector: CardsSelector;
+  desired_retention?: number;
+  // Omit to leave unchanged, `null` to clear
   special_state?: SpecialStateUpdate | null;
   due?: string;
 }
@@ -143,9 +189,51 @@ export interface NoteResponse {
   parser_id: number;
   keywords: string[];
   tags: string[];
+  custom_data: Record<string, unknown>;
+  // `null` if unpopulated
+  linked_notes: LinkedNote[] | null;
   card_count: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface LinkedNote {
+  searched_keyword: string;
+  linked_note_id: number | null;
+  matched_keyword: string | null;
+}
+
+// Externally-tagged serde enum
+export type NotesSelector = { Ids: number[] } | { Query: string } | 'All';
+
+export interface CreateNoteRequest {
+  data: string;
+  keywords: string[];
+  tags: string[];
+  // Suspends all of its cards
+  is_suspended: boolean;
+  custom_data: Record<string, unknown>;
+}
+
+export interface MatchedKeywordResponse {
+  matched_keyword: string;
+  note_id: number;
+  score: number;
+}
+
+export interface UnmatchedKeywordResponse {
+  note_id: number;
+  searched_keyword: string;
+}
+
+export interface NoteLink {
+  parent_note_id: number;
+  // `null` if no note matched the searched keyword
+  linked_note_id: number | null;
+  order: number;
+  searched_keyword: string;
+  matched_keyword: string | null;
+  score: number | null;
 }
 
 export interface NoteRenderResponse {

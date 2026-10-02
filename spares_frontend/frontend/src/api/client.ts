@@ -1,10 +1,16 @@
 import type {
   CardResponse,
+  CreateNoteRequest,
+  CreateTagRequest,
   Credentials,
   ForgetCardResponse,
   GetReviewCardResponse,
+  MatchedKeywordResponse,
+  NoteLink,
   NoteRenderResponse,
   NoteResponse,
+  NotesSelector,
+  ParserResponse,
   Rating,
   ReviewConfig,
   ReviewFilter,
@@ -14,8 +20,10 @@ import type {
   SubmitStudyActionResponse,
   TagResponse,
   UndoEventResponse,
+  UnmatchedKeywordResponse,
   UpdateCardsRequest,
   UpdateCardsResponse,
+  UpdateTagRequest,
 } from '../types/spares';
 
 const STORAGE_KEY = 'spares_credentials';
@@ -42,24 +50,36 @@ function authHeaders(): HeadersInit {
   };
 }
 
-/** Throws with the server's `{ message }` when present, falling back to the status code. */
+/** Throws with the server's `{ message }` (or plain-text body) when present, falling back to the status code. */
 async function throwIfNotOk(res: Response, label: string): Promise<void> {
   if (res.ok) return;
   let message = `${label} failed: ${res.status}`;
+  const text = await res.text().catch(() => '');
   try {
-    const body = await res.json() as { message?: unknown };
+    const body = JSON.parse(text) as { message?: unknown };
     if (typeof body.message === 'string') message = `${label} failed: ${body.message}`;
   } catch {
-    // Not JSON; keep the status-code message
+    // Not JSON, e.g. a request the server rejected before reaching a handler
+    if (text) message = `${label} failed: ${text}`;
   }
   throw new Error(message);
 }
 
 async function apiFetch<T>(label: string, path: string, init: RequestInit = {}): Promise<T> {
+  const res = await apiSend(label, path, init);
+  return res.json() as Promise<T>;
+}
+
+/** Like `apiFetch`, for endpoints whose response body is empty. */
+async function apiSend(label: string, path: string, init: RequestInit = {}): Promise<Response> {
   const { serverUrl } = getCredentials();
   const res = await fetch(`${serverUrl}${path}`, { ...init, headers: authHeaders() });
   await throwIfNotOk(res, label);
-  return res.json() as Promise<T>;
+  return res;
+}
+
+function pageQuery(page: number, limit: number): string {
+  return `page=${page}&limit=${limit}`;
 }
 
 export function fileUrl(relativePath: string): string {
@@ -152,11 +172,8 @@ export async function tagNote(noteId: number, tag: string): Promise<number | nul
 
 /** Regenerates a note's rendered files (and its cards' and linked notes'), as the CLI does after syncing a note. */
 export async function renderNote(noteId: number): Promise<void> {
-  const { serverUrl } = getCredentials();
-  // The response has an empty body, so it is not parsed
-  const res = await fetch(`${serverUrl}/api/notes/generate_files`, {
+  await apiSend('Render note', '/api/notes/generate_files', {
     method: 'POST',
-    headers: authHeaders(),
     body: JSON.stringify({
       selector: { Ids: [noteId] },
       immutable_note_ids: null,
@@ -167,7 +184,6 @@ export async function renderNote(noteId: number): Promise<void> {
       force_generate_rendered: false,
     }),
   });
-  await throwIfNotOk(res, 'Render note');
 }
 
 /** Undoes `eventId` and the rest of its group, or the latest event if `null`. */
@@ -179,66 +195,49 @@ export async function undoEvent(eventId: number | null): Promise<UndoEventRespon
 }
 
 export async function getStatistics(schedulerName: string, date: Date = new Date()): Promise<StatisticsResponse> {
-  const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/review/statistics`, {
+  return apiFetch('Statistics fetch', '/api/review/statistics', {
     method: 'POST',
-    headers: authHeaders(),
     body: JSON.stringify({ scheduler_name: schedulerName, date: date.toISOString() }),
   });
-  if (!res.ok) throw new Error(`Statistics fetch failed: ${res.status}`);
-  return res.json();
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {
-  const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/scheduler/${encodeURIComponent(name)}/ratings`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`Ratings fetch failed: ${res.status}`);
-  return res.json();
+  return apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`);
 }
 
 export async function submitAction(req: SubmitStudyActionRequest): Promise<SubmitStudyActionResponse> {
   return apiFetch('Submit', '/api/review/submit', { method: 'POST', body: JSON.stringify(req) });
 }
 
+/** Reviews `count` cards ahead of time, like `spares card advance`. */
+export async function advanceCards(schedulerName: string, count: number, query: string | null): Promise<number | null> {
+  const res = await submitAction({ scheduler_name: schedulerName, action: { Advance: { count, query } } });
+  return res.event_id;
+}
+
+/** Delays `count` reviews, like `spares card postpone`. */
+export async function postponeCards(schedulerName: string, count: number, query: string | null): Promise<number | null> {
+  const res = await submitAction({ scheduler_name: schedulerName, action: { Postpone: { count, query } } });
+  return res.event_id;
+}
+
+// Notes
+
 export async function searchNotes(query: string): Promise<NoteResponse[]> {
-  const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/notes/search`, {
+  const data = await apiFetch<{ Notes: [NoteResponse, string][] }>('Search', '/api/notes/search', {
     method: 'POST',
-    headers: authHeaders(),
     body: JSON.stringify({ query, output_type: 'Notes' }),
   });
-  if (!res.ok) {
-    const body = await res.text();
-    let message = `Search failed: ${res.status}`;
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed.error) message = parsed.error;
-      else if (typeof parsed === 'string') message = parsed;
-    } catch {
-      if (body) message = body;
-    }
-    throw new Error(message);
-  }
-  const data = await res.json() as { Notes: [NoteResponse, string][] };
   return data.Notes.map(([note]) => note);
 }
 
 export async function listNotes(page: number, limit: number): Promise<NoteResponse[]> {
-  const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/notes?page=${page}&limit=${limit}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`Notes fetch failed: ${res.status}`);
-  return res.json();
+  return apiFetch('Notes fetch', `/api/notes?${pageQuery(page, limit)}`);
 }
 
 export async function updateNote(id: number, data: string, tags: string[], keywords: string[]): Promise<NoteResponse> {
-  const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/notes`, {
+  const body = await apiFetch<{ notes: NoteResponse[]; event_id: number | null }>('Update', '/api/notes', {
     method: 'PATCH',
-    headers: authHeaders(),
     body: JSON.stringify({
       selector: { Ids: [id] },
       data,
@@ -246,7 +245,126 @@ export async function updateNote(id: number, data: string, tags: string[], keywo
       tags: { SetTags: tags },
     }),
   });
-  if (!res.ok) throw new Error(`Update failed: ${res.status}`);
-  const body = await res.json() as { notes: NoteResponse[]; event_id: number | null };
   return body.notes[0];
+}
+
+export async function createNotes(parserId: number, requests: CreateNoteRequest[]): Promise<NoteResponse[]> {
+  const body = await apiFetch<{ notes: NoteResponse[] }>('Create notes', '/api/notes', {
+    method: 'POST',
+    body: JSON.stringify({ parser_id: parserId, requests }),
+  });
+  return body.notes;
+}
+
+export async function deleteNotes(selector: NotesSelector): Promise<void> {
+  await apiSend('Delete notes', '/api/notes', { method: 'DELETE', body: JSON.stringify({ selector }) });
+}
+
+// Cards
+
+export async function listCards(page: number, limit: number): Promise<CardResponse[]> {
+  return apiFetch('Cards fetch', `/api/cards?${pageQuery(page, limit)}`);
+}
+
+export async function getCard(id: number): Promise<CardResponse> {
+  return apiFetch('Card fetch', `/api/cards/${id}`);
+}
+
+export async function searchCards(query: string): Promise<CardResponse[]> {
+  const data = await apiFetch<{ Cards: [CardResponse, string][] }>('Search', '/api/notes/search', {
+    method: 'POST',
+    body: JSON.stringify({ query, output_type: 'Cards' }),
+  });
+  return data.Cards.map(([card]) => card);
+}
+
+/** Cards that are frequently forgotten. */
+export async function getLeeches(schedulerName: string): Promise<CardResponse[]> {
+  return apiFetch('Leeches fetch', '/api/cards/leeches', {
+    method: 'POST',
+    body: JSON.stringify({ scheduler_name: schedulerName }),
+  });
+}
+
+/** Unburies all buried cards, or only those matching `query`. */
+export async function unburyCards(query: string | null): Promise<void> {
+  await apiSend('Unbury', '/api/cards/unbury', { method: 'POST', body: JSON.stringify({ query }) });
+}
+
+// Tags
+
+export async function listTags(page: number, limit: number): Promise<TagResponse[]> {
+  return apiFetch('Tags fetch', `/api/tags?${pageQuery(page, limit)}`);
+}
+
+export async function getTag(id: number): Promise<TagResponse> {
+  return apiFetch('Tag fetch', `/api/tags/${id}`);
+}
+
+export async function createTag(req: CreateTagRequest): Promise<TagResponse> {
+  return apiFetch('Create tag', '/api/tags', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export async function updateTag(req: UpdateTagRequest): Promise<TagResponse> {
+  return apiFetch('Update tag', '/api/tags', { method: 'PATCH', body: JSON.stringify(req) });
+}
+
+export async function deleteTag(id: number): Promise<void> {
+  await apiSend('Delete tag', `/api/tags/${id}`, { method: 'DELETE' });
+}
+
+/** Rebuilds a filtered tag's membership from its query. */
+export async function rebuildTag(id: number): Promise<void> {
+  await apiSend('Rebuild tag', `/api/tags/${id}/rebuild`);
+}
+
+// Parsers
+
+export async function listParsers(page: number, limit: number): Promise<ParserResponse[]> {
+  return apiFetch('Parsers fetch', `/api/parsers?${pageQuery(page, limit)}`);
+}
+
+export async function createParser(name: string): Promise<ParserResponse> {
+  return apiFetch('Create parser', '/api/parsers', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export async function updateParser(id: number, name: string): Promise<ParserResponse> {
+  return apiFetch('Update parser', `/api/parsers/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export async function deleteParser(id: number): Promise<void> {
+  await apiSend('Delete parser', `/api/parsers/${id}`, { method: 'DELETE' });
+}
+
+// Keywords and links
+
+/** Every note keyword, as `[note id, keyword]`. */
+export async function listKeywords(): Promise<[number, string][]> {
+  return apiFetch('Keywords fetch', '/api/notes/keywords');
+}
+
+/** Notes whose keywords match `keyword`, best match first. */
+export async function searchKeyword(keyword: string): Promise<MatchedKeywordResponse[]> {
+  return apiFetch('Keyword search', '/api/notes/search/keyword', {
+    method: 'POST',
+    body: JSON.stringify({ keyword }),
+  });
+}
+
+/** Keywords that notes link to but no note has. */
+export async function getUnmatchedKeywords(): Promise<UnmatchedKeywordResponse[]> {
+  return apiFetch('Unmatched keywords fetch', '/api/notes/unmatched-keywords');
+}
+
+/** Keywords on more than one note, as `[keyword, note ids]`. */
+export async function getDuplicateKeywords(): Promise<[string, number[]][]> {
+  return apiFetch('Duplicate keywords fetch', '/api/notes/duplicate-keywords');
+}
+
+/** Note links whose match score is below `scoreThreshold`. */
+export async function getNoteLinks(scoreThreshold: number): Promise<NoteLink[]> {
+  return apiFetch('Note links fetch', '/api/notes/search/note-links', {
+    method: 'POST',
+    body: JSON.stringify({ score_threshold: scoreThreshold }),
+  });
 }
