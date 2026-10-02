@@ -95,25 +95,30 @@ impl Iterator for Lexer<'_> {
             Some('O') if self.s.eat_if('R') => just(TokenKind::Or, self.s.cursor()),
             Some('t') if self.s.eat_if("rue") => just(TokenKind::True, self.s.cursor()),
             Some('f') if self.s.eat_if("alse") => just(TokenKind::False, self.s.cursor()),
-            Some('"') => match self.parse_string(false) {
-                Ok(kind) => Ok(Token {
-                    kind,
-                    span: cursor_start + 1..self.s.cursor() - 1,
+            Some(open) if is_quote(open) => match self.parse_string(open, false) {
+                Ok(close_len) => Ok(Token {
+                    kind: TokenKind::String,
+                    span: cursor_start + open.len_utf8()..self.s.cursor() - close_len,
                 }),
                 Err(e) => return Some(Err(e)),
             },
-            Some('#') if self.s.eat_if('"') => match self.parse_string(true) {
-                Ok(kind) => Ok(Token {
-                    kind,
-                    span: cursor_start + 2..self.s.cursor() - 2,
-                }),
-                Err(e) => return Some(Err(e)),
-            },
-            Some('r') if self.s.eat_if("e:\"") => {
-                self.parse_string(false).ok()?;
+            Some('#') if self.quote_after("") => {
+                let open = self.s.eat()?;
+                match self.parse_string(open, true) {
+                    Ok(close_len) => Ok(Token {
+                        kind: TokenKind::String,
+                        span: cursor_start + 1 + open.len_utf8()..self.s.cursor() - close_len - 1,
+                    }),
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+            Some('r') if self.quote_after("e:") => {
+                self.s.eat_if("e:");
+                let open = self.s.eat()?;
+                let close_len = self.parse_string(open, false).ok()?;
                 Ok(Token {
                     kind: TokenKind::Regex,
-                    span: cursor_start + 4..self.s.cursor() - 1,
+                    span: cursor_start + 3 + open.len_utf8()..self.s.cursor() - close_len,
                 })
             }
             Some(c) if char::is_ascii_digit(&c) || c == '-' => match self.parse_date_or_number(c) {
@@ -157,6 +162,11 @@ impl Iterator for Lexer<'_> {
             }
         }
     }
+}
+
+/// Whether `c` delimits a string. Curly double quotes are accepted since phone keyboards insert them in place of `"`.
+fn is_quote(c: char) -> bool {
+    matches!(c, '"' | '\u{201C}' | '\u{201D}')
 }
 
 impl Lexer<'_> {
@@ -203,13 +213,26 @@ impl Lexer<'_> {
         }
     }
 
-    fn parse_string(&mut self, hash_quote: bool) -> Result<TokenKind, Error> {
+    /// Whether the input after `prefix` starts with a quote character.
+    fn quote_after(&self, prefix: &str) -> bool {
+        self.s
+            .after()
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(is_quote)
+    }
+
+    /// Consumes the rest of a string opened by `open`, returning the byte length of the closing quote.
+    ///
+    /// A string opened with a straight quote is only closed by a straight quote. A string opened with a curly quote
+    /// (e.g. from a phone keyboard's smart punctuation) is closed by any double quote.
+    fn parse_string(&mut self, open: char, hash_quote: bool) -> Result<usize, Error> {
         let mut result = String::new();
         while let Some(c) = self.s.eat() {
             match c {
-                '"' => {
+                c if c == '"' || (open != '"' && is_quote(c)) => {
                     if !hash_quote || self.s.eat_if('#') {
-                        return Ok(TokenKind::String);
+                        return Ok(c.len_utf8());
                     }
                     result.push(c);
                 }
@@ -662,6 +685,39 @@ mod tests {
                 (TokenKind::Field, "tag"),
                 (TokenKind::Equal, "="),
                 (TokenKind::String, "math:measure-theory:homework"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_curly_quotes() {
+        let input = "tag=\u{201C}math:homework\u{201D} #\u{201C}a \"b\u{201D}\u{201D}# re:\u{201C}x.y\u{201D} \"\u{201C}c\u{201D}\"";
+        let lexer = Lexer::new(input);
+        let tokens = lexer
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.kind, &input[t.span]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tokens,
+            vec![
+                (TokenKind::Field, "tag"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "math:homework"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "a \"b\u{201D}"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::Regex, "x.y"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "\u{201C}c\u{201D}"),
             ]
         );
     }
