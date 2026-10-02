@@ -38,6 +38,8 @@ use crate::handlers::parser::delete_parser_handler;
 use crate::handlers::parser::get_parser_handler;
 use crate::handlers::parser::list_parsers_handler;
 use crate::handlers::parser::update_parser_handler;
+use crate::handlers::render_asset::get_render_asset_handler;
+use crate::handlers::render_asset::list_render_packages_handler;
 use crate::handlers::require_api_key;
 use crate::handlers::review::create_review_snapshot_handler;
 use crate::handlers::review::get_review_card_by_id_handler;
@@ -126,6 +128,12 @@ pub(crate) fn create_router(
         .route(
             "/api/scheduler/{name}/rating",
             get(get_rating_from_score_handler),
+        )
+        // Files read by sources that clients compile themselves
+        .route("/api/render-assets", get(get_render_asset_handler))
+        .route(
+            "/api/render-assets/packages",
+            get(list_render_packages_handler),
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))

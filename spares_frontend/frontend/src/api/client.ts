@@ -36,6 +36,25 @@ export function fileUrl(relativePath: string): string {
   return `${serverUrl.replace(/\/$/, '')}/files/${relativePath}`;
 }
 
+/** Package specs (`namespace/name/version`) that browser-rendered sources import. */
+export async function listRenderPackages(): Promise<string[]> {
+  const { serverUrl } = getCredentials();
+  const res = await fetch(`${serverUrl}/api/render-assets/packages`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Render packages fetch failed: ${res.status}`);
+  return res.json();
+}
+
+/** A file a browser-rendered source reads, by the absolute path the source uses. `null` if the server does not have it. */
+export async function fetchRenderAsset(path: string): Promise<Uint8Array | null> {
+  const { serverUrl } = getCredentials();
+  const res = await fetch(`${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Render asset fetch failed for ${path}: ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export async function postReview(filter?: string): Promise<GetReviewCardResponse | null> {
   const { serverUrl } = getCredentials();
   const body = filter ? { filter: { Query: filter } } : {};

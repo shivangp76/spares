@@ -544,10 +544,22 @@ pub mod review {
         /// Present iff this card is a CLI card.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub cli: Option<CliReviewInfo>,
+        /// Present iff the parser [renders in the browser](crate::parsers::Parseable::renders_in_browser).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub browser_sources: Option<BrowserRenderSources>,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
         pub linked_notes: Vec<ReviewLinkedNote>,
+    }
+
+    /// Raw sources for a client to compile itself. Files they read are served by the render asset
+    /// endpoints.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct BrowserRenderSources {
+        pub card_front: String,
+        /// The card back, or the whole note if the card's back is the note.
+        pub card_back: String,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

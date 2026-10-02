@@ -13,8 +13,9 @@
     "start-image-occlusion": "bun install && cd ./svgedit/ && bun install && [ -d packages/svgcanvas/dist ] || npm run build --workspace @svgedit/svgcanvas && cd ../ && bun run dev-image-occlusion"
   },
   "dependencies": {
-    "@myriaddreamin/typst-ts-renderer": "^0.7.0",
-    "@myriaddreamin/typst.ts": "^0.7.0",
+    "@myriaddreamin/typst-ts-renderer": "0.8.0-rc3",
+    "@myriaddreamin/typst-ts-web-compiler": "0.8.0-rc3",
+    "@myriaddreamin/typst.ts": "0.8.0-rc3",
     "@replit/codemirror-vim": "^6.4.0",
     "@uiw/react-codemirror": "^4.25.12",
     "dompurify": "^3.4.16",

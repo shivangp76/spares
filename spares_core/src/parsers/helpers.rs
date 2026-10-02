@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::RenderOutputType;
@@ -24,6 +27,20 @@ pub fn get_output_raw_dir(
     // SAFETY: The parser is validated so that its name is a valid directory name.
     output_raw_dir.push(parser_name);
     output_raw_dir
+}
+
+/// What compiling a rendered file read, besides the raw file itself. Written next to the rendered
+/// file by parsers that [render in the browser](crate::parsers::Parseable::renders_in_browser).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RenderDependencies {
+    /// Absolute paths of local files.
+    pub files: Vec<PathBuf>,
+    /// Package specs as `namespace/name/version`, e.g. `preview/cetz/0.5.2`.
+    pub packages: Vec<String>,
+}
+
+pub fn render_dependencies_filepath(output_rendered_filepath: &Path) -> PathBuf {
+    output_rendered_filepath.with_extension("deps.json")
 }
 
 #[derive(Debug)]

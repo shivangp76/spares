@@ -1,3 +1,6 @@
+use std::fs::read_to_string;
+use std::fs::remove_file;
+use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -5,6 +8,8 @@ use std::process::Command;
 
 use data_parser::TypstDataParser;
 use indoc::indoc;
+use log::warn;
+use serde::Deserialize;
 
 use crate::Error;
 use crate::LibraryError;
@@ -20,6 +25,7 @@ use crate::parsers::GenerateNoteFilesRequest;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
@@ -27,6 +33,7 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
@@ -317,20 +324,102 @@ impl Parseable for TypstParser {
                 "TYPST_ROOT environment variable is not set".to_string(),
             )))
         })?;
+        let to_absolute = |path: &Path| {
+            std::path::absolute(path).map_err(|e| Error::Io {
+                description: format!("Failed to make {} absolute", path.display()),
+                source: e,
+            })
+        };
+        let output_text_filepath = to_absolute(output_text_filepath)?;
+        let dependencies_filepath =
+            render_dependencies_filepath(&to_absolute(output_rendered_filepath)?);
+        let mut raw_dependencies_filepath = dependencies_filepath.clone();
+        raw_dependencies_filepath.set_extension("raw.json");
         let output = Command::new("typst")
             .arg("compile")
             .arg("--no-pdf-tags") // To reduce output filesize
             .arg("--root")
             .arg(typst_root_dir)
-            .arg(output_text_filepath)
+            // Typst writes dependencies relative to the working directory.
+            .arg("--deps")
+            .arg(&raw_dependencies_filepath)
+            .arg(&output_text_filepath)
             .arg(output_rendered_filepath)
-            // .current_dir(output_text_filepath.parent().unwrap())
+            .current_dir("/")
             .output()
             .map_err(|e| Error::Io {
                 description: "Failed to run typst command".to_string(),
                 source: e,
             })?;
+        // The raw dependency list holds every file of every package, so only a summary is kept.
+        if let Err(e) = summarize_dependencies(
+            &raw_dependencies_filepath,
+            &output_text_filepath,
+            &dependencies_filepath,
+        ) {
+            warn!(
+                "Failed to record dependencies of {}: {e}",
+                output_text_filepath.display()
+            );
+        }
+        let _ = remove_file(&raw_dependencies_filepath);
         Ok(output)
+    }
+
+    fn renders_in_browser(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Deserialize)]
+struct TypstDependencies {
+    inputs: Vec<PathBuf>,
+}
+
+/// Converts the output of `typst compile --deps` (run from `/`) to [`RenderDependencies`].
+fn summarize_dependencies(
+    raw_dependencies_filepath: &Path,
+    main_filepath: &Path,
+    dependencies_filepath: &Path,
+) -> Result<(), String> {
+    let raw = read_to_string(raw_dependencies_filepath).map_err(|e| e.to_string())?;
+    let TypstDependencies { inputs } = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let mut dependencies = RenderDependencies::default();
+    for input in inputs {
+        let input = Path::new("/").join(input);
+        if input == main_filepath {
+            continue;
+        }
+        match package_spec(&input) {
+            Some(spec) if spec.starts_with("preview/") => dependencies.packages.push(spec),
+            // Local packages cannot be fetched by the browser.
+            Some(_) => {}
+            None => dependencies.files.push(input),
+        }
+    }
+    dependencies.files.sort();
+    dependencies.files.dedup();
+    dependencies.packages.sort();
+    dependencies.packages.dedup();
+    let contents = serde_json::to_string(&dependencies).map_err(|e| e.to_string())?;
+    write(dependencies_filepath, contents).map_err(|e| e.to_string())
+}
+
+/// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid
+/// out as `<..>/typst/packages/<namespace>/<name>/<version>/<file>`.
+fn package_spec(path: &Path) -> Option<String> {
+    let components = path
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    let start = components
+        .windows(2)
+        .position(|w| w == ["typst", "packages"])?;
+    match components.get(start + 2..start + 5) {
+        Some([namespace, name, version]) if components.len() > start + 5 => {
+            Some(format!("{namespace}/{name}/{version}"))
+        }
+        _ => None,
     }
 }
 
@@ -466,6 +555,30 @@ pub mod tests {
                 end_match: 94..100,
                 settings_match: 96..99,
             }
+        );
+    }
+
+    #[test]
+    fn test_typst_package_spec() {
+        use std::path::Path;
+
+        use crate::parsers::impls::typst::package_spec;
+
+        assert_eq!(
+            package_spec(Path::new(
+                "/Users/a/Library/Caches/typst/packages/preview/cetz/0.5.2/src/lib.typ"
+            )),
+            Some("preview/cetz/0.5.2".to_string())
+        );
+        assert_eq!(
+            package_spec(Path::new(
+                "/home/a/.cache/typst/packages/preview/cetz/0.5.2"
+            )),
+            None
+        );
+        assert_eq!(
+            package_spec(Path::new("/Users/a/learning/preambles/template.typ")),
+            None
         );
     }
 

@@ -10,6 +10,7 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::browser_render::sync_render_assets;
 use crate::api::execute_batched_query;
 use crate::api::note::create_note_links;
 use crate::api::note::get_keywords;
@@ -196,11 +197,39 @@ async fn persist_updated_note_links(
     create_note_links(db, updated_note_links).await
 }
 
+/// Note links of each of `note_ids`, in order.
+pub async fn get_note_links_map(
+    db: &SqlitePool,
+    note_ids: &[NoteId],
+) -> Result<HashMap<NoteId, Vec<NoteLink>>, Error> {
+    // Note that the query sorts by order, so we don't need to do this after
+    let query_str = format!(
+        "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
+        placeholders(note_ids.len())
+    );
+    let mut query = sqlx::query_as(&query_str);
+    for note_id in note_ids {
+        query = query.bind(note_id);
+    }
+    let all_note_links: Vec<NoteLink> = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    let mut all_note_links_map: HashMap<NoteId, Vec<NoteLink>> = HashMap::new();
+    for note_link in all_note_links {
+        all_note_links_map
+            .entry(note_link.parent_note_id)
+            .or_default()
+            .push(note_link);
+    }
+    Ok(all_note_links_map)
+}
+
 /// - Determines linked notes for _all_ notes. This is not possible for only some notes. See note below.
 /// - Generates files for specified notes, usually all notes.
 ///
 /// Note: Only generating linked notes for some notes is not possible. Suppose a user has 3 notes: Notes A, B, and C. Suppose the user requests Note A to be rendered. Suppose Note B currently has a keyword that matches with Note C. However, the change to Note A could mean that Note B now has a better match with Note A. This means that Note B should be rendered as well. Therefore, it is possible that notes that are not requested need to have their linked notes regenerated as well.
-#[expect(clippy::too_many_lines)]
 pub async fn render_notes(
     db: &SqlitePool,
     body: RenderNotesRequest,
@@ -272,7 +301,9 @@ pub async fn render_notes(
     // Get notes data. Note that some other notes may have had their linked notes match to another note. However, we do not render them if their note id is not requested. (Unless all notes are requested.)
     let notes_data = get_render_note_data(
         db,
-        requested_note_ids.map(|x| x.into_iter().collect::<Vec<_>>()),
+        requested_note_ids
+            .as_ref()
+            .map(|x| x.iter().copied().collect::<Vec<_>>()),
     )
     .await?;
 
@@ -280,29 +311,7 @@ pub async fn render_notes(
     let mut linked_notes_map: Option<HashMap<_, _>> = None;
     if include_linked_notes {
         let note_ids_for_links: Vec<NoteId> = notes_data.iter().map(|n| n.note_id).collect();
-        // Note that the query sorts by order, so we don't need to do this after
-        let query_str = format!(
-            "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
-            placeholders(note_ids_for_links.len())
-        );
-        let mut query = sqlx::query_as(&query_str);
-        for note_id in &note_ids_for_links {
-            query = query.bind(note_id);
-        }
-        let all_note_links: Vec<NoteLink> = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-
-        // Build linked_notes_map with all note links for rendered notes
-        let mut all_note_links_map: HashMap<NoteId, Vec<NoteLink>> = HashMap::new();
-        for note_link in all_note_links {
-            all_note_links_map
-                .entry(note_link.parent_note_id)
-                .or_default()
-                .push(note_link);
-        }
-        linked_notes_map = Some(all_note_links_map);
+        linked_notes_map = Some(get_note_links_map(db, &note_ids_for_links).await?);
     }
 
     // Generate files for notes and cards
@@ -331,9 +340,14 @@ pub async fn render_notes(
             force_render: force_generate_rendered,
             precomputed_cards: None,
         };
-        let _card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests)?
+        let card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests)?
             .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>();
+        // Record dependencies even if some notes failed to render.
+        if generate_rendered && overridden_output_raw_dir.is_none() {
+            sync_render_assets(db, parser.as_ref(), requested_note_ids.as_ref()).await?;
+        }
+        let _card_paths = card_paths?;
     }
     Ok(())
 }

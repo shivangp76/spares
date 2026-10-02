@@ -227,6 +227,37 @@ pub fn create_note_files_bulk(
     Ok(result)
 }
 
+/// The raw note file, without the hash line added when rendering.
+pub fn construct_note_file_contents(
+    parser: &dyn Parseable,
+    note_template_contents: &str,
+    body_placeholder: &str,
+    request: &GenerateNoteFilesRequest,
+) -> String {
+    let note_file_data = parser.construct_full_file_data(
+        &[(ConstructFileDataType::Note, request)],
+        &NoteImportAction::Update(0),
+    );
+    note_template_contents.replace(body_placeholder, &note_file_data)
+}
+
+/// The raw file of one side of a card.
+pub fn construct_card_file_contents(
+    parser: &dyn Parseable,
+    card_template_contents: &str,
+    body_placeholder: &str,
+    request: &GenerateNoteFilesRequest,
+    card_order: usize,
+    card: &CardData,
+    side: CardSide,
+) -> String {
+    let card_file_data = parser.construct_full_file_data(
+        &[(ConstructFileDataType::Card(card_order, card, side), request)],
+        &NoteImportAction::Update(0),
+    );
+    card_template_contents.replace(body_placeholder, &card_file_data)
+}
+
 #[allow(clippy::too_many_arguments, reason = "function is only called once")]
 #[expect(clippy::too_many_lines)]
 fn create_note_files(
@@ -249,10 +280,6 @@ fn create_note_files(
         note_id, note_data, ..
     } = request;
 
-    let note_file_data = parser.construct_full_file_data(
-        &[(ConstructFileDataType::Note, request)],
-        &NoteImportAction::Update(0),
-    );
     let output_rendered_filename = parser.get_output_filename(RenderOutputType::Note, *note_id);
     let mut output_text_filepath = get_output_raw_dir(
         parser.get_parser_name(),
@@ -266,7 +293,8 @@ fn create_note_files(
     output_rendered_filepath.push(&output_rendered_filename);
 
     // Check cache
-    let mut file_contents = note_template_contents.replace(body_placeholder, &note_file_data);
+    let mut file_contents =
+        construct_note_file_contents(parser, note_template_contents, body_placeholder, request);
     let line_to_hash = |line: &str| -> Option<String> {
         parser
             .extract_comment(line)
@@ -297,15 +325,15 @@ fn create_note_files(
                 .enumerate()
                 .try_for_each(|(i, card)| -> Result<(), Error> {
                     let card_order = i + 1;
-                    let card_file_data = parser.construct_full_file_data(
-                        &[(
-                            ConstructFileDataType::Card(card_order, card, CardSide::Front),
-                            request,
-                        )],
-                        &NoteImportAction::Update(0),
+                    let file_contents = construct_card_file_contents(
+                        parser,
+                        card_template_contents,
+                        body_placeholder,
+                        request,
+                        card_order,
+                        card,
+                        CardSide::Front,
                     );
-                    let file_contents =
-                        card_template_contents.replace(body_placeholder, &card_file_data);
                     create_raw_and_rendered_file(
                         parser,
                         *note_id,
@@ -316,15 +344,15 @@ fn create_note_files(
                     )?;
 
                     if matches!(card.back_type, BackType::CardFilePath) {
-                        let card_file_data = parser.construct_full_file_data(
-                            &[(
-                                ConstructFileDataType::Card(card_order, card, CardSide::Back),
-                                request,
-                            )],
-                            &NoteImportAction::Update(0),
+                        let file_contents = construct_card_file_contents(
+                            parser,
+                            card_template_contents,
+                            body_placeholder,
+                            request,
+                            card_order,
+                            card,
+                            CardSide::Back,
                         );
-                        let file_contents =
-                            card_template_contents.replace(body_placeholder, &card_file_data);
                         create_raw_and_rendered_file(
                             parser,
                             *note_id,
