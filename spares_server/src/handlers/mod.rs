@@ -18,6 +18,7 @@ use crate::AppState;
 pub(crate) mod card;
 pub(crate) mod note;
 pub(crate) mod parser;
+pub(crate) mod render_asset;
 pub(crate) mod review;
 pub(crate) mod scheduler;
 pub(crate) mod tag;

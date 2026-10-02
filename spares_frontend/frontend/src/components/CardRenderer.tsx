@@ -6,13 +6,15 @@ import TypstViewer from './TypstViewer';
 interface Props {
   path: string;
   parserName: string;
+  /** Raw source for parsers compiled in the browser. Takes precedence over `path`. */
+  source?: string;
 }
 
-export default function CardRenderer({ path, parserName }: Props) {
+export default function CardRenderer({ path, parserName, source }: Props) {
+  if (source !== undefined) return <TypstViewer source={source} />;
+
   const url = fileUrl(path);
   const name = parserName.toLowerCase();
-
   if (name.includes('latex')) return <PdfViewer url={url} />;
-  if (name.includes('typst')) return <TypstViewer url={url} />;
   return <MarkdownViewer url={url} />;
 }

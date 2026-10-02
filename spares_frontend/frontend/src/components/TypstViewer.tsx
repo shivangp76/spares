@@ -1,74 +1,33 @@
 import { useEffect, useState } from 'react';
 
-interface Props { url: string }
+interface Props { source: string }
 
-// All loaded from CDN to avoid Vite trying to resolve @myriaddreamin/typst-ts-web-compiler,
-// which is not installed. The bundle sets window.$typst and bundles the web-compiler JS;
-// only the WASM binaries are fetched separately at runtime.
-const BUNDLE_SRC =
-  'https://cdn.jsdelivr.net/npm/@myriaddreamin/typst.ts@0.7.0-rc2/dist/esm/contrib/all-in-one-lite.bundle.js';
-const COMPILER_WASM =
-  'https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-web-compiler@0.7.0-rc2/pkg/typst_ts_web_compiler_bg.wasm';
-const RENDERER_WASM =
-  'https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-renderer@0.7.0-rc2/pkg/typst_ts_renderer_bg.wasm';
+type State =
+  | { source: string; svg: string; error?: undefined }
+  | { source: string; error: string; svg?: undefined };
 
-type TypstGlobal = {
-  svg(opts: { mainContent: string }): Promise<string>;
-  setCompilerInitOptions(o: { getModule(): string }): void;
-  setRendererInitOptions(o: { getModule(): string }): void;
-};
-
-// Singleton promise — injects the CDN script tag once and resolves when $typst is ready.
-let typstReady: Promise<TypstGlobal> | null = null;
-
-function loadTypst(): Promise<TypstGlobal> {
-  if (typstReady) return typstReady;
-  typstReady = new Promise<TypstGlobal>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.type = 'module';
-    script.src = BUNDLE_SRC;
-    script.addEventListener('load', () => {
-      const $typst = (window as unknown as { $typst: TypstGlobal }).$typst;
-      $typst.setCompilerInitOptions({ getModule: () => COMPILER_WASM });
-      $typst.setRendererInitOptions({ getModule: () => RENDERER_WASM });
-      resolve($typst);
-    });
-    script.addEventListener('error', () => reject(new Error('Failed to load Typst bundle from CDN')));
-    document.head.appendChild(script);
-  });
-  return typstReady;
-}
-
-export default function TypstViewer({ url }: Props) {
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export default function TypstViewer({ source }: Props) {
+  const [result, setResult] = useState<State | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function render() {
-      try {
-        const [source, $typst] = await Promise.all([
-          fetch(url).then(r => r.text()),
-          loadTypst(),
-        ]);
-        const result = await $typst.svg({ mainContent: source });
-        if (!cancelled) setSvg(result);
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      }
-    }
-    render();
+    // Loaded lazily since the compiler is large and only needed for Typst cards.
+    import('../typst/compiler').then(({ compileTypst }) => compileTypst(source)).then(
+      svg => { if (!cancelled) setResult({ source, svg }); },
+      (e: unknown) => { if (!cancelled) setResult({ source, error: String(e) }); },
+    );
     return () => { cancelled = true; };
-  }, [url]);
+  }, [source]);
 
-  if (error) {
+  // Ignore the result of a previous source while the current one compiles.
+  if (result?.source !== source) return <div>Compiling Typst…</div>;
+  if (result.error !== undefined) {
     return (
       <div>
-        <p style={{ color: '#888', fontSize: 13 }}>Typst rendering unavailable: {error}</p>
-        <a href={url} target="_blank" rel="noreferrer">Download .typ source</a>
+        <p style={{ color: '#b00', fontSize: 13 }}>Typst compilation failed</p>
+        <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{result.error}</pre>
       </div>
     );
   }
-  if (!svg) return <div>Compiling Typst…</div>;
-  return <div dangerouslySetInnerHTML={{ __html: svg }} />;
+  return <div className="typst-viewer" dangerouslySetInnerHTML={{ __html: result.svg }} />;
 }

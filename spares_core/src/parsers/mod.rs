@@ -373,6 +373,14 @@ pub trait Parseable: Send + Sync {
         get_cache_dir()
     }
 
+    /// Whether web clients compile this parser's cards themselves from the raw source instead of
+    /// displaying the rendered file. Such parsers must write a [`RenderDependencies`] file next to
+    /// each rendered file (see [`render_dependencies_filepath`]) so the files the source needs can
+    /// be shipped to the client.
+    fn renders_in_browser(&self) -> bool {
+        false
+    }
+
     // This can be overridden for a specific parser, so it is in the trait.
     fn get_aux_dir(&self, output_type: RenderOutputType, _note_id: NoteId) -> PathBuf {
         let directory_output_type = match output_type {

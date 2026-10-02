@@ -16,9 +16,17 @@ export interface GetReviewCardResponse {
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
   parser_name: string;
+  // Present iff the parser's sources are compiled in the browser (Typst)
+  browser_sources?: BrowserRenderSources;
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
+}
+
+export interface BrowserRenderSources {
+  card_front: string;
+  // The card back, or the whole note if the card's back is the note
+  card_back: string;
 }
 
 export interface ReviewLinkedNote {
