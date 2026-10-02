@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import CardsPage from './pages/CardsPage'
+import KeywordsPage from './pages/KeywordsPage'
 import LoginPage from './pages/LoginPage'
 import NotesPage from './pages/NotesPage'
 import ParsersPage from './pages/ParsersPage'
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/cards" element={<CardsPage />} />
       <Route path="/tags" element={<TagsPage />} />
       <Route path="/parsers" element={<ParsersPage />} />
+      <Route path="/keywords" element={<KeywordsPage />} />
       <Route path="/review" element={<ReviewPage />} />
       <Route path="/statistics" element={<StatisticsPage />} />
       <Route path="*" element={<Navigate to="/review" replace />} />
