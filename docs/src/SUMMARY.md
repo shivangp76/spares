@@ -5,4 +5,3 @@
 - [Workflows](./workflows.md)
 - [Comparison with Anki](./comparison.md)
 - [Contributing](./contributing.md)
-- [Roadmap](./roadmap.md)
