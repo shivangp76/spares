@@ -19,6 +19,7 @@ use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
+use crate::api::browser_render::add_browser_render_sources;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
@@ -279,6 +280,7 @@ fn build_review_card_response(
         parser_name,
         keywords,
         cli,
+        browser_sources: None,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -669,7 +671,7 @@ pub async fn get_review_card(
                 .fetch_all(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        return Ok(Some(build_review_card_response(
+        let mut response = build_review_card_response(
             review_card,
             note_data,
             cards_left_by_state,
@@ -677,7 +679,9 @@ pub async fn get_review_card(
             all_parsers,
             linked_notes,
             keywords,
-        )?));
+        )?;
+        add_browser_render_sources(db, &mut response, all_parsers).await?;
+        return Ok(Some(response));
     }
     Ok(None)
 }
@@ -743,7 +747,7 @@ pub async fn get_review_card_by_id(
                     None => (HashMap::new(), Duration::zero()),
                 };
 
-            Ok(Some(build_review_card_response(
+            let mut response = build_review_card_response(
                 review_card,
                 note_data,
                 cards_left_by_state,
@@ -751,7 +755,9 @@ pub async fn get_review_card_by_id(
                 all_parsers,
                 linked_notes,
                 keywords,
-            )?))
+            )?;
+            add_browser_render_sources(db, &mut response, all_parsers).await?;
+            Ok(Some(response))
         }
         None => Ok(None),
     }

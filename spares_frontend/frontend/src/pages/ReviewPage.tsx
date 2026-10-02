@@ -24,11 +24,6 @@ function backPath(card: GetReviewCardResponse): string {
   return 'CardBack' in b ? b.CardBack : b.Note;
 }
 
-function backRawPath(card: GetReviewCardResponse): string {
-  const b = card.card_back_raw_path;
-  return 'CardBack' in b ? b.CardBack : b.Note;
-}
-
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -184,7 +179,7 @@ export default function ReviewPage() {
           </div>
 
           <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
-            <CardRenderer path={card.parser_name.includes('typst') ? card.card_front_raw_path : card.card_front_rendered_path} parserName={card.parser_name} />
+            <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} />
           </div>
 
           {phase === 'front' && (
@@ -196,7 +191,7 @@ export default function ReviewPage() {
           {phase === 'back' && (
             <>
               <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16, background: '#fafafa' }}>
-                <CardRenderer path={card.parser_name.includes('typst') ? backRawPath(card) : backPath(card)} parserName={card.parser_name} />
+                <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {ratings.map((r, i) => (
