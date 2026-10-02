@@ -8,6 +8,7 @@ interface NavbarProps {
 const NAV_LINKS = [
   { to: '/review', label: 'Review' },
   { to: '/notes', label: 'Notes' },
+  { to: '/cards', label: 'Cards' },
   { to: '/statistics', label: 'Statistics' },
 ];
 

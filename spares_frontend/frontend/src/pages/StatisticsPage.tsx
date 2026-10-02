@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getStatistics } from '../api/client';
+import { advanceCards, getStatistics, postponeCards } from '../api/client';
+import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type StatisticsResponse } from '../types/spares';
@@ -49,6 +50,55 @@ function StateCounts({ counts, empty }: { counts: Record<string, number>; empty:
   );
 }
 
+/** `spares card advance` / `spares card postpone`, prefilled with the number of cards that are safe to move. */
+function ScheduleForm({ kind, safeCount, onDone }: { kind: 'Advance' | 'Postpone'; safeCount: number; onDone: (outcome: ActionOutcome) => void }) {
+  const { credentials } = useAuth();
+  const [count, setCount] = useState(String(safeCount));
+  const [query, setQuery] = useState('');
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    if (!credentials) return;
+    const n = Number(count);
+    if (!Number.isInteger(n) || n <= 0) { setError(`Invalid count: ${count}`); return; }
+    setRunning(true);
+    setError(null);
+    try {
+      const run = kind === 'Advance' ? advanceCards : postponeCards;
+      const eventId = await run(credentials.schedulerName, n, query.trim() || null);
+      onDone({ message: `${kind === 'Advance' ? 'Advanced' : 'Postponed'} ${n} cards.`, eventIds: eventId === null ? [] : [eventId] });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 14, marginTop: 8 }}>
+      <input
+        type="number"
+        min={1}
+        value={count}
+        onChange={e => setCount(e.target.value)}
+        aria-label={`Number of cards to ${kind.toLowerCase()}`}
+        style={{ width: 80, padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+      />
+      <input
+        type="text"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') run(); }}
+        placeholder="Optional query, e.g. tag=a"
+        style={{ flex: 1, minWidth: 160, padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+      />
+      <button onClick={run} disabled={running} style={{ minWidth: 90 }}>{running ? '…' : kind}</button>
+      {error && <span style={{ color: 'red', fontSize: 13 }}>{error}</span>}
+    </div>
+  );
+}
+
 export default function StatisticsPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -59,6 +109,13 @@ export default function StatisticsPage() {
   const [loadedDate, setLoadedDate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loading = !!date && loadedDate !== date;
+  // Bumped to refetch after an action changes the schedule
+  const [reloadCount, setReloadCount] = useState(0);
+  // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
+  const [scheduleOutcome, setScheduleOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
+  const showOutcome = (outcome: ActionOutcome) => setScheduleOutcome(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome }));
+  const isToday = date === toDateInputValue(new Date());
+  const reload = () => setReloadCount(c => c + 1);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -68,7 +125,7 @@ export default function StatisticsPage() {
       .then(stats => { if (!cancelled) { setStatistics(stats); setError(null); setLoadedDate(date); } })
       .catch(e => { if (!cancelled) { setError(String(e)); setLoadedDate(date); } });
     return () => { cancelled = true; };
-  }, [credentials, navigate, date]);
+  }, [credentials, navigate, date, reloadCount]);
 
   const dueByDate = statistics
     ? Object.entries(statistics.due_count_by_date).sort(([a], [b]) => a.localeCompare(b))
@@ -113,6 +170,16 @@ export default function StatisticsPage() {
             <Tile value={statistics.advance_safe_count} label="Safe to advance" />
             <Tile value={statistics.postpone_safe_count} label="Safe to postpone" />
           </div>
+          {isToday ? (
+            <>
+              {/* Keyed on the safe count so the prefilled count follows the latest statistics */}
+              <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} onDone={o => { showOutcome(o); reload(); }} />
+              <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} onDone={o => { showOutcome(o); reload(); }} />
+              {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onUndone={reload} />}
+            </>
+          ) : (
+            <p style={{ fontSize: 13, color: '#888' }}>Advancing and postponing apply from now, so they are only offered for today.</p>
+          )}
 
           <div style={sectionTitle}>All cards by state</div>
           <StateCounts counts={statistics.card_count_by_state} empty="No cards." />
