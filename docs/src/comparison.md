@@ -45,8 +45,6 @@ The following are issues in Anki that this project aims to address:
 
 ## Current Limitations of spares
 
-- No mobile app or web interface
 - No card-level flagging system (tags are note-level only)
 - No support for typed cloze answers
-- No undo functionality
-- No cloud backup system
+- No support for audio cloze answers
