@@ -91,6 +91,18 @@ spares note generate --render
 
 The note's text file will also contain the linked notes. The exact syntax of these files can be modified in the parser.
 
+### Where files are written
+
+Rendered files are written to a per-parser directory, chosen by the first of these that applies:
+
+1. The parser's own environment variable, if it points to an existing directory: `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, or `TYPST_OUT_DIR`.
+2. `SPARES_CACHE_DIR`, if set.
+3. The default cache directory, `$XDG_CACHE_HOME/spares` (`~/.cache/spares` if `XDG_CACHE_HOME` is unset).
+
+The more specific variable wins, so `SPARES_CACHE_DIR` does **not** override a parser's `*_OUT_DIR`. If you run a separate instance of spares (e.g. for testing) next to your main one, unset the `*_OUT_DIR` variables for it too, or its rendered files will overwrite your main instance's. `spares_server` logs the directory each parser renders to when it starts (run it with `RUST_LOG=info` to see this).
+
+The other directories can be overridden with `SPARES_CONFIG_DIR` (config file and parser templates), `SPARES_DATA_DIR` (database, and note and card text files), and `DATABASE_URL` (the database alone).
+
 ## Editing notes
 
 Notes can be edited by directly editing their corresponding file which is created after rendering. They can then be reimported in (see `spares import --help`).
