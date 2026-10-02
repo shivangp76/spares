@@ -19,8 +19,10 @@ import {
   updateCards,
 } from '../api/client';
 import CardRenderer from '../components/CardRenderer';
+import RecentSearches from '../components/RecentSearches';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
+import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useShowReviewTimer } from '../preferences';
 import {
   STATE_LABELS,
@@ -137,33 +139,8 @@ function filterParams(mode: FilterMode, input: string): URLSearchParams {
 
 interface RecentFilter { mode: FilterMode; input: string }
 
-const RECENT_FILTERS_KEY = 'spares_review_recent_filters';
-const RECENT_FILTERS_MAX = 8;
 const RECENT_FILTER_PREFIX: Record<FilterMode, string> = { query: '', tagName: 'tag: ', tagId: 'tag id: ' };
-
-function loadRecentFilters(): RecentFilter[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_FILTERS_KEY) ?? '[]');
-    return Array.isArray(parsed) ? parsed as RecentFilter[] : [];
-  } catch {
-    return [];
-  }
-}
-
-function storeRecentFilters(filters: RecentFilter[]): RecentFilter[] {
-  try {
-    localStorage.setItem(RECENT_FILTERS_KEY, JSON.stringify(filters));
-  } catch {
-    // Recent filters are a convenience, so a storage failure only means they aren't remembered
-  }
-  return filters;
-}
-
-/** Moves the filter to the front of the recent list, most recent first. */
-function saveRecentFilter(filters: RecentFilter[], mode: FilterMode, input: string): RecentFilter[] {
-  const rest = filters.filter(f => f.mode !== mode || f.input !== input);
-  return storeRecentFilters([{ mode, input }, ...rest].slice(0, RECENT_FILTERS_MAX));
-}
+const sameFilter = (a: RecentFilter, b: RecentFilter) => a.mode === b.mode && a.input === b.input;
 
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
@@ -190,7 +167,7 @@ export default function ReviewPage() {
   const [filterInput, setFilterInput] = useState(() => initialFilter(searchParams).input);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter | undefined>(undefined);
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
-  const [recentFilters, setRecentFilters] = useState<RecentFilter[]>(loadRecentFilters);
+  const recentFilters = useRecentSearches<RecentFilter>('spares_review_recent_filters', sameFilter);
   const filterInputRef = useRef<HTMLInputElement>(null);
 
   // Side panels
@@ -294,7 +271,7 @@ export default function ReviewPage() {
       setPhase('error');
       return;
     }
-    if (input) setRecentFilters(saveRecentFilter(recentFilters, mode, input));
+    if (input) recentFilters.save({ mode, input });
     setSearchParams(filterParams(mode, input), { replace: true });
     setActiveFilter(filter);
     setReviewedCount(0);
@@ -316,10 +293,6 @@ export default function ReviewPage() {
     setDueDatePicker(null);
     refreshStatistics();
     setPhase('landing');
-  }
-
-  function removeRecentFilter({ mode, input }: RecentFilter) {
-    setRecentFilters(storeRecentFilters(recentFilters.filter(f => f.mode !== mode || f.input !== input)));
   }
 
   function showAnswer() {
@@ -686,19 +659,13 @@ export default function ReviewPage() {
               Start Review
             </button>
           </div>
-          {recentFilters.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-muted)' }}>Recent:</span>
-              {recentFilters.map(f => (
-                <span key={`${f.mode}:${f.input}`} style={{ display: 'inline-flex' }}>
-                  <button onClick={() => { setFilterMode(f.mode); setFilterInput(f.input); startReview(f.mode, f.input); }} title="Start reviewing this filter" style={actionButton}>
-                    {RECENT_FILTER_PREFIX[f.mode]}{f.input}
-                  </button>
-                  <button onClick={() => removeRecentFilter(f)} title="Remove from recent" aria-label="Remove from recent" style={{ ...actionButton, color: 'var(--text-faint)' }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
+          <RecentSearches
+            recent={recentFilters.recent}
+            label={f => `${RECENT_FILTER_PREFIX[f.mode]}${f.input}`}
+            onSelect={f => { setFilterMode(f.mode); setFilterInput(f.input); startReview(f.mode, f.input); }}
+            onRemove={recentFilters.remove}
+            selectTitle="Start reviewing this filter"
+          />
           {filterMode === 'query' && (
             <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.

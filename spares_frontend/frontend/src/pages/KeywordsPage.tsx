@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { getDuplicateKeywords, getNote, getNoteLinks, getUnmatchedKeywords, listKeywords, searchKeyword } from '../api/client';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
+import RecentSearches from '../components/RecentSearches';
 import { useAuth } from '../hooks/useAuth';
+import { useRecentSearches } from '../hooks/useRecentSearches';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
 import { td, th } from '../utils';
 
@@ -85,13 +87,16 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<{ keyword: string; matches: MatchedKeywordResponse[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_keyword_recent_searches');
 
-  async function search() {
-    const k = keyword.trim();
+  async function search(q = keyword) {
+    const k = q.trim();
     if (!k) return;
+    setKeyword(q);
     setError(null);
     try {
       setResults({ keyword: k, matches: await searchKeyword(k) });
+      saveRecent(k);
     } catch (e) {
       setError(String(e));
     }
@@ -99,7 +104,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: recent.length > 0 ? 8 : 12 }}>
         <input
           value={keyword}
           onChange={e => setKeyword(e.target.value)}
@@ -107,8 +112,9 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
           placeholder="Keyword"
           style={{ ...input, flex: 1, maxWidth: 300 }}
         />
-        <button onClick={search}>Search</button>
+        <button onClick={() => search()}>Search</button>
       </div>
+      <RecentSearches recent={recent} onSelect={search} onRemove={removeRecent} style={{ marginBottom: 12 }} />
       {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
       {results && (results.matches.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>No matching keyword found for “{results.keyword}”.</p>

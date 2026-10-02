@@ -4,7 +4,9 @@ import { cachedCardsPage, listCards, searchCards } from '../api/client';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
+import RecentSearches from '../components/RecentSearches';
 import { useAuth } from '../hooks/useAuth';
+import { useRecentSearches } from '../hooks/useRecentSearches';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
 import { td, th, withSearch } from '../utils';
 
@@ -52,6 +54,7 @@ export default function CardsPage() {
     return () => { cancelled = true; };
   }, [credentials, navigate, page, searchQuery]);
 
+  const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_cards_recent_searches');
   // Bumped by each search so searching the same query again refetches it
   const [searchCount, setSearchCount] = useState(0);
 
@@ -64,15 +67,16 @@ export default function CardsPage() {
     setError(null);
     let cancelled = false;
     searchCards(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); setBrowse(null); setError(null); } })
+      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setBrowse(null); setError(null); } })
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, searchCount]);
+  }, [credentials, searchQuery, searchCount, saveRecentSearch]);
 
-  function handleSearch() {
-    if (!query.trim()) return;
-    setSearchParams(prev => withSearch(prev, query.trim()));
+  function handleSearch(q = query) {
+    if (!q.trim()) return;
+    setQuery(q);
+    setSearchParams(prev => withSearch(prev, q.trim()));
     setSearchCount(n => n + 1);
   }
 
@@ -111,7 +115,7 @@ export default function CardsPage() {
             <CardTools onOpenCard={(index, list) => setBrowse({ cards: list, index })} />
           </details>
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
             <input
               type="text"
               value={query}
@@ -120,9 +124,10 @@ export default function CardsPage() {
               placeholder="Search cards, e.g. tag=a c.state=2"
               style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
             />
-            <button onClick={handleSearch}>Search</button>
+            <button onClick={() => handleSearch()}>Search</button>
             {searchResults !== null && <button onClick={handleClear}>Clear</button>}
           </div>
+          <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
