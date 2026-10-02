@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import { useRecentSearches } from '../hooks/useRecentSearches';
 import Navbar from '../components/Navbar';
+import RecentSearches from '../components/RecentSearches';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
@@ -50,6 +52,7 @@ export default function NotesPage() {
     return () => { cancelled = true; };
   }, [credentials, navigate, page, searchQuery]);
 
+  const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_notes_recent_searches');
   // Bumped by each search so searching the same query again refetches it
   const [searchCount, setSearchCount] = useState(0);
 
@@ -62,15 +65,16 @@ export default function NotesPage() {
     setError(null);
     let cancelled = false;
     searchNotes(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); setError(null); } })
+      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setError(null); } })
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, searchCount]);
+  }, [credentials, searchQuery, searchCount, saveRecentSearch]);
 
-  function handleSearch() {
-    if (!query.trim()) return;
-    setSearchParams(prev => withSearch(prev, query));
+  function handleSearch(q = query) {
+    if (!q.trim()) return;
+    setQuery(q);
+    setSearchParams(prev => withSearch(prev, q));
     setSearchCount(n => n + 1);
   }
 
@@ -127,7 +131,7 @@ export default function NotesPage() {
 
       <div className="notes-split">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
             <input
               type="text"
               value={query}
@@ -136,10 +140,11 @@ export default function NotesPage() {
               placeholder="Search notes…"
               style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
             />
-            <button onClick={handleSearch}>Search</button>
+            <button onClick={() => handleSearch()}>Search</button>
             {searchResults !== null && <button onClick={handleClear}>Clear</button>}
             <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); }} style={{ marginLeft: 'auto' }}>New note</button>
           </div>
+          <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
