@@ -71,7 +71,7 @@ use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
 use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
-fn maybe_relativize(path: PathBuf) -> PathBuf {
+pub(crate) fn maybe_relativize(path: PathBuf) -> PathBuf {
     if let Ok(base) = std::env::var("SPARES_FILES_DIR") {
         path.strip_prefix(&base).unwrap_or(&path).to_path_buf()
     } else {

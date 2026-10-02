@@ -3,6 +3,7 @@ import type {
   Credentials,
   ForgetCardResponse,
   GetReviewCardResponse,
+  NoteRenderResponse,
   NoteResponse,
   Rating,
   ReviewConfig,
@@ -118,6 +119,11 @@ export async function getTagByName(name: string): Promise<TagResponse> {
 
 export async function getNote(id: number): Promise<NoteResponse> {
   return apiFetch('Note fetch', `/api/notes/${id}`);
+}
+
+/** Where to find the note's rendered file, or its source if it is compiled in the browser. */
+export async function getNoteRender(id: number): Promise<NoteRenderResponse> {
+  return apiFetch('Note render fetch', `/api/notes/${id}/render`);
 }
 
 export async function getCardsForNote(noteId: number): Promise<CardResponse[]> {

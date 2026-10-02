@@ -147,3 +147,10 @@ export interface NoteResponse {
   created_at: string;
   updated_at: string;
 }
+
+export interface NoteRenderResponse {
+  parser_name: string;
+  rendered_path: string;
+  // Present iff the parser's sources are compiled in the browser (Typst)
+  browser_source?: string;
+}

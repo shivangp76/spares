@@ -6,6 +6,7 @@ use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
+use spares_core::api::browser_render::get_note_render;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::delete_notes;
 use spares_core::api::note::export::export_notes;
@@ -52,6 +53,16 @@ pub(crate) async fn get_note_handler(
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let note_res = get_note(&data.db, id).await.map_err(error_to_response)?;
     Ok(Json(note_res))
+}
+
+pub(crate) async fn get_note_render_handler(
+    Path(id): Path<i64>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let response = get_note_render(&data.db, id, &get_all_parsers())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
 }
 
 pub(crate) async fn update_notes_handler(
