@@ -1,3 +1,5 @@
+import type { GetReviewCardResponse } from './types/spares';
+
 /** Port of the CLI's `format_duration`, e.g. `7d 0h 0m 0s` or `1m 30s`. */
 export function formatDuration(totalSeconds: number): string {
   const days = Math.floor(totalSeconds / 86400);
@@ -15,3 +17,9 @@ export function formatDuration(totalSeconds: number): string {
 export const sectionLabel: React.CSSProperties = { fontSize: 12, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 };
 export const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #ccc' };
 export const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid #eee' };
+
+/** The rendered file shown as a card's back: its own back, or the whole note. */
+export function backPath(card: GetReviewCardResponse): string {
+  const b = card.card_back_rendered_path;
+  return 'CardBack' in b ? b.CardBack : b.Note;
+}

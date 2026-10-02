@@ -57,7 +57,10 @@ async function resolveCardIds(mode: SelectorMode, value: string): Promise<number
 }
 
 /** Bulk card commands from the CLI: `card unbury`, `card forget`, `card edit` and `card leeches`. */
-export default function CardTools({ onOpenCard }: { onOpenCard?: (card: CardResponse) => void }) {
+export default function CardTools({ onOpenCard }: {
+  /** Opens a card from the leeches table, along with the table so it can be stepped through. */
+  onOpenCard?: (index: number, cards: CardResponse[]) => void;
+}) {
   const { credentials } = useAuth();
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
   const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
@@ -223,10 +226,10 @@ export default function CardTools({ onOpenCard }: { onOpenCard?: (card: CardResp
               </tr>
             </thead>
             <tbody>
-              {leeches.map(c => (
+              {leeches.map((c, i) => (
                 <tr
                   key={c.id}
-                  onClick={onOpenCard ? () => onOpenCard(c) : undefined}
+                  onClick={onOpenCard ? () => onOpenCard(i, leeches) : undefined}
                   style={onOpenCard ? { cursor: 'pointer' } : undefined}
                 >
                   <td style={td}>{c.id}</td>

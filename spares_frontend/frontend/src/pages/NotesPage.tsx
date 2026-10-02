@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { listNotes, searchNotes } from '../api/client';
+import { deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import Navbar from '../components/Navbar';
+import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
 import { td, th } from '../utils';
@@ -22,6 +23,8 @@ export default function NotesPage() {
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<NoteResponse[] | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [paneStatus, setPaneStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -49,6 +52,37 @@ export default function NotesPage() {
   }
 
   const displayedNotes = searchResults ?? notes;
+  // -1 if the selected note was opened from a link and isn't in the table
+  const selectedIndex = selectedNote ? displayedNotes.findIndex(n => n.id === selectedNote.id) : -1;
+
+  function selectNote(note: NoteResponse | null) {
+    setSelectedNote(note);
+    setCreating(false);
+    setPaneStatus(null);
+  }
+
+  async function openLinkedNote(noteId: number) {
+    try {
+      selectNote(await getNote(noteId));
+    } catch (e) {
+      setPaneStatus(String(e));
+    }
+  }
+
+  async function deleteSelected() {
+    if (!selectedNote) return;
+    const id = selectedNote.id;
+    if (!window.confirm(`Delete note ${id} and its cards?`)) return;
+    try {
+      await deleteNotes({ Ids: [id] });
+      setNotes(prev => prev.filter(n => n.id !== id));
+      setSearchResults(prev => (prev ? prev.filter(n => n.id !== id) : prev));
+      setSelectedNote(null);
+      setPaneStatus(`Note ${id} deleted.`);
+    } catch (e) {
+      setPaneStatus(String(e));
+    }
+  }
 
   return (
     <div style={{ padding: 24 }}>
@@ -77,6 +111,7 @@ export default function NotesPage() {
             />
             <button onClick={handleSearch}>Search</button>
             {searchResults !== null && <button onClick={handleClear}>Clear</button>}
+            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); }} style={{ marginLeft: 'auto' }}>New note</button>
           </div>
 
           {searchResults !== null && (
@@ -104,7 +139,7 @@ export default function NotesPage() {
                   <tr
                     key={note.id}
                     className={`notes-row${selectedNote?.id === note.id ? ' notes-row-selected' : ''}`}
-                    onClick={() => setSelectedNote(selectedNote?.id === note.id ? null : note)}
+                    onClick={() => selectNote(selectedNote?.id === note.id ? null : note)}
                     style={{ cursor: 'pointer' }}
                   >
                     <td style={td}>{note.id}</td>
@@ -138,19 +173,43 @@ export default function NotesPage() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {selectedNote
-            ? <NoteDetail
+          {paneStatus && <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>{paneStatus}</div>}
+          {creating ? (
+            <NewNoteForm
+              onCreated={note => {
+                selectNote(note);
+                setPaneStatus(`Note ${note.id} created.`);
+              }}
+              onCancel={() => setCreating(false)}
+            />
+          ) : selectedNote ? (
+            <>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, fontSize: 13 }}>
+                {selectedIndex >= 0 && (
+                  <>
+                    {/* Wraps around at either end, as in the CLI */}
+                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + displayedNotes.length - 1) % displayedNotes.length])} disabled={displayedNotes.length < 2}>Previous</button>
+                    <span>Note {selectedIndex + 1} of {displayedNotes.length}</span>
+                    <button onClick={() => selectNote(displayedNotes[(selectedIndex + 1) % displayedNotes.length])} disabled={displayedNotes.length < 2}>Next</button>
+                  </>
+                )}
+                <button onClick={deleteSelected} style={{ marginLeft: 'auto', color: '#b00' }}>Delete note</button>
+              </div>
+              <NoteDetail
                 key={selectedNote.id}
                 note={selectedNote}
-                onClose={() => setSelectedNote(null)}
+                onClose={() => selectNote(null)}
                 onNoteUpdated={(updated) => {
                   setSelectedNote(updated);
                   setNotes(prev => prev.map(n => n.id === updated.id ? updated : n));
                   setSearchResults(prev => prev ? prev.map(n => n.id === updated.id ? updated : n) : prev);
                 }}
+                onOpenNote={openLinkedNote}
               />
-            : <div style={{ color: '#999', fontSize: 14, paddingTop: 8 }}>Select a note to see details.</div>
-          }
+            </>
+          ) : (
+            <div style={{ color: '#999', fontSize: 14, paddingTop: 8 }}>Select a note to see details.</div>
+          )}
         </div>
       </div>
     </div>

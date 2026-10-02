@@ -9,7 +9,15 @@ const fieldLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBot
 const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid #eee', borderRadius: 4, fontSize: 13 };
 
-export default function NoteDetail({ note, onClose, onNoteUpdated }: { note: NoteResponse; onClose: () => void; onNoteUpdated: (updated: NoteResponse) => void }) {
+interface Props {
+  note: NoteResponse;
+  onClose: () => void;
+  onNoteUpdated: (updated: NoteResponse) => void;
+  /** Opens a linked note. The note's links are listed iff this is given. */
+  onOpenNote?: (noteId: number) => void;
+}
+
+export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
   const [dataContent, setDataContent] = useState(note.data);
   const [tagsContent, setTagsContent] = useState(note.tags.join('\n'));
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
@@ -115,6 +123,28 @@ export default function NoteDetail({ note, onClose, onNoteUpdated }: { note: Not
           <div style={{ fontSize: 13 }}>{new Date(note.updated_at).toLocaleString()}</div>
         </div>
       </div>
+
+      {onOpenNote && note.linked_notes && note.linked_notes.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={metaLabel}>Linked Notes</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+            {note.linked_notes.map((ln, i) => {
+              const id = ln.linked_note_id;
+              return (
+                <button
+                  key={`${i}-${ln.searched_keyword}`}
+                  onClick={id === null ? undefined : () => onOpenNote(id)}
+                  disabled={id === null}
+                  title={id === null ? 'No note matches this keyword' : ln.matched_keyword ?? undefined}
+                  style={{ padding: '4px 8px', fontSize: 12 }}
+                >
+                  {ln.searched_keyword} ({id ?? 'unmatched'})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
         <button
