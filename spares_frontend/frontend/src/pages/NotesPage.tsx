@@ -116,8 +116,8 @@ export default function NotesPage() {
       <style>{`
         .notes-split { display: flex; flex-direction: row; gap: 24px; align-items: flex-start; }
         @media (max-width: 768px) { .notes-split { flex-direction: column; } }
-        .notes-row:hover { background-color: #f5f5f5; }
-        .notes-row-selected { background-color: #f0f4ff !important; }
+        .notes-row:hover { background-color: var(--hover); }
+        .notes-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -142,12 +142,12 @@ export default function NotesPage() {
           </div>
 
           {searchResults !== null && (
-            <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
               {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
             </div>
           )}
 
-          {error && <div style={{ color: 'red', marginBottom: 12 }}>Error: {error}</div>}
+          {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
           {loading && <div>Loading…</div>}
 
           {!loading && (
@@ -184,7 +184,7 @@ export default function NotesPage() {
                   </tr>
                 ))}
                 {displayedNotes.length === 0 && (
-                  <tr><td colSpan={5} style={{ ...td, color: '#888', textAlign: 'center' }}>No notes found</td></tr>
+                  <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No notes found</td></tr>
                 )}
               </tbody>
             </table>
@@ -200,7 +200,7 @@ export default function NotesPage() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {paneStatus && <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>{paneStatus}</div>}
+          {paneStatus && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{paneStatus}</div>}
           {creating ? (
             <NewNoteForm
               onCreated={note => {
@@ -220,7 +220,7 @@ export default function NotesPage() {
                     <button onClick={() => selectNote(displayedNotes[(selectedIndex + 1) % displayedNotes.length])} disabled={displayedNotes.length < 2}>Next</button>
                   </>
                 )}
-                <button onClick={deleteSelected} style={{ marginLeft: 'auto', color: '#b00' }}>Delete note</button>
+                <button onClick={deleteSelected} style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
               </div>
               <NoteDetail
                 key={selectedNote.id}
@@ -235,7 +235,7 @@ export default function NotesPage() {
               />
             </>
           ) : (
-            <div style={{ color: '#999', fontSize: 14, paddingTop: 8 }}>Select a note to see details.</div>
+            <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note to see details.</div>
           )}
         </div>
       </div>

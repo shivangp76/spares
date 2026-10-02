@@ -95,8 +95,8 @@ export default function CardsPage() {
       <style>{`
         .cards-split { display: flex; flex-direction: row; gap: 24px; align-items: flex-start; }
         @media (max-width: 768px) { .cards-split { flex-direction: column; } }
-        .cards-row:hover { background-color: #f5f5f5; }
-        .cards-row-selected { background-color: #f0f4ff !important; }
+        .cards-row:hover { background-color: var(--hover); }
+        .cards-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -125,12 +125,12 @@ export default function CardsPage() {
           </div>
 
           {searchResults !== null && (
-            <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
               {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
             </div>
           )}
 
-          {error && <div style={{ color: 'red', marginBottom: 12 }}>Error: {error}</div>}
+          {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
           {loading && <div>Loading…</div>}
 
           {!loading && (
@@ -164,7 +164,7 @@ export default function CardsPage() {
                   </tr>
                 ))}
                 {displayedCards.length === 0 && (
-                  <tr><td colSpan={7} style={{ ...td, color: '#888', textAlign: 'center' }}>No cards found</td></tr>
+                  <tr><td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No cards found</td></tr>
                 )}
               </tbody>
             </table>
@@ -190,7 +190,7 @@ export default function CardsPage() {
                 onClose={() => setBrowse(null)}
                 onCardChanged={onCardChanged}
               />
-            : <div style={{ color: '#999', fontSize: 14, paddingTop: 8 }}>Select a card to view it.</div>
+            : <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a card to view it.</div>
           }
         </div>
       </div>

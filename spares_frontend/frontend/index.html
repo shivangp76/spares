@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style id="styleoverrides" media="screen"></style>
     <title>Spares</title>
+    <!-- Applies the theme setting (see src/theme.ts) before the first paint so the page doesn't flash -->
+    <script>
+      try {
+        const theme = localStorage.getItem('spares_theme');
+        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
   </head>
   <body style="margin:0">
     <div id="root"></div>

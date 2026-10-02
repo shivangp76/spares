@@ -7,8 +7,8 @@ import CardRenderer from './CardRenderer';
 import NoteDetail from './NoteDetail';
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
-const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', fontWeight: 600 };
-const renderBox: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 4, padding: 4, marginBottom: 12, background: '#fff' };
+const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 };
+const renderBox: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 4, padding: 4, marginBottom: 12, background: 'var(--bg)' };
 
 interface Props {
   card: CardResponse;
@@ -99,10 +99,10 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
   const reviewCard = loaded && 'result' in loaded ? loaded.result : null;
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: '#fafafa' }}>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: 'var(--surface)' }}>
       <button
         onClick={onClose}
-        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#666', lineHeight: 1 }}
+        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
         aria-label="Close detail"
       >×</button>
 
@@ -137,13 +137,13 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         {card.special_state && <div><div style={metaLabel}>Special</div>{card.special_state}</div>}
       </div>
 
-      {!loaded && <div style={{ fontSize: 13, color: '#888', marginBottom: 12 }}>Loading…</div>}
-      {loaded && 'error' in loaded && <div style={{ color: 'red', fontSize: 13, marginBottom: 12 }}>{loaded.error}</div>}
-      {loaded && 'result' in loaded && loaded.result === null && <div style={{ color: '#888', fontSize: 13, marginBottom: 12 }}>Card no longer exists.</div>}
+      {!loaded && <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Loading…</div>}
+      {loaded && 'error' in loaded && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{loaded.error}</div>}
+      {loaded && 'result' in loaded && loaded.result === null && <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Card no longer exists.</div>}
       {reviewCard && (reviewCard.cli ? (
         <div style={renderBox}>
           <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{reviewCard.cli.surrounding}</pre>
-          <p style={{ color: '#a60', fontSize: 13, marginBottom: 0 }}>
+          <p style={{ color: 'var(--warning)', fontSize: 13, marginBottom: 0 }}>
             This card is reviewed by running <code>{reviewCard.cli.exec}</code>, which only the CLI can do.
           </p>
         </div>
@@ -181,7 +181,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         </details>
       )}
 
-      {error && <div style={{ color: 'red', fontSize: 13 }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onUndone={refreshCard} />}
 
       {panelNote && (

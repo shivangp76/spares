@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { getNoteRender, renderNote, updateNote } from '../api/client';
+import { useResolvedTheme } from '../theme';
 import type { NoteRenderResponse, NoteResponse } from '../types/spares';
 import CardRenderer from './CardRenderer';
 
-const fieldLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
-const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
-const cmStyle = { border: '1px solid #eee', borderRadius: 4, fontSize: 13 };
+const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
+const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
+const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13 };
 
 // `:w` saves the note being edited. Ex commands are global, so the editor reaches its note's
 // NoteDetail through a DOM event.
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
+  const theme = useResolvedTheme();
   const [dataContent, setDataContent] = useState(note.data);
   const [tagsContent, setTagsContent] = useState(note.tags.join('\n'));
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
@@ -83,10 +85,10 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   }
 
   return (
-    <div ref={rootRef} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: '#fafafa' }}>
+    <div ref={rootRef} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: 'var(--surface)' }}>
       <button
         onClick={onClose}
-        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#666', lineHeight: 1 }}
+        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
         aria-label="Close detail"
       >×</button>
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note #{note.id}</h3>
@@ -94,6 +96,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       <div style={{ marginBottom: 16 }}>
         <div style={fieldLabel}>Data</div>
         <CodeMirror
+          theme={theme}
           value={dataContent}
           onChange={setDataContent}
           extensions={[vim()]}
@@ -106,6 +109,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         <div>
           <div style={fieldLabel}>Tags <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
           <CodeMirror
+            theme={theme}
             value={tagsContent}
             onChange={setTagsContent}
             extensions={[vim()]}
@@ -116,6 +120,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         <div>
           <div style={fieldLabel}>Keywords <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
           <CodeMirror
+            theme={theme}
             value={keywordsContent}
             onChange={setKeywordsContent}
             extensions={[vim()]}
@@ -171,15 +176,15 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         >
           {saveStatus === 'saving' ? 'Saving…' : 'Save'}
         </button>
-        {saveStatus === 'saved' && <span style={{ fontSize: 13, color: '#2a7' }}>Saved</span>}
-        {saveStatus === 'error' && <span style={{ fontSize: 13, color: 'red' }}>{saveError}</span>}
+        {saveStatus === 'saved' && <span style={{ fontSize: 13, color: 'var(--success)' }}>Saved</span>}
+        {saveStatus === 'error' && <span style={{ fontSize: 13, color: 'var(--error)' }}>{saveError}</span>}
       </div>
 
       <div>
         <div style={fieldLabel}>Compiled</div>
-        <div style={{ border: '1px solid #eee', borderRadius: 4, padding: 4, backgroundColor: '#fff' }}>
+        <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 4, backgroundColor: 'var(--bg)' }}>
           {render === null && <div>Loading…</div>}
-          {render && 'error' in render && <div style={{ color: 'red', fontSize: 13 }}>{render.error}</div>}
+          {render && 'error' in render && <div style={{ color: 'var(--error)', fontSize: 13 }}>{render.error}</div>}
           {render && 'result' in render && (
             <CardRenderer
               path={render.result.rendered_path}

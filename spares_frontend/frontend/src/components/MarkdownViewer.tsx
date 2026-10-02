@@ -25,7 +25,7 @@ export default function MarkdownViewer({ url, onReady }: Props) {
     if (html !== null || error !== null) onReady?.();
   }, [html, error, onReady]);
 
-  if (error) return <div style={{ color: 'red' }}>Error loading markdown: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>Error loading markdown: {error}</div>;
   if (html === null) return <div>Loading…</div>;
   return (
     <div
