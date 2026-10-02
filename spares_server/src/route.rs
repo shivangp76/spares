@@ -2,11 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::patch;
 use axum::routing::post;
+use axum::routing::put;
 use tower_http::services::ServeDir;
 use tower_http::services::ServeFile;
 
@@ -19,6 +21,12 @@ use crate::handlers::card::list_cards_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
+use crate::handlers::image_occlusion::IMAGE_OCCLUSION_BODY_LIMIT;
+use crate::handlers::image_occlusion::create_image_occlusion_handler;
+use crate::handlers::image_occlusion::get_image_occlusion_file_handler;
+use crate::handlers::image_occlusion::get_image_occlusion_template_handler;
+use crate::handlers::image_occlusion::list_note_image_occlusions_handler;
+use crate::handlers::image_occlusion::update_note_image_occlusion_handler;
 use crate::handlers::note::create_notes_handler;
 use crate::handlers::note::delete_notes_handler;
 use crate::handlers::note::export_notes_handler;
@@ -59,6 +67,31 @@ use crate::handlers::tag::rebuild_tag_handler;
 use crate::handlers::tag::update_tag_handler;
 use crate::handlers::undo::get_latest_note_event_id_handler;
 use crate::handlers::undo::undo_event_handler;
+
+fn image_occlusion_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/image-occlusions/template",
+            get(get_image_occlusion_template_handler),
+        )
+        .route(
+            "/api/image-occlusions",
+            post(create_image_occlusion_handler)
+                .layer(DefaultBodyLimit::max(IMAGE_OCCLUSION_BODY_LIMIT)),
+        )
+        .route(
+            "/api/image-occlusions/file",
+            get(get_image_occlusion_file_handler),
+        )
+        .route(
+            "/api/notes/{id}/image-occlusions",
+            get(list_note_image_occlusions_handler),
+        )
+        .route(
+            "/api/notes/{id}/image-occlusions/{index}",
+            put(update_note_image_occlusion_handler),
+        )
+}
 
 pub(crate) fn create_router(
     app_state: Arc<AppState>,
@@ -141,6 +174,7 @@ pub(crate) fn create_router(
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))
+        .merge(image_occlusion_routes())
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
