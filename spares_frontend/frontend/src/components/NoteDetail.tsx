@@ -105,7 +105,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', marginBottom: 16 }}>
+      <div className="form-grid">
         <div>
           <div style={fieldLabel}>Tags <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
           <CodeMirror

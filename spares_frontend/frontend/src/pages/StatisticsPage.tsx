@@ -133,7 +133,7 @@ export default function StatisticsPage() {
   const maxDue = Math.max(1, ...dueByDate.map(([, count]) => count));
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
+    <div className="page">
       <Navbar onLogout={logout} />
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -188,26 +188,28 @@ export default function StatisticsPage() {
           {dueByDate.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)' }}>No cards due after this date.</p>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr>
-                  <th style={th}>Date</th>
-                  <th style={{ ...th, textAlign: 'right', width: 80 }}>Cards</th>
-                  <th style={th} />
-                </tr>
-              </thead>
-              <tbody>
-                {dueByDate.map(([day, count]) => (
-                  <tr key={day}>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{day}</td>
-                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{count}</td>
-                    <td style={{ ...td, width: '60%' }}>
-                      <div style={{ height: 8, borderRadius: 4, background: 'var(--accent)', width: `${(count / maxDue) * 100}%` }} />
-                    </td>
+            <div className="table-scroll">
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Date</th>
+                    <th style={{ ...th, textAlign: 'right', width: 80 }}>Cards</th>
+                    <th style={th} />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {dueByDate.map(([day, count]) => (
+                    <tr key={day}>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{day}</td>
+                      <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{count}</td>
+                      <td style={{ ...td, width: '60%' }}>
+                        <div style={{ height: 8, borderRadius: 4, background: 'var(--accent)', width: `${(count / maxDue) * 100}%` }} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

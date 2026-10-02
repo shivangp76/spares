@@ -221,7 +221,7 @@ export default function TagsPage() {
   const shown = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
 
   return (
-    <div style={{ maxWidth: 1000, margin: '0 auto', padding: 24 }}>
+    <div className="page" style={{ maxWidth: 1000 }}>
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
         <Navbar onLogout={logout} />
       </div>
@@ -254,40 +254,42 @@ export default function TagsPage() {
       )}
 
       {tags && view === 'table' && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead>
-            <tr>
-              <th style={th}>ID</th>
-              <th style={th}>Name</th>
-              <th style={th}>Description</th>
-              <th style={th}>Query</th>
-              <th style={th}>Auto delete</th>
-              <th style={th} />
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map(tag => (
-              <tr key={tag.id}>
-                <td style={td}>{tag.id}</td>
-                <td style={td}>{tag.name}</td>
-                <td style={td}>{tag.description || '—'}</td>
-                <td style={td}>{tag.query !== null ? <code>{tag.query}</code> : '—'}</td>
-                <td style={td}>{tag.auto_delete ? 'Yes' : 'No'}</td>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  <span style={{ display: 'inline-flex', gap: 4 }}>
-                    <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
-                    <button onClick={() => setEditing({ tag })} style={smallButton}>Edit</button>
-                    {tag.query !== null && <button onClick={() => rebuild(tag)} style={smallButton}>Rebuild</button>}
-                    <button onClick={() => remove(tag)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
-                  </span>
-                </td>
+        <div className="table-scroll">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr>
+                <th style={th}>ID</th>
+                <th style={th}>Name</th>
+                <th style={th}>Description</th>
+                <th style={th}>Query</th>
+                <th style={th}>Auto delete</th>
+                <th style={th} />
               </tr>
-            ))}
-            {shown.length === 0 && (
-              <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No tags found</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shown.map(tag => (
+                <tr key={tag.id}>
+                  <td style={td}>{tag.id}</td>
+                  <td style={td}>{tag.name}</td>
+                  <td style={td}>{tag.description || '—'}</td>
+                  <td style={td}>{tag.query !== null ? <code>{tag.query}</code> : '—'}</td>
+                  <td style={td}>{tag.auto_delete ? 'Yes' : 'No'}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'inline-flex', gap: 4 }}>
+                      <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
+                      <button onClick={() => setEditing({ tag })} style={smallButton}>Edit</button>
+                      {tag.query !== null && <button onClick={() => rebuild(tag)} style={smallButton}>Rebuild</button>}
+                      <button onClick={() => remove(tag)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {shown.length === 0 && (
+                <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No tags found</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
