@@ -653,7 +653,7 @@ export default function ReviewPage() {
               </label>
             ))}
           </div>
-          <div className="review-filter-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             <input
               ref={filterInputRef}
               type={filterMode === 'tagId' ? 'number' : 'text'}

@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import RecentSearches from '../components/RecentSearches';
 import { useAuth } from '../hooks/useAuth';
+import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
 import { td, th } from '../utils';
@@ -106,7 +107,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: recent.length > 0 ? 8 : 12 }}>
+      <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recent.length > 0 ? 8 : 12 }}>
         <input
           value={keyword}
           onChange={e => setKeyword(e.target.value)}
@@ -114,7 +115,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
           placeholder="Keyword"
           style={{ ...input, flex: 1, maxWidth: 300 }}
         />
-        <button onClick={() => search()}>Search</button>
+        <button onClick={() => search()} className="touch-target-small">Search</button>
       </div>
       <RecentSearches recent={recent} onSelect={search} onRemove={removeRecent} style={{ marginBottom: 12 }} />
       {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
@@ -286,6 +287,7 @@ export default function KeywordsPage() {
   const [tab, setTab] = useState<Tab>('all');
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
+  const detail = useDetailView(panelNote !== null, () => setPanelNote(null));
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -309,8 +311,9 @@ export default function KeywordsPage() {
       <h2 style={{ marginBottom: 16 }}>Keywords</h2>
 
       <div className="split">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
+        {/* Hidden rather than unmounted on phones, since the tabs keep their own results */}
+        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+          <div role="tablist" className="tab-row" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
             {TABS.map(t => (
               <button
                 key={t.tab}
@@ -339,16 +342,17 @@ export default function KeywordsPage() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
+          {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to keywords</button>}
           {noteError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>{noteError}</div>}
           {panelNote
             ? <NoteDetail
                 key={panelNote.id}
                 note={panelNote}
-                onClose={() => setPanelNote(null)}
+                onClose={detail.back}
                 onNoteUpdated={setPanelNote}
                 onOpenNote={openNote}
               />
-            : <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note id to see it.</div>
+            : !detail.isNarrow && <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note id to see it.</div>
           }
         </div>
       </div>

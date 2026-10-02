@@ -27,7 +27,7 @@ export default function LoginPage() {
   const field: React.CSSProperties = { display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', boxSizing: 'border-box' };
 
   return (
-    <div style={{ maxWidth: 400, margin: '80px auto', padding: 24 }}>
+    <div className="login" style={{ maxWidth: 400, margin: '80px auto', padding: 24 }}>
       <h2 style={{ marginBottom: 24 }}>Spares</h2>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <label>
@@ -45,7 +45,7 @@ export default function LoginPage() {
           <input type="text" value={schedulerName} onChange={e => setSchedulerName(e.target.value)}
             style={field} />
         </label>
-        <button type="submit" style={{ padding: '8px 0', marginTop: 4 }}>Login</button>
+        <button type="submit" className="touch-target" style={{ padding: '8px 0', marginTop: 4 }}>Login</button>
       </form>
     </div>
   );

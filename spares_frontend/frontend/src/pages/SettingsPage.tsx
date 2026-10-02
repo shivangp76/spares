@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
-import { setShowReviewTimer, useShowReviewTimer } from '../preferences';
+import { setShowReviewTimer, setVimKeybindings, useShowReviewTimer, useVimKeybindings } from '../preferences';
 import { setThemePreference, useThemePreference, type ThemePreference } from '../theme';
 import { sectionLabel } from '../utils';
 
@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const theme = useThemePreference();
   const showReviewTimer = useShowReviewTimer();
+  const vimKeybindings = useVimKeybindings();
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -58,6 +59,21 @@ export default function SettingsPage() {
         </label>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Both durations are still recorded, and shown after each card is rated.
+        </p>
+      </fieldset>
+
+      <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>
+        <legend style={{ ...sectionLabel, padding: 0 }}>Editor</legend>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={vimKeybindings}
+            onChange={e => setVimKeybindings(e.target.checked)}
+          />
+          Vim keybindings in the note editor
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Off by default on touchscreens, since a phone keyboard can't leave Vim's normal mode to type.
         </p>
       </fieldset>
     </div>

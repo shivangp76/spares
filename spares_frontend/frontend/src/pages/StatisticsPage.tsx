@@ -29,7 +29,7 @@ function stateLabel(stateId: string): string {
 
 function Tile({ value, label }: { value: React.ReactNode; label: string }) {
   return (
-    <div style={tile}>
+    <div className="tile" style={tile}>
       <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
       <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</div>
     </div>
@@ -93,7 +93,7 @@ function ScheduleForm({ kind, safeCount, onDone }: { kind: 'Advance' | 'Postpone
         placeholder="Optional query, e.g. tag=a"
         style={{ flex: 1, minWidth: 160, padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
       />
-      <button onClick={run} disabled={running} style={{ minWidth: 90 }}>{running ? '…' : kind}</button>
+      <button onClick={run} disabled={running} className="touch-target-small" style={{ minWidth: 90 }}>{running ? '…' : kind}</button>
       {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
     </div>
   );

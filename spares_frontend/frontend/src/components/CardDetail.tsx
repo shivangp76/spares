@@ -104,13 +104,14 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         onClick={onClose}
         style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
         aria-label="Close detail"
+        className="tap-area"
       >×</button>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
         {/* Wraps around at either end, as in the CLI */}
-        <button onClick={() => onGoTo((index + total - 1) % total)} disabled={total < 2} style={actionButton}>Previous</button>
+        <button onClick={() => onGoTo((index + total - 1) % total)} disabled={total < 2} className="touch-target-small" style={actionButton}>Previous</button>
         <span style={{ fontSize: 14 }}>Card {index + 1} of {total}</span>
-        <button onClick={() => onGoTo((index + 1) % total)} disabled={total < 2} style={actionButton}>Next</button>
+        <button onClick={() => onGoTo((index + 1) % total)} disabled={total < 2} className="touch-target-small" style={actionButton}>Next</button>
         <input
           type="number"
           min={1}
