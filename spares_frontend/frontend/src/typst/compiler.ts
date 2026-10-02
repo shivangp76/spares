@@ -89,13 +89,13 @@ function init(): Promise<void> {
   return ready;
 }
 
-async function compileNow(source: string): Promise<string> {
+async function compileNow(source: string, inputs: Record<string, string>): Promise<string> {
   await init();
   await $typst.addSource(MAIN_FILE_PATH, source);
   for (let round = 1; ; round++) {
     missingFiles.clear();
     try {
-      return await $typst.svg({ mainFilePath: MAIN_FILE_PATH });
+      return await $typst.svg({ mainFilePath: MAIN_FILE_PATH, inputs });
     } catch (e) {
       const newFiles = [...missingFiles].filter(path => !requestedFiles.has(path));
       if (newFiles.length === 0 || round >= MAX_COMPILE_ROUNDS) throw e;
@@ -111,9 +111,14 @@ async function compileNow(source: string): Promise<string> {
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Compiles `source` to an SVG string. Rejects with the compiler's diagnostics, a string. */
-export function compileTypst(source: string): Promise<string> {
-  const result = queue.then(() => compileNow(source));
+/**
+ * Compiles `source` to an SVG string. Rejects with the compiler's diagnostics, a string.
+ *
+ * `inputs` are visible to the source through `sys.inputs`. They are always passed since the
+ * compiler otherwise reuses the inputs of the previous compile.
+ */
+export function compileTypst(source: string, inputs: Record<string, string> = {}): Promise<string> {
+  const result = queue.then(() => compileNow(source, inputs));
   queue = result.catch(() => undefined);
   return result;
 }
