@@ -54,6 +54,13 @@ export interface SubmitStudyActionRequest {
   action: { Rate: RatingSubmission } | { Bury: { card_id: number } };
 }
 
+export const STATE_LABELS: Record<number, string> = {
+  0: 'New',
+  1: 'Learning',
+  2: 'Review',
+  3: 'Relearning',
+};
+
 export interface StatisticsResponse {
   cards_studied_count: number;
   recall_duration: number;

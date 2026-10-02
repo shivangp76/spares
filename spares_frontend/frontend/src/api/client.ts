@@ -67,12 +67,12 @@ export async function postReview(filter?: string): Promise<GetReviewCardResponse
   return res.json() as Promise<GetReviewCardResponse | null>;
 }
 
-export async function getStatistics(schedulerName: string): Promise<StatisticsResponse> {
+export async function getStatistics(schedulerName: string, date: Date = new Date()): Promise<StatisticsResponse> {
   const { serverUrl } = getCredentials();
   const res = await fetch(`${serverUrl}/api/review/statistics`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ scheduler_name: schedulerName, date: new Date().toISOString() }),
+    body: JSON.stringify({ scheduler_name: schedulerName, date: date.toISOString() }),
   });
   if (!res.ok) throw new Error(`Statistics fetch failed: ${res.status}`);
   return res.json();
