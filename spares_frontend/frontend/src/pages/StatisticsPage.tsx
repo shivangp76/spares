@@ -7,8 +7,8 @@ import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type StatisticsResponse } from '../types/spares';
 import { formatDuration, td, th } from '../utils';
 
-const sectionTitle: React.CSSProperties = { fontSize: 12, color: '#888', margin: '32px 0 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
-const tile: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 6, padding: '12px 20px', textAlign: 'center', minWidth: 96 };
+const sectionTitle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', margin: '32px 0 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
+const tile: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 6, padding: '12px 20px', textAlign: 'center', minWidth: 96 };
 
 /** `YYYY-MM-DD` for `date` in local time, the format `<input type="date">` uses. */
 function toDateInputValue(date: Date): string {
@@ -31,7 +31,7 @@ function Tile({ value, label }: { value: React.ReactNode; label: string }) {
   return (
     <div style={tile}>
       <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
-      <div style={{ fontSize: 13, color: '#666' }}>{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</div>
     </div>
   );
 }
@@ -41,7 +41,7 @@ function StateCounts({ counts, empty }: { counts: Record<string, number>; empty:
     .filter(([, count]) => count > 0)
     .sort(([a], [b]) => Number(a) - Number(b));
   const total = entries.reduce((sum, [, count]) => sum + count, 0);
-  if (entries.length === 0) return <p style={{ color: '#555' }}>{empty}</p>;
+  if (entries.length === 0) return <p style={{ color: 'var(--text-secondary)' }}>{empty}</p>;
   return (
     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
       {entries.map(([stateId, count]) => <Tile key={stateId} value={count} label={stateLabel(stateId)} />)}
@@ -83,7 +83,7 @@ function ScheduleForm({ kind, safeCount, onDone }: { kind: 'Advance' | 'Postpone
         value={count}
         onChange={e => setCount(e.target.value)}
         aria-label={`Number of cards to ${kind.toLowerCase()}`}
-        style={{ width: 80, padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+        style={{ width: 80, padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
       />
       <input
         type="text"
@@ -91,10 +91,10 @@ function ScheduleForm({ kind, safeCount, onDone }: { kind: 'Advance' | 'Postpone
         onChange={e => setQuery(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') run(); }}
         placeholder="Optional query, e.g. tag=a"
-        style={{ flex: 1, minWidth: 160, padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+        style={{ flex: 1, minWidth: 160, padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
       />
       <button onClick={run} disabled={running} style={{ minWidth: 90 }}>{running ? '…' : kind}</button>
-      {error && <span style={{ color: 'red', fontSize: 13 }}>{error}</span>}
+      {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
     </div>
   );
 }
@@ -143,14 +143,14 @@ export default function StatisticsPage() {
             type="date"
             value={date}
             onChange={e => setDate(e.target.value)}
-            style={{ padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+            style={{ padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
           />
         </label>
-        <span style={{ fontSize: 13, color: '#888' }}>Scheduler: {credentials?.schedulerName}</span>
-        {loading && <span style={{ fontSize: 13, color: '#888' }}>Loading…</span>}
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Scheduler: {credentials?.schedulerName}</span>
+        {loading && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</span>}
       </div>
 
-      {error && !loading && <div style={{ color: 'red', marginTop: 16 }}>Error: {error}</div>}
+      {error && !loading && <div style={{ color: 'var(--error)', marginTop: 16 }}>Error: {error}</div>}
 
       {statistics && (
         <div style={{ opacity: loading ? 0.5 : 1 }}>
@@ -178,7 +178,7 @@ export default function StatisticsPage() {
               {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onUndone={reload} />}
             </>
           ) : (
-            <p style={{ fontSize: 13, color: '#888' }}>Advancing and postponing apply from now, so they are only offered for today.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Advancing and postponing apply from now, so they are only offered for today.</p>
           )}
 
           <div style={sectionTitle}>All cards by state</div>
@@ -186,7 +186,7 @@ export default function StatisticsPage() {
 
           <div style={sectionTitle}>Upcoming due</div>
           {dueByDate.length === 0 ? (
-            <p style={{ color: '#555' }}>No cards due after this date.</p>
+            <p style={{ color: 'var(--text-secondary)' }}>No cards due after this date.</p>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
@@ -202,7 +202,7 @@ export default function StatisticsPage() {
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{day}</td>
                     <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{count}</td>
                     <td style={{ ...td, width: '60%' }}>
-                      <div style={{ height: 8, borderRadius: 4, background: '#4a7bd0', width: `${(count / maxDue) * 100}%` }} />
+                      <div style={{ height: 8, borderRadius: 4, background: 'var(--accent)', width: `${(count / maxDue) * 100}%` }} />
                     </td>
                   </tr>
                 ))}

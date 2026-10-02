@@ -17,8 +17,8 @@ const TABS: { tab: Tab; label: string }[] = [
   { tab: 'links', label: 'Links' },
 ];
 
-const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 };
-const hint: React.CSSProperties = { fontSize: 13, color: '#888', marginTop: 0 };
+const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
+const hint: React.CSSProperties = { fontSize: 13, color: 'var(--text-muted)', marginTop: 0 };
 
 /** A note id that opens the note in the side pane. */
 function NoteLinkButton({ id, onOpen }: { id: number; onOpen: (id: number) => void }) {
@@ -42,7 +42,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     listKeywords().then(setKeywords, e => setError(String(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
   if (!keywords) return <div>Loading…</div>;
 
   const needle = filter.trim().toLowerCase();
@@ -57,7 +57,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           <input type="checkbox" checked={short} onChange={e => setShort(e.target.checked)} style={{ marginRight: 6 }} />
           Unique keywords only
         </label>
-        <span style={{ fontSize: 13, color: '#888' }}>{short ? unique.length : shown.length} shown</span>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{short ? unique.length : shown.length} shown</span>
       </div>
       {short ? (
         <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.7 }}>
@@ -109,9 +109,9 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
         />
         <button onClick={search}>Search</button>
       </div>
-      {error && <div style={{ color: 'red' }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
       {results && (results.matches.length === 0 ? (
-        <p style={{ color: '#555' }}>No matching keyword found for “{results.keyword}”.</p>
+        <p style={{ color: 'var(--text-secondary)' }}>No matching keyword found for “{results.keyword}”.</p>
       ) : (
         <>
           <p style={hint}>Ranked best first; the first row is what a link to “{results.keyword}” resolves to.</p>
@@ -119,7 +119,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
             <thead><tr><th style={th}>#</th><th style={th}>Matched keyword</th><th style={th}>Note</th><th style={th}>Score</th></tr></thead>
             <tbody>
               {results.matches.map((m, i) => (
-                <tr key={`${m.note_id}-${m.matched_keyword}`} style={i === 0 ? { background: '#f0f4ff' } : undefined}>
+                <tr key={`${m.note_id}-${m.matched_keyword}`} style={i === 0 ? { background: 'var(--selected)' } : undefined}>
                   <td style={td}>{i + 1}</td>
                   <td style={td}>{m.matched_keyword}</td>
                   <td style={td}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
@@ -143,7 +143,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     getUnmatchedKeywords().then(setRows, e => setError(String(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
@@ -157,7 +157,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
               <td style={td}>{r.searched_keyword}</td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: '#888', textAlign: 'center' }}>No unmatched keywords</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No unmatched keywords</td></tr>}
         </tbody>
       </table>
     </>
@@ -173,7 +173,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     getDuplicateKeywords().then(setRows, e => setError(String(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
@@ -191,7 +191,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: '#888', textAlign: 'center' }}>No duplicate keywords</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No duplicate keywords</td></tr>}
         </tbody>
       </table>
     </>
@@ -232,7 +232,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
         </label>
         <button onClick={load}>List</button>
       </div>
-      {error && <div style={{ color: 'red' }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
       {links && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
           <thead>
@@ -255,7 +255,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
               </tr>
             ))}
             {links.links.length === 0 && (
-              <tr><td colSpan={5} style={{ ...td, color: '#888', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
+              <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
             )}
           </tbody>
         </table>
@@ -298,7 +298,7 @@ export default function KeywordsPage() {
 
       <div className="keywords-split">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid #ddd', marginBottom: 16 }}>
+          <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
             {TABS.map(t => (
               <button
                 key={t.tab}
@@ -309,7 +309,7 @@ export default function KeywordsPage() {
                   padding: '6px 14px',
                   fontSize: 14,
                   border: 'none',
-                  borderBottom: tab === t.tab ? '2px solid #4a7bd0' : '2px solid transparent',
+                  borderBottom: tab === t.tab ? '2px solid var(--accent)' : '2px solid transparent',
                   background: 'none',
                   cursor: 'pointer',
                   fontWeight: tab === t.tab ? 600 : 400,
@@ -327,7 +327,7 @@ export default function KeywordsPage() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {noteError && <div style={{ color: 'red', fontSize: 13, marginBottom: 8 }}>{noteError}</div>}
+          {noteError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>{noteError}</div>}
           {panelNote
             ? <NoteDetail
                 key={panelNote.id}
@@ -336,7 +336,7 @@ export default function KeywordsPage() {
                 onNoteUpdated={setPanelNote}
                 onOpenNote={openNote}
               />
-            : <div style={{ color: '#999', fontSize: 14, paddingTop: 8 }}>Select a note id to see it.</div>
+            : <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note id to see it.</div>
           }
         </div>
       </div>

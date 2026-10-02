@@ -1,11 +1,86 @@
+/* Colours follow the system's light or dark mode unless the Settings page picks one, which sets
+   `data-theme` on the root element (see src/theme.ts). Each colour is `light-dark(light, dark)`. */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#fff, #18191b);
+  --text: light-dark(#000, #e4e4e7);
+  /* Secondary text, e.g. statuses and counts */
+  --text-secondary: light-dark(#555, #b4b4bb);
+  /* Labels and hints */
+  --text-muted: light-dark(#888, #8e8e96);
+  /* Placeholders and the current page in the navbar */
+  --text-faint: light-dark(#999, #6e6e76);
+  --border: light-dark(#ddd, #3a3b3f);
+  --border-strong: light-dark(#ccc, #4a4b50);
+  --border-subtle: light-dark(#eee, #2c2d31);
+  /* Panels set apart from the page */
+  --surface: light-dark(#fafafa, #202124);
+  --hover: light-dark(#f5f5f5, #2a2b2f);
+  --selected: light-dark(#f0f4ff, #1f2a44);
+  --accent: light-dark(#4a7bd0, #6b9bf0);
+  --link: light-dark(#0000ee, #8ab4f8);
+  --link-visited: light-dark(#551a8b, #c58af9);
+  --error: light-dark(red, #ff6b6b);
+  --danger: light-dark(#b00, #ff7b72);
+  --warning: light-dark(#a60, #e3a64f);
+  --success: light-dark(#2a7, #4cc38a);
+
+  /* Button families on the review page */
+  --tone-red-fg: light-dark(#b42318, #fda29b);
+  --tone-red-border: light-dark(#f3b4ae, #7a271a);
+  --tone-red-bg: light-dark(#fef3f2, #2d1512);
+  --tone-orange-fg: light-dark(#b54708, #fec84b);
+  --tone-orange-border: light-dark(#f8c995, #7a4b0c);
+  --tone-orange-bg: light-dark(#fffaeb, #2b1f0d);
+  --tone-green-fg: light-dark(#067647, #75e0a7);
+  --tone-green-border: light-dark(#a6e3c4, #085d3a);
+  --tone-green-bg: light-dark(#ecfdf3, #0f2419);
+  --tone-blue-fg: light-dark(#175cd3, #84adff);
+  --tone-blue-border: light-dark(#b2ccff, #1d3f8a);
+  --tone-blue-bg: light-dark(#eff4ff, #121d33);
+  --tone-purple-fg: light-dark(#6941c6, #bdb4fe);
+  --tone-purple-border: light-dark(#d0c3f5, #4a2d8f);
+  --tone-purple-bg: light-dark(#f4f3ff, #1e1833);
+  --tone-teal-fg: light-dark(#0e7090, #67e3f9);
+  --tone-teal-border: light-dark(#a5dcec, #0b4a5e);
+  --tone-teal-bg: light-dark(#ecfafd, #0e2229);
+  --tone-gray-fg: light-dark(#344054, #cecfd2);
+  --tone-gray-border: light-dark(#d0d5dd, #45464b);
+  --tone-gray-bg: light-dark(#f9fafb, #222327);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 /* Reserve scrollbar space so centered content doesn't shift between pages */
 html {
   scrollbar-gutter: stable;
 }
 
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--link);
+}
+
+a:visited {
+  color: var(--link-visited);
+}
+
+/* Typst pages are transparent and written for a white page, so give them a white page in dark mode */
 .typst-viewer svg {
   width: 100%;
   height: auto;
+  background: light-dark(transparent, #fff);
 }
 
 /* Inline-coloured buttons lose the browser's disabled styling, so dim them here */

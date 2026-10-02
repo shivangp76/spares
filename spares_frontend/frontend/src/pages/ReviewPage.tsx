@@ -47,17 +47,17 @@ const NoteDetail = lazy(loadNoteDetail);
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
-/** Text, border and background colours for a family of buttons, so each family is recognizable at a glance. */
+/** Text, border and background colours for a family of buttons, so each family is recognizable at a glance. Defined in index.css. */
 interface Tone { fg: string; border: string; bg: string }
 
 const TONES = {
-  red: { fg: '#b42318', border: '#f3b4ae', bg: '#fef3f2' },
-  orange: { fg: '#b54708', border: '#f8c995', bg: '#fffaeb' },
-  green: { fg: '#067647', border: '#a6e3c4', bg: '#ecfdf3' },
-  blue: { fg: '#175cd3', border: '#b2ccff', bg: '#eff4ff' },
-  purple: { fg: '#6941c6', border: '#d0c3f5', bg: '#f4f3ff' },
-  teal: { fg: '#0e7090', border: '#a5dcec', bg: '#ecfafd' },
-  gray: { fg: '#344054', border: '#d0d5dd', bg: '#f9fafb' },
+  red: { fg: 'var(--tone-red-fg)', border: 'var(--tone-red-border)', bg: 'var(--tone-red-bg)' },
+  orange: { fg: 'var(--tone-orange-fg)', border: 'var(--tone-orange-border)', bg: 'var(--tone-orange-bg)' },
+  green: { fg: 'var(--tone-green-fg)', border: 'var(--tone-green-border)', bg: 'var(--tone-green-bg)' },
+  blue: { fg: 'var(--tone-blue-fg)', border: 'var(--tone-blue-border)', bg: 'var(--tone-blue-bg)' },
+  purple: { fg: 'var(--tone-purple-fg)', border: 'var(--tone-purple-border)', bg: 'var(--tone-purple-bg)' },
+  teal: { fg: 'var(--tone-teal-fg)', border: 'var(--tone-teal-border)', bg: 'var(--tone-teal-bg)' },
+  gray: { fg: 'var(--tone-gray-fg)', border: 'var(--tone-gray-border)', bg: 'var(--tone-gray-bg)' },
 } satisfies Record<string, Tone>;
 
 function toned(tone: Tone, base: React.CSSProperties = actionButton): React.CSSProperties {
@@ -580,7 +580,7 @@ export default function ReviewPage() {
   const sessionStarted = sessionStart !== null;
 
   const summary = sessionStarted && (
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 16, marginTop: 24, textAlign: 'left', display: 'inline-block' }}>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginTop: 24, textAlign: 'left', display: 'inline-block' }}>
       <div style={sectionLabel}>Session</div>
       <div>Cards reviewed: {reviewedCount}</div>
       <div>Total time: {formatDuration(msToSeconds((sessionEnd ?? sessionStart ?? 0) - (sessionStart ?? 0)))}</div>
@@ -601,7 +601,7 @@ export default function ReviewPage() {
     <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
       <Navbar
         onLogout={logout}
-        extra={cardCounts ? <span style={{ fontSize: 13, color: '#666' }}>{cardCounts}</span> : undefined}
+        extra={cardCounts ? <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{cardCounts}</span> : undefined}
       />
 
       {phase === 'landing' && (
@@ -612,13 +612,13 @@ export default function ReviewPage() {
               {Object.entries(statistics.due_count_by_state)
                 .filter(([, count]) => count > 0)
                 .map(([stateId, count]) => (
-                  <div key={stateId} style={{ border: '1px solid #ddd', borderRadius: 6, padding: '12px 20px', textAlign: 'center' }}>
+                  <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '12px 20px', textAlign: 'center' }}>
                     <div style={{ fontSize: 24, fontWeight: 600 }}>{count}</div>
-                    <div style={{ fontSize: 13, color: '#666' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
                   </div>
                 ))}
               {Object.values(statistics.due_count_by_state).every(c => c === 0) && (
-                <p style={{ color: '#555' }}>Nothing due to review.</p>
+                <p style={{ color: 'var(--text-secondary)' }}>Nothing due to review.</p>
               )}
             </div>
           )}
@@ -644,7 +644,7 @@ export default function ReviewPage() {
               value={filterInput}
               onChange={e => setFilterInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
-              style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+              style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
             />
             <button onClick={() => startReview(filterMode, filterInput)} style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
               Start Review
@@ -652,19 +652,19 @@ export default function ReviewPage() {
           </div>
           {recentFilters.length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8, fontSize: 13 }}>
-              <span style={{ color: '#888' }}>Recent:</span>
+              <span style={{ color: 'var(--text-muted)' }}>Recent:</span>
               {recentFilters.map(f => (
                 <span key={`${f.mode}:${f.input}`} style={{ display: 'inline-flex' }}>
                   <button onClick={() => { setFilterMode(f.mode); setFilterInput(f.input); startReview(f.mode, f.input); }} title="Start reviewing this filter" style={actionButton}>
                     {RECENT_FILTER_PREFIX[f.mode]}{f.input}
                   </button>
-                  <button onClick={() => removeRecentFilter(f)} title="Remove from recent" aria-label="Remove from recent" style={{ ...actionButton, color: '#999' }}>×</button>
+                  <button onClick={() => removeRecentFilter(f)} title="Remove from recent" aria-label="Remove from recent" style={{ ...actionButton, color: 'var(--text-faint)' }}>×</button>
                 </span>
               ))}
             </div>
           )}
           {filterMode === 'query' && (
-            <p style={{ fontSize: 12, color: '#888', margin: 0 }}>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.
             </p>
           )}
@@ -674,7 +674,7 @@ export default function ReviewPage() {
       {phase === 'loading' && <div>Loading…</div>}
 
       {(phase === 'done' || phase === 'summary') && (
-        <div style={{ textAlign: 'center', marginTop: 80, color: '#555' }}>
+        <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>
           {phase === 'done' && <p>Nothing left to review.</p>}
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
           {summary}
@@ -686,7 +686,7 @@ export default function ReviewPage() {
       )}
 
       {phase === 'error' && (
-        <div style={{ color: 'red' }}>
+        <div style={{ color: 'var(--error)' }}>
           Error: {error}
           <button onClick={() => (card || sessionStarted ? loadCard(activeFilter) : setPhase('landing'))} style={{ marginLeft: 12 }}>Retry</button>
           <button onClick={() => setPhase('landing')} style={{ marginLeft: 8 }}>Back</button>
@@ -695,8 +695,8 @@ export default function ReviewPage() {
 
       {(phase === 'front' || phase === 'back') && card && (
         <>
-          {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: '#666' }}>{sessionInfo}</div>}
-          <div style={{ marginBottom: 8, fontSize: 13, color: '#888', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>{sessionInfo}</div>}
+          <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>Note {card.note_id} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
             <span style={{ marginLeft: 'auto' }}>
               Reviewed {reviewedCount} · ~{formatDuration(card.time_estimate)} left
@@ -707,14 +707,14 @@ export default function ReviewPage() {
               the flip shows it again without rerendering. */}
           <div style={phase === 'back' ? hiddenSide : undefined} aria-hidden={phase === 'back'}>
             {card.cli ? (
-              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
                 <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{card.cli.surrounding}</pre>
-                <p style={{ color: '#a60', fontSize: 13, marginBottom: 0 }}>
+                <p style={{ color: 'var(--warning)', fontSize: 13, marginBottom: 0 }}>
                   This card is reviewed by running <code>{card.cli.exec}</code>, which only the CLI can do. Bury it or review it with <code>spares card review</code>.
                 </p>
               </div>
             ) : (
-              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
                 <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
               </div>
             )}
@@ -722,7 +722,7 @@ export default function ReviewPage() {
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
-              <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 16, background: '#fafafa' }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16, background: 'var(--surface)' }}>
                 <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
               </div>
             </div>
@@ -745,12 +745,12 @@ export default function ReviewPage() {
             </div>
           )}
 
-          {status && <div style={{ marginTop: 12, fontSize: 13, color: '#555' }}>{status}</div>}
+          {status && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-secondary)' }}>{status}</div>}
 
-          {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: '#888' }}>Loading note…</div>}
+          {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
           {panelNote && (
             <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
-              <Suspense fallback={<div style={{ fontSize: 13, color: '#888' }}>Loading note…</div>}>
+              <Suspense fallback={<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}>
                 <NoteDetail
                   key={panelNote.id}
                   note={panelNote}
@@ -811,11 +811,11 @@ export default function ReviewPage() {
                 {keywordResults && (
                   <div style={{ marginTop: 8, fontSize: 13 }}>
                     <div style={sectionLabel}>Notes linked to “{keywordResults.keyword}”</div>
-                    {keywordResults.notes.length === 0 && <div style={{ color: '#888' }}>No notes found.</div>}
+                    {keywordResults.notes.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No notes found.</div>}
                     {keywordResults.notes.map(n => (
                       <div key={n.id}>
                         <a href="#" onClick={e => { e.preventDefault(); openNote(n.id); }}>Note {n.id}</a>
-                        <span style={{ color: '#888' }}> — {n.data.slice(0, 80)}</span>
+                        <span style={{ color: 'var(--text-muted)' }}> — {n.data.slice(0, 80)}</span>
                       </div>
                     ))}
                   </div>

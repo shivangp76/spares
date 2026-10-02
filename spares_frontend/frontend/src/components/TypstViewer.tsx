@@ -62,7 +62,7 @@ export default function TypstViewer({ source, onReady }: Props) {
   } else if (result.error !== undefined) {
     content = (
       <div>
-        <p style={{ color: '#b00', fontSize: 13 }}>Typst compilation failed</p>
+        <p style={{ color: 'var(--danger)', fontSize: 13 }}>Typst compilation failed</p>
         <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{result.error}</pre>
       </div>
     );

@@ -8,7 +8,7 @@ import { td, th } from '../utils';
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
-const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 };
+const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 const smallButton: React.CSSProperties = { padding: '2px 8px', fontSize: 12 };
 
 /** `spares parser list/add/edit/delete`. */
@@ -82,8 +82,8 @@ export default function ParsersPage() {
         <button onClick={add} disabled={!newName.trim()}>Add</button>
       </div>
 
-      {status && <div style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>{status}</div>}
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>Error: {error}</div>}
+      {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
+      {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
       {!parsers && !error && <div>Loading…</div>}
 
       {parsers && (
@@ -121,13 +121,13 @@ export default function ParsersPage() {
                     ) : (
                       <button onClick={() => setRenaming({ id: parser.id, name: parser.name })} style={smallButton}>Rename</button>
                     )}
-                    <button onClick={() => remove(parser)} style={{ ...smallButton, color: '#b00' }}>Delete</button>
+                    <button onClick={() => remove(parser)} style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
                   </span>
                 </td>
               </tr>
             ))}
             {parsers.length === 0 && (
-              <tr><td colSpan={3} style={{ ...td, color: '#888', textAlign: 'center' }}>No parsers</td></tr>
+              <tr><td colSpan={3} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No parsers</td></tr>
             )}
           </tbody>
         </table>

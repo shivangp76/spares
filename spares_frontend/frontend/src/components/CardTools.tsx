@@ -9,9 +9,9 @@ type SelectorMode = 'query' | 'ids';
 // `''` leaves the special state unchanged, `'None'` clears it
 type SpecialStateChoice = '' | 'None' | Exclude<SpecialStateUpdate, 'BuriedUntilLaterToday'>;
 
-const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 };
+const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 const row: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 };
-const section: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16 };
+const section: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginBottom: 16 };
 
 /** Parses card ids separated by spaces or commas, like the CLI's `--ids`. */
 function parseIds(value: string): number[] {
@@ -213,7 +213,7 @@ export default function CardTools({ onOpenCard }: {
           <button onClick={loadLeeches} disabled={busy}>{leeches ? 'Refresh' : 'Load'}</button>
         </div>
         {leeches && (leeches.length === 0 ? (
-          <p style={{ color: '#555', fontSize: 14, marginBottom: 0 }}>No leeches.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 0 }}>No leeches.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, marginTop: 8 }}>
             <thead>
@@ -244,7 +244,7 @@ export default function CardTools({ onOpenCard }: {
         ))}
       </div>
 
-      {error && <div style={{ color: 'red', fontSize: 13 }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} />}
     </div>
   );
