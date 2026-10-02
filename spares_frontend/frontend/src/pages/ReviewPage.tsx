@@ -65,6 +65,36 @@ function filterParams(mode: FilterMode, input: string): URLSearchParams {
   return input ? new URLSearchParams({ [mode]: input }) : new URLSearchParams();
 }
 
+interface RecentFilter { mode: FilterMode; input: string }
+
+const RECENT_FILTERS_KEY = 'spares_review_recent_filters';
+const RECENT_FILTERS_MAX = 8;
+const RECENT_FILTER_PREFIX: Record<FilterMode, string> = { query: '', tagName: 'tag: ', tagId: 'tag id: ' };
+
+function loadRecentFilters(): RecentFilter[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_FILTERS_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed as RecentFilter[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeRecentFilters(filters: RecentFilter[]): RecentFilter[] {
+  try {
+    localStorage.setItem(RECENT_FILTERS_KEY, JSON.stringify(filters));
+  } catch {
+    // Recent filters are a convenience, so a storage failure only means they aren't remembered
+  }
+  return filters;
+}
+
+/** Moves the filter to the front of the recent list, most recent first. */
+function saveRecentFilter(filters: RecentFilter[], mode: FilterMode, input: string): RecentFilter[] {
+  const rest = filters.filter(f => f.mode !== mode || f.input !== input);
+  return storeRecentFilters([{ mode, input }, ...rest].slice(0, RECENT_FILTERS_MAX));
+}
+
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -84,6 +114,8 @@ export default function ReviewPage() {
   const [filterInput, setFilterInput] = useState(() => initialFilter(searchParams).input);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter | undefined>(undefined);
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
+  const [recentFilters, setRecentFilters] = useState<RecentFilter[]>(loadRecentFilters);
+  const filterInputRef = useRef<HTMLInputElement>(null);
 
   // Side panels
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
@@ -147,13 +179,13 @@ export default function ReviewPage() {
     if (phase === 'done' || phase === 'summary') refreshStatistics();
   }, [phase, refreshStatistics]);
 
-  async function startReview() {
+  async function startReview(mode: FilterMode, rawInput: string) {
     setError(null);
     setSessionInfo(null);
-    const input = filterInput.trim();
+    const input = rawInput.trim();
     let filter: ReviewFilter | undefined;
     try {
-      if (filterMode === 'query' && input) {
+      if (mode === 'query' && input) {
         if (queryHasLimit(input)) {
           const snapshot = await createReviewSnapshot(input);
           filter = { FilteredTag: { tag_id: snapshot.tag_id } };
@@ -161,11 +193,11 @@ export default function ReviewPage() {
         } else {
           filter = { Query: input };
         }
-      } else if (filterMode === 'tagName' && input) {
+      } else if (mode === 'tagName' && input) {
         const tag = await getTagByName(input);
         filter = { FilteredTag: { tag_id: tag.id } };
         setSessionInfo(`Reviewing filtered tag \`${tag.name}\``);
-      } else if (filterMode === 'tagId' && input) {
+      } else if (mode === 'tagId' && input) {
         const id = Number(input);
         if (!Number.isInteger(id)) throw new Error(`Invalid tag id: ${input}`);
         filter = { FilteredTag: { tag_id: id } };
@@ -175,7 +207,8 @@ export default function ReviewPage() {
       setPhase('error');
       return;
     }
-    setSearchParams(filterParams(filterMode, input), { replace: true });
+    if (input) setRecentFilters(saveRecentFilter(recentFilters, mode, input));
+    setSearchParams(filterParams(mode, input), { replace: true });
     setActiveFilter(filter);
     setReviewedCount(0);
     setSessionRecallMs(0);
@@ -185,6 +218,21 @@ export default function ReviewPage() {
     lastEventId.current = null;
     lastActionWasRating.current = false;
     loadCard(filter);
+  }
+
+  /** Leaves the session for the landing page, keeping the current filter prefilled to edit. */
+  function switchQuery() {
+    if (sessionEnd === null) setSessionEnd(Date.now());
+    setStatus(null);
+    setPanelNote(null);
+    setKeywordResults(null);
+    setDueDatePicker(null);
+    refreshStatistics();
+    setPhase('landing');
+  }
+
+  function removeRecentFilter({ mode, input }: RecentFilter) {
+    setRecentFilters(storeRecentFilters(recentFilters.filter(f => f.mode !== mode || f.input !== input)));
   }
 
   function showAnswer() {
@@ -387,6 +435,12 @@ export default function ReviewPage() {
     if (panelNoteId !== undefined) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [panelNoteId]);
 
+  // After leaving a session, focus the prefilled filter so a new one can be typed straight away
+  const returnedToLanding = phase === 'landing' && sessionStart !== null;
+  useEffect(() => {
+    if (returnedToLanding) filterInputRef.current?.select();
+  }, [returnedToLanding]);
+
   /** Mirrors the CLI's Sync Note: re-render the note, then refresh the current card in place. */
   async function onNoteUpdated(updated: NoteResponse) {
     setPanelNote(updated);
@@ -437,6 +491,7 @@ export default function ReviewPage() {
         case 'b': buryCard(); break;
         case 's': suspendCard(); break;
         case 'e': toggleCardNote(); break;
+        case 'q': switchQuery(); break;
       }
     }
     window.addEventListener('keydown', handleKey);
@@ -480,6 +535,7 @@ export default function ReviewPage() {
 
       {phase === 'landing' && (
         <div style={{ marginTop: 48 }}>
+          {sessionStarted && <div style={{ marginBottom: 24 }}>{summary}</div>}
           {statistics && (
             <div style={{ display: 'flex', gap: 16, marginBottom: 32, flexWrap: 'wrap' }}>
               {Object.entries(statistics.due_count_by_state)
@@ -511,17 +567,31 @@ export default function ReviewPage() {
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             <input
+              ref={filterInputRef}
               type={filterMode === 'tagId' ? 'number' : 'text'}
               placeholder={FILTER_MODES.find(m => m.mode === filterMode)?.placeholder}
               value={filterInput}
               onChange={e => setFilterInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') startReview(); }}
+              onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
               style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
             />
-            <button onClick={startReview} style={{ padding: '8px 24px', fontSize: 14 }}>
+            <button onClick={() => startReview(filterMode, filterInput)} style={{ padding: '8px 24px', fontSize: 14 }}>
               Start Review
             </button>
           </div>
+          {recentFilters.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8, fontSize: 13 }}>
+              <span style={{ color: '#888' }}>Recent:</span>
+              {recentFilters.map(f => (
+                <span key={`${f.mode}:${f.input}`} style={{ display: 'inline-flex' }}>
+                  <button onClick={() => { setFilterMode(f.mode); setFilterInput(f.input); startReview(f.mode, f.input); }} title="Start reviewing this filter" style={actionButton}>
+                    {RECENT_FILTER_PREFIX[f.mode]}{f.input}
+                  </button>
+                  <button onClick={() => removeRecentFilter(f)} title="Remove from recent" aria-label="Remove from recent" style={{ ...actionButton, color: '#999' }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
           {filterMode === 'query' && (
             <p style={{ fontSize: 12, color: '#888', margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.
@@ -618,7 +688,8 @@ export default function ReviewPage() {
               <button onClick={flagNote} disabled={!config} style={actionButton}>
                 Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
               </button>
-              <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={{ ...actionButton, marginLeft: 'auto' }}>End session</button>
+              <button onClick={switchQuery} style={{ ...actionButton, marginLeft: 'auto' }}>Switch query <span style={{ color: '#999' }}>(q)</span></button>
+              <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={actionButton}>End session</button>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={buryCard} style={actionButton}>Bury Card <span style={{ color: '#999' }}>(b)</span></button>
