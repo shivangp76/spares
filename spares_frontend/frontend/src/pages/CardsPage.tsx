@@ -6,7 +6,7 @@ import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
-import { td, th } from '../utils';
+import { td, th, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 
@@ -23,13 +23,16 @@ export default function CardsPage() {
   const [cards, setCards] = useState<CardResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
+  // The search is kept in the URL so it survives navigating away and back
+  const searchQuery = searchParams.get('q');
+  const [query, setQuery] = useState(searchQuery ?? '');
   const [searchResults, setSearchResults] = useState<CardResponse[] | null>(null);
   // The list being stepped through, which is the table unless a card was opened from the leeches
   const [browse, setBrowse] = useState<{ cards: CardResponse[]; index: number } | null>(null);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
+    if (searchQuery !== null) return;
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedCardsPage(page, PAGE_SIZE);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
@@ -47,21 +50,34 @@ export default function CardsPage() {
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page]);
+  }, [credentials, navigate, page, searchQuery]);
+
+  // Bumped by each search so searching the same query again refetches it
+  const [searchCount, setSearchCount] = useState(0);
+
+  useEffect(() => {
+    if (!credentials) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the input follows the URL, e.g. on back
+    setQuery(searchQuery ?? '');
+    if (searchQuery === null) { setSearchResults(null); return; }
+    setLoading(true);
+    setError(null);
+    let cancelled = false;
+    searchCards(searchQuery)
+      .then(data => { if (!cancelled) { setSearchResults(data); setBrowse(null); setError(null); } })
+      .catch(e => { if (!cancelled) setError(String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [credentials, searchQuery, searchCount]);
 
   function handleSearch() {
     if (!query.trim()) return;
-    setLoading(true);
-    setError(null);
-    searchCards(query.trim())
-      .then(data => { setSearchResults(data); setBrowse(null); })
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false));
+    setSearchParams(prev => withSearch(prev, query.trim()));
+    setSearchCount(n => n + 1);
   }
 
   function handleClear() {
-    setSearchResults(null);
-    setQuery('');
+    setSearchParams(prev => withSearch(prev, null));
     setBrowse(null);
   }
 
@@ -110,7 +126,7 @@ export default function CardsPage() {
 
           {searchResults !== null && (
             <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
-              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{query}"
+              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
             </div>
           )}
 
