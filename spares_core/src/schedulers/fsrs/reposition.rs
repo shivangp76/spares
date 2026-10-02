@@ -125,12 +125,11 @@ async fn get_all_cards_internal<'a>(
             .map_or_else(Duration::zero, |review_log| {
                 requested_date - review_log.reviewed_at
             });
+        // The card was last reviewed after `requested_date` (e.g. statistics for a past date), so
+        // its current schedule did not exist yet at that date and it cannot be moved from there.
         if current_elapsed_time < Duration::zero() {
-            dbg!(&requested_date);
-            dbg!(&review_log_res.map(|x| x.reviewed_at));
-            dbg!(&current_elapsed_time);
+            continue;
         }
-        assert!(current_elapsed_time >= Duration::zero());
         // Equivalent to `current_retrievability`.
         let current_retention = rs_fsrs::Parameters::forgetting_curve(
             current_elapsed_time.num_fractional_days(),
