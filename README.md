@@ -49,7 +49,16 @@ See our [Getting Started Guide](https://github.com/shivangp76/spares/blob/main/d
 - [Concepts](https://github.com/shivangp76/spares/blob/main/docs/src/concepts.md)
 - [Workflows](https://github.com/shivangp76/spares/blob/main/docs/src/workflows.md)
 - [Comparison with Anki](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md)
-- [Roadmap](https://github.com/shivangp76/spares/blob/main/docs/src/roadmap.md)
+
+## Roadmap
+
+- Add FSRS optimizer: <https://github.com/open-spaced-repetition/fsrs-rs>
+    - `optimal_retention::simulate()`
+    - `training.compute_parameters()`
+    - Optimizing parameters improves performance by ~40% <https://github.com/open-spaced-repetition/go-fsrs/issues/19#issuecomment-2414421494>
+    - <https://github.com/open-spaced-repetition/fsrs-browser>
+- Improve documentation coverage
+- Todos in code
 
 ## Contributing
 
