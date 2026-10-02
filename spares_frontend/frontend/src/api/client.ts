@@ -50,10 +50,13 @@ const memoized = new Map<string, Promise<unknown>>();
 // List pages are shown from here while they are refetched. Any change may affect them, so they are
 // dropped on every request that isn't a GET.
 const listPages = new Map<string, unknown[]>();
+// Today's statistics per scheduler, shown on the review page while they are refetched
+const todayStatistics = new Map<string, StatisticsResponse>();
 
 function clearCaches(): void {
   memoized.clear();
   listPages.clear();
+  todayStatistics.clear();
 }
 
 function memoize<T>(key: string, fetch: () => Promise<T>): Promise<T> {
@@ -232,6 +235,18 @@ export async function getStatistics(schedulerName: string, date: Date = new Date
     method: 'POST',
     body: JSON.stringify({ scheduler_name: schedulerName, date: date.toISOString() }),
   });
+}
+
+/** `getStatistics` for today, remembered for `cachedTodayStatistics`. */
+export async function getTodayStatistics(schedulerName: string): Promise<StatisticsResponse> {
+  const statistics = await getStatistics(schedulerName);
+  todayStatistics.set(schedulerName, statistics);
+  return statistics;
+}
+
+/** The statistics `getTodayStatistics` last returned for the scheduler. */
+export function cachedTodayStatistics(schedulerName: string): StatisticsResponse | undefined {
+  return todayStatistics.get(schedulerName);
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {

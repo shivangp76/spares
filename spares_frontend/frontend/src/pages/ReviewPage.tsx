@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  cachedTodayStatistics,
   createReviewSnapshot,
   forgetCard,
   getCardsForNote,
@@ -8,8 +9,8 @@ import {
   getReviewCardById,
   getReviewConfig,
   getSchedulerRatings,
-  getStatistics,
   getTagByName,
+  getTodayStatistics,
   postReview,
   searchNotes,
   submitAction,
@@ -106,13 +107,16 @@ export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [phase, setPhase] = useState<Phase>('landing');
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [config, setConfig] = useState<ReviewConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
+  // Shown from the last visit while they are refetched, so the landing page appears straight away
+  const [statistics, setStatistics] = useState<StatisticsResponse | null>(
+    () => (credentials && cachedTodayStatistics(credentials.schedulerName)) ?? null,
+  );
   // The back is rendered hidden once the front is done, so Show Answer only has to reveal it
   const [frontRendered, setFrontRendered] = useState(false);
   const onFrontRendered = useCallback(() => setFrontRendered(true), []);
@@ -175,14 +179,14 @@ export default function ReviewPage() {
 
   const refreshStatistics = useCallback(() => {
     if (!credentials) return Promise.resolve();
-    return getStatistics(credentials.schedulerName).then(setStatistics).catch(console.error);
+    return getTodayStatistics(credentials.schedulerName).then(setStatistics).catch(console.error);
   }, [credentials]);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     getSchedulerRatings(credentials.schedulerName).then(setRatings).catch(console.error);
     getReviewConfig().then(setConfig).catch(console.error);
-    refreshStatistics().finally(() => setPhase('landing'));
+    refreshStatistics();
   }, [credentials, navigate, refreshStatistics]);
 
   // Refresh the day's statistics whenever the session ends
