@@ -47,6 +47,47 @@ const NoteDetail = lazy(loadNoteDetail);
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 
+/** Text, border and background colours for a family of buttons, so each family is recognizable at a glance. */
+interface Tone { fg: string; border: string; bg: string }
+
+const TONES = {
+  red: { fg: '#b42318', border: '#f3b4ae', bg: '#fef3f2' },
+  orange: { fg: '#b54708', border: '#f8c995', bg: '#fffaeb' },
+  green: { fg: '#067647', border: '#a6e3c4', bg: '#ecfdf3' },
+  blue: { fg: '#175cd3', border: '#b2ccff', bg: '#eff4ff' },
+  purple: { fg: '#6941c6', border: '#d0c3f5', bg: '#f4f3ff' },
+  teal: { fg: '#0e7090', border: '#a5dcec', bg: '#ecfafd' },
+  gray: { fg: '#344054', border: '#d0d5dd', bg: '#f9fafb' },
+} satisfies Record<string, Tone>;
+
+function toned(tone: Tone, base: React.CSSProperties = actionButton): React.CSSProperties {
+  return { ...base, color: tone.fg, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 4, cursor: 'pointer' };
+}
+
+const primaryButton: React.CSSProperties = { background: '#175cd3', color: '#fff', border: '1px solid #175cd3', borderRadius: 4, cursor: 'pointer' };
+
+const RATING_TONES: Record<string, Tone> = { again: TONES.red, hard: TONES.orange, good: TONES.green, easy: TONES.blue };
+
+/** Colours a rating by its name, falling back to its position from worst (red) to best (blue). */
+function ratingTone(rating: Rating, index: number, count: number): Tone {
+  const named = RATING_TONES[rating.description.toLowerCase()];
+  if (named) return named;
+  const scale = [TONES.red, TONES.orange, TONES.green, TONES.blue];
+  return scale[Math.round((index / Math.max(1, count - 1)) * (scale.length - 1))];
+}
+
+/** A labelled row of related actions, set apart by a coloured rule on its left. */
+function ActionGroup({ label, tone, children }: { label: string; tone: Tone; children: React.ReactNode }) {
+  return (
+    <div style={{ borderLeft: `3px solid ${tone.border}`, paddingLeft: 10 }}>
+      <div style={{ ...sectionLabel, color: tone.fg, marginBottom: 4 }}>{label}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{children}</div>
+    </div>
+  );
+}
+
+const keyHint: React.CSSProperties = { opacity: 0.6 };
+
 // Hides a rendered side without changing its width, so a Typst side compiled for the hidden
 // viewer's width is not recompiled when it is shown.
 const hiddenSide: React.CSSProperties = { height: 0, overflow: 'hidden', visibility: 'hidden' };
@@ -605,7 +646,7 @@ export default function ReviewPage() {
               onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
               style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
             />
-            <button onClick={() => startReview(filterMode, filterInput)} style={{ padding: '8px 24px', fontSize: 14 }}>
+            <button onClick={() => startReview(filterMode, filterInput)} style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
               Start Review
             </button>
           </div>
@@ -688,17 +729,17 @@ export default function ReviewPage() {
           )}
 
           {phase === 'front' && !card.cli && (
-            <button onClick={showAnswer} style={{ width: '100%', padding: 12 }}>
-              Show Answer <span style={{ color: '#999', fontSize: 12 }}>(Space)</span>
+            <button onClick={showAnswer} style={{ ...primaryButton, width: '100%', padding: 12, fontSize: 15, fontWeight: 600 }}>
+              Show Answer <span style={{ ...keyHint, fontSize: 12, fontWeight: 400 }}>(Space)</span>
             </button>
           )}
 
           {phase === 'back' && (
             <div style={{ display: 'flex', gap: 8 }}>
               {ratings.map((r, i) => (
-                <button key={r.id} onClick={() => rate(r.id)} style={{ flex: 1, padding: 12 }}>
+                <button key={r.id} onClick={() => rate(r.id)} style={{ ...toned(ratingTone(r, i, ratings.length), { flex: 1, padding: 12, fontSize: 15, fontWeight: 600 }) }}>
                   {r.description}
-                  <span style={{ display: 'block', color: '#999', fontSize: 12 }}>({i + 1})</span>
+                  <span style={{ ...keyHint, display: 'block', fontSize: 12, fontWeight: 400 }}>({i + 1})</span>
                 </button>
               ))}
             </div>
@@ -720,45 +761,51 @@ export default function ReviewPage() {
             </div>
           )}
 
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button onClick={undo} style={actionButton}>Undo <span style={{ color: '#999' }}>(u)</span></button>
-              <button onClick={toggleCardNote} style={actionButton}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span style={{ color: '#999' }}>(e)</span></button>
-              <button onClick={flagNote} disabled={!config} style={actionButton}>
-                Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
-              </button>
-              <button onClick={switchQuery} style={{ ...actionButton, marginLeft: 'auto' }}>Switch query <span style={{ color: '#999' }}>(q)</span></button>
-              <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={actionButton}>End session</button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button onClick={buryCard} style={actionButton}>Bury Card <span style={{ color: '#999' }}>(b)</span></button>
-              <button onClick={buryNote} style={actionButton}>Bury Note (card + siblings)</button>
-              <button onClick={buryUntilLaterToday} style={actionButton}>Bury Until Later Today</button>
-              <button onClick={suspendCard} style={actionButton}>Suspend Card <span style={{ color: '#999' }}>(s)</span></button>
-              <button onClick={suspendNote} style={actionButton}>Suspend Note (card + siblings)</button>
-              <button onClick={forget} style={actionButton}>Forget Card</button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button onClick={() => setDueDatePicker('card')} style={actionButton}>Set Card Due Date…</button>
-              <button onClick={() => setDueDateIn('card')} disabled={!config} style={actionButton}>Set Card Due Date in {dueInLabel}</button>
-              <button onClick={() => setDueDatePicker('note')} style={actionButton}>Set Note Due Date…</button>
-              <button onClick={() => setDueDateIn('note')} disabled={!config} style={actionButton}>Set Note Due Date in {dueInLabel}</button>
-            </div>
-            {dueDatePicker && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}>
-                <span>{dueDatePicker === 'card' ? 'Card' : 'Note'} due date:</span>
-                <input type="date" value={dueDateValue} onChange={e => setDueDateValue(e.target.value)} />
-                <button onClick={setDueDateFromPicker} disabled={!dueDateValue} style={actionButton}>Set</button>
-                <button onClick={() => setDueDatePicker(null)} style={actionButton}>Cancel</button>
+          <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1 }}>
+                <ActionGroup label="Note" tone={TONES.blue}>
+                  <button onClick={undo} style={toned(TONES.gray)}>Undo <span style={keyHint}>(u)</span></button>
+                  <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span style={keyHint}>(e)</span></button>
+                  <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
+                    Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
+                  </button>
+                </ActionGroup>
               </div>
-            )}
+              <ActionGroup label="Session" tone={TONES.gray}>
+                <button onClick={switchQuery} style={toned(TONES.gray)}>Switch query <span style={keyHint}>(q)</span></button>
+                <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={toned(TONES.gray)}>End session</button>
+              </ActionGroup>
+            </div>
+            <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
+              <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span style={keyHint}>(b)</span></button>
+              <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings)</button>
+              <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today</button>
+              <button onClick={suspendCard} style={toned(TONES.purple)}>Suspend Card <span style={keyHint}>(s)</span></button>
+              <button onClick={suspendNote} style={toned(TONES.purple)}>Suspend Note (card + siblings)</button>
+              <button onClick={forget} style={toned(TONES.red)}>Forget Card</button>
+            </ActionGroup>
+            <ActionGroup label="Reschedule" tone={TONES.teal}>
+              <button onClick={() => setDueDatePicker('card')} style={toned(TONES.teal)}>Set Card Due Date…</button>
+              <button onClick={() => setDueDateIn('card')} disabled={!config} style={toned(TONES.teal)}>Set Card Due Date in {dueInLabel}</button>
+              <button onClick={() => setDueDatePicker('note')} style={toned(TONES.teal)}>Set Note Due Date…</button>
+              <button onClick={() => setDueDateIn('note')} disabled={!config} style={toned(TONES.teal)}>Set Note Due Date in {dueInLabel}</button>
+              {dueDatePicker && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, flexBasis: '100%' }}>
+                  <span>{dueDatePicker === 'card' ? 'Card' : 'Note'} due date:</span>
+                  <input type="date" value={dueDateValue} onChange={e => setDueDateValue(e.target.value)} />
+                  <button onClick={setDueDateFromPicker} disabled={!dueDateValue} style={toned(TONES.teal)}>Set</button>
+                  <button onClick={() => setDueDatePicker(null)} style={toned(TONES.gray)}>Cancel</button>
+                </div>
+              )}
+            </ActionGroup>
 
             {card.keywords.length > 0 && (
               <details>
                 <summary style={{ cursor: 'pointer', fontSize: 13 }}>Browse Keywords ({card.keywords.length})</summary>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                   {card.keywords.map(k => (
-                    <button key={k} onClick={() => browseKeyword(k)} style={actionButton}>{k}</button>
+                    <button key={k} onClick={() => browseKeyword(k)} style={toned(TONES.gray)}>{k}</button>
                   ))}
                 </div>
                 {keywordResults && (
@@ -781,7 +828,7 @@ export default function ReviewPage() {
                 <summary style={{ cursor: 'pointer', fontSize: 13 }}>Open Linked Notes ({card.linked_notes.length})</summary>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                   {card.linked_notes.map(ln => (
-                    <button key={`${ln.searched_keyword}-${ln.note_id}`} onClick={() => openNote(ln.note_id)} style={actionButton}>
+                    <button key={`${ln.searched_keyword}-${ln.note_id}`} onClick={() => openNote(ln.note_id)} style={toned(TONES.gray)}>
                       {ln.searched_keyword} ({ln.note_id})
                     </button>
                   ))}
