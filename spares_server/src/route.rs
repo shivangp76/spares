@@ -28,6 +28,7 @@ use crate::handlers::note::get_duplicate_keywords_handler;
 use crate::handlers::note::get_keywords_handler;
 use crate::handlers::note::get_note_handler;
 use crate::handlers::note::get_note_links_handler;
+use crate::handlers::note::get_note_render_handler;
 use crate::handlers::note::get_unmatched_keywords_handler;
 use crate::handlers::note::list_notes_handler;
 use crate::handlers::note::search_keyword_handler;
@@ -82,6 +83,7 @@ pub(crate) fn create_router(
         // Note
         .route("/api/notes", post(create_notes_handler))
         .route("/api/notes/{id}", get(get_note_handler))
+        .route("/api/notes/{id}/render", get(get_note_render_handler))
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>
         .route("/api/notes", delete(delete_notes_handler))
         .route("/api/notes", get(list_notes_handler))

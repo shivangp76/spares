@@ -274,6 +274,17 @@ pub mod note {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct NoteRenderResponse {
+        pub parser_name: String,
+        /// Path to the rendered note. Relative to `SPARES_FILES_DIR` when set.
+        pub rendered_path: PathBuf,
+        /// The raw note source for a client to compile itself. Present iff the parser
+        /// [renders in the browser](crate::parsers::Parseable::renders_in_browser).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub browser_source: Option<String>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct NoteResponse {
         pub id: NoteId,
         pub data: String,

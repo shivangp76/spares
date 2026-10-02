@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { vim } from '@replit/codemirror-vim';
-import { updateNote } from '../api/client';
-import type { NoteResponse } from '../types/spares';
+import { getNoteRender, renderNote, updateNote } from '../api/client';
+import type { NoteRenderResponse, NoteResponse } from '../types/spares';
+import CardRenderer from './CardRenderer';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -14,6 +15,18 @@ export default function NoteDetail({ note, onClose, onNoteUpdated }: { note: Not
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Bumped after each save so the compiled note is refetched
+  const [renderVersion, setRenderVersion] = useState(0);
+  const [render, setRender] = useState<{ version: number; result: NoteRenderResponse } | { version: number; error: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNoteRender(note.id).then(
+      result => { if (!cancelled) setRender({ version: renderVersion, result }); },
+      (e: unknown) => { if (!cancelled) setRender({ version: renderVersion, error: String(e) }); },
+    );
+    return () => { cancelled = true; };
+  }, [note.id, renderVersion]);
 
   async function handleSave() {
     setSaveStatus('saving');
@@ -22,7 +35,20 @@ export default function NoteDetail({ note, onClose, onNoteUpdated }: { note: Not
     const keywords = keywordsContent.split('\n').map(s => s.trim()).filter(Boolean);
     try {
       const updated = await updateNote(note.id, dataContent, tags, keywords);
+      // Render before notifying so callers see the regenerated files
+      let renderError: string | null = null;
+      try {
+        await renderNote(note.id);
+      } catch (e) {
+        renderError = String(e);
+      }
       onNoteUpdated(updated);
+      setRenderVersion(v => v + 1);
+      if (renderError) {
+        setSaveError(`Saved, but ${renderError}`);
+        setSaveStatus('error');
+        return;
+      }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (e) {
@@ -100,6 +126,22 @@ export default function NoteDetail({ note, onClose, onNoteUpdated }: { note: Not
         </button>
         {saveStatus === 'saved' && <span style={{ fontSize: 13, color: '#2a7' }}>Saved</span>}
         {saveStatus === 'error' && <span style={{ fontSize: 13, color: 'red' }}>{saveError}</span>}
+      </div>
+
+      <div>
+        <div style={fieldLabel}>Compiled</div>
+        <div style={{ border: '1px solid #eee', borderRadius: 4, padding: 16, backgroundColor: '#fff' }}>
+          {render === null && <div>Loading…</div>}
+          {render && 'error' in render && <div style={{ color: 'red', fontSize: 13 }}>{render.error}</div>}
+          {render && 'result' in render && (
+            <CardRenderer
+              path={render.result.rendered_path}
+              parserName={render.result.parser_name}
+              source={render.result.browser_source}
+              version={render.version}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
