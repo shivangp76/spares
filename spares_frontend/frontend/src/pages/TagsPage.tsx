@@ -48,22 +48,53 @@ function buildTree(names: string[]): TreeNode {
   return root;
 }
 
-function TagTree({ node, path, tagsByName }: { node: TreeNode; path: string; tagsByName: Map<string, TagResponse> }) {
+const treeToggle: React.CSSProperties = {
+  width: 18, padding: 0, marginRight: 2, border: 'none', background: 'none',
+  color: 'var(--text-muted)', font: 'inherit', fontSize: 11, cursor: 'pointer',
+};
+
+interface TagTreeProps {
+  node: TreeNode;
+  path: string;
+  tagsByName: Map<string, TagResponse>;
+  /** Full names of the nodes whose children are hidden */
+  collapsed: Set<string>;
+  onToggle: (fullName: string) => void;
+}
+
+function TagTree({ node, path, tagsByName, collapsed, onToggle }: TagTreeProps) {
   const keys = [...node.children.keys()].sort();
   return (
     <ul style={{ listStyle: 'none', paddingLeft: path ? 20 : 0, margin: 0 }}>
       {keys.map(key => {
         const fullName = path ? `${path}:${key}` : key;
         const tag = tagsByName.get(fullName);
+        const child = node.children.get(key)!;
+        const hasChildren = child.children.size > 0;
+        const isCollapsed = collapsed.has(fullName);
         return (
           <li key={key} style={{ fontSize: 14, lineHeight: 1.8 }}>
+            {hasChildren ? (
+              <button
+                onClick={() => onToggle(fullName)}
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${fullName}`}
+                style={treeToggle}
+              >
+                {isCollapsed ? '▶' : '▼'}
+              </button>
+            ) : (
+              <span style={{ display: 'inline-block', width: 18, marginRight: 2 }} />
+            )}
             <span style={{ color: tag ? undefined : 'var(--text-faint)' }}>{key || '(empty)'}</span>
             {tag && (
               <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
                 #{tag.id}{tag.query !== null && ' · filtered'} · <Link to={reviewLink(tag)}>Review</Link>
               </span>
             )}
-            <TagTree node={node.children.get(key)!} path={fullName} tagsByName={tagsByName} />
+            {hasChildren && !isCollapsed && (
+              <TagTree node={child} path={fullName} tagsByName={tagsByName} collapsed={collapsed} onToggle={onToggle} />
+            )}
           </li>
         );
       })}
@@ -136,6 +167,7 @@ export default function TagsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [view, setView] = useState<'table' | 'tree'>('table');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // `null` for a new tag
   const [editing, setEditing] = useState<{ tag: TagResponse | null } | null>(null);
 
@@ -177,6 +209,14 @@ export default function TagsPage() {
     setEditing(null);
   }
 
+  function toggleCollapsed(fullName: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (!next.delete(fullName)) next.add(fullName);
+      return next;
+    });
+  }
+
   const needle = filter.trim().toLowerCase();
   const shown = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
 
@@ -204,7 +244,13 @@ export default function TagsPage() {
       {!tags && !error && <div>Loading…</div>}
 
       {tags && view === 'tree' && (
-        <TagTree node={buildTree(shown.map(t => t.name))} path="" tagsByName={new Map(tags.map(t => [t.name, t]))} />
+        <TagTree
+          node={buildTree(shown.map(t => t.name))}
+          path=""
+          tagsByName={new Map(tags.map(t => [t.name, t]))}
+          collapsed={collapsed}
+          onToggle={toggleCollapsed}
+        />
       )}
 
       {tags && view === 'table' && (
