@@ -43,6 +43,7 @@
 //! - Strings with non-alphanumeric characters must be quoted.
 //! - Quotes can be escaped with a backslash.
 //! - Alternatively, use `#"` and `"#` to delimit strings, where double quotes inside do not require escaping.
+//! - Curly double quotes (`“` and `”`, as inserted by phone keyboards) may be used in place of `"`.
 //!
 //! **Regex String:**
 //! - Strings delimited by `re:"` and `"`
@@ -262,7 +263,11 @@ pub(crate) struct Token {
 impl Token {
     pub(crate) fn unescape(s: &str) -> Cow<'_, str> {
         if s.contains('\\') {
-            Cow::Owned(s.replace("\\\"", "\""))
+            Cow::Owned(
+                s.replace("\\\"", "\"")
+                    .replace("\\\u{201C}", "\u{201C}")
+                    .replace("\\\u{201D}", "\u{201D}"),
+            )
         } else {
             Cow::Borrowed(s)
         }
