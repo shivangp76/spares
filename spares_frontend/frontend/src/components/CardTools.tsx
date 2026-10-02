@@ -215,32 +215,34 @@ export default function CardTools({ onOpenCard }: {
         {leeches && (leeches.length === 0 ? (
           <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 0 }}>No leeches.</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, marginTop: 8 }}>
-            <thead>
-              <tr>
-                <th style={th}>Card</th>
-                <th style={th}>Note</th>
-                <th style={th}>State</th>
-                <th style={th}>Due</th>
-                <th style={th}>Special state</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leeches.map((c, i) => (
-                <tr
-                  key={c.id}
-                  onClick={onOpenCard ? () => onOpenCard(i, leeches) : undefined}
-                  style={onOpenCard ? { cursor: 'pointer' } : undefined}
-                >
-                  <td style={td}>{c.id}</td>
-                  <td style={td}>{c.note_id}</td>
-                  <td style={td}>{STATE_LABELS[c.state] ?? c.state}</td>
-                  <td style={td}>{new Date(c.due).toLocaleString()}</td>
-                  <td style={td}>{c.special_state ?? '—'}</td>
+          <div className="table-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Card</th>
+                  <th style={th}>Note</th>
+                  <th style={th}>State</th>
+                  <th style={th}>Due</th>
+                  <th style={th}>Special state</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {leeches.map((c, i) => (
+                  <tr
+                    key={c.id}
+                    onClick={onOpenCard ? () => onOpenCard(i, leeches) : undefined}
+                    style={onOpenCard ? { cursor: 'pointer' } : undefined}
+                  >
+                    <td style={td}>{c.id}</td>
+                    <td style={td}>{c.note_id}</td>
+                    <td style={td}>{STATE_LABELS[c.state] ?? c.state}</td>
+                    <td style={td}>{new Date(c.due).toLocaleString()}</td>
+                    <td style={td}>{c.special_state ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ))}
       </div>
 

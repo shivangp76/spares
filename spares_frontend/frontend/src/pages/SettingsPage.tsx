@@ -24,7 +24,7 @@ export default function SettingsPage() {
   }, [credentials, navigate]);
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
+    <div className="page">
       <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 16 }}>Settings</h2>
 

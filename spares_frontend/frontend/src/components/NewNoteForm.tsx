@@ -81,7 +81,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         <CodeMirror theme={theme} value={data} onChange={setData} extensions={[vim()]} basicSetup={{ lineNumbers: true }} minHeight="120px" style={cmStyle} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', marginBottom: 16 }}>
+      <div className="form-grid">
         <div>
           <div style={fieldLabel}>Tags <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
           <CodeMirror theme={theme} value={tags} onChange={setTags} extensions={[vim()]} basicSetup={{ lineNumbers: false }} style={cmStyle} />
