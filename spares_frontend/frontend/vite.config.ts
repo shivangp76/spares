@@ -1,6 +1,28 @@
-import { defineConfig } from 'vite'
+import { cpSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import wasm from 'vite-plugin-wasm'
+
+const SVGEDIT_EDITOR_DIR = fileURLToPath(new URL('./svgedit/src/editor', import.meta.url))
+const DIST_DIR = fileURLToPath(new URL('./dist', import.meta.url))
+
+/** svgedit fetches its icons, shape libraries, etc. by URL at runtime, so they are copied next to
+    its page rather than bundled. Its scripts are bundled from the entry. */
+function copySvgeditAssets(): Plugin {
+  return {
+    name: 'copy-svgedit-assets',
+    apply: 'build',
+    closeBundle() {
+      for (const dir of ['images', 'extensions']) {
+        cpSync(`${SVGEDIT_EDITOR_DIR}/${dir}`, `${DIST_DIR}/svgedit/src/editor/${dir}`, {
+          recursive: true,
+          filter: source => !source.endsWith('.js'),
+        })
+      }
+    },
+  }
+}
 
 export default defineConfig({
   optimizeDeps: {
@@ -12,11 +34,20 @@ export default defineConfig({
     'svgedit/src/editor/dialogs/*.html',
     'svgedit/src/editor/extensions/*/*.html',
   ],
+  build: {
+    rollupOptions: {
+      // The image occlusion editor is its own page, embedded by the app in an iframe
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        svgedit: fileURLToPath(new URL('./svgedit/src/editor/index.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [react(), wasm(), {
+  plugins: [react(), wasm(), copySvgeditAssets(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files

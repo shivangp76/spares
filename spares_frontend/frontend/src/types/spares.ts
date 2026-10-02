@@ -197,6 +197,15 @@ export interface NoteResponse {
   updated_at: string;
 }
 
+/** Settings of an image occlusion block in a note. The paths are absolute paths on the server. */
+export interface ImageOcclusionData {
+  original_image_filepath: string;
+  clozes_filepath: string;
+  front_conceal: string;
+  back_reveal: string;
+  back_emphasis: boolean;
+}
+
 export interface LinkedNote {
   searched_keyword: string;
   linked_note_id: number | null;

@@ -5,6 +5,7 @@ import type {
   Credentials,
   ForgetCardResponse,
   GetReviewCardResponse,
+  ImageOcclusionData,
   MatchedKeywordResponse,
   NoteLink,
   NoteRenderResponse,
@@ -140,6 +141,56 @@ export async function fetchRenderAsset(path: string): Promise<Uint8Array | null>
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Render asset fetch failed for ${path}: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
+}
+
+export async function getImageOcclusionTemplate(): Promise<string> {
+  return memoize('image-occlusion-template', async () => {
+    const res = await apiSend('Image occlusion template', '/api/image-occlusions/template');
+    return res.text();
+  });
+}
+
+/** Stores a new image occlusion. `snippet` is its block in the parser's syntax, ready to insert into a note. */
+export async function createImageOcclusion(
+  parserId: number,
+  image: File,
+  clozesSvg: string,
+): Promise<{ image_occlusion: ImageOcclusionData; snippet: string }> {
+  const { serverUrl, apiKey } = getCredentials();
+  const form = new FormData();
+  form.append('parser_id', String(parserId));
+  form.append('image', image, image.name);
+  form.append('clozes', clozesSvg);
+  // The browser sets the multipart Content-Type, with its boundary
+  const res = await fetch(`${serverUrl}/api/image-occlusions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  await throwIfNotOk(res, 'Save image occlusion');
+  return res.json();
+}
+
+/** A file of a stored image occlusion, by the absolute path a note refers to it by. */
+export async function fetchImageOcclusionFile(path: string): Promise<Blob> {
+  const res = await apiSend('Image occlusion file', `/api/image-occlusions/file?path=${encodeURIComponent(path)}`);
+  return res.blob();
+}
+
+/** The note's image occlusions, in the order they appear in it. */
+export async function listNoteImageOcclusions(noteId: number): Promise<ImageOcclusionData[]> {
+  return apiFetch('Image occlusions', `/api/notes/${noteId}/image-occlusions`);
+}
+
+/** Replaces the clozes of the note's `index`th image occlusion (0 based). The server stores them as
+    new files and updates the note, so its cards follow and the change can be undone. */
+export async function updateNoteImageOcclusion(noteId: number, index: number, clozesSvg: string): Promise<NoteResponse> {
+  const body = await apiFetch<{ notes: NoteResponse[]; event_id: number | null }>(
+    'Save image occlusion',
+    `/api/notes/${noteId}/image-occlusions/${index}`,
+    { method: 'PUT', body: JSON.stringify({ clozes: clozesSvg }) },
+  );
+  return body.notes[0];
 }
 
 export async function postReview(filter?: ReviewFilter): Promise<GetReviewCardResponse | null> {

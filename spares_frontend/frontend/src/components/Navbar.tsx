@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { to: '/tags', label: 'Tags' },
   { to: '/parsers', label: 'Parsers' },
   { to: '/keywords', label: 'Keywords' },
+  { to: '/image-occlusion', label: 'Image Occlusion' },
   { to: '/statistics', label: 'Statistics' },
   { to: '/settings', label: 'Settings' },
 ];
@@ -49,7 +50,6 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
             <Link key={to} to={to} className="navbar-link">{label}</Link>
           )
         )}
-        <a href="/svgedit/src/editor/index.html?storagePrompt=false" className="navbar-link">Image Occlusion Editor</a>
       </div>
       <div className="navbar-actions">
         {extra}

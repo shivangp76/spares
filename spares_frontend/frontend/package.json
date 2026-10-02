@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite",
     "dev-image-occlusion": "SPARES_OPEN='/svgedit/src/editor/index.html?storagePrompt=false' vite",
-    "build": "tsc -b && vite build",
+    "build": "bun run prepare-svgedit && tsc -b && vite build",
+    "prepare-svgedit": "cd ./svgedit/ && bun install && ([ -d packages/svgcanvas/dist ] || npm run build --workspace @svgedit/svgcanvas)",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start-main": "bun install && bun run dev",
-    "start-image-occlusion": "bun install && cd ./svgedit/ && bun install && [ -d packages/svgcanvas/dist ] || npm run build --workspace @svgedit/svgcanvas && cd ../ && bun run dev-image-occlusion"
+    "start-main": "bun install && bun run prepare-svgedit && bun run dev",
+    "start-image-occlusion": "bun install && bun run prepare-svgedit && bun run dev-image-occlusion"
   },
   "dependencies": {
     "@myriaddreamin/typst-ts-renderer": "0.8.0-rc3",
