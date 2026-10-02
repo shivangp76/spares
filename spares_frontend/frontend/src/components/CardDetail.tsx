@@ -8,7 +8,7 @@ import NoteDetail from './NoteDetail';
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', fontWeight: 600 };
-const renderBox: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 4, padding: 16, marginBottom: 12, background: '#fff' };
+const renderBox: React.CSSProperties = { border: '1px solid #ddd', borderRadius: 4, padding: 4, marginBottom: 12, background: '#fff' };
 
 interface Props {
   card: CardResponse;
