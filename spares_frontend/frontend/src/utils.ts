@@ -23,3 +23,11 @@ export function backPath(card: GetReviewCardResponse): string {
   const b = card.card_back_rendered_path;
   return 'CardBack' in b ? b.CardBack : b.Note;
 }
+
+/** Sets or removes the search `q` in `params`, keeping the page to return to when it is cleared. */
+export function withSearch(params: URLSearchParams, q: string | null): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (q === null) next.delete('q');
+  else next.set('q', q);
+  return next;
+}
