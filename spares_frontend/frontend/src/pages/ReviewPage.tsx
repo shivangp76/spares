@@ -21,6 +21,7 @@ import {
 import CardRenderer from '../components/CardRenderer';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
+import { useShowReviewTimer } from '../preferences';
 import {
   STATE_LABELS,
   type GetReviewCardResponse,
@@ -94,6 +95,26 @@ const hiddenSide: React.CSSProperties = { height: 0, overflow: 'hidden', visibil
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
+}
+
+/** When the current card's stopwatches started, and the durations recorded so far (`null` while running). */
+interface Stopwatch { recallStart: number; recallMs: number | null; rateStart: number; rateMs: number | null }
+
+/** Counts the recall time on the front, then the rate time on the back, as they would be submitted. */
+function ReviewTimer({ stopwatch, flipped }: { stopwatch: Stopwatch; flipped: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  const recallMs = stopwatch.recallMs ?? now - stopwatch.recallStart;
+  const rateMs = stopwatch.rateMs ?? now - stopwatch.rateStart;
+  return (
+    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+      Recall {formatDuration(msToSeconds(recallMs))}
+      {flipped && <> · Rate {formatDuration(msToSeconds(rateMs))}</>}
+    </span>
+  );
 }
 
 /** Heuristic mirror of `spares_core::search::query_has_limit`. A false positive only means the snapshot endpoint reports the error. */
@@ -192,6 +213,15 @@ export default function ReviewPage() {
   const recallDuration = useRef<number | null>(null);
   const rateStart = useRef(0);
   const rateDuration = useRef<number | null>(null);
+  // Copied from the refs above whenever they change, for the on-screen timer
+  const [stopwatch, setStopwatch] = useState<Stopwatch | null>(null);
+  const showTimer = useShowReviewTimer();
+  const syncStopwatch = useCallback(() => setStopwatch({
+    recallStart: recallStart.current,
+    recallMs: recallDuration.current,
+    rateStart: rateStart.current,
+    rateMs: rateDuration.current,
+  }), []);
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
@@ -211,12 +241,13 @@ export default function ReviewPage() {
       recallStart.current = Date.now();
       recallDuration.current = null;
       rateDuration.current = null;
+      syncStopwatch();
       setPhase('front');
     } catch (e) {
       setError(String(e));
       setPhase('error');
     }
-  }, []);
+  }, [syncStopwatch]);
 
   const refreshStatistics = useCallback(() => {
     if (!credentials) return Promise.resolve();
@@ -300,12 +331,15 @@ export default function ReviewPage() {
     }
     rateStart.current = Date.now();
     rateDuration.current = null;
+    syncStopwatch();
     setPhase('back');
   }
 
   async function rate(ratingId: number) {
     if (!card || !credentials || recallDuration.current === null) return;
     const rateMs = rateDuration.current ?? Date.now() - rateStart.current;
+    const recallSeconds = msToSeconds(recallDuration.current);
+    const rateSeconds = msToSeconds(rateMs);
     try {
       const res = await submitAction({
         scheduler_name: credentials.schedulerName,
@@ -313,8 +347,8 @@ export default function ReviewPage() {
           Rate: {
             card_id: card.card_id,
             rating: ratingId,
-            recall_duration: msToSeconds(recallDuration.current),
-            rate_duration: msToSeconds(rateMs),
+            recall_duration: recallSeconds,
+            rate_duration: rateSeconds,
             tag_id: tagId,
           },
         },
@@ -323,7 +357,7 @@ export default function ReviewPage() {
       setReviewedCount(c => c + 1);
       lastEventId.current = res.event_id;
       lastActionWasRating.current = true;
-      setStatus(null);
+      setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`);
       loadCard(activeFilter);
     } catch (e) {
       setError(String(e));
@@ -440,6 +474,7 @@ export default function ReviewPage() {
       recallDuration.current = null;
       rateDuration.current = null;
       recallStart.current = Date.now();
+      syncStopwatch();
       setPhase('front');
       return;
     }
@@ -468,6 +503,7 @@ export default function ReviewPage() {
         recallDuration.current = d;
         setSessionRecallMs(ms => ms + d);
       }
+      syncStopwatch();
     }
     setNoteLoading(true);
     try {
@@ -701,6 +737,7 @@ export default function ReviewPage() {
             <span style={{ marginLeft: 'auto' }}>
               Reviewed {reviewedCount} · ~{formatDuration(card.time_estimate)} left
             </span>
+            {showTimer && stopwatch && <ReviewTimer stopwatch={stopwatch} flipped={phase === 'back'} />}
           </div>
 
           {/* Like the CLI, the front is closed when the card is flipped. It stays mounted so undoing
