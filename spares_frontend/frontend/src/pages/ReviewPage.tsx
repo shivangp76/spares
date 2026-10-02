@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createReviewSnapshot,
   forgetCard,
@@ -52,6 +52,14 @@ function queryHasLimit(query: string): boolean {
   return /(^|[\s(])limit\s*=/.test(query);
 }
 
+function initialFilter(params: URLSearchParams): { mode: FilterMode; input: string } {
+  const tagId = params.get('tagId');
+  if (tagId !== null) return { mode: 'tagId', input: tagId };
+  const tagName = params.get('tagName');
+  if (tagName !== null) return { mode: 'tagName', input: tagName };
+  return { mode: 'query', input: params.get('query') ?? '' };
+}
+
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -64,9 +72,11 @@ export default function ReviewPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
 
-  // Filter, resolved once per session like the CLI's `resolve_filtered_tag_id`
-  const [filterMode, setFilterMode] = useState<FilterMode>('query');
-  const [filterInput, setFilterInput] = useState('');
+  // Filter, resolved once per session like the CLI's `resolve_filtered_tag_id`. Prefilled from
+  // `?tagId=`, `?tagName=` or `?query=`, e.g. by a tag's Review link.
+  const [searchParams] = useSearchParams();
+  const [filterMode, setFilterMode] = useState<FilterMode>(() => initialFilter(searchParams).mode);
+  const [filterInput, setFilterInput] = useState(() => initialFilter(searchParams).input);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter | undefined>(undefined);
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
 
