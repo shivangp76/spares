@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { vim } from '@replit/codemirror-vim';
+import { Vim, vim } from '@replit/codemirror-vim';
 import { getNoteRender, renderNote, updateNote } from '../api/client';
 import type { NoteRenderResponse, NoteResponse } from '../types/spares';
 import CardRenderer from './CardRenderer';
@@ -8,6 +8,13 @@ import CardRenderer from './CardRenderer';
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: '#888', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid #eee', borderRadius: 4, fontSize: 13 };
+
+// `:w` saves the note being edited. Ex commands are global, so the editor reaches its note's
+// NoteDetail through a DOM event.
+const VIM_WRITE_EVENT = 'spares-vim-write';
+Vim.defineEx('write', 'w', cm => {
+  cm.cm6.dom.dispatchEvent(new Event(VIM_WRITE_EVENT, { bubbles: true }));
+});
 
 interface Props {
   note: NoteResponse;
@@ -35,6 +42,16 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     );
     return () => { cancelled = true; };
   }, [note.id, renderVersion]);
+
+  // Re-bound on every render so the handler sees the current contents
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const onWrite = () => { if (saveStatus !== 'saving') handleSave(); };
+    root.addEventListener(VIM_WRITE_EVENT, onWrite);
+    return () => root.removeEventListener(VIM_WRITE_EVENT, onWrite);
+  });
 
   async function handleSave() {
     setSaveStatus('saving');
@@ -66,7 +83,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   }
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: '#fafafa' }}>
+    <div ref={rootRef} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: '#fafafa' }}>
       <button
         onClick={onClose}
         style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#666', lineHeight: 1 }}
