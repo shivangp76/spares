@@ -30,6 +30,7 @@ import {
   type ReviewFilter,
   type StatisticsResponse,
 } from '../types/spares';
+import { formatDuration, sectionLabel } from '../utils';
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
@@ -41,7 +42,6 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
 ];
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
-const sectionLabel: React.CSSProperties = { fontSize: 12, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 };
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
@@ -55,21 +55,6 @@ function backPath(card: GetReviewCardResponse): string {
 /** Heuristic mirror of `spares_core::search::query_has_limit`. A false positive only means the snapshot endpoint reports the error. */
 function queryHasLimit(query: string): boolean {
   return /(^|[\s(])limit\s*=/.test(query);
-}
-
-/** Port of the CLI's `format_duration`, e.g. `7d0h0m0s` or `1m30s`. */
-function formatDuration(totalSeconds: number): string {
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts: string[] = [];
-  let started = false;
-  if (days > 0) { parts.push(`${days}d`); started = true; }
-  if (hours > 0 || started) { parts.push(`${hours}h`); started = true; }
-  if (minutes > 0 || started) { parts.push(`${minutes}m`); }
-  parts.push(`${seconds}s`);
-  return parts.join('');
 }
 
 export default function ReviewPage() {
