@@ -108,6 +108,11 @@ async function compileNow(source: string, inputs: Record<string, string>): Promi
   }
 }
 
+/** Loads the compiler and prefetches packages ahead of the first compile, e.g. before a review starts. */
+export function warmUpTypst(): Promise<void> {
+  return init();
+}
+
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
 let queue: Promise<unknown> = Promise.resolve();
 
