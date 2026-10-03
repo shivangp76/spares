@@ -163,6 +163,14 @@ export interface ForgetCardResponse {
 
 export interface UndoEventResponse {
   undone_event_ids: number[];
+  /** The undo events that were appended, oldest first. Pass one to `redoEvent`. */
+  undo_event_ids: number[];
+}
+
+export interface RedoEventResponse {
+  redone_event_ids: number[];
+  /** The redo events that were appended, oldest first. Pass one to `undoEvent`. */
+  redo_event_ids: number[];
 }
 
 export const STATE_LABELS: Record<number, string> = {
