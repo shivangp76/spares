@@ -1,7 +1,6 @@
 # Image Occlusion Utility
 
 Roadmap:
-- Add any missing keyboard shortcuts. Most should already be present.
 - Allow customizing initial fill color, along with other settings, specified in `svgedit/src/editor/index.html`
 - The standalone editor still has its own copy of `spares_core/src/parsers/image_occlusion/template.svg` (the embedded editor gets the server's copy).
 - Allow the CLI to open the standalone editor with a background image preloaded.
@@ -25,6 +24,13 @@ Standalone workflow, for those who only use the CLI:
 - Add markup and clozes to the appropriate layer. Add cloze settings string to clozes, as needed.
 - Click "Save SVG".
 - Navigate to note document and use a snippet to insert the image occlusion.
+
+Keyboard shortcuts specific to image occlusion (hover over a tool for the rest):
+- `1` / `2`: select the Markup / Clozes layer.
+- `Shift+C`: edit the cloze settings of the selected shape. `Enter` or `Escape` returns to the canvas.
+- `Shift+B`: change the background image (standalone only).
+- `V`: select tool. `R`, `E`, `L`, `P`, `Q`, `T`: rectangle, ellipse, line, path, freehand and text tools.
+- `Cmd/Ctrl+Z` to undo. `Cmd+Shift+Z`, `Cmd+Y` or `Ctrl+Y` to redo.
 
 Potentially useful links:
 - <https://github.com/SVG-Edit/svgedit>
