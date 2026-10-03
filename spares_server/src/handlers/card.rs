@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
 use spares_core::api::card::get_card;
+use spares_core::api::card::get_card_reviews;
 use spares_core::api::card::get_cards;
 use spares_core::api::card::get_leeches;
 use spares_core::api::card::list_cards;
@@ -29,6 +30,16 @@ pub(crate) async fn get_card_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(card_res))
+}
+
+pub(crate) async fn get_card_reviews_handler(
+    Path(card_id): Path<i64>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let card_reviews = get_card_reviews(&data.db, card_id)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(card_reviews))
 }
 
 pub(crate) async fn get_cards_handler(
