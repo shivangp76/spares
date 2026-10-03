@@ -6,6 +6,7 @@ use chrono::Utc;
 use rand::RngExt;
 use sqlx::SqlitePool;
 
+use super::utils::retrievability;
 use crate::Error;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
@@ -116,10 +117,8 @@ async fn get_all_cards_internal<'a>(
             continue;
         }
         // Equivalent to `current_retrievability`.
-        let current_retention = rs_fsrs::Parameters::forgetting_curve(
-            current_elapsed_time.num_fractional_days(),
-            card.stability,
-        );
+        let current_retention =
+            retrievability(current_elapsed_time.num_fractional_days(), card.stability);
         assert!(
             !current_retention.is_nan(),
             "card {} in review has stability {}",
@@ -137,7 +136,7 @@ async fn get_all_cards_internal<'a>(
                             + scheduled_time.num_fractional_days() * 0.075,
                     )
                 });
-        let approx_retention_after_postpone = rs_fsrs::Parameters::forgetting_curve(
+        let approx_retention_after_postpone = retrievability(
             approx_elapsed_time_after_postpone.num_fractional_days(),
             card.stability,
         );
@@ -246,7 +245,7 @@ pub async fn move_cards(
             custom_data: None,
         });
 
-        let prev_target_retention = rs_fsrs::Parameters::forgetting_curve(
+        let prev_target_retention = retrievability(
             card_internal
                 .scheduled_time
                 .unwrap_or_else(Duration::zero)
@@ -254,7 +253,7 @@ pub async fn move_cards(
             card_internal.card.stability,
         );
         prev_target_retentions.push(prev_target_retention);
-        let new_target_retention = rs_fsrs::Parameters::forgetting_curve(
+        let new_target_retention = retrievability(
             new_scheduled_time.num_fractional_days(),
             card_internal.card.stability,
         );

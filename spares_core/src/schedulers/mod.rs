@@ -319,7 +319,7 @@ fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
     // NOTE: Add scheduler here
     // Also run: `spares scheduler add --name="NAME"`
     // Schedulers are selected by name via the `--scheduler-name` CLI flag.
-    let all_schedulers: Vec<fn() -> Box<dyn SrsScheduler>> = vec![|| Box::<fsrs::FSRS>::default()];
+    let all_schedulers: Vec<fn() -> Box<dyn SrsScheduler>> = vec![|| Box::<fsrs::Fsrs>::default()];
     all_schedulers
 }
 
