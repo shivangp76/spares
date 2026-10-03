@@ -1062,8 +1062,12 @@ mod forget_tests {
         let src_logs = crate::api::fetch_review_logs_for_replay(&pool, src_id)
             .await
             .unwrap();
-        let from_src = scheduler.compute_memory_state(src_logs).unwrap();
-        let from_dst = scheduler.compute_memory_state(copied).unwrap();
+        let from_src = scheduler
+            .compute_memory_state(src_logs, crate::model::DEFAULT_DESIRED_RETENTION)
+            .unwrap();
+        let from_dst = scheduler
+            .compute_memory_state(copied, crate::model::DEFAULT_DESIRED_RETENTION)
+            .unwrap();
         assert_eq!(from_dst.stability, from_src.stability);
         assert_eq!(from_dst.difficulty, from_src.difficulty);
     }
