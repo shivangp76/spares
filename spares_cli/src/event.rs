@@ -10,6 +10,7 @@ use crate::args::EventCommands;
 use crate::args::RedoArgs;
 use crate::args::UndoArgs;
 use crate::utils::ensure_ok;
+use crate::utils::print_reverted;
 use crate::utils::redo_event;
 use crate::utils::undo_event;
 
@@ -40,7 +41,7 @@ pub(crate) async fn handle(
                 .map_err(|e| miette!("{}", e))?;
             match undo_response_opt {
                 Some(undo_response) => {
-                    println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                    print_reverted("Undone", &undo_response.undone_events);
                 }
                 None => {
                     println!("No event to undo");
@@ -60,7 +61,7 @@ pub(crate) async fn handle(
                 .map_err(|e| miette!("{}", e))?;
             match redo_response_opt {
                 Some(redo_response) => {
-                    println!("Redone event(s): {:?}", redo_response.redone_event_ids);
+                    print_reverted("Redone", &redo_response.redone_events);
                 }
                 None => {
                     println!("No event to redo");

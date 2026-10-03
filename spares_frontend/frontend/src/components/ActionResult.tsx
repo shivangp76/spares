@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { redoEvent, undoEvent } from '../api/client';
+import { describeReverted, redoEvent, undoEvent } from '../api/client';
+import type { EventSummary } from '../types/spares';
 import { RedoIcon, UndoIcon } from './Icons';
 
 export interface ActionOutcome {
@@ -23,26 +24,26 @@ export default function ActionResult({ outcome, onReverted }: { outcome: ActionO
   async function revert() {
     setBusy(true);
     try {
-      const reverted: number[] = [];
+      const reverted: EventSummary[] = [];
       const created: number[] = [];
       // Last first, so each event is reversed on top of the state it produced
       for (const id of [...eventIds].reverse()) {
         if (undone) {
           const res = await redoEvent(id);
           if (res) {
-            reverted.push(...res.redone_event_ids);
+            reverted.push(...res.redone_events);
             created.push(res.redo_event_ids[0]);
           }
         } else {
           const res = await undoEvent(id);
           if (res) {
-            reverted.push(...res.undone_event_ids);
+            reverted.push(...res.undone_events);
             created.push(res.undo_event_ids[0]);
           }
         }
       }
       const verb = undone ? 'Redone' : 'Undone';
-      setStatus(reverted.length ? `${verb} event(s): ${reverted.join(', ')}` : `No event to ${undone ? 'redo' : 'undo'}.`);
+      setStatus(reverted.length ? describeReverted(verb, reverted) : `No event to ${undone ? 'redo' : 'undo'}.`);
       setEventIds(created);
       setUndone(!undone);
       onReverted?.();

@@ -68,6 +68,7 @@ pub(crate) use utils::forget_card;
 use crate::review::utils::note_id_to_cards;
 use crate::review::utils::set_due_date;
 use crate::review::utils::set_due_date_with_prompt;
+use crate::utils::print_reverted;
 use crate::utils::redo_event;
 use crate::utils::undo_event;
 
@@ -1230,7 +1231,7 @@ pub(crate) async fn review_cards(
                     let undo_response_opt = undo_event(base_url, client, request).await?;
                     match undo_response_opt {
                         Some(undo_response) => {
-                            println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                            print_reverted("Undone", &undo_response.undone_events);
                             last_undo = undo_response
                                 .undo_event_ids
                                 .first()
@@ -1269,7 +1270,7 @@ pub(crate) async fn review_cards(
                 };
                 match redo_event(base_url, client, request).await? {
                     Some(redo_response) => {
-                        println!("Redone event(s): {:?}", redo_response.redone_event_ids);
+                        print_reverted("Redone", &redo_response.redone_events);
                         // So that undo reverses exactly this redo
                         last_action_event_id = redo_response.redo_event_ids.first().copied();
                         last_action_was_rating = was_rating;

@@ -14,6 +14,7 @@ use spares_core::parsers::generate_files::CardSide;
 use spares_core::parsers::generate_files::RenderOutputType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_output_raw_dir;
+use spares_core::schema::undo::EventSummary;
 use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::RedoEventResponse;
 use spares_core::schema::undo::UndoEventRequest;
@@ -89,6 +90,18 @@ pub(crate) async fn undo_event(
     let undo_response: Option<UndoEventResponse> =
         response.json().await.map_err(|e| format!("{}", e))?;
     Ok(undo_response)
+}
+
+/// Prints what an undo or redo reversed, e.g. `Undone: Rate card 3 (Good) [event 12]`.
+pub(crate) fn print_reverted(verb: &str, events: &[EventSummary]) {
+    if let [event] = events {
+        println!("{verb}: {} [event {}]", event.description, event.id);
+        return;
+    }
+    println!("{verb} {} events:", events.len());
+    for event in events {
+        println!("  - {} [event {}]", event.description, event.id);
+    }
 }
 
 pub(crate) async fn redo_event(
