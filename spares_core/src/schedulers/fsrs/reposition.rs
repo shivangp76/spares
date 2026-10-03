@@ -61,7 +61,7 @@ fn is_card_safe(d: &CardInternal, action: &MoveCardAction) -> bool {
 }
 
 fn card_sort_key(d: &CardInternal, action: &MoveCardAction) -> (f64, f64) {
-    let result = match action {
+    match action {
         // sort by (1 - elapsed_day / scheduled_day)
         // = 1-ln(current retention)/ln(requested retention), -stability (ascending)
         MoveCardAction::Advance => (
@@ -75,22 +75,7 @@ fn card_sort_key(d: &CardInternal, action: &MoveCardAction) -> (f64, f64) {
                 - 1.),
             -d.card.stability,
         ),
-    };
-    if result.0.is_nan() || result.1.is_nan() {
-        match action {
-            MoveCardAction::Advance => {
-                dbg!(&d.current_retention);
-                dbg!(&d.card.desired_retention);
-                dbg!(&d.card.stability);
-            }
-            MoveCardAction::Postpone => {
-                dbg!(&d.approx_retention_after_postpone);
-                dbg!(&d.card.desired_retention);
-                dbg!(&d.card.stability);
-            }
-        }
     }
-    result
 }
 
 async fn get_all_cards_internal<'a>(
@@ -135,11 +120,12 @@ async fn get_all_cards_internal<'a>(
             current_elapsed_time.num_fractional_days(),
             card.stability,
         );
-        if current_retention.is_nan() {
-            dbg!(&current_elapsed_time);
-            dbg!(&card.stability);
-        }
-        assert!(!current_retention.is_nan());
+        assert!(
+            !current_retention.is_nan(),
+            "card {} in review has stability {}",
+            card.id,
+            card.stability
+        );
 
         // Postpone
         let approx_elapsed_time_after_postpone =
@@ -155,15 +141,6 @@ async fn get_all_cards_internal<'a>(
             approx_elapsed_time_after_postpone.num_fractional_days(),
             card.stability,
         );
-        if approx_retention_after_postpone.is_nan() {
-            dbg!(&card);
-            dbg!(&requested_date);
-            dbg!(&current_elapsed_time.num_fractional_days());
-            dbg!(&scheduled_time.unwrap().num_fractional_days());
-            dbg!(&approx_elapsed_time_after_postpone);
-            dbg!(&approx_elapsed_time_after_postpone.num_fractional_days());
-            dbg!(&card.stability);
-        }
         cards_internal.push(CardInternal {
             card,
             // Advance
@@ -175,9 +152,11 @@ async fn get_all_cards_internal<'a>(
         });
     }
     cards_internal.sort_by(|a, b| {
-        let key_a = card_sort_key(a, action);
-        let key_b = card_sort_key(b, action);
-        key_a.partial_cmp(&key_b).unwrap()
+        let (a_primary, a_secondary) = card_sort_key(a, action);
+        let (b_primary, b_secondary) = card_sort_key(b, action);
+        a_primary
+            .total_cmp(&b_primary)
+            .then(a_secondary.total_cmp(&b_secondary))
     });
     Ok(cards_internal)
 }
