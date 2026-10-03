@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use chrono::Duration;
 use chrono::Local;
+use chrono::NaiveDate;
 use chrono::Utc;
 use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
@@ -17,6 +18,7 @@ use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::review::StatisticsRequest;
+use crate::schema::review::ReviewHistoryResponse;
 use crate::schema::review::StatisticsResponse;
 
 #[allow(clippy::cast_possible_wrap)]
@@ -153,5 +155,21 @@ pub async fn get_statistics(
         due_count_by_date: future_due,
         advance_safe_count,
         postpone_safe_count,
+    })
+}
+
+/// Counts the graded reviews on each local date, for a review heatmap.
+pub async fn get_review_history(db: &SqlitePool) -> Result<ReviewHistoryResponse, Error> {
+    // Reviews of since-deleted cards still count, as they were studied all the same
+    let review_count_by_date: Vec<(NaiveDate, u32)> = sqlx::query_as(
+        r"SELECT date(reviewed_at, 'unixepoch', 'localtime') AS day, COUNT(*) FROM review_log
+          WHERE kind = ? GROUP BY day",
+    )
+    .bind(ReviewLogKind::Review)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(ReviewHistoryResponse {
+        review_count_by_date: review_count_by_date.into_iter().collect(),
     })
 }

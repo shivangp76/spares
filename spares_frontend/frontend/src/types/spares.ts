@@ -198,6 +198,11 @@ export interface StatisticsResponse {
   postpone_safe_count: number;
 }
 
+export interface ReviewHistoryResponse {
+  // Keyed by local `YYYY-MM-DD`, only dates with reviews
+  review_count_by_date: Record<string, number>;
+}
+
 export interface NoteResponse {
   id: number;
   data: string;

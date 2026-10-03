@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  cachedReviewHistory,
   cachedTodayStatistics,
   createReviewSnapshot,
   describeReverted,
@@ -9,6 +10,7 @@ import {
   getNote,
   getReviewCardById,
   getReviewConfig,
+  getReviewHistory,
   getSchedulerRatings,
   getTagByName,
   getTodayStatistics,
@@ -23,6 +25,7 @@ import {
 import CardRenderer from '../components/CardRenderer';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
+import ReviewHeatmap from '../components/ReviewHeatmap';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -35,6 +38,7 @@ import {
   type Rating,
   type ReviewConfig,
   type ReviewFilter,
+  type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
 import { backPath, formatDuration, sectionLabel } from '../utils';
@@ -158,6 +162,7 @@ export default function ReviewPage() {
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(
     () => (credentials && cachedTodayStatistics(credentials.schedulerName)) ?? null,
   );
+  const [history, setHistory] = useState<ReviewHistoryResponse | null>(() => cachedReviewHistory() ?? null);
   // The back is rendered hidden once the front is done, so Show Answer only has to reveal it
   const [frontRendered, setFrontRendered] = useState(false);
   const onFrontRendered = useCallback(() => setFrontRendered(true), []);
@@ -235,6 +240,7 @@ export default function ReviewPage() {
 
   const refreshStatistics = useCallback(() => {
     if (!credentials) return Promise.resolve();
+    getReviewHistory().then(setHistory).catch(console.error);
     return getTodayStatistics(credentials.schedulerName).then(setStatistics).catch(console.error);
   }, [credentials]);
 
@@ -715,6 +721,11 @@ export default function ReviewPage() {
             <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.
             </p>
+          )}
+          {history && (
+            <div style={{ marginTop: 40 }}>
+              <ReviewHeatmap counts={history.review_count_by_date} />
+            </div>
           )}
         </div>
       )}
