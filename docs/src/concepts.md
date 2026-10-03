@@ -67,3 +67,13 @@ specific_dates = ["2026-12-25"]
 ```
 
 Cards are only moved within their range, so these settings shift reviews by a few days at most. Cards in learning steps and cards due sooner than `minimum_interval` keep the interval FSRS gave them. If the settings rule out every day in the range, sibling dispersal is ignored first, and then the rest.
+
+Changing these settings, the learning steps, or the scheduler only affects cards as they are next rated. To apply the change to every card now, run:
+
+```sh
+spares card reschedule
+```
+
+This replays each card's review history to recompute its memory state, then places it again with the settings above. Suspended and buried cards are included and keep their state. It cannot be undone, so it asks for confirmation (skip it with `--yes`).
+
+It always reschedules every card; there is no `--query`. Cards are placed one at a time, each seeing the due dates already given to the others, so rescheduling only some of them would leave the load spread across days unbalanced.

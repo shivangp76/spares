@@ -297,6 +297,9 @@ pub(crate) enum CardCommands {
     Advance(AdvanceArgs),
     /// Postpone cards (delay reviews)
     Postpone(PostponeArgs),
+    /// Recompute every card's memory state and due date from its review history (run after
+    /// changing the scheduler, its parameters, learning steps or easy days)
+    Reschedule(RescheduleArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
     /// Unbury all cards
@@ -430,6 +433,18 @@ pub(crate) struct PostponeArgs {
     pub(crate) scheduler_name: String,
     #[arg(short, long)]
     pub(crate) query: Option<String>,
+}
+
+// There is no `--query`: rescheduling places cards one at a time against the due dates of every
+// other card, so rescheduling only some of them would leave the load spread across days
+// unbalanced. Settings also apply to all cards, so all cards are rescheduled.
+#[derive(Args, Debug)]
+pub(crate) struct RescheduleArgs {
+    #[arg(short, long, default_value = "fsrs")]
+    pub(crate) scheduler_name: String,
+    /// Skip the confirmation prompt
+    #[arg(short, long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args, Debug)]
