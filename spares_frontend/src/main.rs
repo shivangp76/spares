@@ -9,6 +9,9 @@ use spares_core::api::image_occlusion::get_image_occlusion_editor_config;
 struct Args {
     #[arg(long)]
     image_occlusion: bool,
+    /// Image to open the image occlusion editor with, as its background
+    #[arg(long, requires = "image_occlusion")]
+    image: Option<PathBuf>,
 }
 
 fn main() {
@@ -33,6 +36,18 @@ fn main() {
             "SPARES_IMAGE_OCCLUSION_EDITOR_CONFIG",
             serde_json::to_string(&config).expect("The config serializes"),
         );
+    }
+    if let Some(image) = &args.image {
+        // The dev server runs elsewhere, so it is given an absolute path
+        let image = image
+            .canonicalize()
+            .ok()
+            .filter(|image| image.is_file())
+            .unwrap_or_else(|| {
+                eprintln!("No image at {}", image.display());
+                exit(1);
+            });
+        command.env("SPARES_IMAGE_OCCLUSION_BACKGROUND", image);
     }
     let status = command.status().expect("Failed to start npm process");
 
