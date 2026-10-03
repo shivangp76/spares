@@ -247,6 +247,10 @@ pub struct SparesExternalConfig {
     /// in review with a short interval instead.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub relearning_steps: Vec<Duration>,
+    /// The FSRS model's parameters: 21 for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5. Empty to
+    /// use the FSRS-6 defaults. `spares card optimize --apply` sets these from your review
+    /// history.
+    pub fsrs_parameters: Vec<f32>,
     /// Spread reviews so that each day has a similar number of cards due, in proportion to its
     /// easy-day workload percentage.
     pub load_balance: bool,
@@ -272,6 +276,7 @@ impl Default for SparesExternalConfig {
             flagged_tag_name: "flagged".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],
+            fsrs_parameters: Vec::new(),
             load_balance: true,
             disperse_siblings: true,
             easy_days: EasyDaysConfig::default(),
@@ -303,6 +308,12 @@ impl SparesExternalConfig {
             if !steps.is_sorted_by(|a, b| a < b) {
                 return Err(format!("`{name}` must be in increasing order."));
             }
+        }
+        if fsrs_rs::check_and_fill_parameters(&self.fsrs_parameters).is_err() {
+            return Err(format!(
+                "`fsrs_parameters` must be empty or 17, 19 or 21 finite numbers, not {} values.",
+                self.fsrs_parameters.len()
+            ));
         }
         if self.easy_days.enabled == Some(false) && self.load_balance {
             log::warn!(
@@ -421,6 +432,40 @@ fn get_external_config_file() -> PathBuf {
     config_file_path
 }
 
+/// Sets `fsrs_parameters` in the config file, leaving the rest of the file, comments included, as
+/// it is.
+pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
+    let config_file_path = get_external_config_file();
+    if !config_file_path.exists() {
+        write_external_config(&SparesExternalConfig::default())?;
+    }
+    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
+        description: format!("Failed to read {}.", config_file_path.display()),
+        source: e,
+    })?;
+    let new_contents = set_fsrs_parameters(&file_contents, parameters)?;
+    write(&config_file_path, new_contents).map_err(|e| Error::Io {
+        description: "Failed to write config".to_string(),
+        source: e,
+    })?;
+    Ok(())
+}
+
+fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String, Error> {
+    let mut doc = file_contents
+        .parse::<DocumentMut>()
+        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+    // Through the shortest decimal that reads back as the same `f32`, so that `0.212` is not
+    // written as `0.21199999749660492`.
+    let array = parameters
+        .iter()
+        .map(|parameter| parameter.to_string().parse::<f64>().unwrap())
+        .collect::<toml_edit::Array>();
+    // Top-level keys must come before the first table, which `insert` takes care of.
+    doc.insert("fsrs_parameters", toml_edit::value(array));
+    Ok(doc.to_string())
+}
+
 // The `toml_edit` package was used in place of `confy` since `confy` does not support default values when serializing. For example, if a user had an existing config file and then `spares` was changed to add a new config key, deserialization would fail since a key was missing and not defaulted.
 pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     let config_file_path = get_external_config_file();
@@ -509,6 +554,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fsrs_parameters_are_validated() {
+        assert_eq!(parse("").fsrs_parameters, Vec::<f32>::new());
+        let defaults = fsrs_rs::DEFAULT_PARAMETERS
+            .iter()
+            .map(|parameter| parameter.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(
+            parse(&format!("fsrs_parameters = [{defaults}]"))
+                .fsrs_parameters
+                .len(),
+            21
+        );
+        for invalid in ["fsrs_parameters = [1.0, 2.0]", "fsrs_parameters = [nan]"] {
+            let mut config: SparesExternalConfig = toml_edit::de::from_str(invalid).unwrap();
+            assert!(config.validate().is_err(), "{invalid} must be rejected");
+        }
+    }
+
+    #[test]
+    fn setting_fsrs_parameters_keeps_the_rest_of_the_file() {
+        let original = indoc::indoc! {r"
+            # My settings
+            load_balance = false # keep this
+
+            [leech]
+            lapses_threshold = 4
+        "};
+        let parameters = fsrs_rs::DEFAULT_PARAMETERS.to_vec();
+        let written = set_fsrs_parameters(original, &parameters).unwrap();
+        assert!(written.contains("# My settings"), "{written}");
+        assert!(written.contains("# keep this"), "{written}");
+        let config = parse(&written);
+        assert!(!config.load_balance);
+        assert_eq!(config.leech.lapses_threshold, 4);
+        assert_eq!(config.fsrs_parameters, parameters);
+
+        // Setting them again replaces them rather than adding a second key.
+        let rewritten = set_fsrs_parameters(&written, &parameters[..19]).unwrap();
+        assert_eq!(parse(&rewritten).fsrs_parameters, parameters[..19]);
+    }
+
     /// The example in `docs/src/concepts.md`.
     #[test]
     fn documented_scheduling_example_parses() {
@@ -517,6 +605,7 @@ mod tests {
             relearning_steps = [600]    # 10 minutes
             load_balance = true
             disperse_siblings = true
+            fsrs_parameters = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
 
             [easy_days]
             days_to_workload_percentage = { Mon = 1.0, Tue = 1.0, Wed = 1.0, Thu = 1.0, Fri = 1.0, Sat = 1.0, Sun = 0.5 }
@@ -526,6 +615,7 @@ mod tests {
             config.easy_days.specific_dates,
             [NaiveDate::from_ymd_opt(2026, 12, 25).unwrap()].into()
         );
+        assert_eq!(config.fsrs_parameters.len(), 21);
         let workload = &config.easy_days.days_to_workload_percentage;
         assert!((workload[&Weekday::Sun] * 2.0 - workload[&Weekday::Mon]).abs() < 1e-9);
     }

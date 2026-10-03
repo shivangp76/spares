@@ -50,16 +50,6 @@ See our [Getting Started Guide](https://github.com/shivangp76/spares/blob/main/d
 - [Workflows](https://github.com/shivangp76/spares/blob/main/docs/src/workflows.md)
 - [Comparison with Anki](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md)
 
-## Roadmap
-
-- Add FSRS optimizer: <https://github.com/open-spaced-repetition/fsrs-rs>
-    - `optimal_retention::simulate()`
-    - `training.compute_parameters()`
-    - Optimizing parameters improves performance by ~40% <https://github.com/open-spaced-repetition/go-fsrs/issues/19#issuecomment-2414421494>
-    - <https://github.com/open-spaced-repetition/fsrs-browser>
-- Improve documentation coverage
-- Todos in code
-
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](https://github.com/shivangp76/spares/blob/main/docs/src/contributing.md) for details.
@@ -69,5 +59,4 @@ We welcome contributions! Please see our [Contributing Guide](https://github.com
 This project is licensed under either of:
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
-
 at your option.
