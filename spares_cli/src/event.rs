@@ -2,12 +2,15 @@ use miette::Error;
 use miette::miette;
 use reqwest::Client;
 use spares_core::schema::undo::LatestEventResponse;
+use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::UndoEventRequest;
 
 use crate::args::EventArgs;
 use crate::args::EventCommands;
+use crate::args::RedoArgs;
 use crate::args::UndoArgs;
 use crate::utils::ensure_ok;
+use crate::utils::redo_event;
 use crate::utils::undo_event;
 
 pub(crate) async fn handle(
@@ -41,6 +44,26 @@ pub(crate) async fn handle(
                 }
                 None => {
                     println!("No event to undo");
+                }
+            }
+        }
+        EventCommands::Redo(RedoArgs {
+            event_id,
+            redo_group,
+        }) => {
+            let request = RedoEventRequest {
+                event_id,
+                redo_group,
+            };
+            let redo_response_opt = redo_event(base_url, client, request)
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            match redo_response_opt {
+                Some(redo_response) => {
+                    println!("Redone event(s): {:?}", redo_response.redone_event_ids);
+                }
+                None => {
+                    println!("No event to redo");
                 }
             }
         }

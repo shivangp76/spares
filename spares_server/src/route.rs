@@ -68,6 +68,7 @@ use crate::handlers::tag::list_tags_handler;
 use crate::handlers::tag::rebuild_tag_handler;
 use crate::handlers::tag::update_tag_handler;
 use crate::handlers::undo::get_latest_note_event_id_handler;
+use crate::handlers::undo::redo_event_handler;
 use crate::handlers::undo::undo_event_handler;
 
 fn image_occlusion_routes() -> Router<Arc<AppState>> {
@@ -184,6 +185,7 @@ pub(crate) fn create_router(
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))
+        .route("/api/redo", post(redo_event_handler))
         .merge(image_occlusion_routes())
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),

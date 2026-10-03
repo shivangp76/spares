@@ -474,6 +474,17 @@ pub(crate) struct UndoArgs {
 }
 
 #[derive(Args, Debug)]
+pub(crate) struct RedoArgs {
+    /// Undo event ID to redo. If not provided, redoes the latest undo, unless an action was taken
+    /// after it.
+    #[arg(short, long)]
+    pub(crate) event_id: Option<i64>,
+    /// If true, redo all undo events in the same group as the specified event
+    #[arg(short, long, default_value_t = false)]
+    pub(crate) redo_group: bool,
+}
+
+#[derive(Args, Debug)]
 pub(crate) struct KeywordArgs {
     #[command(subcommand)]
     pub(crate) command: KeywordCommands,
@@ -491,6 +502,8 @@ pub(crate) enum EventCommands {
     Latest,
     /// Undo an event
     Undo(UndoArgs),
+    /// Redo an undone event
+    Redo(RedoArgs),
 }
 
 #[derive(Debug, Subcommand)]
