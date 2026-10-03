@@ -1063,10 +1063,18 @@ mod forget_tests {
             .await
             .unwrap();
         let from_src = scheduler
-            .compute_memory_state(src_logs, crate::model::DEFAULT_DESIRED_RETENTION)
+            .compute_memory_state(
+                &crate::config::SparesExternalConfig::default(),
+                src_logs,
+                crate::model::DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         let from_dst = scheduler
-            .compute_memory_state(copied, crate::model::DEFAULT_DESIRED_RETENTION)
+            .compute_memory_state(
+                &crate::config::SparesExternalConfig::default(),
+                copied,
+                crate::model::DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert_eq!(from_dst.stability, from_src.stability);
         assert_eq!(from_dst.difficulty, from_src.difficulty);

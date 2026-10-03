@@ -86,8 +86,13 @@ pub trait SrsScheduler: Send + Sync {
     ) -> Vec<Vec<(RatingSubmission, DateTime<Utc>)>>;
 
     /// Note that `RatingId` is used instead of a general `Rating` enum to support different schedulers having different options. For example, FSRS has 4 ratings (Again, Hard, Good, Easy), but another scheduler might just have 2, such as Pass and Fail.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the fields of one review, plus the config"
+    )]
     fn schedule(
         &self,
+        config: &SparesExternalConfig,
         card: &Card,
         previous_review_log: Option<ReviewLog>,
         rating: RatingId,
@@ -167,7 +172,7 @@ pub trait SrsScheduler: Send + Sync {
         cards_with_review_logs.iter_mut().try_for_each(
             |(card, review_logs)| -> Result<(), Error> {
                 let new_card =
-                    self.compute_memory_state(review_logs.clone(), card.desired_retention)?;
+                    self.compute_memory_state(config, review_logs.clone(), card.desired_retention)?;
                 card.stability = new_card.stability;
                 card.difficulty = new_card.difficulty;
                 card.state = new_card.state;
@@ -231,6 +236,7 @@ pub trait SrsScheduler: Send + Sync {
     /// memory state, but it does decide the due date of the returned card.
     fn compute_memory_state(
         &self,
+        config: &SparesExternalConfig,
         review_logs: Vec<ReviewLog>,
         desired_retention: f64,
     ) -> Result<Card, Error> {
@@ -280,6 +286,7 @@ pub trait SrsScheduler: Send + Sync {
                     let rate_duration =
                         Duration::new(review_log.rate_duration.unwrap_or(0), 0).unwrap();
                     let (new_card, new_review_log) = self.schedule(
+                        config,
                         &card,
                         previous_review_log,
                         rating,
@@ -418,6 +425,7 @@ mod tests {
         let scheduler = scheduler();
         let reviewed = scheduler
             .compute_memory_state(
+                &SparesExternalConfig::default(),
                 vec![review_at(0, 3), review_at(1, 3), review_at(2, 4)],
                 DEFAULT_DESIRED_RETENTION,
             )
@@ -426,6 +434,7 @@ mod tests {
 
         let forgotten = scheduler
             .compute_memory_state(
+                &SparesExternalConfig::default(),
                 vec![
                     review_at(0, 3),
                     review_at(1, 3),
@@ -447,6 +456,7 @@ mod tests {
         // A card with history, forgotten, then reviewed once.
         let after_forget = scheduler
             .compute_memory_state(
+                &SparesExternalConfig::default(),
                 vec![
                     review_at(0, 3),
                     review_at(1, 3),
@@ -459,7 +469,11 @@ mod tests {
             .unwrap();
         // The same single review against a card that never had any history.
         let from_scratch = scheduler
-            .compute_memory_state(vec![review_at(4, 3)], DEFAULT_DESIRED_RETENTION)
+            .compute_memory_state(
+                &SparesExternalConfig::default(),
+                vec![review_at(4, 3)],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert_eq!(after_forget.stability, from_scratch.stability);
         assert_eq!(after_forget.difficulty, from_scratch.difficulty);
@@ -479,6 +493,7 @@ mod tests {
         // nothing to the resulting interval.
         let after_forget = scheduler
             .compute_memory_state(
+                &SparesExternalConfig::default(),
                 vec![
                     review_at(0, 3),
                     review_at(1, 3),
@@ -490,7 +505,11 @@ mod tests {
             )
             .unwrap();
         let from_scratch = scheduler
-            .compute_memory_state(vec![review_at(40, 3)], DEFAULT_DESIRED_RETENTION)
+            .compute_memory_state(
+                &SparesExternalConfig::default(),
+                vec![review_at(40, 3)],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert_eq!(
             after_forget.due, from_scratch.due,
@@ -504,7 +523,11 @@ mod tests {
         // A card forgotten before it was ever reviewed: the fold is seeded from the marker, so the
         // card is created at that instant rather than at the epoch.
         let card = scheduler
-            .compute_memory_state(vec![forget_at(7)], DEFAULT_DESIRED_RETENTION)
+            .compute_memory_state(
+                &SparesExternalConfig::default(),
+                vec![forget_at(7)],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert_eq!(card.stability, 0.0);
         assert_eq!(card.state, NEW_CARD_STATE);
@@ -518,7 +541,11 @@ mod tests {
         broken.rating = None;
         assert!(
             scheduler
-                .compute_memory_state(vec![broken], DEFAULT_DESIRED_RETENTION)
+                .compute_memory_state(
+                    &SparesExternalConfig::default(),
+                    vec![broken],
+                    DEFAULT_DESIRED_RETENTION
+                )
                 .is_err()
         );
     }

@@ -238,6 +238,15 @@ pub struct SparesExternalConfig {
     pub minimum_interval: Duration,
     pub new_cards_daily_limit: u32,
     pub flagged_tag_name: String,
+    /// Delays between the same-day reviews of a new card before it graduates to review, in
+    /// seconds. Each must be shorter than a day, in increasing order. Empty to graduate on the
+    /// first answer.
+    #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
+    pub learning_steps: Vec<Duration>,
+    /// Like [`Self::learning_steps`], for a card in review that was forgotten. Empty to keep it
+    /// in review with a short interval instead.
+    #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
+    pub relearning_steps: Vec<Duration>,
     /// Spread reviews so that each day has a similar number of cards due, in proportion to its
     /// easy-day workload percentage.
     pub load_balance: bool,
@@ -261,6 +270,8 @@ impl Default for SparesExternalConfig {
             minimum_interval: Duration::days(2),
             new_cards_daily_limit: 20,
             flagged_tag_name: "flagged".to_string(),
+            learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
+            relearning_steps: vec![Duration::minutes(10)],
             load_balance: true,
             disperse_siblings: true,
             easy_days: EasyDaysConfig::default(),
@@ -276,6 +287,23 @@ impl Default for SparesExternalConfig {
 
 impl SparesExternalConfig {
     pub(crate) fn validate(&mut self) -> Result<(), String> {
+        for (name, steps) in [
+            ("learning_steps", &self.learning_steps),
+            ("relearning_steps", &self.relearning_steps),
+        ] {
+            if steps
+                .iter()
+                .any(|step| *step <= Duration::zero() || *step >= Duration::days(1))
+            {
+                return Err(format!(
+                    "Each of `{name}` must be longer than 0 seconds and shorter than a day. \
+                     Longer intervals are FSRS's to choose."
+                ));
+            }
+            if !steps.is_sorted_by(|a, b| a < b) {
+                return Err(format!("`{name}` must be in increasing order."));
+            }
+        }
         if self.easy_days.enabled == Some(false) && self.load_balance {
             log::warn!(
                 "`easy_days.enabled` is deprecated. Replace `enabled = false` with \
@@ -465,10 +493,28 @@ mod tests {
         assert!(written.contains("load_balance = false"), "{written}");
     }
 
+    #[test]
+    fn learning_steps_are_validated() {
+        let steps = parse("learning_steps = [30, 600, 3600]\nrelearning_steps = []\n");
+        assert_eq!(steps.learning_steps[1], Duration::minutes(10));
+        assert_eq!(steps.relearning_steps, Vec::<Duration>::new());
+        for invalid in [
+            "learning_steps = [0]",
+            "learning_steps = [86400]",
+            "learning_steps = [600, 60]",
+            "relearning_steps = [600, 600]",
+        ] {
+            let mut config: SparesExternalConfig = toml_edit::de::from_str(invalid).unwrap();
+            assert!(config.validate().is_err(), "{invalid} must be rejected");
+        }
+    }
+
     /// The example in `docs/src/concepts.md`.
     #[test]
     fn documented_scheduling_example_parses() {
         let config = parse(indoc::indoc! {r#"
+            learning_steps = [60, 600]  # 1 and 10 minutes
+            relearning_steps = [600]    # 10 minutes
             load_balance = true
             disperse_siblings = true
 
