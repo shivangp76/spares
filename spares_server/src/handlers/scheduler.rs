@@ -5,9 +5,12 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use chrono::Utc;
 use serde::Deserialize;
 use spares_core::api::scheduler::get_scheduler_ratings;
+use spares_core::api::scheduler::optimize_scheduler;
 use spares_core::api::scheduler::resolve_rating_from_score;
+use spares_core::schema::review::OptimizeRequest;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -40,5 +43,16 @@ pub(crate) async fn get_rating_from_score_handler(
         ));
     }
     let res = resolve_rating_from_score(name.as_str(), query.score).map_err(error_to_response)?;
+    Ok(Json(res))
+}
+
+pub(crate) async fn optimize_scheduler_handler(
+    Path(name): Path<String>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<OptimizeRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let res = optimize_scheduler(&data.db, name.as_str(), body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
     Ok(Json(res))
 }

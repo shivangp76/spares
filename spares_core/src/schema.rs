@@ -582,6 +582,39 @@ pub mod review {
         pub description: String,
     }
 
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct OptimizeRequest {
+        /// Save the optimized parameters if they predict the review history better than the
+        /// current ones, then reschedule every card with them.
+        #[serde(default)]
+        pub apply: bool,
+    }
+
+    /// How well a set of parameters predicts the review history. Lower is better for both.
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+    pub struct ParametersEvaluation {
+        /// The log loss of the predicted recall probabilities against what was recalled.
+        pub log_loss: f32,
+        /// The root mean square error between the predicted and the actual recall rate, over
+        /// reviews binned by their history.
+        pub rmse_bins: f32,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct OptimizeResponse {
+        /// The cards whose history was used.
+        pub card_count: usize,
+        /// The reviews the parameters were fitted to: those on a later day than the card's
+        /// previous review.
+        pub review_count: usize,
+        pub current_parameters: Vec<f32>,
+        pub current: ParametersEvaluation,
+        pub optimized_parameters: Vec<f32>,
+        pub optimized: ParametersEvaluation,
+        /// Whether the optimized parameters were saved and every card rescheduled.
+        pub applied: bool,
+    }
+
     #[serde_with::serde_as]
     #[derive(Debug, Deserialize, Serialize)]
     pub struct RatingSubmission {

@@ -68,7 +68,7 @@ specific_dates = ["2026-12-25"]
 
 Cards are only moved within their range, so these settings shift reviews by a few days at most. Cards in learning steps and cards due sooner than `minimum_interval` keep the interval FSRS gave them. If the settings rule out every day in the range, sibling dispersal is ignored first, and then the rest.
 
-Changing these settings, the learning steps, or the scheduler only affects cards as they are next rated. To apply the change to every card now, run:
+Changing these settings, the learning steps, the FSRS parameters, or the scheduler only affects cards as they are next rated. To apply the change to every card now, run:
 
 ```sh
 spares card reschedule
@@ -77,3 +77,29 @@ spares card reschedule
 This replays each card's review history to recompute its memory state, then places it again with the settings above. Suspended and buried cards are included and keep their state. It cannot be undone, so it asks for confirmation (skip it with `--yes`).
 
 It always reschedules every card; there is no `--query`. Cards are placed one at a time, each seeing the due dates already given to the others, so rescheduling only some of them would leave the load spread across days unbalanced.
+
+### Optimizing FSRS parameters
+
+FSRS starts with default parameters fitted to many people's reviews. Once you have a few hundred reviews, parameters fitted to your own history usually predict your memory better:
+
+```sh
+spares card optimize
+```
+
+This fits the parameters to your review log and prints them next to two measures of how well each set predicts the reviews you actually did, where lower is better: the log loss, and the RMSE between predicted and actual recall rates. Only reviews on a later day than the card's previous review count, and cards whose history was cut short by an import are skipped. It does not change anything.
+
+To save the new parameters and reschedule every card with them, run:
+
+```sh
+spares card optimize --apply
+```
+
+They are saved only if they predict your reviews better than the current ones. Like `spares card reschedule`, this cannot be undone, so it asks for confirmation (skip it with `--yes`). Optimizing again every month or so keeps the parameters in step with your history.
+
+The parameters are stored in `config.toml` and can also be set by hand. Leave the list empty to use the defaults:
+
+```toml
+fsrs_parameters = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
+```
+
+Parameters from Anki work too, including 19 values from FSRS-5 or 17 from FSRS-4.5. Run `spares card reschedule` after changing them by hand.

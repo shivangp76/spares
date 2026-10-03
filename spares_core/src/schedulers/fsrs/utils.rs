@@ -2,8 +2,13 @@ use std::cmp;
 
 use chrono::Duration;
 use fsrs_rs::DEFAULT_PARAMETERS;
+use fsrs_rs::FSRS;
 use fsrs_rs::MemoryState;
 
+use crate::Error;
+use crate::LibraryError;
+use crate::SchedulerErrorKind;
+use crate::config::SparesExternalConfig;
 use crate::helpers::FractionalDays;
 use crate::model::RatingId;
 use crate::model::StateId;
@@ -66,9 +71,26 @@ pub fn state_to_number(state: State) -> StateId {
     }
 }
 
-/// The probability of recalling a card with `stability` after `elapsed_days`, using the default
-/// parameters' forgetting curve.
-pub fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
+/// The FSRS model with the configured parameters, or the defaults if none are configured.
+pub fn model(config: &SparesExternalConfig) -> Result<FSRS, Error> {
+    FSRS::new(&config.fsrs_parameters).map_err(|e| {
+        Error::Library(LibraryError::Scheduler(SchedulerErrorKind::InvalidInput(
+            format!("invalid `fsrs_parameters`: {e:?}"),
+        )))
+    })
+}
+
+/// The forgetting curve's decay under the configured parameters, clipped like the model clips
+/// it.
+pub fn decay(config: &SparesExternalConfig) -> f32 {
+    fsrs_rs::check_and_fill_parameters(&config.fsrs_parameters)
+        .map_or(DEFAULT_PARAMETERS[20], |parameters| parameters[20])
+        .clamp(0.1, 0.8)
+}
+
+/// The probability of recalling a card with `stability` after `elapsed_days`, on the forgetting
+/// curve with `decay`.
+pub fn retrievability(elapsed_days: f64, stability: f64, decay: f32) -> f64 {
     let memory_state = MemoryState {
         stability: stability as f32,
         // Not used by the forgetting curve.
@@ -77,7 +99,7 @@ pub fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
     f64::from(fsrs_rs::current_retrievability(
         memory_state,
         elapsed_days as f32,
-        DEFAULT_PARAMETERS[20],
+        decay,
     ))
 }
 

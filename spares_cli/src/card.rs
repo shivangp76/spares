@@ -8,6 +8,8 @@ use spares_core::schema::card::GetLeechesRequest;
 use spares_core::schema::card::UnburyRequest;
 use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
+use spares_core::schema::review::OptimizeRequest;
+use spares_core::schema::review::OptimizeResponse;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::review::StudyAction;
@@ -18,6 +20,7 @@ use crate::args::AdvanceArgs;
 use crate::args::CardArgs;
 use crate::args::CardCommands;
 use crate::args::ForgetCardArgs;
+use crate::args::OptimizeArgs;
 use crate::args::PostponeArgs;
 use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
@@ -205,6 +208,31 @@ pub(crate) async fn handle(
             let _ = ensure_ok(response).await?;
             println!("Rescheduled all cards.");
         }
+        CardCommands::Optimize(OptimizeArgs {
+            scheduler_name,
+            apply,
+            yes,
+        }) => {
+            if apply && !yes {
+                let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card, which cannot be undone. Are you sure you want to continue?";
+                let ans = Confirm::new(prompt).with_default(false).prompt();
+                if !ans.unwrap_or(false) {
+                    return Ok(());
+                }
+            }
+            println!("Optimizing. This can take a minute on a large collection.");
+            let url = format!("{}/api/scheduler/{}/optimize", base_url, scheduler_name);
+            let response = client
+                .post(&url)
+                .json(&OptimizeRequest { apply })
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let response = ensure_ok(response).await?;
+            let optimized: OptimizeResponse =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            print_optimize_response(&optimized, apply);
+        }
         CardCommands::Forget(ForgetCardArgs { ids, query }) => {
             let card_ids = if let Some(ids_vec) = ids {
                 ids_vec
@@ -272,4 +300,40 @@ pub(crate) async fn handle(
         }
     }
     Ok(())
+}
+
+fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
+    println!(
+        "Fitted to {} reviews of {} cards. Lower is better:",
+        response.review_count, response.card_count
+    );
+    println!("{:<12}{:>10}{:>10}", "", "Log loss", "RMSE");
+    for (name, evaluation) in [
+        ("Current", &response.current),
+        ("Optimized", &response.optimized),
+    ] {
+        println!(
+            "{:<12}{:>10.4}{:>9.2}%",
+            name,
+            evaluation.log_loss,
+            evaluation.rmse_bins * 100.0
+        );
+    }
+    let parameters = response
+        .optimized_parameters
+        .iter()
+        .map(|parameter| parameter.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("\nfsrs_parameters = [{}]\n", parameters);
+    let better = response.optimized.log_loss < response.current.log_loss;
+    if response.applied {
+        println!("Saved the optimized parameters to the config and rescheduled all cards.");
+    } else if !better {
+        println!(
+            "Kept the current parameters: the optimized ones do not predict your reviews better."
+        );
+    } else if !apply {
+        println!("Run with `--apply` to save them and reschedule every card.");
+    }
 }

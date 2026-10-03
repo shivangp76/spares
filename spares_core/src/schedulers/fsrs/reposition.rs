@@ -6,10 +6,12 @@ use chrono::Utc;
 use rand::RngExt;
 use sqlx::SqlitePool;
 
+use super::utils::decay;
 use super::utils::retrievability;
 use crate::Error;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::config::SparesExternalConfig;
 use crate::helpers::FractionalDays;
 use crate::helpers::mean;
 use crate::model::Card;
@@ -39,8 +41,9 @@ pub async fn get_safe_cards<'a>(
     cards: &'a [Card],
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
+    decay: f32,
 ) -> Result<Vec<CardInternal<'a>>, Error> {
-    let cards_internal = get_all_cards_internal(db, cards, action, requested_date).await?;
+    let cards_internal = get_all_cards_internal(db, cards, action, requested_date, decay).await?;
     let safe_cards = cards_internal
         .into_iter()
         .filter(|x| is_card_safe(x, action))
@@ -84,6 +87,7 @@ async fn get_all_cards_internal<'a>(
     cards: &'a [Card],
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
+    decay: f32,
 ) -> Result<Vec<CardInternal<'a>>, Error> {
     let mut cards_internal = Vec::new();
     for card in cards {
@@ -117,8 +121,11 @@ async fn get_all_cards_internal<'a>(
             continue;
         }
         // Equivalent to `current_retrievability`.
-        let current_retention =
-            retrievability(current_elapsed_time.num_fractional_days(), card.stability);
+        let current_retention = retrievability(
+            current_elapsed_time.num_fractional_days(),
+            card.stability,
+            decay,
+        );
         assert!(
             !current_retention.is_nan(),
             "card {} in review has stability {}",
@@ -139,6 +146,7 @@ async fn get_all_cards_internal<'a>(
         let approx_retention_after_postpone = retrievability(
             approx_elapsed_time_after_postpone.num_fractional_days(),
             card.stability,
+            decay,
         );
         cards_internal.push(CardInternal {
             card,
@@ -163,16 +171,17 @@ async fn get_all_cards_internal<'a>(
 // DB is used to:
 // 1. get latest review log for each card
 // 2. update card with new due date
+#[expect(clippy::too_many_lines)]
 pub async fn move_cards(
     db: &SqlitePool,
     count: u32,
     cards: &[Card],
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
-    minimum_interval: Duration,
-    maximum_interval: Duration,
+    config: &SparesExternalConfig,
 ) -> Result<MoveCardsResult, Error> {
-    let cards_internal = get_all_cards_internal(db, cards, action, requested_date).await?;
+    let decay = decay(config);
+    let cards_internal = get_all_cards_internal(db, cards, action, requested_date, decay).await?;
     let (mut safe_cards, not_safe_cards): (Vec<_>, Vec<_>) = cards_internal
         .into_iter()
         .partition(|x| is_card_safe(x, action));
@@ -207,7 +216,7 @@ pub async fn move_cards(
                 let rand_float: f64 = rng.random();
                 let new_scheduled_time = cmp::min(
                     cmp::max(
-                        minimum_interval,
+                        config.minimum_interval,
                         Duration::fractional_days(
                             card_internal
                                 .scheduled_time
@@ -216,7 +225,7 @@ pub async fn move_cards(
                                 * (1.05 + 0.05 * rand_float),
                         ) + delay_time,
                     ),
-                    maximum_interval,
+                    config.maximum_interval,
                 );
                 (requested_date + new_scheduled_time, new_scheduled_time)
             }
@@ -251,11 +260,13 @@ pub async fn move_cards(
                 .unwrap_or_else(Duration::zero)
                 .num_fractional_days(),
             card_internal.card.stability,
+            decay,
         );
         prev_target_retentions.push(prev_target_retention);
         let new_target_retention = retrievability(
             new_scheduled_time.num_fractional_days(),
             card_internal.card.stability,
+            decay,
         );
         new_target_retentions.push(new_target_retention);
     }
@@ -342,6 +353,7 @@ mod tests {
             std::slice::from_ref(&card),
             &MoveCardAction::Advance,
             now,
+            fsrs_rs::DEFAULT_PARAMETERS[20],
         )
         .await
         .unwrap();

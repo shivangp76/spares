@@ -8,6 +8,7 @@
 //!   card in review is rated or rescheduled. See [`crate::schedulers::placement`].
 //! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
 //! - Remedy hard misuse: Unsupported.
+mod optimize;
 mod reposition;
 mod steps;
 mod utils;
@@ -33,7 +34,9 @@ use steps::LearningSteps;
 use steps::next_step;
 use utils::Rating as FsrsRating;
 use utils::State;
+use utils::decay;
 use utils::get_fuzz_range;
+use utils::model;
 use utils::number_to_rating;
 use utils::number_to_state;
 use utils::rating_to_number;
@@ -53,6 +56,7 @@ use crate::model::ReviewLogKind;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
+use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 use crate::search::evaluator::Evaluator;
@@ -68,10 +72,10 @@ pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f
     ))
 }
 
+/// Stateless: the model is built from the config's `fsrs_parameters` whenever it is needed, so a
+/// change to them applies without restarting the server.
 #[derive(Debug, Default)]
-pub struct Fsrs {
-    model: fsrs_rs::FSRS,
-}
+pub struct Fsrs;
 
 // NOTE: Make sure to pass time data as a `Duration` instead of an integer representing days.
 #[async_trait]
@@ -231,8 +235,9 @@ impl SrsScheduler for Fsrs {
             learning: &config.learning_steps,
             relearning: &config.relearning_steps,
         };
+        let model = model(config)?;
         let step = next_step(
-            &self.model,
+            &model,
             steps,
             state,
             memory,
@@ -333,8 +338,15 @@ impl SrsScheduler for Fsrs {
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-        let cards_internal =
-            get_safe_cards(db, &cards, &MoveCardAction::Advance, card_due_limit).await?;
+        let config = read_external_config()?;
+        let cards_internal = get_safe_cards(
+            db,
+            &cards,
+            &MoveCardAction::Advance,
+            card_due_limit,
+            decay(&config),
+        )
+        .await?;
         Ok(cards_internal.len() as u32)
     }
 
@@ -357,8 +369,15 @@ impl SrsScheduler for Fsrs {
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-        let cards_internal =
-            get_safe_cards(db, &cards, &MoveCardAction::Postpone, card_due_limit).await?;
+        let config = read_external_config()?;
+        let cards_internal = get_safe_cards(
+            db,
+            &cards,
+            &MoveCardAction::Postpone,
+            card_due_limit,
+            decay(&config),
+        )
+        .await?;
         Ok(cards_internal.len() as u32)
     }
 
@@ -401,8 +420,7 @@ impl SrsScheduler for Fsrs {
             &cards,
             &MoveCardAction::Advance,
             card_due_limit,
-            config.minimum_interval,
-            config.maximum_interval,
+            config,
         )
         .await
     }
@@ -446,10 +464,42 @@ impl SrsScheduler for Fsrs {
             &cards,
             &MoveCardAction::Postpone,
             card_due_limit,
-            config.minimum_interval,
-            config.maximum_interval,
+            config,
         )
         .await
+    }
+
+    async fn optimize(
+        &self,
+        db: &SqlitePool,
+        config: &SparesExternalConfig,
+    ) -> Result<OptimizeResponse, Error> {
+        // Forget markers are kept: the training set starts each card's history after its last one.
+        let review_logs: Vec<ReviewLog> = sqlx::query_as(
+            r"SELECT * FROM review_log WHERE card_id IS NOT NULL
+              ORDER BY card_id, reviewed_at ASC, id ASC",
+        )
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        let training_set = optimize::training_set(&review_logs);
+        let current_parameters = config.fsrs_parameters.clone();
+        let num_relearning_steps = config.relearning_steps.len();
+        // Training is CPU-bound, so it runs on the rayon pool rather than blocking the executor.
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        rayon::spawn(move || {
+            let _ = sender.send(optimize::optimize(
+                training_set,
+                &current_parameters,
+                num_relearning_steps,
+            ));
+        });
+        receiver.await.map_err(|_| {
+            Error::Library(LibraryError::Scheduler(SchedulerErrorKind::Custom {
+                scheduler_name: self.get_scheduler_name().to_string(),
+                error: "the optimizer stopped unexpectedly".to_string(),
+            }))
+        })?
     }
 
     fn due_candidates(
@@ -517,7 +567,7 @@ mod tests {
     /// Random histories, each ending with the review that produced the card.
     fn random_cards(count: usize) -> Vec<(Card, Vec<ReviewLog>)> {
         let mut rng = rand::rng();
-        let scheduler = Fsrs::default();
+        let scheduler = Fsrs;
         (0..count)
             .map(|_| {
                 let created_at = Utc::now() - Duration::days(rng.random_range(0..400));
@@ -527,9 +577,44 @@ mod tests {
     }
 
     #[test]
+    fn configured_parameters_are_used() {
+        let schedule_good = |config: &SparesExternalConfig| {
+            let created_at = Utc::now();
+            Fsrs.schedule(
+                config,
+                &Card::new(created_at),
+                None,
+                rating_to_number(FsrsRating::Good),
+                created_at,
+                Duration::seconds(5),
+                Duration::seconds(2),
+            )
+            .unwrap()
+            .0
+        };
+        // Graduate on the first answer, so the interval comes from the initial stability.
+        let defaults = SparesExternalConfig {
+            learning_steps: Vec::new(),
+            ..SparesExternalConfig::default()
+        };
+        let mut parameters = fsrs_rs::DEFAULT_PARAMETERS.to_vec();
+        // The initial stability after Good.
+        parameters[2] *= 4.0;
+        let custom = SparesExternalConfig {
+            fsrs_parameters: parameters,
+            learning_steps: Vec::new(),
+            ..SparesExternalConfig::default()
+        };
+        let default_card = schedule_good(&defaults);
+        let custom_card = schedule_good(&custom);
+        assert!(custom_card.stability > default_card.stability * 3.0);
+        assert!(custom_card.due > default_card.due);
+    }
+
+    #[test]
     fn due_candidates_stay_within_the_fuzz_range() {
         let config = SparesExternalConfig::default();
-        let scheduler = Fsrs::default();
+        let scheduler = Fsrs;
         for (card, review_logs) in random_cards(300) {
             let last_review = review_logs.last().unwrap().reviewed_at;
             let candidates = scheduler.due_candidates(&config, &card, &review_logs, last_review);
@@ -565,7 +650,7 @@ mod tests {
     #[test]
     fn due_candidates_are_never_in_the_past() {
         let config = SparesExternalConfig::default();
-        let scheduler = Fsrs::default();
+        let scheduler = Fsrs;
         for (card, review_logs) in random_cards(300) {
             let last_review = review_logs.last().unwrap().reviewed_at;
             // Partway through the card's interval, so part of its range may have passed.
@@ -585,7 +670,7 @@ mod tests {
     #[test]
     fn an_overdue_card_is_due_at_the_end_of_its_range() {
         let config = SparesExternalConfig::default();
-        let scheduler = Fsrs::default();
+        let scheduler = Fsrs;
         let mut checked = 0;
         for (card, review_logs) in random_cards(300) {
             let last_review = review_logs.last().unwrap().reviewed_at;

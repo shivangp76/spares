@@ -300,6 +300,9 @@ pub(crate) enum CardCommands {
     /// Recompute every card's memory state and due date from its review history (run after
     /// changing the scheduler, its parameters, learning steps or easy days)
     Reschedule(RescheduleArgs),
+    /// Fit the scheduler's parameters to your review history and compare them with the current
+    /// ones. Use `--apply` to save them and reschedule every card.
+    Optimize(OptimizeArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
     /// Unbury all cards
@@ -443,6 +446,19 @@ pub(crate) struct RescheduleArgs {
     #[arg(short, long, default_value = "fsrs")]
     pub(crate) scheduler_name: String,
     /// Skip the confirmation prompt
+    #[arg(short, long)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct OptimizeArgs {
+    #[arg(short, long, default_value = "fsrs")]
+    pub(crate) scheduler_name: String,
+    /// Save the optimized parameters to the config if they predict your reviews better than the
+    /// current ones, then reschedule every card
+    #[arg(short, long)]
+    pub(crate) apply: bool,
+    /// Skip the confirmation prompt for `--apply`
     #[arg(short, long)]
     pub(crate) yes: bool,
 }
