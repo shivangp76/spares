@@ -9,6 +9,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use spares_core::api::scheduler::get_scheduler_ratings;
 use spares_core::api::scheduler::optimize_scheduler;
+use spares_core::api::scheduler::reschedule_scheduler;
 use spares_core::api::scheduler::resolve_rating_from_score;
 use spares_core::schema::review::OptimizeRequest;
 
@@ -55,4 +56,14 @@ pub(crate) async fn optimize_scheduler_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(res))
+}
+
+pub(crate) async fn reschedule_scheduler_handler(
+    Path(name): Path<String>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    reschedule_scheduler(&data.db, name.as_str(), Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(StatusCode::OK)
 }

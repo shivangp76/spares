@@ -12,6 +12,7 @@ use crate::api::card::get_leeches;
 use crate::api::note::create_notes;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::review::submit_study_action;
+use crate::api::scheduler::reschedule_scheduler;
 use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
@@ -190,7 +191,7 @@ async fn reschedule_moves_card_to_its_fsrs_interval(pool: SqlitePool) {
         .await
         .unwrap();
 
-    study(&pool, StudyAction::Reschedule, now).await;
+    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
     assert_due_near_optimal(&fetch_card(&pool, card_id).await, now - Duration::days(5));
 }
@@ -202,7 +203,7 @@ async fn reschedule_respects_a_changed_desired_retention(pool: SqlitePool) {
     graduate(&pool, card_id, now, &[10, 9, 5]).await;
     set_desired_retention(&pool, card_id, 0.97).await;
 
-    study(&pool, StudyAction::Reschedule, now).await;
+    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
     assert_due_near_optimal(&fetch_card(&pool, card_id).await, now - Duration::days(5));
 }
@@ -319,7 +320,7 @@ async fn reschedule_spreads_siblings_apart(pool: SqlitePool) {
         .await
         .unwrap();
 
-    study(&pool, StudyAction::Reschedule, now).await;
+    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
     let mut cards = Vec::new();
     for card_id in &siblings {
@@ -351,7 +352,7 @@ async fn reschedule_includes_suspended_and_buried_cards(pool: SqlitePool) {
             .unwrap();
     }
 
-    study(&pool, StudyAction::Reschedule, now).await;
+    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
     for (card_id, special_state) in [
         (suspended, SpecialState::Suspended),
