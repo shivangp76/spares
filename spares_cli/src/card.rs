@@ -1,3 +1,4 @@
+use inquire::Confirm;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
@@ -18,6 +19,7 @@ use crate::args::CardArgs;
 use crate::args::CardCommands;
 use crate::args::ForgetCardArgs;
 use crate::args::PostponeArgs;
+use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
 use crate::args::SpecialStateLocal;
 use crate::args::StatisticsArgs;
@@ -176,6 +178,32 @@ pub(crate) async fn handle(
                 .map_err(|e| miette!("{}", e))?;
             let _ = ensure_ok(response).await?;
             println!("Postponed {} cards.", count);
+        }
+        CardCommands::Reschedule(RescheduleArgs {
+            scheduler_name,
+            yes,
+        }) => {
+            if !yes {
+                // Unlike advance and postpone, a reschedule is not recorded as an event.
+                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones, and cannot be undone. Are you sure you want to continue?";
+                let ans = Confirm::new(prompt).with_default(false).prompt();
+                if !ans.unwrap_or(false) {
+                    return Ok(());
+                }
+            }
+            let request = SubmitStudyActionRequest {
+                scheduler_name,
+                action: StudyAction::Reschedule,
+            };
+            let url = format!("{}/api/review/submit", base_url);
+            let response = client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            let _ = ensure_ok(response).await?;
+            println!("Rescheduled all cards.");
         }
         CardCommands::Forget(ForgetCardArgs { ids, query }) => {
             let card_ids = if let Some(ids_vec) = ids {
