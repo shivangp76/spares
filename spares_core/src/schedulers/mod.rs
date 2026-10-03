@@ -260,12 +260,34 @@ pub trait SrsScheduler: Send + Sync {
             !review_logs.is_empty(),
             "no review logs to compute memory state from"
         );
+        Ok(self
+            .memory_state_history(config, review_logs, desired_retention)?
+            .pop()
+            .expect("one card per review log"))
+    }
+
+    /// Like [`SrsScheduler::compute_memory_state`], but returns the card as it stood after each
+    /// row of `review_logs`, in the same order. The last element is what
+    /// [`SrsScheduler::compute_memory_state`] returns.
+    ///
+    /// The replay uses the current `config`, so after the scheduler's parameters change these
+    /// can differ from what the card actually had at the time.
+    fn memory_state_history(
+        &self,
+        config: &SparesExternalConfig,
+        review_logs: Vec<ReviewLog>,
+        desired_retention: f64,
+    ) -> Result<Vec<Card>, Error> {
+        let Some(first_review_log) = review_logs.first() else {
+            return Ok(Vec::new());
+        };
         // Seeded from the first entry whatever its kind, so that a card forgotten before it was
         // ever reviewed replays to a card created at that instant rather than at the epoch.
         let mut card = Card {
             desired_retention,
-            ..Card::new(review_logs.first().unwrap().reviewed_at)
+            ..Card::new(first_review_log.reviewed_at)
         };
+        let mut history = Vec::with_capacity(review_logs.len());
         let mut previous_review_log: Option<ReviewLog> = None;
         for review_log in review_logs {
             match review_log.kind {
@@ -314,8 +336,9 @@ pub trait SrsScheduler: Send + Sync {
                     previous_review_log = Some(new_review_log);
                 }
             }
+            history.push(card.clone());
         }
-        Ok(card)
+        Ok(history)
     }
 }
 
@@ -563,6 +586,51 @@ mod tests {
                     DEFAULT_DESIRED_RETENTION
                 )
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn memory_state_history_has_one_card_per_log_ending_in_memory_state() {
+        let scheduler = scheduler();
+        let logs = vec![
+            review_at(0, 3),
+            review_at(1, 3),
+            forget_at(2),
+            review_at(3, 4),
+        ];
+        let history = scheduler
+            .memory_state_history(
+                &SparesExternalConfig::default(),
+                logs.clone(),
+                DEFAULT_DESIRED_RETENTION,
+            )
+            .unwrap();
+        assert_eq!(history.len(), logs.len());
+        assert!(history[1].stability > 0.0, "learned before the forget");
+        assert_eq!(history[2].stability, 0.0, "the forget resets memory");
+        assert_eq!(history[2].state, NEW_CARD_STATE);
+
+        let current = scheduler
+            .compute_memory_state(
+                &SparesExternalConfig::default(),
+                logs,
+                DEFAULT_DESIRED_RETENTION,
+            )
+            .unwrap();
+        let last = history.last().unwrap();
+        assert_eq!(last.stability, current.stability);
+        assert_eq!(last.difficulty, current.difficulty);
+        assert_eq!(last.due, current.due);
+
+        assert!(
+            scheduler
+                .memory_state_history(
+                    &SparesExternalConfig::default(),
+                    Vec::new(),
+                    DEFAULT_DESIRED_RETENTION
+                )
+                .unwrap()
+                .is_empty()
         );
     }
 

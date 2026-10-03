@@ -3,6 +3,7 @@ import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '..
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
 import { backPath, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
+import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
 import NoteDetail from './NoteDetail';
 
@@ -24,6 +25,9 @@ interface Props {
 export default function CardDetail({ card, index, total, onGoTo, onClose, onCardChanged }: Props) {
   // Bumped after the note is saved so the rendered files are refetched
   const [version, setVersion] = useState(0);
+  // Bumped after the card's review log may have changed, so Card Info is refetched
+  const [infoVersion, setInfoVersion] = useState(0);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [review, setReview] = useState<{ cardId: number; version: number; result: GetReviewCardResponse | null } | { cardId: number; version: number; error: string } | null>(null);
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
   const [goTo, setGoTo] = useState('');
@@ -65,6 +69,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
     run(async () => {
       const res = await forgetCard(card.id);
       onCardChanged(res.card);
+      setInfoVersion(v => v + 1);
       return { message: 'Card forgotten (scheduling reset).', eventIds: res.event_id === null ? [] : [res.event_id] };
     });
   }
@@ -72,6 +77,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
   async function refreshCard() {
     try {
       onCardChanged(await getCard(card.id));
+      setInfoVersion(v => v + 1);
     } catch (e) {
       setError(String(e));
     }
@@ -181,6 +187,16 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
           </div>
         </details>
       )}
+
+      <details open={infoOpen} onToggle={e => setInfoOpen(e.currentTarget.open)} style={{ marginBottom: 8 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 13 }}>Card Info</summary>
+        {/* Only fetched while open */}
+        {infoOpen && (
+          <div style={{ marginTop: 8 }}>
+            <CardInfo cardId={card.id} version={infoVersion} />
+          </div>
+        )}
+      </details>
 
       {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onReverted={refreshCard} />}

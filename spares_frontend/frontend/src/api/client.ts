@@ -1,5 +1,6 @@
 import type {
   CardResponse,
+  CardReviewEntry,
   CreateNoteRequest,
   CreateTagRequest,
   Credentials,
@@ -411,6 +412,11 @@ export function cachedCardsPage(page: number, limit: number): CardResponse[] | u
 
 export async function getCard(id: number): Promise<CardResponse> {
   return apiFetch('Card fetch', `/api/cards/${id}`);
+}
+
+/** The card's review log, oldest first, including forgets. */
+export async function getCardReviews(id: number): Promise<CardReviewEntry[]> {
+  return apiFetch('Card reviews fetch', `/api/cards/${id}/reviews`);
 }
 
 export async function searchCards(query: string): Promise<CardResponse[]> {

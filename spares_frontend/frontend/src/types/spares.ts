@@ -161,6 +161,24 @@ export interface ForgetCardResponse {
   event_id: number | null;
 }
 
+/** One row of a card's review log, with the memory state the card had after it. */
+export interface CardReviewEntry {
+  id: number;
+  kind: 'Review' | 'Forget';
+  reviewed_at: string;
+  /** Relative to `scheduler_name`. */
+  rating: number | null;
+  scheduler_name: string;
+  previous_state: number;
+  scheduled_time: number | null; // seconds
+  recall_duration: number | null; // seconds
+  rate_duration: number | null;   // seconds
+  tag_id: number | null;
+  /** Replayed with the scheduler's current parameters. `null` after a forget. */
+  stability: number | null;
+  difficulty: number | null;
+}
+
 /** An event that undo or redo reversed. */
 export interface EventSummary {
   id: number;

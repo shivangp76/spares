@@ -22,6 +22,7 @@ import {
   undoEvent,
   updateCards,
 } from '../api/client';
+import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
@@ -213,7 +214,11 @@ export default function ReviewPage() {
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
   // The undo event that Redo reverses, and whether it undid a rating. Any new action clears it.
-  const [lastUndo, setLastUndo] = useState<{ eventId: number; wasRating: boolean } | null>(null);
+  const [lastUndo, setLastUndo] = useState<{ eventId: number; wasRating: boolean; ratedCardId: number | null } | null>(null);
+  // The card rated last, for Previous Card Info. `version` is bumped on every rating so the panel
+  // refetches even when the same card comes back, e.g. during relearning.
+  const [previousCard, setPreviousCard] = useState<{ id: number; version: number } | null>(null);
+  const [showPreviousCardInfo, setShowPreviousCardInfo] = useState(false);
 
   const tagId = activeFilter && 'FilteredTag' in activeFilter ? activeFilter.FilteredTag.tag_id : null;
 
@@ -345,6 +350,8 @@ export default function ReviewPage() {
       lastEventId.current = res.event_id;
       lastActionWasRating.current = true;
       setLastUndo(null);
+      const ratedCardId = card.card_id;
+      setPreviousCard(prev => ({ id: ratedCardId, version: (prev?.version ?? 0) + 1 }));
       setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`);
       loadCard(activeFilter);
     } catch (e) {
@@ -474,8 +481,13 @@ export default function ReviewPage() {
       lastEventId.current = null;
       setStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.');
       const undoId = res?.undo_event_ids[0];
-      setLastUndo(undoId === undefined ? null : { eventId: undoId, wasRating: lastActionWasRating.current });
-      if (lastActionWasRating.current) setReviewedCount(c => Math.max(0, c - 1));
+      const ratedCardId = lastActionWasRating.current ? previousCard?.id ?? null : null;
+      setLastUndo(undoId === undefined ? null : { eventId: undoId, wasRating: lastActionWasRating.current, ratedCardId });
+      if (lastActionWasRating.current) {
+        setReviewedCount(c => Math.max(0, c - 1));
+        // The rated card is back on screen, and the one rated before it isn't tracked
+        setPreviousCard(null);
+      }
       lastActionWasRating.current = false;
       // The next card will be the one that was just undone
       loadCard(activeFilter);
@@ -501,6 +513,8 @@ export default function ReviewPage() {
       lastEventId.current = res.redo_event_ids[0] ?? null;
       lastActionWasRating.current = lastUndo.wasRating;
       if (lastUndo.wasRating) setReviewedCount(c => c + 1);
+      const redoneCardId = lastUndo.ratedCardId;
+      if (redoneCardId !== null) setPreviousCard(prev => ({ id: redoneCardId, version: (prev?.version ?? 0) + 1 }));
       // The redone action moved the card on again
       loadCard(activeFilter);
     } catch (e) {
@@ -810,6 +824,13 @@ export default function ReviewPage() {
 
           {status && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-secondary)' }}>{status}</div>}
 
+          {showPreviousCardInfo && previousCard && (
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel}>Previous Card Info (card {previousCard.id})</div>
+              <CardInfo cardId={previousCard.id} version={previousCard.version} />
+            </div>
+          )}
+
           {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
           {panelNote && (
             <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
@@ -851,6 +872,9 @@ export default function ReviewPage() {
                   </div>
                   <ActionGroup label="Session" tone={TONES.gray}>
                     <button onClick={switchQuery} style={toned(TONES.gray)}>Switch query <span className="key-hint">(q)</span></button>
+                    <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} style={toned(TONES.gray)}>
+                      {showPreviousCardInfo && previousCard ? 'Hide Previous Card Info' : 'Previous Card Info'}
+                    </button>
                     <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={toned(TONES.gray)}>End session</button>
                   </ActionGroup>
                 </div>

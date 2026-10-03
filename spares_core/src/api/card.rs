@@ -29,6 +29,7 @@ use crate::schedulers::get_default_scheduler_name;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::FilterOptions;
 use crate::schema::card::CardResponse;
+use crate::schema::card::CardReviewEntry;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::ForgetCardResponse;
 use crate::schema::card::GetLeechesRequest;
@@ -46,6 +47,40 @@ pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     Ok(CardResponse::new(&card))
+}
+
+/// The card's review log, oldest first, including forget markers. Each entry carries the memory
+/// state the card had after it, replayed with the scheduler's current parameters.
+pub async fn get_card_reviews(
+    db: &SqlitePool,
+    card_id: CardId,
+) -> Result<Vec<CardReviewEntry>, Error> {
+    let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+        .bind(card_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let review_logs = fetch_review_logs_for_replay(db, card_id).await?;
+    // A log of nothing but forget markers has no memory state to replay.
+    let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) else {
+        return Ok(review_logs
+            .into_iter()
+            .map(|review_log| CardReviewEntry::new(review_log, None))
+            .collect());
+    };
+    let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
+    let config = read_external_config()?;
+    let history =
+        scheduler.memory_state_history(&config, review_logs.clone(), card.desired_retention)?;
+    Ok(review_logs
+        .into_iter()
+        .zip(history)
+        .map(|(review_log, card)| {
+            let memory_state =
+                (card.state != NEW_CARD_STATE).then_some((card.stability, card.difficulty));
+            CardReviewEntry::new(review_log, memory_state)
+        })
+        .collect())
 }
 
 pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardResponse>, Error> {
@@ -1108,5 +1143,67 @@ mod forget_tests {
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
         // Forgetting is not a review
         assert_eq!(history.review_count_by_date[&local_date(now)], 2);
+    }
+
+    #[sqlx::test]
+    async fn card_reviews_replay_memory_state_through_forget(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        rate(&pool, card_id, 3, now - Duration::days(4)).await;
+        rate(&pool, card_id, 3, now - Duration::days(2)).await;
+        forget_card(&pool, card_id, now - Duration::days(1), true)
+            .await
+            .unwrap();
+        rate(&pool, card_id, 4, now).await;
+
+        let entries = get_card_reviews(&pool, card_id).await.unwrap();
+        let kinds = entries.iter().map(|e| e.kind).collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                ReviewLogKind::Review,
+                ReviewLogKind::Review,
+                ReviewLogKind::Forget,
+                ReviewLogKind::Review
+            ],
+            "oldest first, forget markers included"
+        );
+        assert!(entries[0].stability.is_some_and(|s| s > 0.0));
+        assert_eq!(entries[0].rating, Some(3));
+        assert_eq!(entries[0].scheduler_name, "fsrs");
+        assert_eq!(entries[0].recall_duration, Some(5));
+        assert_eq!(
+            entries[2].stability, None,
+            "a forget leaves no memory state"
+        );
+        assert_eq!(entries[2].difficulty, None);
+        assert_eq!(entries[2].rating, None);
+
+        let card = fetch_card(&pool, card_id).await;
+        let last = entries.last().unwrap();
+        assert!((last.stability.unwrap() - card.stability).abs() < ALLOWED_F64_ERROR);
+        assert!((last.difficulty.unwrap() - card.difficulty).abs() < ALLOWED_F64_ERROR);
+    }
+
+    #[sqlx::test]
+    async fn card_reviews_of_unreviewed_card_is_empty(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        assert!(get_card_reviews(&pool, card_id).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn card_reviews_of_forget_only_log_has_no_memory_state(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        forget_card(&pool, card_id, Utc::now(), true).await.unwrap();
+
+        let entries = get_card_reviews(&pool, card_id).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, ReviewLogKind::Forget);
+        assert_eq!(entries[0].stability, None);
+    }
+
+    #[sqlx::test]
+    async fn card_reviews_of_missing_card_is_an_error(pool: SqlitePool) {
+        assert!(get_card_reviews(&pool, 12_345).await.is_err());
     }
 }

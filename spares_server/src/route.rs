@@ -15,6 +15,7 @@ use tower_http::services::ServeFile;
 use crate::AppState;
 use crate::handlers::card::forget_card_handler;
 use crate::handlers::card::get_card_handler;
+use crate::handlers::card::get_card_reviews_handler;
 use crate::handlers::card::get_cards_handler;
 use crate::handlers::card::get_leeches_handler;
 use crate::handlers::card::list_cards_handler;
@@ -153,6 +154,7 @@ pub(crate) fn create_router(
         .route("/api/cards/leeches", post(get_leeches_handler))
         .route("/api/cards", patch(update_cards_handler))
         .route("/api/cards/{id}/forget", post(forget_card_handler))
+        .route("/api/cards/{id}/reviews", get(get_card_reviews_handler))
         .route("/api/cards/unbury", post(unbury_cards_handler))
         // Review
         .route("/api/review", post(get_review_card_handler))

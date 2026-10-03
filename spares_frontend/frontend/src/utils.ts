@@ -15,6 +15,18 @@ export function formatDuration(totalSeconds: number): string {
   return parts.join(' ');
 }
 
+/** A scheduling interval at the coarsest useful unit, like Anki's card info, e.g. `10m` or `3.2mo`. */
+export function formatInterval(totalSeconds: number): string {
+  const units: [number, string][] = [[365 * 86400, 'y'], [30 * 86400, 'mo'], [86400, 'd'], [3600, 'h'], [60, 'm']];
+  for (const [size, unit] of units) {
+    if (totalSeconds >= size) {
+      const value = totalSeconds / size;
+      return `${Number.isInteger(value) || value >= 10 ? Math.round(value) : value.toFixed(1)}${unit}`;
+    }
+  }
+  return `${totalSeconds}s`;
+}
+
 export const sectionLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 };
 export const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--border-strong)' };
 export const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid var(--border-subtle)' };
