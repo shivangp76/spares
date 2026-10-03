@@ -1133,11 +1133,12 @@ pub async fn submit_study_action(
             }
         }
         StudyAction::Reschedule => {
-            let cards: Vec<Card> =
-                sqlx::query_as(r"SELECT * FROM card WHERE special_state IS NULL")
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
+            // Suspended and buried cards are included: they keep their special state, but should
+            // come back with a memory state and due date that match their history.
+            let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
             // Get all review logs for cards. Every card is a candidate here, so this fetches the
             // whole table rather than building an `IN` list. Orphaned rows (deleted cards) are
             // excluded up front rather than in Rust: there is nothing to reschedule for them, and
