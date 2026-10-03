@@ -248,6 +248,7 @@ pub fn modify_clozes_for_card(
         cloze_not_to_answer_color,
         cloze_hint_font_size,
         cloze_emphasis_fill_opacity,
+        ..
     } = image_occlusion_config;
     // NOTE: We cannot use the original image in any case since there may be markup present in the clozes file that should be shown.
     for (i, cloze) in &mut clozes.iter_mut().enumerate() {

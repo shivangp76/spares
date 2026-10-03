@@ -64,6 +64,7 @@ pub struct ImageOcclusionConfig {
     pub cloze_not_to_answer_color: String,
     pub cloze_emphasis_fill_opacity: f64,
     pub cloze_hint_font_size: u32,
+    pub editor: ImageOcclusionEditorConfig,
 }
 
 impl Default for ImageOcclusionConfig {
@@ -73,6 +74,35 @@ impl Default for ImageOcclusionConfig {
             cloze_not_to_answer_color: "#FFEBA2".to_string(),
             cloze_emphasis_fill_opacity: 0.3,
             cloze_hint_font_size: 16,
+            editor: ImageOcclusionEditorConfig::default(),
+        }
+    }
+}
+
+/// The initial style of the image occlusion editor.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ImageOcclusionEditorConfig {
+    /// Fill of shapes drawn in the editor. Clozes are recolored when cards are rendered, so this
+    /// mostly shows on markup.
+    pub fill_color: String,
+    pub stroke_color: String,
+    pub stroke_width: f64,
+    pub font_size: u32,
+    pub font_family: String,
+    /// The tool selected when the editor opens, e.g. `rect`, `ellipse`, `fhpath` or `select`.
+    pub initial_tool: String,
+}
+
+impl Default for ImageOcclusionEditorConfig {
+    fn default() -> Self {
+        Self {
+            fill_color: "#FFEBA2".to_string(),
+            stroke_color: "#000000".to_string(),
+            stroke_width: 1.,
+            font_size: 16,
+            font_family: "Sans-serif".to_string(),
+            initial_tool: "rect".to_string(),
         }
     }
 }

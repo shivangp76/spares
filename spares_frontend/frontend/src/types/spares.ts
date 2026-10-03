@@ -207,6 +207,17 @@ export interface ImageOcclusionData {
   back_emphasis: boolean;
 }
 
+/** What the image occlusion editor starts from: the template and the user's editor settings. */
+export interface ImageOcclusionEditorConfig {
+  template: string;
+  fill_color: string;
+  stroke_color: string;
+  stroke_width: number;
+  font_size: number;
+  font_family: string;
+  initial_tool: string;
+}
+
 export interface LinkedNote {
   searched_keyword: string;
   linked_note_id: number | null;

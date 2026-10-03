@@ -23,8 +23,8 @@ use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
 use crate::handlers::image_occlusion::IMAGE_OCCLUSION_BODY_LIMIT;
 use crate::handlers::image_occlusion::create_image_occlusion_handler;
+use crate::handlers::image_occlusion::get_image_occlusion_editor_config_handler;
 use crate::handlers::image_occlusion::get_image_occlusion_file_handler;
-use crate::handlers::image_occlusion::get_image_occlusion_template_handler;
 use crate::handlers::image_occlusion::list_note_image_occlusions_handler;
 use crate::handlers::image_occlusion::update_note_image_occlusion_handler;
 use crate::handlers::note::create_notes_handler;
@@ -71,8 +71,8 @@ use crate::handlers::undo::undo_event_handler;
 fn image_occlusion_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
-            "/api/image-occlusions/template",
-            get(get_image_occlusion_template_handler),
+            "/api/image-occlusions/editor-config",
+            get(get_image_occlusion_editor_config_handler),
         )
         .route(
             "/api/image-occlusions",

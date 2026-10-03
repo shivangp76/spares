@@ -6,6 +6,7 @@ import type {
   ForgetCardResponse,
   GetReviewCardResponse,
   ImageOcclusionData,
+  ImageOcclusionEditorConfig,
   MatchedKeywordResponse,
   NoteLink,
   NoteRenderResponse,
@@ -143,10 +144,10 @@ export async function fetchRenderAsset(path: string): Promise<Uint8Array | null>
   return new Uint8Array(await res.arrayBuffer());
 }
 
-export async function getImageOcclusionTemplate(): Promise<string> {
-  return memoize('image-occlusion-template', async () => {
-    const res = await apiSend('Image occlusion template', '/api/image-occlusions/template');
-    return res.text();
+export async function getImageOcclusionEditorConfig(): Promise<ImageOcclusionEditorConfig> {
+  return memoize('image-occlusion-editor-config', async () => {
+    const res = await apiSend('Image occlusion editor config', '/api/image-occlusions/editor-config');
+    return res.json();
   });
 }
 

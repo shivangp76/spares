@@ -30,6 +30,7 @@ use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::api::note::update_notes;
 use crate::api::parser::get_parser_name;
+use crate::config::read_external_config;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::parsers::BackReveal;
@@ -38,6 +39,7 @@ use crate::parsers::Parseable;
 use crate::parsers::find_parser;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::ImageOcclusionEditorConfig;
 use crate::parsers::image_occlusion::append_to_stem;
 use crate::parsers::image_occlusion::back_emphasis_image_occlusion_default;
 use crate::parsers::image_occlusion::get_clozes_from_svg_str;
@@ -62,6 +64,21 @@ pub struct CreateImageOcclusionResponse {
     pub image_occlusion: ImageOcclusionData,
     /// The image occlusion block to insert into a note, in the parser's syntax.
     pub snippet: String,
+}
+
+/// What the image occlusion editor starts from: the template and the user's editor settings.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ImageOcclusionEditorSetup {
+    pub template: String,
+    #[serde(flatten)]
+    pub config: ImageOcclusionEditorConfig,
+}
+
+pub fn get_image_occlusion_editor_config() -> Result<ImageOcclusionEditorSetup, Error> {
+    Ok(ImageOcclusionEditorSetup {
+        template: IMAGE_OCCLUSION_TEMPLATE.to_string(),
+        config: read_external_config()?.image_occlusion.editor,
+    })
 }
 
 fn other_error(description: String) -> Error {
@@ -332,6 +349,20 @@ mod tests {
         r##"<rect id="svg_1" x="10" y="10" width="50" height="50" fill="#FFEBA2"/>"##;
     const RECT_2: &str =
         r##"<rect id="svg_2" x="100" y="100" width="50" height="50" fill="#FFEBA2"/>"##;
+
+    #[test]
+    fn test_editor_settings_default_when_missing() {
+        // A config written before the editor settings existed
+        let config: crate::config::SparesExternalConfig = toml_edit::de::from_str(
+            "[image_occlusion]\ncloze_hint_font_size = 24\n[image_occlusion.editor]\nfill_color = \"#123456\"\n",
+        )
+        .unwrap();
+        let config = config.image_occlusion;
+        assert_eq!(config.cloze_hint_font_size, 24);
+        assert_eq!(config.editor.fill_color, "#123456");
+        assert_eq!(config.editor.stroke_color, "#000000");
+        assert_eq!(config.editor.initial_tool, "rect");
+    }
 
     #[test]
     fn test_strip_hash_suffix() {
