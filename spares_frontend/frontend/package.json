@@ -14,11 +14,16 @@
     "start-image-occlusion": "bun install && bun run prepare-svgedit && bun run dev-image-occlusion"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/legacy-modes": "^6.5.4",
     "@myriaddreamin/typst-ts-renderer": "0.8.0-rc3",
     "@myriaddreamin/typst-ts-web-compiler": "0.8.0-rc3",
     "@myriaddreamin/typst.ts": "0.8.0-rc3",
     "@replit/codemirror-vim": "^6.4.0",
     "@uiw/react-codemirror": "^4.25.12",
+    "codemirror-lang-typst": "^0.6.0",
     "dompurify": "^3.4.16",
     "marked": "^18.0.14",
     "react": "^19.3.0",

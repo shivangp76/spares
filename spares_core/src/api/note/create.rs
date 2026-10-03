@@ -264,6 +264,7 @@ pub async fn create_notes(
         };
         note_responses.push(NoteResponse::new(
             &note,
+            parser_name.clone(),
             all_keywords
                 .iter()
                 .map(|(k, _)| k.clone())

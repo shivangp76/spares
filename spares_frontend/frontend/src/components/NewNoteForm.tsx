@@ -19,9 +19,9 @@ function lines(value: string): string[] {
 /** `spares note add`, followed by rendering the note as the CLI does when syncing it. */
 export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note: NoteResponse) => void; onCancel: () => void }) {
   const theme = useResolvedTheme();
-  const editor = useEditorSetup();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
+  const editor = useEditorSetup(parsers?.find(p => p.id === parserId)?.name);
   const [data, setData] = useState('');
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
   const [tags, setTags] = useState('');
@@ -85,7 +85,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
           <div style={fieldLabel}>Data</div>
           <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
         </div>
-        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} extensions={editor.extensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
+        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} extensions={editor.dataExtensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
       </div>
 
       <div className="form-grid">

@@ -4,6 +4,7 @@ use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::api::parser::get_parser_name;
 use crate::api::undo::payloads::CardSnapshot;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::read_internal_config;
@@ -75,8 +76,11 @@ pub async fn enrich_note(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
+    let parser_name = get_parser_name(db, note.parser_id).await?;
+
     Ok(NoteResponse::new(
         note,
+        parser_name,
         keywords,
         tags,
         linked_notes_arg,
@@ -137,6 +141,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     struct ListNotesRow {
         #[sqlx(flatten)]
         note: Note,
+        parser_name: String,
         keywords_value: Value,
         tags_value: Value,
         card_count: u32,
@@ -149,6 +154,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     let notes_data: Vec<ListNotesRow> = sqlx::query_as(
         r"SELECT
            n.*,
+           (SELECT name FROM parser WHERE id = n.parser_id) AS parser_name,
            COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
             FROM note_keyword nk
             WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
@@ -172,6 +178,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     let mut responses = Vec::new();
     for ListNotesRow {
         note,
+        parser_name,
         keywords_value,
         tags_value,
         card_count,
@@ -199,6 +206,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         tags.sort();
         responses.push(NoteResponse::new(
             &note,
+            parser_name,
             keywords,
             tags,
             linked_notes_arg,

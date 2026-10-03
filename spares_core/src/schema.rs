@@ -291,6 +291,7 @@ pub mod note {
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
         pub parser_id: i64,
+        pub parser_name: String,
         pub keywords: Vec<String>,
         pub tags: Vec<String>,
         pub custom_data: CustomData,
@@ -302,6 +303,7 @@ pub mod note {
     impl NoteResponse {
         pub fn new(
             note: &Note,
+            parser_name: String,
             keywords: Vec<String>,
             tags: Vec<String>,
             linked_notes: Option<Vec<LinkedNote>>,
@@ -311,6 +313,7 @@ pub mod note {
                 id: note.id.to_owned(),
                 data: note.data.clone(),
                 parser_id: note.parser_id.to_owned(),
+                parser_name,
                 keywords,
                 created_at: note.created_at,
                 updated_at: note.updated_at,
