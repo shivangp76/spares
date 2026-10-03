@@ -151,21 +151,21 @@ pub fn update_cloze_settings(
         CLOZE_SETTINGS_KEY.to_string(),
         cloze_settings_string.to_string(),
     );
-    // let _ = clozes_svg_element.write_with_config(
-    //     OpenOptions::new()
-    //         .write(true)
-    //         .open(clozes_filepath)
-    //         .unwrap(),
-    //     EmitterConfig::new().perform_indent(true),
-    // );
-    // let clozes_file_contents = read_to_string(clozes_filepath).unwrap();
-    // dbg!(&clozes_file_contents);
-    // TODO: xmltree bug: Writing directly to the file produces invalid svg data for some reason, but writing to a string first works fine.
+    // Serialize to memory first so that a failure cannot leave a partially written file behind.
+    // When writing to the file directly, it must also be truncated, otherwise output shorter than
+    // the original leaves trailing bytes of the old svg in place.
     let mut buffer: Vec<u8> = Vec::new();
-    let _ = clozes_svg_element
-        .write_with_config(&mut buffer, EmitterConfig::new().perform_indent(true));
-    let clozes_file_contents = String::from_utf8(buffer).unwrap();
-    std::fs::write(clozes_filepath, clozes_file_contents).map_err(|_| {
+    clozes_svg_element
+        .write_with_config(&mut buffer, EmitterConfig::new().perform_indent(true))
+        .map_err(|e| {
+            LibraryError::Note(NoteErrorKind::InvalidSettings {
+                description: format!("Failed to serialize clozes file data as svg: {}", e),
+                advice: None,
+                src: data.to_string(),
+                at: cloze_range.clone().into(),
+            })
+        })?;
+    std::fs::write(clozes_filepath, buffer).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!("Failed to write file {}.", clozes_filepath.display()),
             advice: None,
