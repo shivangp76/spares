@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { redoEvent, undoEvent } from '../api/client';
+import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import { RedoIcon, UndoIcon } from './Icons';
 
 interface NavbarProps {
@@ -37,7 +37,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
     if (!window.confirm('Undo the most recent change? This can be any kind of change (a review, card, note or tag edit), including one made from the CLI.')) return;
     try {
       const res = await undoEvent(null);
-      setUndoStatus(res ? `Undone event(s): ${res.undone_event_ids.join(', ')}.` : 'No event to undo.');
+      setUndoStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.');
       setLastUndoId(res?.undo_event_ids[0] ?? null);
     } catch (e) {
       setUndoStatus(String(e));
@@ -50,7 +50,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
     try {
       const res = await redoEvent(lastUndoId);
       setLastUndoId(null);
-      setUndoStatus(res ? `Redone event(s): ${res.redone_event_ids.join(', ')}.` : 'No undo to redo.');
+      setUndoStatus(res ? describeReverted('Redone', res.redone_events) : 'No undo to redo.');
     } catch (e) {
       setUndoStatus(String(e));
     }

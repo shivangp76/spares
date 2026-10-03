@@ -161,14 +161,21 @@ export interface ForgetCardResponse {
   event_id: number | null;
 }
 
+/** An event that undo or redo reversed. */
+export interface EventSummary {
+  id: number;
+  /** The action the user originally took, e.g. "Rate card 3 (Good)", whether undone or redone. */
+  description: string;
+}
+
 export interface UndoEventResponse {
-  undone_event_ids: number[];
+  undone_events: EventSummary[];
   /** The undo events that were appended, oldest first. Pass one to `redoEvent`. */
   undo_event_ids: number[];
 }
 
 export interface RedoEventResponse {
-  redone_event_ids: number[];
+  redone_events: EventSummary[];
   /** The redo events that were appended, oldest first. Pass one to `undoEvent`. */
   redo_event_ids: number[];
 }

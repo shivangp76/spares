@@ -40,7 +40,7 @@ async fn e2e_undo_create_parser_restores_state(pool: SqlitePool) {
     .await
     .unwrap();
     assert!(res.is_some());
-    assert_eq!(res.unwrap().undone_event_ids.len(), 1);
+    assert_eq!(res.unwrap().undone_events.len(), 1);
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser WHERE id = ?")
         .bind(id)

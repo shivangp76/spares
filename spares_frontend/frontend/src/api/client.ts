@@ -3,6 +3,7 @@ import type {
   CreateNoteRequest,
   CreateTagRequest,
   Credentials,
+  EventSummary,
   ForgetCardResponse,
   GetReviewCardResponse,
   ImageOcclusionData,
@@ -281,6 +282,11 @@ export async function undoEvent(eventId: number | null): Promise<UndoEventRespon
     method: 'POST',
     body: JSON.stringify({ event_id: eventId, undo_group: true }),
   });
+}
+
+/** What an undo or redo reversed, e.g. `Undone: Rate card 3 (Good)`. */
+export function describeReverted(verb: 'Undone' | 'Redone', events: EventSummary[]): string {
+  return `${verb}: ${events.map(e => e.description).join('; ')}`;
 }
 
 /**

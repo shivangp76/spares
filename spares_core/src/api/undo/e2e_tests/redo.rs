@@ -10,6 +10,7 @@ use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::parser::update_parser;
+use crate::api::review::bury_card;
 use crate::api::review::submit_study_action;
 use crate::api::tag::delete_tag;
 use crate::api::tag::tests::create_tag_helper;
@@ -19,6 +20,7 @@ use crate::model::Card;
 use crate::model::EventAction;
 use crate::model::ReviewLog;
 use crate::parsers::get_all_parsers;
+use crate::schedulers::get_scheduler_from_string;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
@@ -27,6 +29,7 @@ use crate::schema::parser::UpdateParserRequest;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
+use crate::schema::undo::EventSummary;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
 use crate::schema::undo::UndoEventRequest;
@@ -332,7 +335,7 @@ async fn e2e_redo_group_recreates_note_and_tag(pool: SqlitePool) {
     assert_eq!(counts(&pool).await, (1, 1));
 
     let undo = undo_latest(&pool).await.unwrap();
-    assert_eq!(undo.undone_event_ids.len(), 2);
+    assert_eq!(undo.undone_events.len(), 2);
     assert_eq!(undo.undo_event_ids.len(), 2);
     assert_eq!(counts(&pool).await, (0, 0));
 
@@ -347,7 +350,7 @@ async fn e2e_redo_group_recreates_note_and_tag(pool: SqlitePool) {
     .unwrap()
     .unwrap();
     assert_eq!(
-        redo.redone_event_ids.len(),
+        redo.redone_events.len(),
         2,
         "redo must take the whole undo group"
     );
@@ -442,4 +445,47 @@ async fn e2e_redo_delete_notes(pool: SqlitePool) {
     assert_eq!(note_count(&pool).await, 0);
     undo_latest(&pool).await.unwrap();
     assert_eq!(note_count(&pool).await, 1);
+}
+
+fn descriptions(events: &[EventSummary]) -> Vec<&str> {
+    events.iter().map(|e| e.description.as_str()).collect()
+}
+
+#[sqlx::test]
+async fn e2e_undo_and_redo_describe_the_original_action(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    rate(&pool, card_id, 3).await;
+    let rated = format!("Rate card {card_id} (Good)");
+
+    // An undo of the action, a redo, and an undo of the redo all describe the rating itself
+    let undo = undo_latest(&pool).await.unwrap();
+    assert_eq!(descriptions(&undo.undone_events), [rated.as_str()]);
+    let redo = redo_latest(&pool).await.unwrap();
+    assert_eq!(descriptions(&redo.redone_events), [rated.as_str()]);
+    let undo = undo_latest(&pool).await.unwrap();
+    assert_eq!(descriptions(&undo.undone_events), [rated.as_str()]);
+
+    // A redone bury is stored as `UpdateCards`, but is still described as a bury
+    let scheduler = get_scheduler_from_string("fsrs").unwrap();
+    bury_card(&pool, scheduler.as_ref(), card_id, Utc::now(), true)
+        .await
+        .unwrap();
+    let buried = format!("Bury card {card_id}");
+    undo_latest(&pool).await.unwrap();
+    redo_latest(&pool).await.unwrap();
+    let undo = undo_latest(&pool).await.unwrap();
+    assert_eq!(descriptions(&undo.undone_events), [buried.as_str()]);
+
+    let p = create_parser_helper(&pool, "a").await;
+    rename_parser(&pool, p.id, "b").await;
+    let undo = undo_latest(&pool).await.unwrap();
+    assert_eq!(
+        descriptions(&undo.undone_events),
+        ["Rename parser 'a' to 'b'"]
+    );
+    let redo = redo_latest(&pool).await.unwrap();
+    assert_eq!(
+        descriptions(&redo.redone_events),
+        ["Rename parser 'a' to 'b'"]
+    );
 }

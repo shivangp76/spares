@@ -706,10 +706,19 @@ pub mod undo {
         pub undo_group: bool,
     }
 
+    /// An event that undo or redo reversed, and what it did
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EventSummary {
+        pub id: i64,
+        /// The action the user originally took, e.g. "Rate card 3 (Good)". Undoing and redoing
+        /// that action both describe it this way.
+        pub description: String,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct UndoEventResponse {
-        /// The IDs of all events that were undone (including the original and any in the group)
-        pub undone_event_ids: Vec<i64>,
+        /// All events that were undone (including the original and any in the group), oldest first
+        pub undone_events: Vec<EventSummary>,
         /// The IDs of the undo events that were appended, oldest first. Pass one to redo.
         pub undo_event_ids: Vec<i64>,
     }
@@ -725,8 +734,8 @@ pub mod undo {
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct RedoEventResponse {
-        /// The IDs of all undo events that were redone
-        pub redone_event_ids: Vec<i64>,
+        /// All undo events that were redone, oldest first
+        pub redone_events: Vec<EventSummary>,
         /// The IDs of the redo events that were appended, oldest first. Pass one to undo again.
         pub redo_event_ids: Vec<i64>,
     }
