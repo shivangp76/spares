@@ -31,7 +31,6 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
-use crate::parsers::image_occlusion::parse_image_occlusion_data;
 use crate::schema::note::DeleteNotesRequest;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
@@ -77,7 +76,8 @@ pub fn delete_note_files(
         delete_file(&note_rendered_path)?;
     }
 
-    let image_occlusion_clozes = parse_image_occlusion_data(note_data, parser, false, &mut 0)?;
+    // Only the number of image occlusions is needed to find their rendered files, so avoid fully parsing them, which requires the original image and clozes files to still exist
+    let image_occlusion_count = parser.get_image_occlusions(note_data)?.len();
 
     for current_card_order in card_orders {
         // Card front raw path
@@ -133,7 +133,7 @@ pub fn delete_note_files(
         }
 
         // Image occlusion rendered paths
-        for (i, _image_occlusion_cloze) in image_occlusion_clozes.iter().enumerate() {
+        for i in 0..image_occlusion_count {
             for side in [CardSide::Front, CardSide::Back] {
                 let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
                 output_rendered_filepath.push(parser.get_output_filename(
