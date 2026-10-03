@@ -1,8 +1,5 @@
 # Image Occlusion Utility
 
-Roadmap:
-- Allow the CLI to open the standalone editor with a background image preloaded.
-
 Requirements:
 - Ensure that multiple instances of the image occlusion editor can be run at once
 - Should be a webpage so that multiple instances can easily be managed. Keep in mind that this is just a utility.
@@ -17,13 +14,12 @@ Workflow in the frontend:
 The editor is SVG-Edit (the `svgedit` submodule, a fork with the `ext-spares` extension), embedded in an iframe with `?embedded=1`. The extension then hides its own open/save tools and exposes `window.sparesBridge` to the frontend.
 
 Standalone workflow, for those who only use the CLI:
-- Run `spares_frontend --image-occlusion`. The webpage should automatically open up.
-- Click "Change Background Image" and choose an image.
+- Run `spares_frontend --image-occlusion [--image <PATH>]`. The webpage should automatically open up with the image as its background, if provided, otherwise, click "Change Background Image" and choose an image. Each run is its own instance, on the next free port.
 - Add markup and clozes to the appropriate layer. Add cloze settings string to clozes, as needed.
 - Click "Save SVG".
 - Navigate to note document and use a snippet to insert the image occlusion.
 
-The editor's initial style is set by `[image_occlusion.editor]` in the spares config: `fill_color`, `stroke_color`, `stroke_width`, `font_size`, `font_family` and `initial_tool` (e.g. `rect`, `ellipse`, `fhpath` or `select`). The embedded editor gets them, along with the template, from `GET /api/image-occlusions/editor-config`, and the standalone editor gets them from `spares_frontend`. Reload the editor after changing them.
+The editor's initial style is set by `[image_occlusion.editor]` in the spares config: `fill_color`, `stroke_color`, `stroke_width`, `font_size`, `font_family` and `initial_tool` (e.g. `rect`, `ellipse`, `fhpath` or `select`). The embedded editor gets them, along with the template, from `GET /api/image-occlusions/editor-config`, and the standalone editor gets them from `spares_frontend` when it starts. After changing them, reload the frontend or restart `spares_frontend`.
 
 Keyboard shortcuts specific to image occlusion (hover over a tool for the rest):
 - `1` / `2`: select the Markup / Clozes layer.

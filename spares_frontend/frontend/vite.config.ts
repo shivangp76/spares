@@ -1,4 +1,5 @@
-import { cpSync, readFileSync } from 'node:fs'
+import { cpSync, createReadStream, readFileSync } from 'node:fs'
+import { basename, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -9,19 +10,46 @@ const DIST_DIR = fileURLToPath(new URL('./dist', import.meta.url))
 
 const IMAGE_OCCLUSION_TEMPLATE = fileURLToPath(new URL('../../spares_core/src/parsers/image_occlusion/template.svg', import.meta.url))
 
+const BACKGROUND_PATH = '/__spares/background'
+const IMAGE_TYPES: Record<string, string> = {
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+}
+
 /** Serves the standalone image occlusion editor its config (see `ext-spares/config.js`).
-    `spares_frontend --image-occlusion` sets it from the user's spares config. Otherwise, the editor
-    gets the template and its own default settings. */
+    `spares_frontend --image-occlusion` sets it from the user's spares config, along with the image
+    to open, if any. Otherwise, the editor gets the template and its own default settings. */
 function imageOcclusionEditorConfig(): Plugin {
   return {
     name: 'image-occlusion-editor-config',
     configureServer(server) {
+      const background = process.env.SPARES_IMAGE_OCCLUSION_BACKGROUND
       server.middlewares.use('/__spares/image-occlusion-editor.json', (_req, res) => {
         const config = process.env.SPARES_IMAGE_OCCLUSION_EDITOR_CONFIG
-          ?? JSON.stringify({ template: readFileSync(IMAGE_OCCLUSION_TEMPLATE, 'utf8') })
+          ? JSON.parse(process.env.SPARES_IMAGE_OCCLUSION_EDITOR_CONFIG)
+          : { template: readFileSync(IMAGE_OCCLUSION_TEMPLATE, 'utf8') }
+        if (background) config.background = { url: BACKGROUND_PATH, name: basename(background) }
         res.setHeader('Content-Type', 'application/json')
         res.setHeader('Cache-Control', 'no-store')
-        res.end(config)
+        res.end(JSON.stringify(config))
+      })
+      // Only this one file is served, not the directory it is in
+      server.middlewares.use(BACKGROUND_PATH, (_req, res) => {
+        if (!background) {
+          res.statusCode = 404
+          res.end()
+          return
+        }
+        res.setHeader('Content-Type', IMAGE_TYPES[extname(background).toLowerCase()] ?? 'application/octet-stream')
+        res.setHeader('Cache-Control', 'no-store')
+        createReadStream(background)
+          .on('error', () => { res.statusCode = 404; res.end() })
+          .pipe(res)
       })
     },
   }
