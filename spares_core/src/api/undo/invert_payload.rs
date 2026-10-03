@@ -12,6 +12,7 @@ use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
@@ -19,11 +20,18 @@ use crate::api::undo::payloads::UpdateParserPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventType;
+use crate::model::ReviewLog;
 
+/// Appends the event that reverses `event` (an undo, or a redo when `event` is itself an undo) and
+/// returns it. The caller applies it.
+///
+/// `group_id` is the group of the new event, not of `event`: undoing a group creates a new group,
+/// so that redoing it can find exactly the undo events.
 pub async fn create_undo_event(
     db: &SqlitePool,
     event: &Event,
     at: chrono::DateTime<Utc>,
+    group_id: Option<i64>,
 ) -> Result<Event, Error> {
     let undo_event_type = match event.kind {
         EventType::CreateParser => EventType::DeleteParser,
@@ -35,9 +43,11 @@ pub async fn create_undo_event(
         EventType::CreateNotes => EventType::DeleteNotes,
         EventType::UpdateNotes => EventType::UpdateNotes,
         EventType::DeleteNotes => EventType::CreateNotes,
+        EventType::RateCard => EventType::UnrateCard,
+        EventType::UnrateCard => EventType::RateCard,
+        EventType::ForgetCard => EventType::UnforgetCard,
+        EventType::UnforgetCard => EventType::ForgetCard,
         EventType::UpdateCards
-        | EventType::RateCard
-        | EventType::ForgetCard
         | EventType::AdvanceCards
         | EventType::PostponeCards
         | EventType::BuryCards
@@ -46,14 +56,13 @@ pub async fn create_undo_event(
 
     let undo_payload = create_undo_payload(db, event).await?;
 
-    // Insert the undo event
     let id: i64 = sqlx::query_scalar(
-        r"INSERT INTO event (kind, created_at, version, group_id, payload) VALUES (?, ?, ?, ?, ?) RETURNING id"
+        r"INSERT INTO event (kind, created_at, group_id, reverts_event_id, payload) VALUES (?, ?, ?, ?, ?) RETURNING id"
     )
     .bind(undo_event_type)
     .bind(at.timestamp())
-    .bind(event.version) // Use same version as original event
-    .bind(event.group_id) // Preserve group_id if undoing a grouped event
+    .bind(group_id)
+    .bind(event.id)
     .bind(&undo_payload)
     .fetch_one(db)
     .await
@@ -63,10 +72,55 @@ pub async fn create_undo_event(
         id,
         kind: undo_event_type,
         created_at: at,
-        version: event.version,
-        group_id: event.group_id,
+        group_id,
+        reverts_event_id: Some(event.id),
         payload: undo_payload,
     })
+}
+
+/// Deletes the `review_log` row a `RateCard` or `ForgetCard` wrote, returning it so a redo can
+/// restore it. Without this, replay would keep the undone review or forget.
+async fn take_review_log(db: &SqlitePool, review_log_id: i64) -> Result<ReviewLog, Error> {
+    let review_log: ReviewLog = sqlx::query_as(r"SELECT * FROM review_log WHERE id = ?")
+        .bind(review_log_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?
+        .ok_or_else(|| {
+            Error::Library(LibraryError::InvalidConfig(format!(
+                "Review log {review_log_id} no longer exists"
+            )))
+        })?;
+    sqlx::query(r"DELETE FROM review_log WHERE id = ?")
+        .bind(review_log_id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(review_log)
+}
+
+/// Reinserts a row removed by [`take_review_log`], returning its new id.
+async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i64, Error> {
+    sqlx::query_scalar(
+        r"INSERT INTO review_log
+            (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
+             recall_duration, rate_duration, previous_state, tag_id, custom_data)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(review_log.card_id)
+    .bind(review_log.reviewed_at.timestamp())
+    .bind(review_log.kind)
+    .bind(review_log.rating)
+    .bind(&review_log.scheduler_name)
+    .bind(review_log.scheduled_time)
+    .bind(review_log.recall_duration)
+    .bind(review_log.rate_duration)
+    .bind(review_log.previous_state)
+    .bind(review_log.tag_id)
+    .bind(&review_log.custom_data)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
 }
 
 #[expect(clippy::too_many_lines)]
@@ -213,66 +267,39 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::RateCard => {
             let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            sqlx::query(r"DELETE FROM review_log WHERE id = ?")
-                .bind(payload.review_log_id)
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            let p = payload.card;
-            let undo_payloads = vec![UpdateCardPayload {
-                card_id: p.card_id,
-                order: p.order.map(|t| t.swap()),
-                back_type: p.back_type.map(|t| t.swap()),
-                due: p.due.map(|t| t.swap()),
-                stability: p.stability.map(|t| t.swap()),
-                difficulty: p.difficulty.map(|t| t.swap()),
-                desired_retention: p.desired_retention.map(|t| t.swap()),
-                special_state: p.special_state.map(|t| t.swap()),
-                state: p.state.map(|t| t.swap()),
-                custom_data: p.custom_data.map(|t| t.swap()),
-            }];
-            Ok(serde_json::to_value(undo_payloads).unwrap())
+            let review_log = take_review_log(db, payload.review_log_id).await?;
+            let undo_payload = UnreviewPayload {
+                review_log,
+                card: payload.card.swap(),
+            };
+            Ok(serde_json::to_value(undo_payload).unwrap())
         }
         EventType::ForgetCard => {
-            // A version 2 payload is an object carrying the id of the `review_log` marker row that
-            // `forget_card` wrote; a version 1 payload is a bare array and has no marker to
-            // remove. `event.version` is written but never read, and `create_undo_event` copies
-            // the original event's version onto the undo event, so the shape is the reliable
-            // discriminator here. The two can never both parse.
-            let card_payload: UpdateCardPayload = if event.payload.is_array() {
-                let payloads: Vec<UpdateCardPayload> =
-                    serde_json::from_value(event.payload.clone()).unwrap();
-                payloads.into_iter().next().ok_or_else(|| {
-                    Error::Library(LibraryError::InvalidConfig(
-                        "ForgetCard event has an empty payload".to_string(),
-                    ))
-                })?
-            } else {
-                let payload: ForgetCardPayload =
-                    serde_json::from_value(event.payload.clone()).unwrap();
-                // Undoing the forget must also remove its marker, or replay would keep resetting
-                // the card at that instant. This mirrors how undoing a `RateCard` deletes the
-                // review log row it created.
-                sqlx::query(r"DELETE FROM review_log WHERE id = ?")
-                    .bind(payload.review_log_id)
-                    .execute(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-                payload.card
+            let payload: ForgetCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let review_log = take_review_log(db, payload.review_log_id).await?;
+            let undo_payload = UnreviewPayload {
+                review_log,
+                card: payload.card.swap(),
             };
-            let undo_payloads = vec![UpdateCardPayload {
-                card_id: card_payload.card_id,
-                order: card_payload.order.map(|t| t.swap()),
-                back_type: card_payload.back_type.map(|t| t.swap()),
-                due: card_payload.due.map(|t| t.swap()),
-                stability: card_payload.stability.map(|t| t.swap()),
-                difficulty: card_payload.difficulty.map(|t| t.swap()),
-                desired_retention: card_payload.desired_retention.map(|t| t.swap()),
-                special_state: card_payload.special_state.map(|t| t.swap()),
-                state: card_payload.state.map(|t| t.swap()),
-                custom_data: card_payload.custom_data.map(|t| t.swap()),
-            }];
-            Ok(serde_json::to_value(undo_payloads).unwrap())
+            Ok(serde_json::to_value(undo_payload).unwrap())
+        }
+        EventType::UnrateCard => {
+            let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let review_log_id = restore_review_log(db, &payload.review_log).await?;
+            let redo_payload = RateCardPayload {
+                review_log_id,
+                card: payload.card.swap(),
+            };
+            Ok(serde_json::to_value(redo_payload).unwrap())
+        }
+        EventType::UnforgetCard => {
+            let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let review_log_id = restore_review_log(db, &payload.review_log).await?;
+            let redo_payload = ForgetCardPayload {
+                review_log_id,
+                card: payload.card.swap(),
+            };
+            Ok(serde_json::to_value(redo_payload).unwrap())
         }
         EventType::UpdateCards
         | EventType::AdvanceCards
@@ -281,21 +308,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         | EventType::UnburyCards => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
-            let undo_payloads: Vec<UpdateCardPayload> = payloads
-                .into_iter()
-                .map(|p| UpdateCardPayload {
-                    card_id: p.card_id,
-                    order: p.order.map(|t| t.swap()),
-                    back_type: p.back_type.map(|t| t.swap()),
-                    due: p.due.map(|t| t.swap()),
-                    stability: p.stability.map(|t| t.swap()),
-                    difficulty: p.difficulty.map(|t| t.swap()),
-                    desired_retention: p.desired_retention.map(|t| t.swap()),
-                    special_state: p.special_state.map(|t| t.swap()),
-                    state: p.state.map(|t| t.swap()),
-                    custom_data: p.custom_data.map(|t| t.swap()),
-                })
-                .collect();
+            let undo_payloads: Vec<UpdateCardPayload> =
+                payloads.into_iter().map(UpdateCardPayload::swap).collect();
             Ok(serde_json::to_value(undo_payloads).unwrap())
         }
     }
@@ -323,7 +337,7 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         assert_eq!(undo.kind, EventType::DeleteParser);
         let delete_payload: DeleteParserPayload = serde_json::from_value(undo.payload).unwrap();
         assert_eq!(delete_payload.id, Some(parser.id));
@@ -369,7 +383,7 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         let delete_payload: DeleteParserPayload = serde_json::from_value(undo.payload).unwrap();
         assert_eq!(delete_payload.note_ids.len(), 2);
         assert!(delete_payload.note_ids.contains(&id1));
@@ -393,7 +407,7 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         assert_eq!(undo.kind, EventType::UpdateParser);
         let name = undo.payload.get("name").unwrap();
         assert_eq!(name.get("b").unwrap(), "new_name");
@@ -423,7 +437,7 @@ mod tests {
             .await
             .unwrap();
         let at = Utc::now();
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         assert_eq!(undo.kind, EventType::CreateParser);
         assert_eq!(
             undo.payload.get("id").and_then(|v| v.as_i64()),
@@ -471,7 +485,7 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         assert_eq!(undo.kind, EventType::DeleteTag);
         assert_eq!(
             undo.payload.get("id").and_then(|v| v.as_i64()),
@@ -514,7 +528,7 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, at).await.unwrap();
+        let undo = create_undo_event(&pool, &event, at, None).await.unwrap();
         assert_eq!(undo.kind, EventType::UpdateTag);
         let name = undo.payload.get("name").unwrap();
         assert_eq!(name.get("b").unwrap(), "new_name");
@@ -556,7 +570,9 @@ mod tests {
             .await
             .unwrap();
 
-        let undo = create_undo_event(&pool, &event, Utc::now()).await.unwrap();
+        let undo = create_undo_event(&pool, &event, Utc::now(), None)
+            .await
+            .unwrap();
         assert_eq!(undo.kind, EventType::CreateTag);
         assert_eq!(
             undo.payload.get("id").and_then(|v| v.as_i64()),
