@@ -119,11 +119,11 @@ async fn read_generated_notes(
         .process_data(
             all_notes,
             parser.as_ref(),
-            true,
-            true,
+            false, // dry_run
+            true,  // quiet
             start_date,
             Vec::new(),
-        ) // run quietly
+        )
         .await
         .unwrap();
     let notes = list_notes(
