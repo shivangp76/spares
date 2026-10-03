@@ -492,7 +492,7 @@ async fn simulate_reviews(
     assert!(postponed_once);
 
     // TODO: Use the code above to examine and unit test for:
-    // - smart schedule: Examine the distribution of reviews on different days to see if it lines up with the workload_percentage
+    // - placement: Examine the distribution of reviews on different days to see if it lines up with the workload_percentage
 }
 
 #[allow(clippy::too_many_lines, reason = "test data is long")]

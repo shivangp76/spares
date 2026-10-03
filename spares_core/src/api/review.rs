@@ -899,7 +899,7 @@ pub async fn rate_card(
     )
     .await?;
     // Record the interval the card was actually given, not the one the scheduler proposed before
-    // smart scheduling moved it. Postponing reads this back to measure how overdue a card is.
+    // placement moved it. Postponing reads this back to measure how overdue a card is.
     new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());
 
     // Update filtered tag scheduler data

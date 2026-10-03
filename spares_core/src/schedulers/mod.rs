@@ -28,16 +28,6 @@ pub mod placement;
 #[cfg(test)]
 pub(crate) use fsrs::optimal_interval_days;
 
-pub fn stepped_range_inclusive(start: Duration, end: Duration, step: Duration) -> Vec<Duration> {
-    let mut intervals = Vec::new();
-    let mut current = start;
-    while current <= end {
-        intervals.push(current);
-        current += step;
-    }
-    intervals
-}
-
 #[derive(Debug)]
 pub struct MoveCardsResult {
     pub card_payloads: Vec<UpdateCardPayload>,

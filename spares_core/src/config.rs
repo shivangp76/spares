@@ -150,10 +150,6 @@ pub fn get_env_config(env: Environment) -> EnvironmentConfig {
 pub(crate) struct SparesInternalConfig {
     pub(crate) last_unburied: DateTime<Utc>,
     pub(crate) linked_notes_generated: bool,
-    // #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-    // pub fuzz_range: Duration,
-    // #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-    // pub reschedule_range: Duration,
 }
 
 impl Default for SparesInternalConfig {
@@ -161,8 +157,6 @@ impl Default for SparesInternalConfig {
         Self {
             last_unburied: DateTime::<Utc>::MIN_UTC,
             linked_notes_generated: false,
-            // fuzz_range: Duration::days(4),
-            // reschedule_range: Duration::weeks(1),
         }
     }
 }
@@ -469,5 +463,24 @@ mod tests {
         let written = toml_edit::ser::to_string_pretty(&config).unwrap();
         assert!(!written.contains("enabled"), "{written}");
         assert!(written.contains("load_balance = false"), "{written}");
+    }
+
+    /// The example in `docs/src/concepts.md`.
+    #[test]
+    fn documented_scheduling_example_parses() {
+        let config = parse(indoc::indoc! {r#"
+            load_balance = true
+            disperse_siblings = true
+
+            [easy_days]
+            days_to_workload_percentage = { Mon = 1.0, Tue = 1.0, Wed = 1.0, Thu = 1.0, Fri = 1.0, Sat = 1.0, Sun = 0.5 }
+            specific_dates = ["2026-12-25"]
+        "#});
+        assert_eq!(
+            config.easy_days.specific_dates,
+            [NaiveDate::from_ymd_opt(2026, 12, 25).unwrap()].into()
+        );
+        let workload = &config.easy_days.days_to_workload_percentage;
+        assert!((workload[&Weekday::Sun] * 2.0 - workload[&Weekday::Mon]).abs() < 1e-9);
     }
 }

@@ -135,7 +135,7 @@ pub fn fsrs_card_to_card(
     (card, review_log)
 }
 
-// NOTE: A similar function exists in FSRS, but it is private. If native smart schedule is implemented in FSRS, this won't be needed.
+// NOTE: rs-fsrs has the same function, but it is private.
 pub fn get_fuzz_range(
     interval: Duration,
     elapsed_time: Duration,
@@ -187,97 +187,6 @@ pub fn get_fuzz_range(
     min_ivl = min_ivl.min(max_ivl);
     (min_ivl, max_ivl)
 }
-
-// let (obey_easy_days, obey_specific_due_dates) = if easy_days_config.review_ratio == 0.0 {
-//     (true, true)
-// } else {
-//     let mut rng = rand::rng();
-//     let (sample_1, sample_2): (f64, f64) = rng.random();
-//     (
-//         sample_1 < p_obey_easy_days_val,
-//         sample_2 < p_obey_specific_due_dates_val,
-//     )
-// };
-// let step = Duration::fractional_days(
-//     (1. + (max_ivl - min_ivl).num_fractional_days() / 100.).floor(),
-// );
-// let range = stepped_range(min_ivl, max_ivl, step)
-//     .into_iter()
-//     .rev()
-//     .filter(|check_ivl| {
-//         let check_due = review_log.reviewed_at + *check_ivl;
-//         // If the due date is on an easy day, skip
-//         !(obey_specific_due_dates
-//             && easy_days_config
-//                 .specific_dates
-//                 .contains(&check_due.date_naive()))
-//             || (obey_easy_days
-//                 && easy_days_config
-//                     .days_to_review_ratio
-//                     .contains_key(&check_due.weekday()))
-//     })
-//     .collect::<Vec<_>>();
-// let workloads = range
-//     .into_iter()
-//     .map(|check_ivl| {
-//         let check_due = review_log.reviewed_at + check_ivl;
-//         let workload = if check_due > now {
-//             // If the due date is in the future, the workload is the number of cards due on that day
-//             date_to_due_count.get(&check_due.date_naive()).unwrap_or(&0)
-//         } else {
-//             // If the due date is today, the workload is the number of cards due today plus the number of cards learned today
-//             // &(due_today + reviewed_today)
-//             &workload_today
-//         };
-//         (check_ivl, workload)
-//     })
-//     .collect::<Vec<_>>();
-// let (best_ivl, _min_workload) = workloads
-//     .into_iter()
-//     .min_by_key(|(_ivl, workload)| **workload)
-//     .unwrap_or((max_ivl, &i64::MAX));
-// best_ivl
-
-// /// Calculate the probability of obeying easy days to ensure the review ratio.
-// ///
-// /// # Parameters
-// /// - `num_of_easy_days`: The number of easy days.
-// /// - `easy_days_review_ratio`: The ratio of reviews on easy days.
-// ///
-// /// # Math
-// /// - A week has 7 days, `n` easy days, and `7 - n` non-easy days.
-// /// - Assume we have `y` reviews per non-easy day, the number of reviews per easy day is `a * y`.
-// /// - The total number of reviews in a week is `y * (7 - n) + a * y * n`.
-// /// - The probability of a review on an easy day is the number of reviews on easy days divided by the total number of reviews:
-// ///   `(a * y * n) / (y * (7 - n) + a * y * n) = (a * n) / (a * n + 7 - n)`.
-// /// - The probability of skipping a review on an easy day is:
-// ///   `1 - (a * n) / (a * n + 7 - n) = (7 - n) / (a * n + 7 - n)`.
-// pub fn p_obey_easy_days(num_of_easy_days: f64, easy_days_review_ratio: f64) -> f64 {
-//     (7.0 - num_of_easy_days) / (easy_days_review_ratio * num_of_easy_days + 7.0 - num_of_easy_days)
-// }
-//
-// /// Calculate the probability of obeying specific due dates to ensure the review ratio.
-// ///
-// /// # Parameters
-// /// - `num_of_specific_due_dates`: The number of specific due dates.
-// /// - `easy_days_review_ratio`: The ratio of reviews on easy days.
-// /// - `fuzz_range`: The number of days after (or before) the specific due date that will be rescheduled. For example, if this is 2, then 2 days before, the specific due date, and 2 days after will be rescheduled, totaling 5 days.
-// ///
-// /// # Math
-// /// - When we have `n` specific due dates, the number of days to reschedule is `(fuzz_range * 2) + n`.
-// /// - Assume we have `y` reviews per non-easy day, the number of reviews per easy day is `a * y`.
-// /// - The total number of reviews in the days to reschedule is `y * (fuzz_range * 2) + a * y * n`.
-// /// - The probability of a review on a specific due date is the number of reviews on specific due dates divided by the total number of reviews:
-// ///   `(a * y * n) / (y * (fuzz_range * 2) + a * y * n) = (a * n) / (a * n + (fuzz_range * 2))`.
-// /// - The probability of skipping a review on a specific due date is:
-// ///   `1 - (a * n) / (a * n + (fuzz_range * 2)) = (fuzz_range * 2) / (a * n + (fuzz_range * 2))`.
-// pub fn p_obey_specific_due_dates(
-//     num_of_specific_due_dates: f64,
-//     easy_days_review_ratio: f64,
-//     fuzz_range: f64,
-// ) -> f64 {
-//     (fuzz_range * 2.0) / (easy_days_review_ratio * num_of_specific_due_dates + (fuzz_range * 2.0))
-// }
 
 #[cfg(test)]
 mod tests {

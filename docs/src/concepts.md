@@ -39,3 +39,22 @@ Parsers allow notes to be created in different markup languages. By default, spa
 ## Adapters
 
 Adapters allow spares to interface with different spaced repetition software. By default, spares ships with an adapter for Anki and for spares itself.
+
+## Scheduling
+
+Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention. When a card in review is rated or rescheduled, FSRS proposes an interval and a small range of days around it. One day in that range is then chosen at random, weighted by these settings in `config.toml`:
+
+```toml
+# Prefer days that have fewer cards due.
+load_balance = true
+# Keep cards from the same note off the same and nearby days.
+disperse_siblings = true
+
+[easy_days]
+# Relative workload per weekday. Here, Sundays get half the reviews of other days.
+days_to_workload_percentage = { Mon = 1.0, Tue = 1.0, Wed = 1.0, Thu = 1.0, Fri = 1.0, Sat = 1.0, Sun = 0.5 }
+# Days with no reviews, such as a vacation.
+specific_dates = ["2026-12-25"]
+```
+
+Cards are only moved within their range, so these settings shift reviews by a few days at most. Cards in learning steps and cards due sooner than `minimum_interval` keep the interval FSRS gave them. If the settings rule out every day in the range, sibling dispersal is ignored first, and then the rest.
