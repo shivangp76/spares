@@ -900,7 +900,7 @@ pub async fn rate_card(
     // discarded. Handing either to the scheduler would make this review look like a continuation
     // of a lapse rather than the first review of a reset card.
     let latest_review_log = effective_review_logs(&review_logs).last().cloned();
-    let (mut updated_card, new_review_log) = scheduler.schedule(
+    let (mut updated_card, mut new_review_log) = scheduler.schedule(
         &card,
         latest_review_log,
         rating,
@@ -925,6 +925,9 @@ pub async fn rate_card(
             reviewed_at,
         )
         .await?;
+    // Record the interval the card was actually given, not the one the scheduler proposed before
+    // smart scheduling moved it. Postponing reads this back to measure how overdue a card is.
+    new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());
 
     // Update filtered tag scheduler data
     if let Some(filtered_tag) = filtered_tag_opt {

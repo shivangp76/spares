@@ -22,6 +22,9 @@ use crate::schema::review::RatingSubmission;
 
 mod fsrs;
 
+#[cfg(test)]
+pub(crate) use fsrs::optimal_interval_days;
+
 pub fn stepped_range_inclusive(start: Duration, end: Duration, step: Duration) -> Vec<Duration> {
     let mut intervals = Vec::new();
     let mut current = start;
@@ -160,11 +163,19 @@ pub trait SrsScheduler: Send + Sync {
         // non-empty log.
         cards_with_review_logs.retain(|(_card, review_logs)| !review_logs.is_empty());
 
-        // Recompute parameters
+        // Recompute the memory state. The replay also yields the due date the scheduler itself
+        // would assign after the latest review, which is the base that smart scheduling adjusts.
+        // Using the stored `due` instead would keep whatever the card had before, which is
+        // exactly what a reschedule is meant to replace.
         cards_with_review_logs.iter_mut().try_for_each(
             |(card, review_logs)| -> Result<(), Error> {
-                let new_card = self.compute_memory_state(review_logs.clone())?;
-                (card.stability, card.difficulty) = (new_card.stability, new_card.difficulty);
+                let new_card =
+                    self.compute_memory_state(review_logs.clone(), card.desired_retention)?;
+                card.stability = new_card.stability;
+                card.difficulty = new_card.difficulty;
+                card.state = new_card.state;
+                card.due = new_card.due;
+                card.updated_at = at;
                 Ok(())
             },
         )?;
@@ -178,11 +189,19 @@ pub trait SrsScheduler: Send + Sync {
             // NOTE: This currently schedules each sibling sequentially so the order of the siblings will impact how they are scheduled.
             siblings_with_review_logs.sort_by_key(|(card, _)| card.order);
             for sibling_index in 0..siblings_with_review_logs.len() {
+                // `smart_schedule` takes the card and its siblings separately, so the card must
+                // not also appear among its own siblings.
+                let other_siblings = siblings_with_review_logs
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != sibling_index)
+                    .map(|(_, sibling)| sibling.clone())
+                    .collect::<Vec<_>>();
                 siblings_with_review_logs[sibling_index].0.due = self
                     .smart_schedule(
                         config,
                         &siblings_with_review_logs[sibling_index],
-                        &siblings_with_review_logs,
+                        &other_siblings,
                         at,
                     )
                     .await?;
@@ -226,14 +245,24 @@ pub trait SrsScheduler: Send + Sync {
     /// [`ReviewLogKind`], not just reviews: a [`ReviewLogKind::Forget`] row is what tells the
     /// replay to start over, and dropping it would reconstruct the state the card would have had
     /// if it had never been forgotten.
-    fn compute_memory_state(&self, review_logs: Vec<ReviewLog>) -> Result<Card, Error> {
+    ///
+    /// `desired_retention` is the card's current desired retention. It does not affect the
+    /// memory state, but it does decide the due date of the returned card.
+    fn compute_memory_state(
+        &self,
+        review_logs: Vec<ReviewLog>,
+        desired_retention: f64,
+    ) -> Result<Card, Error> {
         assert!(
             !review_logs.is_empty(),
             "no review logs to compute memory state from"
         );
         // Seeded from the first entry whatever its kind, so that a card forgotten before it was
         // ever reviewed replays to a card created at that instant rather than at the epoch.
-        let mut card = Card::new(review_logs.first().unwrap().reviewed_at);
+        let mut card = Card {
+            desired_retention,
+            ..Card::new(review_logs.first().unwrap().reviewed_at)
+        };
         let mut previous_review_log: Option<ReviewLog> = None;
         for review_log in review_logs {
             match review_log.kind {
@@ -342,6 +371,7 @@ mod tests {
     use serde_json::Map;
 
     use super::*;
+    use crate::model::DEFAULT_DESIRED_RETENTION;
     use crate::model::NEW_CARD_STATE;
 
     #[test]
@@ -406,17 +436,23 @@ mod tests {
     fn compute_memory_state_forget_resets_memory() {
         let scheduler = scheduler();
         let reviewed = scheduler
-            .compute_memory_state(vec![review_at(0, 3), review_at(1, 3), review_at(2, 4)])
+            .compute_memory_state(
+                vec![review_at(0, 3), review_at(1, 3), review_at(2, 4)],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert!(reviewed.stability > 0.0, "precondition: card was learned");
 
         let forgotten = scheduler
-            .compute_memory_state(vec![
-                review_at(0, 3),
-                review_at(1, 3),
-                review_at(2, 4),
-                forget_at(3),
-            ])
+            .compute_memory_state(
+                vec![
+                    review_at(0, 3),
+                    review_at(1, 3),
+                    review_at(2, 4),
+                    forget_at(3),
+                ],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         assert_eq!(forgotten.stability, 0.0);
         assert_eq!(forgotten.difficulty, 0.0);
@@ -429,17 +465,20 @@ mod tests {
         let scheduler = scheduler();
         // A card with history, forgotten, then reviewed once.
         let after_forget = scheduler
-            .compute_memory_state(vec![
-                review_at(0, 3),
-                review_at(1, 3),
-                review_at(2, 4),
-                forget_at(3),
-                review_at(4, 3),
-            ])
+            .compute_memory_state(
+                vec![
+                    review_at(0, 3),
+                    review_at(1, 3),
+                    review_at(2, 4),
+                    forget_at(3),
+                    review_at(4, 3),
+                ],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         // The same single review against a card that never had any history.
         let from_scratch = scheduler
-            .compute_memory_state(vec![review_at(4, 3)])
+            .compute_memory_state(vec![review_at(4, 3)], DEFAULT_DESIRED_RETENTION)
             .unwrap();
         assert_eq!(after_forget.stability, from_scratch.stability);
         assert_eq!(after_forget.difficulty, from_scratch.difficulty);
@@ -458,16 +497,19 @@ mod tests {
         // through this scheduler. What this does pin is that the pre-forget reviews contribute
         // nothing to the resulting interval.
         let after_forget = scheduler
-            .compute_memory_state(vec![
-                review_at(0, 3),
-                review_at(1, 3),
-                review_at(2, 4),
-                forget_at(3),
-                review_at(40, 3),
-            ])
+            .compute_memory_state(
+                vec![
+                    review_at(0, 3),
+                    review_at(1, 3),
+                    review_at(2, 4),
+                    forget_at(3),
+                    review_at(40, 3),
+                ],
+                DEFAULT_DESIRED_RETENTION,
+            )
             .unwrap();
         let from_scratch = scheduler
-            .compute_memory_state(vec![review_at(40, 3)])
+            .compute_memory_state(vec![review_at(40, 3)], DEFAULT_DESIRED_RETENTION)
             .unwrap();
         assert_eq!(
             after_forget.due, from_scratch.due,
@@ -480,7 +522,9 @@ mod tests {
         let scheduler = scheduler();
         // A card forgotten before it was ever reviewed: the fold is seeded from the marker, so the
         // card is created at that instant rather than at the epoch.
-        let card = scheduler.compute_memory_state(vec![forget_at(7)]).unwrap();
+        let card = scheduler
+            .compute_memory_state(vec![forget_at(7)], DEFAULT_DESIRED_RETENTION)
+            .unwrap();
         assert_eq!(card.stability, 0.0);
         assert_eq!(card.state, NEW_CARD_STATE);
         assert_eq!(card.due, at(7));
@@ -491,7 +535,11 @@ mod tests {
         let scheduler = scheduler();
         let mut broken = review_at(0, 3);
         broken.rating = None;
-        assert!(scheduler.compute_memory_state(vec![broken]).is_err());
+        assert!(
+            scheduler
+                .compute_memory_state(vec![broken], DEFAULT_DESIRED_RETENTION)
+                .is_err()
+        );
     }
 
     #[test]
