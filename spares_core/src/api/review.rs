@@ -57,6 +57,7 @@ use crate::parsers::get_output_raw_dir;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::placement::place_due;
 use crate::schema::review::CardBackRenderedPath;
 use crate::schema::review::CliReviewInfo;
 use crate::schema::review::GetReviewCardFilterRequest;
@@ -827,33 +828,6 @@ pub async fn update_filtered_tag_scheduler_data(
     Ok(())
 }
 
-/// Fetches all sibling cards for a note (excluding `card_id`) together with
-/// their full review-log history, ordered by `reviewed_at ASC`.
-async fn fetch_siblings_with_review_logs(
-    db: &SqlitePool,
-    note_id: NoteId,
-    card_id: CardId,
-) -> Result<Vec<(Card, Vec<ReviewLog>)>, Error> {
-    let siblings: Vec<Card> = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ? AND id != ?")
-        .bind(note_id)
-        .bind(card_id)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let mut siblings_with_review_logs = Vec::with_capacity(siblings.len());
-    for sibling in siblings {
-        let review_logs: Vec<ReviewLog> = sqlx::query_as(
-            r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC, id ASC",
-        )
-        .bind(sibling.id)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        siblings_with_review_logs.push((sibling, review_logs));
-    }
-    Ok(siblings_with_review_logs)
-}
-
 #[expect(clippy::too_many_lines)]
 pub async fn rate_card(
     db: &SqlitePool,
@@ -912,19 +886,18 @@ pub async fn rate_card(
     assert!(matches!(updated_card.custom_data, Value::Object(_)));
     assert!(matches!(new_review_log.custom_data, Value::Object(_)));
 
-    // Smart schedule
+    // Place the card among the due dates the scheduler allows.
     review_logs.push(new_review_log.clone());
-    let siblings_with_review_logs =
-        fetch_siblings_with_review_logs(db, card.note_id, card.id).await?;
     let config = read_external_config()?;
-    updated_card.due = scheduler
-        .smart_schedule(
-            &config,
-            &(updated_card.clone(), review_logs),
-            &siblings_with_review_logs,
-            reviewed_at,
-        )
-        .await?;
+    updated_card.due = place_due(
+        db,
+        scheduler,
+        &config,
+        &updated_card,
+        &review_logs,
+        reviewed_at,
+    )
+    .await?;
     // Record the interval the card was actually given, not the one the scheduler proposed before
     // smart scheduling moved it. Postponing reads this back to measure how overdue a card is.
     new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());
