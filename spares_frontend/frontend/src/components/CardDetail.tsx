@@ -183,7 +183,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
       )}
 
       {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
-      {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onUndone={refreshCard} />}
+      {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onReverted={refreshCard} />}
 
       {panelNote && (
         <div style={{ marginTop: 16 }}>

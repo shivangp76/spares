@@ -12,6 +12,7 @@ import {
   getTagByName,
   getTodayStatistics,
   postReview,
+  redoEvent,
   searchNotes,
   submitAction,
   tagNote,
@@ -19,6 +20,7 @@ import {
   updateCards,
 } from '../api/client';
 import CardRenderer from '../components/CardRenderer';
+import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
@@ -204,6 +206,8 @@ export default function ReviewPage() {
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
+  // The undo event that Redo reverses, and whether it undid a rating. Any new action clears it.
+  const [lastUndo, setLastUndo] = useState<{ eventId: number; wasRating: boolean } | null>(null);
 
   const tagId = activeFilter && 'FilteredTag' in activeFilter ? activeFilter.FilteredTag.tag_id : null;
 
@@ -283,6 +287,7 @@ export default function ReviewPage() {
     setSessionEnd(null);
     lastEventId.current = null;
     lastActionWasRating.current = false;
+    setLastUndo(null);
     loadCard(filter);
   }
 
@@ -332,6 +337,7 @@ export default function ReviewPage() {
       setReviewedCount(c => c + 1);
       lastEventId.current = res.event_id;
       lastActionWasRating.current = true;
+      setLastUndo(null);
       setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`);
       loadCard(activeFilter);
     } catch (e) {
@@ -345,6 +351,7 @@ export default function ReviewPage() {
     try {
       lastEventId.current = await action();
       lastActionWasRating.current = false;
+      setLastUndo(null);
       setStatus(message ?? null);
       loadCard(activeFilter);
     } catch (e) {
@@ -433,6 +440,7 @@ export default function ReviewPage() {
     try {
       lastEventId.current = await tagNote(card.note_id, config.flagged_tag_name);
       lastActionWasRating.current = false;
+      setLastUndo(null);
       setStatus(`Note tagged \`${config.flagged_tag_name}\`.`);
     } catch (e) {
       setStatus(String(e));
@@ -458,9 +466,35 @@ export default function ReviewPage() {
       const res = await undoEvent(lastEventId.current);
       lastEventId.current = null;
       setStatus(res ? `Undone event(s): ${res.undone_event_ids.join(', ')}` : 'No event to undo.');
+      const undoId = res?.undo_event_ids[0];
+      setLastUndo(undoId === undefined ? null : { eventId: undoId, wasRating: lastActionWasRating.current });
       if (lastActionWasRating.current) setReviewedCount(c => Math.max(0, c - 1));
       lastActionWasRating.current = false;
       // The next card will be the one that was just undone
+      loadCard(activeFilter);
+    } catch (e) {
+      setStatus(String(e));
+    }
+  }
+
+  async function redo() {
+    if (!lastUndo) {
+      setStatus('Nothing to redo.');
+      return;
+    }
+    try {
+      const res = await redoEvent(lastUndo.eventId);
+      setLastUndo(null);
+      if (!res) {
+        setStatus('No event to redo.');
+        return;
+      }
+      setStatus(`Redone event(s): ${res.redone_event_ids.join(', ')}`);
+      // So that Undo reverses exactly this redo
+      lastEventId.current = res.redo_event_ids[0] ?? null;
+      lastActionWasRating.current = lastUndo.wasRating;
+      if (lastUndo.wasRating) setReviewedCount(c => c + 1);
+      // The redone action moved the card on again
       loadCard(activeFilter);
     } catch (e) {
       setStatus(String(e));
@@ -579,6 +613,7 @@ export default function ReviewPage() {
       }
       switch (e.key) {
         case 'u': undo(); break;
+        case 'U': redo(); break;
         case 'b': buryCard(); break;
         case 's': suspendCard(); break;
         case 'e': toggleCardNote(); break;
@@ -779,7 +814,8 @@ export default function ReviewPage() {
           <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
             {isNarrow && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={undo} className="touch-target" style={toned(TONES.gray)}>Undo</button>
+                <button onClick={undo} className="touch-target" style={toned(TONES.gray)}><UndoIcon />Undo</button>
+                {lastUndo && <button onClick={redo} className="touch-target" style={toned(TONES.gray)}><RedoIcon />Redo</button>}
                 <button onClick={toggleCardNote} className="touch-target" style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'}</button>
                 <button onClick={buryCard} className="touch-target" style={toned(TONES.orange)}>Bury Card</button>
                 <button onClick={suspendCard} className="touch-target" style={toned(TONES.purple)}>Suspend Card</button>
@@ -792,7 +828,8 @@ export default function ReviewPage() {
                 <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
                   <div style={{ flex: 1 }}>
                     <ActionGroup label="Note" tone={TONES.blue}>
-                      {!isNarrow && <button onClick={undo} style={toned(TONES.gray)}>Undo <span className="key-hint">(u)</span></button>}
+                      {!isNarrow && <button onClick={undo} style={toned(TONES.gray)}><UndoIcon />Undo <span className="key-hint">(u)</span></button>}
+                      {!isNarrow && lastUndo && <button onClick={redo} style={toned(TONES.gray)}><RedoIcon />Redo <span className="key-hint">(U)</span></button>}
                       {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
                       <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
                         Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
