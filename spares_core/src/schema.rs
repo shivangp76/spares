@@ -710,6 +710,25 @@ pub mod undo {
     pub struct UndoEventResponse {
         /// The IDs of all events that were undone (including the original and any in the group)
         pub undone_event_ids: Vec<i64>,
+        /// The IDs of the undo events that were appended, oldest first. Pass one to redo.
+        pub undo_event_ids: Vec<i64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RedoEventRequest {
+        /// The ID of the undo event to redo. If `None`, then redoes the latest undo, unless an
+        /// action has been taken since.
+        pub event_id: Option<i64>,
+        /// If true, redo all undo events in the same group as this event
+        pub redo_group: bool,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RedoEventResponse {
+        /// The IDs of all undo events that were redone
+        pub redone_event_ids: Vec<i64>,
+        /// The IDs of the redo events that were appended, oldest first. Pass one to undo again.
+        pub redo_event_ids: Vec<i64>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
