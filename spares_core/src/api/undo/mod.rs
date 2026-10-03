@@ -39,11 +39,13 @@ use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventAction;
 use crate::model::EventType;
+use crate::schema::undo::EventSummary;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
 use crate::schema::undo::UndoEventRequest;
 use crate::schema::undo::UndoEventResponse;
 
+mod describe;
 mod event_actions;
 mod invert_payload;
 pub use event_actions::create_event_group;
@@ -168,6 +170,15 @@ async fn revert_events(db: &SqlitePool, events: &[Event]) -> Result<Vec<i64>, Er
     Ok(new_event_ids)
 }
 
+/// Describes `events` before they are reverted, since reverting can delete what describes them.
+async fn summarize_all(db: &SqlitePool, events: &[Event]) -> Result<Vec<EventSummary>, Error> {
+    let mut summaries = Vec::with_capacity(events.len());
+    for event in events {
+        summaries.push(describe::summarize(db, event).await?);
+    }
+    Ok(summaries)
+}
+
 /// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone.
 pub async fn undo_event(
     db: &SqlitePool,
@@ -195,9 +206,10 @@ pub async fn undo_event(
     };
 
     let events = expand_group(db, event, body.undo_group).await?;
+    let undone_events = summarize_all(db, &events).await?;
     let undo_event_ids = revert_events(db, &events).await?;
     Ok(Some(UndoEventResponse {
-        undone_event_ids: events.iter().map(|e| e.id).collect(),
+        undone_events,
         undo_event_ids,
     }))
 }
@@ -235,9 +247,10 @@ pub async fn redo_event(
     };
 
     let events = expand_group(db, event, body.redo_group).await?;
+    let redone_events = summarize_all(db, &events).await?;
     let redo_event_ids = revert_events(db, &events).await?;
     Ok(Some(RedoEventResponse {
-        redone_event_ids: events.iter().map(|e| e.id).collect(),
+        redone_events,
         redo_event_ids,
     }))
 }

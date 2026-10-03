@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   cachedTodayStatistics,
   createReviewSnapshot,
+  describeReverted,
   forgetCard,
   getCardsForNote,
   getNote,
@@ -465,7 +466,7 @@ export default function ReviewPage() {
       // Use the tracked event id so syncs from elsewhere don't cause the wrong event to be undone
       const res = await undoEvent(lastEventId.current);
       lastEventId.current = null;
-      setStatus(res ? `Undone event(s): ${res.undone_event_ids.join(', ')}` : 'No event to undo.');
+      setStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.');
       const undoId = res?.undo_event_ids[0];
       setLastUndo(undoId === undefined ? null : { eventId: undoId, wasRating: lastActionWasRating.current });
       if (lastActionWasRating.current) setReviewedCount(c => Math.max(0, c - 1));
@@ -489,7 +490,7 @@ export default function ReviewPage() {
         setStatus('No event to redo.');
         return;
       }
-      setStatus(`Redone event(s): ${res.redone_event_ids.join(', ')}`);
+      setStatus(describeReverted('Redone', res.redone_events));
       // So that Undo reverses exactly this redo
       lastEventId.current = res.redo_event_ids[0] ?? null;
       lastActionWasRating.current = lastUndo.wasRating;
