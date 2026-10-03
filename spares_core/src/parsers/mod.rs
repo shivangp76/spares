@@ -1,5 +1,7 @@
 use std::fmt::Write as _;
+use std::fs::create_dir_all;
 use std::fs::read_to_string;
+use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -331,42 +333,40 @@ pub trait Parseable: Send + Sync {
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));
         }
+        let mut templates_dir: PathBuf = get_config_dir();
+        templates_dir.push(self.get_parser_name());
+        templates_dir.push("templates");
+        let file_extension = self.file_extension();
+        let read_or_create_template = |name: &str| -> Result<String, std::io::Error> {
+            let path = templates_dir.join(format!("{name}.{file_extension}"));
+            if !path.is_file() {
+                create_dir_all(&templates_dir)?;
+                write(&path, self.default_template())?;
+            }
+            read_to_string(&path)
+        };
         match template_type {
-            TemplateType::Note | TemplateType::Card => {
-                let mut note_template_path: PathBuf = get_config_dir();
-                let parser_name = self.get_parser_name();
-                note_template_path.push(parser_name);
-                note_template_path.push("templates");
-                let file_extension = self.file_extension();
-                let note_template_filename = format!("note_template.{}", file_extension);
-                note_template_path.push(note_template_filename.as_str());
-                let note_template_contents = read_to_string(&note_template_path)?;
-                if template_type == TemplateType::Note {
-                    return Ok((note_template_contents, body_placeholder));
-                }
-                let mut card_template_path = note_template_path.clone();
-                let card_template_filename = format!("card_template.{}", file_extension);
-                card_template_path.set_file_name(card_template_filename);
+            TemplateType::Note => Ok((read_or_create_template("note_template")?, body_placeholder)),
+            TemplateType::Card => {
+                let card_template_path =
+                    templates_dir.join(format!("card_template.{file_extension}"));
                 let card_template_contents = if card_template_path.is_file() {
                     read_to_string(&card_template_path)?
                 } else {
-                    note_template_contents.clone()
+                    read_or_create_template("note_template")?
                 };
                 Ok((card_template_contents, body_placeholder))
             }
-            TemplateType::Export => {
-                let mut export_template_path: PathBuf = get_config_dir();
-                let parser_name = self.get_parser_name();
-                export_template_path.push(parser_name);
-                export_template_path.push("templates");
-                let file_extension = self.file_extension();
-                let export_template_filename = format!("export_template.{}", file_extension);
-                export_template_path.push(export_template_filename.as_str());
-                let export_template_contents = read_to_string(&export_template_path)?;
-                Ok((export_template_contents, body_placeholder))
-            }
+            TemplateType::Export => Ok((
+                read_or_create_template("export_template")?,
+                body_placeholder,
+            )),
         }
     }
+
+    /// Contents written to a note or export template file that does not exist yet. Must contain the
+    /// `spares: body` comment.
+    fn default_template(&self) -> &'static str;
 
     // This can be overridden for a specific parser, so it is in the trait.
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {

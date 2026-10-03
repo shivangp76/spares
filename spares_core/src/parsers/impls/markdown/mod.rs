@@ -310,6 +310,10 @@ impl Parseable for MarkdownParser {
         "md"
     }
 
+    fn default_template(&self) -> &'static str {
+        include_str!("template.md")
+    }
+
     fn render_file(
         &self,
         _aux_dir: &Path,

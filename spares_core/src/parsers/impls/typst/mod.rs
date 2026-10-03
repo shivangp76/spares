@@ -312,6 +312,10 @@ impl Parseable for TypstParser {
         "typ"
     }
 
+    fn default_template(&self) -> &'static str {
+        include_str!("template.typ")
+    }
+
     fn render_file(
         &self,
         _aux_dir: &Path,
