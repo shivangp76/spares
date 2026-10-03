@@ -13,23 +13,15 @@
 //!
 //! ### Smart Schedule
 //! - This is a combination of `Easy days` and `Disperse siblings`.
-mod disperse;
 mod easy_days;
 mod reposition;
 mod utils;
 
-use std::collections::HashMap;
-
 use async_trait::async_trait;
 use chrono::DateTime;
-use chrono::Datelike;
 use chrono::Duration;
-use chrono::Local;
 use chrono::Utc;
-use disperse::disperse_siblings_distance;
-use indexmap::IndexMap;
 use itertools::Itertools;
-use log::info;
 use rand::RngExt;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
@@ -51,7 +43,6 @@ use utils::number_to_state;
 use utils::rating_to_number;
 use utils::state_to_number;
 
-use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
@@ -63,11 +54,9 @@ use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
-use crate::model::SpecialState;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
-use crate::schedulers::stepped_range_inclusive;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 use crate::search::evaluator::Evaluator;
@@ -419,208 +408,117 @@ impl SrsScheduler for FSRS {
         .await
     }
 
-    /// PROPOSAL:
-    /// - If no easy days and yes siblings, then old disperse siblings
-    /// - If yes easy days and yes siblings, then:
-    ///   - For each sibling, determine fuzz range. Determine weights for fuzz range by looking at easy days. If fuzz range < 7 days, then scale each weight in fuzz range to increase by other easy days percentages not in fuzz range. If > 7 days, then the same but to decrease weights.
-    ///   - In parallel, for each sibling use current disperse siblings to determine new date. If no siblings need to be changed, then just sample from current weights and we are done. If some siblings change, then look at those new siblings' due dates. Skew the weights in the direction of the new siblings' due dates. Then, sample from the distribution and we are done.
-    #[expect(clippy::comparison_chain)]
-    #[allow(clippy::too_many_lines, reason = "still a work in progress")]
-    async fn smart_schedule(
+    fn due_candidates(
         &self,
         config: &SparesExternalConfig,
-        data: &(Card, Vec<ReviewLog>),
-        siblings_with_review_logs: &[(Card, Vec<ReviewLog>)],
+        card: &Card,
+        review_logs: &[ReviewLog],
         at: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>, Error> {
-        let (main_card, all_main_review_logs) = data;
-        // Learning and relearning steps are short, deliberate intervals. Spreading them out with
-        // review-sized fuzz windows would skip the steps entirely.
-        if main_card.state != state_to_number(State::Review) {
-            return Ok(main_card.due);
+    ) -> Vec<DateTime<Utc>> {
+        // Learning and relearning steps are short, deliberate intervals. Moving them by
+        // review-sized amounts would skip the steps entirely.
+        if card.state != state_to_number(State::Review) {
+            return Vec::new();
         }
-        // Intervals are derived from the log below, so a forget must hide everything before it.
-        // When the card was just forgotten this leaves an empty slice and the early return keeps
-        // the due date `forget_card` set, which is what a reset card should have.
-        let main_review_logs = effective_review_logs(all_main_review_logs);
-        if main_review_logs.is_empty() {
-            return Ok(main_card.due);
-        }
-
-        // Only siblings that are in review compete for days with this card. New and learning
-        // siblings have no review-sized due date, and suspended ones are not studied at all.
-        let mut all_cards = siblings_with_review_logs
-            .iter()
-            .filter(|(card, _)| {
-                card.state == state_to_number(State::Review)
-                    && card.special_state != Some(SpecialState::Suspended)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        all_cards.push(data.clone());
-        let dispersed_siblings = disperse_siblings_distance(
-            &all_cards,
-            config.minimum_interval,
-            config.maximum_interval,
-            at,
-        );
-        let easy_days_disabled = !config.easy_days.enabled
-            || (config.easy_days.specific_dates.is_empty()
-                && config
-                    .easy_days
-                    .days_to_workload_percentage
-                    .values()
-                    .all(|v| (v - 1. / 7.).abs() < ALLOWED_F64_ERROR));
-        if easy_days_disabled {
-            if let Some(cards_and_dues) = dispersed_siblings {
-                let main_card_new_due = cards_and_dues
-                    .iter()
-                    .find(|(card_id, _new_due)| *card_id == main_card.id)
-                    .unwrap()
-                    .1;
-                return Ok(main_card_new_due);
-            }
-            return Ok(main_card.due);
-        }
-
-        // Determine weights
-        let parameters = rs_fsrs::Parameters {
-            request_retention: main_card.desired_retention,
-            maximum_interval: config.maximum_interval.num_days() as i32,
-            // We are manually using `get_fuzz_range()` here, so we don't want to enable fuzz when getting the next interval.
-            enable_fuzz: false,
-            ..Default::default()
+        // Intervals are measured from the log, so a forget must hide everything before it.
+        let review_logs = effective_review_logs(review_logs);
+        let Some(last_review) = review_logs.last() else {
+            return Vec::new();
         };
-        let last_elapsed_time = main_review_logs
+        let interval = card.due - last_review.reviewed_at;
+        // Too short to move without noticeably changing the card's retention.
+        if interval < config.minimum_interval {
+            return Vec::new();
+        }
+        let elapsed = review_logs
             .iter()
             .rev()
             .tuple_windows()
             .next()
-            .map_or_else(Duration::zero, |(latest_rl, second_latest_rl)| {
-                latest_rl.reviewed_at - second_latest_rl.reviewed_at
+            .map_or_else(Duration::zero, |(latest, previous)| {
+                latest.reviewed_at - previous.reviewed_at
             });
-        let next_interval = Duration::fractional_days(
-            parameters.next_interval(main_card.stability, last_elapsed_time.num_days()),
-        );
         let (min_ivl, max_ivl) = get_fuzz_range(
-            next_interval,
-            last_elapsed_time,
+            interval,
+            elapsed,
             config.maximum_interval,
             config.minimum_interval,
         );
-        let possible_intervals = stepped_range_inclusive(min_ivl, max_ivl, Duration::days(1))
-            .into_iter()
-            .filter(|duration| *duration > Duration::zero())
-            .collect::<Vec<_>>();
-        if possible_intervals.len() == 1 {
-            let chosen_interval = possible_intervals[0];
-            let chosen_due_date = main_review_logs.last().unwrap().reviewed_at + chosen_interval;
-            return Ok(chosen_due_date);
-        }
-        // TODO: Maybe weights should initially be a bell curve and then we can convolve it with the days_to_workload_percentage to get a new distribution.
-        let mut weights = possible_intervals
-            .iter()
-            .map(|duration| main_review_logs.last().unwrap().reviewed_at + *duration)
-            .map(|date| {
-                let day = date.with_timezone(&Local).weekday();
-                *config
-                    .easy_days
-                    .days_to_workload_percentage
-                    .get(&day)
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
+        // Whole days only, so the card keeps the time of day it was reviewed at.
+        let min_days = min_ivl.num_fractional_days().ceil() as i64;
+        let max_days = (max_ivl.num_fractional_days().floor() as i64).max(min_days);
+        let today_start = get_start_end_local_date(&at).0;
+        (min_days..=max_days)
+            .map(|days| last_review.reviewed_at + Duration::days(days))
+            .filter(|due| *due >= today_start)
+            .collect()
+    }
+}
 
-        // Normalize weights to ensure they sum up to 1
-        let sum: f64 = weights.iter().sum();
-        for weight in &mut weights {
-            *weight /= sum;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::tests::generate_review_logs;
 
-        // if dispersed_siblings.is_some() {
-        //     println!("BEFORE");
-        //     dbg!(&weights);
-        // }
-
-        if let Some(ref new_dues) = dispersed_siblings {
-            // Skew weights in the direction of the new due date
-            let original_dues_map = all_cards
-                .iter()
-                .map(|(card, _)| (card.id, card.due))
-                .collect::<HashMap<_, _>>();
-            for (card_id, new_due) in new_dues {
-                let original_due_opt = original_dues_map.get(card_id);
-                assert!(original_due_opt.is_some());
-                let original_due = original_due_opt.unwrap();
-                let diff = *new_due - *original_due;
-                if diff.num_seconds() < 1 {
-                    continue;
-                }
-                let weights_len = weights.len();
-
-                // Exponentially skew weights based on the time difference.
-                // let diff_days = diff.num_fractional_days();
-                // TODO: More diff_days should mean there is a stronger difference
-                // dbg!(&diff_days);
-                for (i, weight) in weights.iter_mut().enumerate() {
-                    let skewed_index = if diff > Duration::zero() {
-                        // New due date is later, so increase weight for later indices
-                        weights_len - i
-                    } else {
-                        // New due date is earlier, so increase weight for earlier indices
-                        i
-                    };
-                    // let factor = (-0.5 * diff_days * (j as f64 / weights_len as f64)).exp();
-                    let factor = if skewed_index > weights_len / 2 {
-                        // let factor = 1.2 * diff_days.abs();
-                        0.1
-                    } else if skewed_index < weights_len / 2 {
-                        -0.1
-                    } else {
-                        0.
-                    };
-                    *weight = (*weight + factor).max(0.);
-                }
-            }
-
-            // Normalize weights to ensure they sum up to 1
-            let sum: f64 = weights.iter().sum();
-            for weight in &mut weights {
-                *weight /= sum;
-            }
-        }
-
-        // Sample from weights
+    /// Random histories, each ending with the review that produced the card.
+    fn random_cards(count: usize) -> Vec<(Card, Vec<ReviewLog>)> {
         let mut rng = rand::rng();
-        // if dispersed_siblings.is_some() {
-        //     println!("AFTER");
-        //     dbg!(&weights);
-        // }
-        let dist = WeightedIndex::new(&weights).unwrap();
-        let chosen_interval = possible_intervals[dist.sample(&mut rng)];
-        let chosen_due_date = main_review_logs.last().unwrap().reviewed_at + chosen_interval;
+        let scheduler = FSRS::default();
+        (0..count)
+            .map(|_| {
+                let created_at = Utc::now() - Duration::days(rng.random_range(0..400));
+                generate_review_logs(&scheduler, Card::new(created_at), &mut rng)
+            })
+            .collect()
+    }
 
-        if chosen_due_date != main_card.due {
-            info!(
-                "[Card {}, Siblings: {}] Due date changed by smart schedule from {} to {}",
-                main_card.id,
-                siblings_with_review_logs.len(),
-                main_card.due,
-                chosen_due_date
+    #[test]
+    fn due_candidates_stay_within_the_fuzz_range() {
+        let config = SparesExternalConfig::default();
+        let scheduler = FSRS::default();
+        for (card, review_logs) in random_cards(300) {
+            let last_review = review_logs.last().unwrap().reviewed_at;
+            let candidates = scheduler.due_candidates(&config, &card, &review_logs, last_review);
+            let interval = card.due - last_review;
+            if card.state != state_to_number(State::Review) || interval < config.minimum_interval {
+                assert!(
+                    candidates.is_empty(),
+                    "card {card:?} must keep its due date"
+                );
+                continue;
+            }
+            assert_ne!(
+                candidates,
+                Vec::<DateTime<Utc>>::new(),
+                "card {card:?} can be moved"
             );
-            let options_with_weights = possible_intervals
-                .into_iter()
-                .zip(weights)
-                .map(|(interval, weight)| {
-                    (
-                        main_review_logs.last().unwrap().reviewed_at + interval,
-                        weight,
-                    )
-                })
-                .collect::<IndexMap<_, _>>();
-            dbg!(&options_with_weights);
+            assert!(candidates.is_sorted(), "candidates are earliest first");
+            for candidate in candidates {
+                let offset = candidate - last_review;
+                assert_eq!(offset.num_seconds() % 86_400, 0, "the time of day is kept");
+                assert!(offset >= config.minimum_interval && offset <= config.maximum_interval);
+                // Fuzz never strays further than this for an interval of this size.
+                let target = interval.min(config.maximum_interval);
+                let slack = 1.0 + 0.15 * target.num_fractional_days();
+                assert!(
+                    (offset - target).num_fractional_days().abs() <= slack,
+                    "{offset} is too far from the proposed {target}"
+                );
+            }
         }
+    }
 
-        Ok(chosen_due_date)
+    #[test]
+    fn due_candidates_are_never_in_the_past() {
+        let config = SparesExternalConfig::default();
+        let scheduler = FSRS::default();
+        for (card, review_logs) in random_cards(100) {
+            // Reviewed long enough ago that the whole window has passed.
+            let at = card.due + Duration::days(60);
+            assert_eq!(
+                scheduler.due_candidates(&config, &card, &review_logs, at),
+                Vec::<DateTime<Utc>>::new()
+            );
+        }
     }
 }

@@ -170,14 +170,17 @@ impl Default for SparesInternalConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EasyDaysConfig {
-    /// With default settings for [`self.days_to_workload_percentage`], this makes your workload (reviews per day) more consistent.
-    // Equivalent to `fsrs4anki-helper`'s `load_balance` option
-    pub enabled: bool,
-    // Always enabled, unlike `fsrs4anki-helper`'s `auto_easy_days`. Can be disabled by setting `days` and `specific_dates` to default values.
+    /// Deprecated: use [`SparesExternalConfig::load_balance`]. `false` is read as
+    /// `load_balance = false`, which is what it used to control.
+    #[serde(skip_serializing)]
+    pub enabled: Option<bool>,
     /// Mapping from days of the week to a percentage describing their workload.
     /// Between 0% (0.0) and 100% (1.0). For example, if this is 0.2, then 20% of cards will be scheduled on that day, relative to normal days (which are set to 1.0).
     ///
-    /// Note that if all each percentage is treated relative to the rest. For example, if all days are set to 0.1, then each day will be treated normally , since 0.1/(0.1 * 7) = 1/7, so each day will have 1/7 of the workload which is the default behavior.
+    /// Each percentage is relative to the rest. For example, if all days are set to 0.1, then each day will be treated normally, since 0.1/(0.1 * 7) = 1/7, so each day will have 1/7 of the workload which is the default behavior.
+    ///
+    /// Only days within a card's fuzz range can be chosen, so this shifts reviews by a few days
+    /// at most.
     pub days_to_workload_percentage: HashMap<Weekday, f64>,
     /// Specific easy dates. Useful when you are going on vacation, for example, and want minimal workload on those days. These days will have a workload percentage of 0%.
     pub specific_dates: HashSet<NaiveDate>,
@@ -198,33 +201,12 @@ impl Default for EasyDaysConfig {
             days_to_workload_percentage.insert(weekday, 1.);
         }
         Self {
-            enabled: true,
+            enabled: None,
             days_to_workload_percentage,
             specific_dates: HashSet::default(),
         }
     }
 }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// #[serde(default)]
-// pub struct DisperseSiblingsConfig {
-//     // NOTE: There is no upside to disabling this option, so therefore it is not provided.
-//     // This alleviates interference between siblings. Disabling it will only decrease the efficiency of spaced repetition.
-//     // Replaces `fsrs4anki-helper`'s `auto_disperse_when_review`.
-//     // pub auto_after_review: bool,
-//     // Note that this breaks load balancing.
-//     // Replaces `fsrs4anki-helper`'s `auto_disperse_after_reschedule`.
-//     // pub auto_after_reschedule: bool,
-// }
-//
-// impl Default for DisperseSiblingsConfig {
-//     fn default() -> Self {
-//         Self {
-//             // auto_after_review: true,
-//             auto_after_reschedule: false,
-//         }
-//     }
-// }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -262,8 +244,13 @@ pub struct SparesExternalConfig {
     pub minimum_interval: Duration,
     pub new_cards_daily_limit: u32,
     pub flagged_tag_name: String,
+    /// Spread reviews so that each day has a similar number of cards due, in proportion to its
+    /// easy-day workload percentage.
+    pub load_balance: bool,
+    /// Avoid scheduling cards of the same note on the same or nearby days, so that reviewing one
+    /// does not give away the answer to another.
+    pub disperse_siblings: bool,
     pub easy_days: EasyDaysConfig,
-    // pub disperse_siblings: DisperseSiblingsConfig,
     pub leech: LeechConfig,
     pub parser: ParserConfig,
     pub image_occlusion: ImageOcclusionConfig,
@@ -280,8 +267,9 @@ impl Default for SparesExternalConfig {
             minimum_interval: Duration::days(2),
             new_cards_daily_limit: 20,
             flagged_tag_name: "flagged".to_string(),
+            load_balance: true,
+            disperse_siblings: true,
             easy_days: EasyDaysConfig::default(),
-            // disperse_siblings: DisperseSiblingsConfig::default(),
             leech: LeechConfig::default(),
             parser: ParserConfig::default(),
             image_occlusion: ImageOcclusionConfig::default(),
@@ -293,7 +281,14 @@ impl Default for SparesExternalConfig {
 }
 
 impl SparesExternalConfig {
-    fn validate(&mut self) -> Result<(), String> {
+    pub(crate) fn validate(&mut self) -> Result<(), String> {
+        if self.easy_days.enabled == Some(false) && self.load_balance {
+            log::warn!(
+                "`easy_days.enabled` is deprecated. Replace `enabled = false` with \
+                 `load_balance = false` at the top level of the config."
+            );
+            self.load_balance = false;
+        }
         for (weekday, workload_percentage) in &self.easy_days.days_to_workload_percentage {
             if !(&0_f64..=&1.).contains(&workload_percentage) {
                 return Err(format!(
@@ -440,4 +435,39 @@ pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(),
         source: e,
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(toml: &str) -> SparesExternalConfig {
+        let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
+        config.validate().unwrap();
+        config
+    }
+
+    #[test]
+    fn placement_defaults_to_enabled() {
+        let config = parse("");
+        assert!(config.load_balance);
+        assert!(config.disperse_siblings);
+    }
+
+    #[test]
+    fn deprecated_easy_days_enabled_turns_off_load_balancing() {
+        let config = parse("[easy_days]\nenabled = false\n");
+        assert!(!config.load_balance);
+        assert!(config.disperse_siblings, "it never controlled dispersal");
+
+        assert!(parse("[easy_days]\nenabled = true\n").load_balance);
+    }
+
+    #[test]
+    fn deprecated_easy_days_enabled_is_not_written_back() {
+        let config = parse("[easy_days]\nenabled = false\n");
+        let written = toml_edit::ser::to_string_pretty(&config).unwrap();
+        assert!(!written.contains("enabled"), "{written}");
+        assert!(written.contains("load_balance = false"), "{written}");
+    }
 }

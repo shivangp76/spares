@@ -271,3 +271,56 @@ async fn advance_and_postpone_accept_a_query(pool: SqlitePool) {
     .await;
     study(&pool, StudyAction::Postpone { count: 1, query }, now).await;
 }
+
+fn distinct_local_days(cards: &[Card]) -> usize {
+    cards
+        .iter()
+        .map(|card| card.due.with_timezone(&chrono::Local).date_naive())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+#[sqlx::test]
+async fn siblings_reviewed_together_are_due_on_different_days(pool: SqlitePool) {
+    let siblings = create_cards(&pool, &["a {{ b }} c {{ d }} e {{ f }}"]).await[0].clone();
+    assert_eq!(siblings.len(), 3, "precondition: one card per cloze");
+    let now = Utc::now();
+    for card_id in &siblings {
+        graduate(&pool, *card_id, now, &[10, 9, 5]).await;
+    }
+
+    let mut cards = Vec::new();
+    for card_id in &siblings {
+        cards.push(fetch_card(&pool, *card_id).await);
+    }
+    for card in &cards {
+        assert_due_near_optimal(card, now - Duration::days(5));
+    }
+    assert_eq!(distinct_local_days(&cards), 3, "{cards:#?}");
+}
+
+#[sqlx::test]
+async fn reschedule_spreads_siblings_apart(pool: SqlitePool) {
+    let siblings = create_cards(&pool, &["a {{ b }} c {{ d }} e {{ f }}"]).await[0].clone();
+    let now = Utc::now();
+    for card_id in &siblings {
+        graduate(&pool, *card_id, now, &[10, 9, 5]).await;
+    }
+    // Bunch them up on a single day.
+    sqlx::query(r"UPDATE card SET due = ?")
+        .bind((now + Duration::days(10)).timestamp())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    study(&pool, StudyAction::Reschedule, now).await;
+
+    let mut cards = Vec::new();
+    for card_id in &siblings {
+        cards.push(fetch_card(&pool, *card_id).await);
+    }
+    for card in &cards {
+        assert_due_near_optimal(card, now - Duration::days(5));
+    }
+    assert_eq!(distinct_local_days(&cards), 3, "{cards:#?}");
+}
