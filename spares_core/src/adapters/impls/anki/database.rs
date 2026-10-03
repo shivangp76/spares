@@ -58,17 +58,14 @@ pub fn parse_anki_revlog_rows(
                 return Ok(None);
             }
             let rating: Option<RatingId> = match review_log_row.ease {
-                // Manual reschedule.
+                // Manual reschedule, which is skipped.
                 //
-                // TODO: some of these are Anki's forget/reset and could now be imported as
-                // `ReviewLogKind::Forget` rows. They are still skipped because Anki's `Manual`
-                // type (`revlog.type = 4`) covers reset, set-due-date, reposition and
-                // deck-change reschedules indiscriminately, and the revlog row alone cannot tell
-                // them apart — the candidate heuristic is `ivl == 0 && factor == 0`. Importing a
-                // set-due-date as a forget would zero the memory state of a card that was merely
-                // rescheduled, which is worse than dropping the row. Doing this properly also
-                // needs `populate_reviews` to interleave `forget_card(.., log: false)` calls into
-                // the chronological replay, since it currently only submits `StudyAction::Rate`.
+                // NOTE: Some of these rows are forgets, which could be imported as
+                // `ReviewLogKind::Forget`. However, Anki's `Manual` type (`revlog.type = 4`) also
+                // covers set due date, reposition and deck change, and a row alone cannot reliably
+                // tell them apart (the best heuristic is `ivl == 0 && factor == 0`). Importing a
+                // set due date as a forget would wrongly reset the card's memory state, which is
+                // worse than dropping a real forget.
                 0 => {
                     info!(
                         "[Card {}] Skipping the {}th review log because manually rescheduled, so the rating is none.",
