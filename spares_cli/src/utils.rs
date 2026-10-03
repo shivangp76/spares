@@ -14,6 +14,8 @@ use spares_core::parsers::generate_files::CardSide;
 use spares_core::parsers::generate_files::RenderOutputType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_output_raw_dir;
+use spares_core::schema::undo::RedoEventRequest;
+use spares_core::schema::undo::RedoEventResponse;
 use spares_core::schema::undo::UndoEventRequest;
 use spares_core::schema::undo::UndoEventResponse;
 
@@ -87,6 +89,28 @@ pub(crate) async fn undo_event(
     let undo_response: Option<UndoEventResponse> =
         response.json().await.map_err(|e| format!("{}", e))?;
     Ok(undo_response)
+}
+
+pub(crate) async fn redo_event(
+    base_url: &str,
+    client: &Client,
+    request: RedoEventRequest,
+) -> Result<Option<RedoEventResponse>, String> {
+    let url = format!("{}/api/redo", base_url);
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+    if response.status() != StatusCode::OK {
+        let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
+        let message = response_json.get("message");
+        return Err(format!("Failed to redo event: {:?}", message));
+    }
+    let redo_response: Option<RedoEventResponse> =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(redo_response)
 }
 
 pub(crate) fn compute_note_raw_path(parser_name: &str, note_id: NoteId) -> Result<PathBuf, String> {

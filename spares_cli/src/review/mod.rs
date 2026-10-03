@@ -61,12 +61,14 @@ use crate::import::import_from_files;
 pub(crate) mod utils;
 use spares_core::parsers::cloze_tag_str;
 use spares_core::schema::card::CardResponse;
+use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::UndoEventRequest;
 pub(crate) use utils::forget_card;
 
 use crate::review::utils::note_id_to_cards;
 use crate::review::utils::set_due_date;
 use crate::review::utils::set_due_date_with_prompt;
+use crate::utils::redo_event;
 use crate::utils::undo_event;
 
 #[derive(Args, Debug)]
@@ -141,6 +143,7 @@ enum ReviewAction {
     #[strum(serialize = "Suspend Note (card + siblings)")]
     SuspendNote,
     Undo,
+    Redo,
     Exit,
 }
 
@@ -616,6 +619,8 @@ pub(crate) async fn review_cards(
     let mut rate_duration = None;
     let mut last_action_event_id: Option<i64> = None;
     let mut last_action_was_rating = false;
+    // The undo event to redo, and whether it undid a rating. Cleared by any new action.
+    let mut last_undo: Option<(i64, bool)> = None;
     let mut pending_cli_rating: Option<Rating> = None;
 
     if review_card_response.cli.is_some() {
@@ -737,6 +742,20 @@ pub(crate) async fn review_cards(
         };
 
         advance_review_card = false;
+        // Like an editor, a new action clears what can be redone
+        if !matches!(
+            chosen_action,
+            ReviewAction::Loop
+                | ReviewAction::Flip
+                | ReviewAction::OpenNote
+                | ReviewAction::BrowseKeywords
+                | ReviewAction::OpenLinkedNotes
+                | ReviewAction::Undo
+                | ReviewAction::Redo
+                | ReviewAction::Exit
+        ) {
+            last_undo = None;
+        }
         match &chosen_action {
             ReviewAction::Loop => {}
             ReviewAction::Rate {
@@ -1212,6 +1231,10 @@ pub(crate) async fn review_cards(
                     match undo_response_opt {
                         Some(undo_response) => {
                             println!("Undone event(s): {:?}", undo_response.undone_event_ids);
+                            last_undo = undo_response
+                                .undo_event_ids
+                                .first()
+                                .map(|id| (*id, last_action_was_rating));
                         }
                         None => {
                             println!("No event to undo.");
@@ -1226,6 +1249,41 @@ pub(crate) async fn review_cards(
                     // Advance to next review card which will be the previous card
                     advance_review_card = true;
                 }
+            }
+            ReviewAction::Redo => {
+                let Some((undo_event_id, was_rating)) = last_undo.take() else {
+                    println!("Nothing to redo.");
+                    continue;
+                };
+                if card_flipped && let Some(mut child) = card_back_rendered_child.take() {
+                    close_rendered_file(&mut child, close_command, false)?;
+                }
+                if let Some(child) = card_front_rendered_child.as_mut() {
+                    close_rendered_file(child, close_command, false)?;
+                }
+                card_flipped = false;
+
+                let request = RedoEventRequest {
+                    event_id: Some(undo_event_id),
+                    redo_group: true,
+                };
+                match redo_event(base_url, client, request).await? {
+                    Some(redo_response) => {
+                        println!("Redone event(s): {:?}", redo_response.redone_event_ids);
+                        // So that undo reverses exactly this redo
+                        last_action_event_id = redo_response.redo_event_ids.first().copied();
+                        last_action_was_rating = was_rating;
+                        if was_rating {
+                            reviewed_cards_count += 1;
+                        }
+                    }
+                    None => {
+                        println!("No event to redo.");
+                    }
+                }
+
+                // The redone action moved the card on again
+                advance_review_card = true;
             }
             ReviewAction::Exit => {
                 if let Some(child) = card_front_rendered_child.as_mut() {
