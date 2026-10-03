@@ -9,8 +9,11 @@ use std::rc::Rc;
 use std::rc::Weak;
 
 use chrono::DateTime;
+use chrono::Datelike;
 use chrono::Duration;
+use chrono::Local;
 use chrono::Utc;
+use chrono::Weekday;
 use fuzz_data::generate_notes;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -32,6 +35,7 @@ use crate::config::read_external_config;
 use crate::model::Card;
 use crate::model::NEW_CARD_STATE;
 use crate::model::RatingId;
+use crate::model::ReviewLogKind;
 use crate::model::Tag;
 use crate::parsers::ConstructFileDataType;
 use crate::parsers::NoteImportAction;
@@ -491,8 +495,76 @@ async fn simulate_reviews(
     assert!(advanced_once);
     assert!(postponed_once);
 
-    // TODO: Use the code above to examine and unit test for:
-    // - placement: Examine the distribution of reviews on different days to see if it lines up with the workload_percentage
+    assert_reviews_follow_workload_percentage(pool).await;
+}
+
+/// Checks that reviews of cards in review are spread across weekdays according to
+/// `days_to_workload_percentage`. Only those cards are placed (see `schedulers::placement`), so
+/// new and learning reviews are left out.
+async fn assert_reviews_follow_workload_percentage(pool: &SqlitePool) {
+    const REVIEW_STATE: u32 = 2;
+    // Placement is random, so allow some slack around each weekday's share.
+    const TOLERANCE: f64 = 0.05;
+    // Fewer days than this say little about a weekly distribution.
+    const MIN_DAYS: i64 = 14;
+
+    let config = read_external_config().unwrap();
+    let reviewed_ats: Vec<i64> = sqlx::query_scalar(
+        "SELECT reviewed_at FROM review_log WHERE kind = ? AND previous_state = ?",
+    )
+    .bind(ReviewLogKind::Review)
+    .bind(REVIEW_STATE)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let dates = reviewed_ats
+        .into_iter()
+        .map(|reviewed_at| {
+            DateTime::from_timestamp(reviewed_at, 0)
+                .unwrap()
+                .with_timezone(&Local)
+                .date_naive()
+        })
+        .filter(|date| !config.easy_days.specific_dates.contains(date))
+        .collect::<Vec<_>>();
+    let (Some(first), Some(last)) = (dates.iter().min(), dates.iter().max()) else {
+        panic!("no reviews of cards in review");
+    };
+    if (*last - *first).num_days() + 1 < MIN_DAYS {
+        println!("Skipping the workload percentage check: too few days of reviews.");
+        return;
+    }
+
+    // A window that is not a whole number of weeks has more of some weekdays than others, so
+    // compare the average number of reviews on each weekday rather than the total.
+    let mut day_counts: HashMap<Weekday, u32> = HashMap::new();
+    for date in first.iter_days().take_while(|date| date <= last) {
+        if !config.easy_days.specific_dates.contains(&date) {
+            *day_counts.entry(date.weekday()).or_default() += 1;
+        }
+    }
+    let mut review_counts: HashMap<Weekday, u32> = HashMap::new();
+    for date in &dates {
+        *review_counts.entry(date.weekday()).or_default() += 1;
+    }
+    let averages = day_counts
+        .iter()
+        .map(|(weekday, day_count)| {
+            let review_count = review_counts.get(weekday).copied().unwrap_or(0);
+            (*weekday, f64::from(review_count) / f64::from(*day_count))
+        })
+        .collect::<HashMap<_, _>>();
+    let total: f64 = averages.values().sum();
+
+    // `days_to_workload_percentage` is normalized to sum to 1, so it is each weekday's share.
+    for (weekday, expected_share) in &config.easy_days.days_to_workload_percentage {
+        let observed_share = averages.get(weekday).copied().unwrap_or(0.0) / total;
+        println!("{weekday:?}: observed {observed_share:.3}, expected {expected_share:.3}");
+        assert!(
+            (observed_share - expected_share).abs() <= TOLERANCE,
+            "{weekday:?} got {observed_share:.3} of reviews, expected {expected_share:.3}"
+        );
+    }
 }
 
 #[allow(clippy::too_many_lines, reason = "test data is long")]
