@@ -175,7 +175,7 @@ export default function StatisticsPage() {
               {/* Keyed on the safe count so the prefilled count follows the latest statistics */}
               <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} onDone={o => { showOutcome(o); reload(); }} />
               <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} onDone={o => { showOutcome(o); reload(); }} />
-              {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onUndone={reload} />}
+              {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onReverted={reload} />}
             </>
           ) : (
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Advancing and postponing apply from now, so they are only offered for today.</p>

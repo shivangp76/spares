@@ -14,6 +14,7 @@ import type {
   NotesSelector,
   ParserResponse,
   Rating,
+  RedoEventResponse,
   ReviewConfig,
   ReviewFilter,
   ReviewSnapshotResponse,
@@ -274,11 +275,22 @@ export async function renderNote(noteId: number): Promise<void> {
   });
 }
 
-/** Undoes `eventId` and the rest of its group, or the latest event if `null`. */
+/** Undoes `eventId` and the rest of its group, or the latest event that isn't an undo if `null`. */
 export async function undoEvent(eventId: number | null): Promise<UndoEventResponse | null> {
   return apiFetch('Undo', '/api/undo', {
     method: 'POST',
     body: JSON.stringify({ event_id: eventId, undo_group: true }),
+  });
+}
+
+/**
+ * Redoes the undo event `eventId` and the rest of its group, or if `null`, the latest undo unless
+ * an action was taken after it.
+ */
+export async function redoEvent(eventId: number | null): Promise<RedoEventResponse | null> {
+  return apiFetch('Redo', '/api/redo', {
+    method: 'POST',
+    body: JSON.stringify({ event_id: eventId, redo_group: true }),
   });
 }
 
