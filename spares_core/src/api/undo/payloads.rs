@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NoteId;
+use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::model::TagId;
@@ -203,11 +204,6 @@ pub struct UpdateNotesPayload {
 }
 
 /// Payload for a `ForgetCard` event.
-///
-/// Version 1 events stored a bare `Vec<UpdateCardPayload>` here, shared with `UpdateCards`, and
-/// wrote no `review_log` marker row. Those events are still in users' databases, so
-/// `invert_payload` distinguishes the two by JSON shape (array = v1, object = v2) rather than by
-/// `event.version`, which nothing reads.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ForgetCardPayload {
     pub review_log_id: i64,
@@ -217,6 +213,16 @@ pub struct ForgetCardPayload {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RateCardPayload {
     pub review_log_id: i64,
+    pub card: UpdateCardPayload,
+}
+
+/// Payload for `UnrateCard` and `UnforgetCard`, the undos of `RateCard` and `ForgetCard`.
+///
+/// Undoing those deletes their `review_log` row, so the row is kept here for a redo to reinsert.
+/// Its `id` is not reused on reinsert, since SQLite may have handed it to a newer row.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UnreviewPayload {
+    pub review_log: ReviewLog,
     pub card: UpdateCardPayload,
 }
 
@@ -242,4 +248,22 @@ pub struct UpdateCardPayload {
     pub state: FieldChange<StateId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_data: FieldChange<Value>,
+}
+
+impl UpdateCardPayload {
+    /// Swaps before and after on every field, giving the payload that reverses this one.
+    pub fn swap(self) -> Self {
+        Self {
+            card_id: self.card_id,
+            order: self.order.map(Transition::swap),
+            back_type: self.back_type.map(Transition::swap),
+            due: self.due.map(Transition::swap),
+            stability: self.stability.map(Transition::swap),
+            difficulty: self.difficulty.map(Transition::swap),
+            desired_retention: self.desired_retention.map(Transition::swap),
+            special_state: self.special_state.map(Transition::swap),
+            state: self.state.map(Transition::swap),
+            custom_data: self.custom_data.map(Transition::swap),
+        }
+    }
 }

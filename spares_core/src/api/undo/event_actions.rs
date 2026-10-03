@@ -8,7 +8,6 @@ use crate::LibraryError;
 use crate::api::fetch_batched_query;
 use crate::api::max_rows_for;
 use crate::api::placeholders_2d;
-use crate::api::undo::EVENT_VERSION;
 use crate::model::EventType;
 
 pub async fn insert_events(
@@ -17,25 +16,25 @@ pub async fn insert_events(
     at: DateTime<Utc>,
     group_id: Option<i64>,
 ) -> Result<Vec<i64>, Error> {
-    let event_ids: Vec<i64> = fetch_batched_query(db, events, max_rows_for(5), async |db, chunk| {
-        let query_str = format!(
-            "INSERT INTO event (kind, created_at, version, group_id, payload) VALUES {} RETURNING id",
-            placeholders_2d(chunk.len(), 5)
-        );
-        let mut query = sqlx::query_scalar(&query_str);
-        for (kind, payload) in chunk {
-            query = query.bind(kind);
-            query = query.bind(at.timestamp());
-            query = query.bind(EVENT_VERSION);
-            query = query.bind(group_id);
-            query = query.bind(payload);
-        }
-        query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })
-    })
-    .await?;
+    let event_ids: Vec<i64> =
+        fetch_batched_query(db, events, max_rows_for(4), async |db, chunk| {
+            let query_str = format!(
+                "INSERT INTO event (kind, created_at, group_id, payload) VALUES {} RETURNING id",
+                placeholders_2d(chunk.len(), 4)
+            );
+            let mut query = sqlx::query_scalar(&query_str);
+            for (kind, payload) in chunk {
+                query = query.bind(kind);
+                query = query.bind(at.timestamp());
+                query = query.bind(group_id);
+                query = query.bind(payload);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
     Ok(event_ids)
 }
 

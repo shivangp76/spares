@@ -295,11 +295,10 @@ pub enum EventType {
     UpdateCards,
     /// Carries `ForgetCardPayload`, which pairs the card transitions with the id of the
     /// `review_log` marker row so undo can delete it.
-    // Version 1 events stored a bare `Vec<UpdateCardPayload>` here, shared with `UpdateCards`, and
-    // wrote no marker row. Those rows are still in users' databases; `invert_payload` tells the
-    // two apart by JSON shape.
     ForgetCard,
     UnburyCards,
+    /// Carries `RateCardPayload`, which pairs the card transitions with the id of the
+    /// `review_log` row so undo can delete it.
     RateCard,
     /// Shares payload schema with `UpdateCards`
     BuryCards,
@@ -307,6 +306,21 @@ pub enum EventType {
     AdvanceCards,
     /// Shares payload schema with `UpdateCards`
     PostponeCards,
+    /// The undo of a `RateCard`. Carries `UnreviewPayload`, which keeps the deleted `review_log`
+    /// row so a redo can restore it.
+    UnrateCard,
+    /// The undo of a `ForgetCard`. Carries `UnreviewPayload`, like `UnrateCard`.
+    UnforgetCard,
+}
+
+/// Whether an event is an action, or the undo or redo of one. Derived from the
+/// `reverts_event_id` chain by the `event_action` view rather than stored.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, sqlx::Type)]
+#[repr(u8)]
+pub enum EventAction {
+    Do = 0,
+    Undo = 1,
+    Redo = 2,
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, PartialEq, Serialize)]
@@ -314,8 +328,9 @@ pub struct Event {
     pub id: i64,
     pub kind: EventType,
     pub created_at: DateTime<Utc>,
-    pub version: i64,
     pub group_id: Option<i64>, // Maybe set this to the id of the first event in the group
+    /// The event this one reverses: the action an undo undid, or the undo a redo redid.
+    pub reverts_event_id: Option<i64>,
     pub payload: Value,
 }
 
