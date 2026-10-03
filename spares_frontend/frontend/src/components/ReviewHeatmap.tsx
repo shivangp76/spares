@@ -1,9 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { sectionLabel } from '../utils';
 
-// The grid always reaches at least this far back, and this far ahead so today can be centered
+// The grid always reaches at least this far back
 const PAST_WEEKS = 52;
-const FUTURE_WEEKS = 35;
 const CELL = 11;
 const GAP = 3;
 const STEP = CELL + GAP;
@@ -108,12 +107,16 @@ function Stat({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** Daily review counts as a scrollable calendar grid centered on today, with streak statistics. */
+/** Daily review counts as a scrollable calendar grid, opening centered on today, with streak statistics. */
 export default function ReviewHeatmap({ counts }: { counts: Record<string, number> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Cell | null>(null);
   const [atStart, setAtStart] = useState(false);
   const [atEnd, setAtEnd] = useState(false);
+  // The visible width of the grid, which sets how far into the future it reaches
+  const [viewWidth, setViewWidth] = useState(0);
+  // Just enough future weeks to center today, so centered is as far forward as the grid scrolls
+  const futureWeeks = Math.ceil(viewWidth / 2 / STEP);
   const todayKey = dateKey(new Date());
 
   const { cells, weeks, todayWeek, months, summary, thresholds } = useMemo(() => {
@@ -124,7 +127,7 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
     // Columns are weeks starting on Sunday, from the first review (or a year ago) into the future
     const start = weekStart(firstKey && firstKey < dateKey(yearAgo) ? parseKey(firstKey) : yearAgo);
     const todayWeek = daysBetween(start, weekStart(today)) / 7;
-    const weeks = todayWeek + 1 + FUTURE_WEEKS;
+    const weeks = todayWeek + 1 + futureWeeks;
     const cells: Cell[] = [];
     const months: { week: number; label: string }[] = [];
     for (let i = 0; i < weeks * 7; i++) {
@@ -144,7 +147,7 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
     const average = active.reduce((sum, c) => sum + c.count, 0) / Math.max(1, active.length);
     const thresholds = [0.5, 1, 1.5].map(f => f * average);
     return { cells, weeks, todayWeek, months, summary: summarize(counts, today), thresholds };
-  }, [counts, todayKey]);
+  }, [counts, todayKey, futureWeeks]);
 
   const updateEnds = useCallback(() => {
     const el = scrollRef.current;
@@ -166,7 +169,15 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
     if (el) el.scrollBy({ left: direction * Math.max(STEP, el.clientWidth - 4 * STEP), behavior: 'smooth' });
   }
 
-  useLayoutEffect(() => center('instant'), [center]);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setViewWidth(el.clientWidth));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => center('instant'), [center, viewWidth]);
 
   // Built once per data change rather than on every hover, as there can be thousands of cells
   const grid = useMemo(() => {
@@ -200,7 +211,8 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
     if (index !== null) setSelected(cells[Number(index)]);
   }
 
-  const width = weeks * STEP - GAP;
+  // Ends where today is centered, cutting off the part of the last week past it
+  const width = viewWidth ? todayWeek * STEP + CELL / 2 + viewWidth / 2 : weeks * STEP - GAP;
   const height = TOP + 7 * STEP - GAP;
 
   return (
