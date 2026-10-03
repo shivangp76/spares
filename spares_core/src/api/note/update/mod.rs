@@ -603,6 +603,7 @@ pub async fn update_notes(
 
         note_responses.push(NoteResponse::new(
             &updated_note,
+            parser_name_map[&updated_note.parser_id].to_string(),
             all_keyword_strings,
             tags.clone(),
             None,

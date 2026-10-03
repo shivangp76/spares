@@ -127,6 +127,7 @@ pub async fn create_notes(
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                     parser_id: create_notes_request.parser_id,
+                    parser_name: parser_name.clone(),
                     keywords: request.keywords,
                     tags: request.tags,
                     custom_data: request.custom_data.clone(),
