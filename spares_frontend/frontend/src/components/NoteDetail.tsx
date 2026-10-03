@@ -32,7 +32,7 @@ interface Props {
 
 export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
   const theme = useResolvedTheme();
-  const editor = useEditorSetup();
+  const editor = useEditorSetup(note.parser_name);
   const [dataContent, setDataContent] = useState(note.data);
   // The editor's data as last saved, so edits made since can be told apart
   const [savedData, setSavedData] = useState(note.data);
@@ -150,7 +150,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           theme={theme}
           value={dataContent}
           onChange={setDataContent}
-          extensions={editor.extensions}
+          extensions={editor.dataExtensions}
           basicSetup={{ lineNumbers: editor.lineNumbers }}
           style={cmStyle}
         />

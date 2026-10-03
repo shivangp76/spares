@@ -187,6 +187,7 @@ export interface NoteResponse {
   id: number;
   data: string;
   parser_id: number;
+  parser_name: string;
   keywords: string[];
   tags: string[];
   custom_data: Record<string, unknown>;
