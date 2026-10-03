@@ -8,6 +8,7 @@ use pretty_assertions::assert_eq;
 use xmltree::Element;
 use xmltree::EmitterConfig;
 
+use crate::api::note::delete_note_files;
 use crate::parsers::BackReveal;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
@@ -17,12 +18,14 @@ use crate::parsers::FrontConceal;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::generate_files::CardSide;
+use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_cards;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct::get_clozes_from_svg;
 use crate::parsers::image_occlusion::construct::modify_clozes_for_card;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
+use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::parsers::impls::markdown::MarkdownParser;
@@ -1081,4 +1084,52 @@ fn test_grouped_shapes_modify_card_hidden() {
         Some("0"),
         "hidden group must have opacity=0 set directly on the <g>"
     );
+}
+
+#[test]
+fn test_delete_note_files_with_missing_image_occlusion_files() {
+    // A note whose original image and clozes files no longer exist should still have its rendered image occlusion files deleted
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let note_id = 990_001;
+    let card_order = 1;
+    let image_occlusion_dir = get_image_occlusion_directory();
+    let original_image_filepath = image_occlusion_dir.join("test-missing.jpg");
+    let clozes_filepath = image_occlusion_dir.join("test-missing_clozes.svg");
+    assert!(!original_image_filepath.exists());
+    assert!(!clozes_filepath.exists());
+    let data = format!(
+        indoc! {r#"
+        test
+        <!--- spares: image occlusion start --->
+        <!--- original_image_filepath = "{}" --->
+        <!--- clozes_filepath = "{}" --->
+        <!--- front_conceal = "all_groupings" --->
+        <!--- back_reveal = "only_answered" --->
+        <!--- back_emphasis = true --->
+        ![Test]({})
+        <!--- spares: image occlusion end --->
+        "#},
+        original_image_filepath.display(),
+        clozes_filepath.display(),
+        original_image_filepath.display(),
+    );
+
+    let rendered_filepaths = [CardSide::Front, CardSide::Back]
+        .into_iter()
+        .map(|side| {
+            let output_rendered_filepath = get_image_occlusion_rendered_directory().join(
+                parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
+            );
+            get_image_occlusion_card_filepath(&output_rendered_filepath, side, 1)
+        })
+        .collect::<Vec<_>>();
+    for filepath in &rendered_filepaths {
+        std::fs::write(filepath, "").unwrap();
+    }
+
+    delete_note_files(parser.as_ref(), note_id, &[card_order], &data).unwrap();
+
+    for filepath in &rendered_filepaths {
+        assert!(!filepath.exists());
+    }
 }
