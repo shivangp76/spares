@@ -123,6 +123,10 @@ impl Parseable for LatexParserNote {
         file_extension(self)
     }
 
+    fn default_template(&self) -> &'static str {
+        include_str!("template.tex")
+    }
+
     fn construct_cloze_replacement(
         &self,
         cloze_replacement: &ClozeReplacement,
