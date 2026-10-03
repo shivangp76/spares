@@ -18,6 +18,7 @@ import type {
   RedoEventResponse,
   ReviewConfig,
   ReviewFilter,
+  ReviewHistoryResponse,
   ReviewSnapshotResponse,
   StatisticsResponse,
   SubmitStudyActionRequest,
@@ -56,11 +57,14 @@ const memoized = new Map<string, Promise<unknown>>();
 const listPages = new Map<string, unknown[]>();
 // Today's statistics per scheduler, shown on the review page while they are refetched
 const todayStatistics = new Map<string, StatisticsResponse>();
+// Likewise the review history for the review page's heatmap
+let reviewHistory: ReviewHistoryResponse | undefined;
 
 function clearCaches(): void {
   memoized.clear();
   listPages.clear();
   todayStatistics.clear();
+  reviewHistory = undefined;
 }
 
 function memoize<T>(key: string, fetch: () => Promise<T>): Promise<T> {
@@ -317,6 +321,17 @@ export async function getTodayStatistics(schedulerName: string): Promise<Statist
 /** The statistics `getTodayStatistics` last returned for the scheduler. */
 export function cachedTodayStatistics(schedulerName: string): StatisticsResponse | undefined {
   return todayStatistics.get(schedulerName);
+}
+
+/** The number of reviews on each day, remembered for `cachedReviewHistory`. */
+export async function getReviewHistory(): Promise<ReviewHistoryResponse> {
+  reviewHistory = await apiFetch<ReviewHistoryResponse>('Review history fetch', '/api/review/history');
+  return reviewHistory;
+}
+
+/** The history `getReviewHistory` last returned. */
+export function cachedReviewHistory(): ReviewHistoryResponse | undefined {
+  return reviewHistory;
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {

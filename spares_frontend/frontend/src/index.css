@@ -395,3 +395,13 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
     inset: -8px;
   }
 }
+
+/* The review heatmap scrolls by swiping, the trackpad, or its Back/Forward buttons */
+.heatmap-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.heatmap-scroll::-webkit-scrollbar {
+  display: none;
+}

@@ -684,6 +684,12 @@ pub mod review {
         pub postpone_safe_count: u32,
     }
 
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ReviewHistoryResponse {
+        /// The number of graded reviews on each local date that has any.
+        pub review_count_by_date: HashMap<NaiveDate, u32>,
+    }
+
     /// Config values that review clients need to offer the same actions as the CLI.
     #[serde_with::serde_as]
     #[derive(Clone, Debug, Deserialize, Serialize)]
