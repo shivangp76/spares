@@ -1,34 +1,49 @@
 use std::cmp;
 
-use chrono::DateTime;
 use chrono::Duration;
-use chrono::Utc;
-use rs_fsrs::State;
-use serde_json::Map;
+use fsrs_rs::DEFAULT_PARAMETERS;
+use fsrs_rs::MemoryState;
 
 use crate::helpers::FractionalDays;
-use crate::model::Card;
 use crate::model::RatingId;
-use crate::model::ReviewLog;
-use crate::model::ReviewLogKind;
 use crate::model::StateId;
 
-pub fn number_to_rating(num: RatingId) -> Option<rs_fsrs::Rating> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rating {
+    Again,
+    Hard,
+    Good,
+    Easy,
+}
+
+impl Rating {
+    pub const ALL: [Self; 4] = [Self::Again, Self::Hard, Self::Good, Self::Easy];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    New,
+    Learning,
+    Review,
+    Relearning,
+}
+
+pub fn number_to_rating(num: RatingId) -> Option<Rating> {
     match num {
-        1 => Some(rs_fsrs::Rating::Again),
-        2 => Some(rs_fsrs::Rating::Hard),
-        3 => Some(rs_fsrs::Rating::Good),
-        4 => Some(rs_fsrs::Rating::Easy),
+        1 => Some(Rating::Again),
+        2 => Some(Rating::Hard),
+        3 => Some(Rating::Good),
+        4 => Some(Rating::Easy),
         _ => None,
     }
 }
 
-pub fn rating_to_number(rating: rs_fsrs::Rating) -> RatingId {
+pub fn rating_to_number(rating: Rating) -> RatingId {
     match rating {
-        rs_fsrs::Rating::Again => 1,
-        rs_fsrs::Rating::Hard => 2,
-        rs_fsrs::Rating::Good => 3,
-        rs_fsrs::Rating::Easy => 4,
+        Rating::Again => 1,
+        Rating::Hard => 2,
+        Rating::Good => 3,
+        Rating::Easy => 4,
     }
 }
 
@@ -51,91 +66,23 @@ pub fn state_to_number(state: State) -> StateId {
     }
 }
 
-pub fn card_to_fsrs_card(
-    card: &Card,
-    state: rs_fsrs::State,
-    last_review: DateTime<Utc>,
-) -> rs_fsrs::Card {
-    rs_fsrs::Card {
-        due: card.due,
-        stability: card.stability,
-        difficulty: card.difficulty,
-        // This value is only used as an output for FSRS, not an input.
-        elapsed_days: 0,
-        // This value is only used as an output for FSRS, not an input.
-        scheduled_days: 0,
-        // This value is not used by FSRS for scheduling.
-        reps: 0,
-        // This value is not used by FSRS for scheduling.
-        lapses: 0,
-        state,
-        last_review,
-    }
+/// The probability of recalling a card with `stability` after `elapsed_days`, using the default
+/// parameters' forgetting curve.
+pub fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
+    let memory_state = MemoryState {
+        stability: stability as f32,
+        // Not used by the forgetting curve.
+        difficulty: 1.0,
+    };
+    f64::from(fsrs_rs::current_retrievability(
+        memory_state,
+        elapsed_days as f32,
+        DEFAULT_PARAMETERS[20],
+    ))
 }
 
-pub fn fsrs_card_to_card(
-    card_fsrs: &rs_fsrs::Card,
-    review_log_fsrs: &rs_fsrs::ReviewLog,
-    original_card: &Card,
-    scheduler_name: &str,
-    recall_duration: &Duration,
-    rate_duration: &Duration,
-) -> (Card, ReviewLog) {
-    let rs_fsrs::Card {
-        due,
-        stability: fsrs_stability,
-        difficulty: fsrs_difficulty,
-        elapsed_days: _,
-        scheduled_days: fsrs_scheduled_days,
-        reps: _,
-        lapses: _,
-        state: fsrs_state,
-        last_review: _,
-    } = card_fsrs;
-    let rs_fsrs::ReviewLog {
-        rating: fsrs_rating,
-        elapsed_days: _,
-        // `scheduled_days = 0` for some reason. Card's scheduled days look fine, so using that
-        // instead
-        scheduled_days: _,
-        state: fsrs_revlog_state,
-        reviewed_date: fsrs_reviewed_date,
-    } = review_log_fsrs;
-    let card = Card {
-        id: original_card.id,
-        note_id: original_card.note_id,
-        order: original_card.order,
-        back_type: original_card.back_type,
-        created_at: original_card.created_at,
-        updated_at: *fsrs_reviewed_date,
-        due: *due,
-        stability: *fsrs_stability,
-        difficulty: *fsrs_difficulty,
-        desired_retention: original_card.desired_retention,
-        special_state: original_card.special_state,
-        state: state_to_number(*fsrs_state),
-        custom_data: original_card.custom_data.clone(),
-    };
-    let review_log = ReviewLog {
-        id: 1,
-        card_id: Some(original_card.id),
-        reviewed_at: *fsrs_reviewed_date,
-        kind: ReviewLogKind::Review,
-        rating: Some(rating_to_number(*fsrs_rating)),
-        // The scheduler has no notion of filtered tags; `rate_card` stamps this on the row it
-        // actually inserts.
-        tag_id: None,
-        scheduler_name: scheduler_name.to_string(),
-        scheduled_time: Some(Duration::days(*fsrs_scheduled_days).num_seconds()),
-        recall_duration: Some(recall_duration.num_seconds()),
-        rate_duration: Some(rate_duration.num_seconds()),
-        previous_state: state_to_number(*fsrs_revlog_state),
-        custom_data: serde_json::Value::Object(Map::new()),
-    };
-    (card, review_log)
-}
-
-// NOTE: rs-fsrs has the same function, but it is private.
+/// The range of intervals around `interval` that FSRS considers interchangeable, as in Anki and
+/// `fsrs4anki-helper`.
 pub fn get_fuzz_range(
     interval: Duration,
     elapsed_time: Duration,

@@ -1,4 +1,4 @@
-//! The FSRS scheduler, backed by the `rs-fsrs` crate.
+//! The FSRS scheduler, backed by the `fsrs` crate with its default (FSRS-6) parameters.
 //!
 //! ## `fsrs4anki-helper` features
 //! - Reschedule: Supported. Reschedules every card from its full review history. `Reschedule
@@ -9,12 +9,14 @@
 //! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
 //! - Remedy hard misuse: Unsupported.
 mod reposition;
+mod steps;
 mod utils;
 
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use fsrs_rs::MemoryState;
 use itertools::Itertools;
 use rand::RngExt;
 use rand::distr::Distribution;
@@ -23,14 +25,13 @@ use rand::rngs::ThreadRng;
 use reposition::MoveCardAction;
 use reposition::get_safe_cards;
 use reposition::move_cards;
-pub(crate) use rs_fsrs::FSRS;
-use rs_fsrs::State;
 use serde_json::Map;
 use serde_json::Number;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use utils::card_to_fsrs_card;
-use utils::fsrs_card_to_card;
+use steps::next_step;
+use utils::Rating as FsrsRating;
+use utils::State;
 use utils::get_fuzz_range;
 use utils::number_to_rating;
 use utils::number_to_state;
@@ -59,13 +60,21 @@ use crate::search::evaluator::Evaluator;
 /// `desired_retention`. Not rounded, clamped or fuzzed.
 #[cfg(test)]
 pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f64 {
-    stability / rs_fsrs::Parameters::FACTOR
-        * (desired_retention.powf(1.0 / rs_fsrs::Parameters::DECAY) - 1.0)
+    f64::from(fsrs_rs::FSRS::default().next_interval(
+        Some(stability as f32),
+        desired_retention as f32,
+        1,
+    ))
+}
+
+#[derive(Debug, Default)]
+pub struct Fsrs {
+    model: fsrs_rs::FSRS,
 }
 
 // NOTE: Make sure to pass time data as a `Duration` instead of an integer representing days.
 #[async_trait]
-impl SrsScheduler for FSRS {
+impl SrsScheduler for Fsrs {
     fn get_scheduler_name(&self) -> &'static str {
         "fsrs"
     }
@@ -75,7 +84,8 @@ impl SrsScheduler for FSRS {
         static RATINGS: OnceLock<Vec<Rating>> = OnceLock::new();
         RATINGS
             .get_or_init(|| {
-                rs_fsrs::Rating::iter()
+                FsrsRating::ALL
+                    .iter()
                     .map(|fsrs_rating| Rating {
                         id: rating_to_number(*fsrs_rating),
                         description: format!("{:?}", fsrs_rating),
@@ -101,7 +111,7 @@ impl SrsScheduler for FSRS {
               ORDER BY due ASC",
         )
         .bind(ReviewLogKind::Review)
-        .bind(rating_to_number(rs_fsrs::Rating::Again))
+        .bind(rating_to_number(FsrsRating::Again))
         .bind(state_to_number(State::Review))
         .bind(config.leech.lapses_threshold)
         .fetch_all(db)
@@ -145,16 +155,16 @@ impl SrsScheduler for FSRS {
                                 rl.reviewed_at + Duration::new(scheduled_time, 0).unwrap()
                             },
                         );
-                        let (new_card, new_review_log) = <FSRS as SrsScheduler>::schedule(
-                            self,
-                            &card,
-                            previous_review_log.cloned(),
-                            *rating,
-                            reviewed_at,
-                            recall_duration,
-                            rate_duration,
-                        )
-                        .unwrap();
+                        let (new_card, new_review_log) = self
+                            .schedule(
+                                &card,
+                                previous_review_log.cloned(),
+                                *rating,
+                                reviewed_at,
+                                recall_duration,
+                                rate_duration,
+                            )
+                            .unwrap();
                         assert_eq!(new_review_log.reviewed_at, reviewed_at);
                         review_logs.push(new_review_log);
                         (new_card, review_logs)
@@ -197,29 +207,56 @@ impl SrsScheduler for FSRS {
         let state = number_to_state(card.state).ok_or(Error::Library(LibraryError::Scheduler(
             SchedulerErrorKind::InvalidState(card.state),
         )))?;
-        let last_review = previous_review_log.map_or(DateTime::<Utc>::MIN_UTC, |r| r.reviewed_at);
-        let card_fsrs = card_to_fsrs_card(card, state, last_review);
-        // `self` carries the default parameters, whose `request_retention` is fixed at 0.9. The
-        // interval must instead target the card's own desired retention. The maximum interval is
-        // left at FSRS's default here and enforced by `due_candidates`, which has the config.
-        let fsrs = FSRS::new(rs_fsrs::Parameters {
-            request_retention: card.desired_retention,
-            ..Default::default()
+        let fsrs_rating = number_to_rating(rating).ok_or(Error::Library(
+            LibraryError::Scheduler(SchedulerErrorKind::InvalidRating(rating)),
+        ))?;
+        // Without a previous review there is nothing to measure from. That only happens for a new
+        // card, whose first step ignores the elapsed time anyway.
+        let elapsed_days = previous_review_log.map_or(0, |previous| {
+            u32::try_from((reviewed_at - previous.reviewed_at).num_days().max(0))
+                .unwrap_or(u32::MAX)
         });
-        // This returns 4 versions of the card, from which we select one depending on the rating chosen by the user.
-        let record_log_fsrs = fsrs.repeat(card_fsrs, reviewed_at);
-        let rating = number_to_rating(rating).ok_or(Error::Library(LibraryError::Scheduler(
-            SchedulerErrorKind::InvalidRating(rating),
-        )))?;
-        let scheduling_info_fsrs = record_log_fsrs.get(&rating).unwrap();
-        let (new_card, new_review_log) = fsrs_card_to_card(
-            &scheduling_info_fsrs.card,
-            &scheduling_info_fsrs.review_log,
-            card,
-            self.get_scheduler_name(),
-            &recall_duration,
-            &rate_duration,
-        );
+        let memory = (state != State::New).then_some(MemoryState {
+            stability: card.stability as f32,
+            difficulty: card.difficulty as f32,
+        });
+        let step = next_step(
+            &self.model,
+            state,
+            memory,
+            card.desired_retention as f32,
+            elapsed_days,
+            fsrs_rating,
+        )
+        .map_err(|e| {
+            Error::Library(LibraryError::Scheduler(SchedulerErrorKind::InvalidInput(
+                format!("FSRS could not schedule card {}: {e}", card.id),
+            )))
+        })?;
+        let new_card = Card {
+            updated_at: reviewed_at,
+            due: reviewed_at + step.interval,
+            stability: f64::from(step.memory.stability),
+            difficulty: f64::from(step.memory.difficulty),
+            state: state_to_number(step.state),
+            ..card.clone()
+        };
+        let new_review_log = ReviewLog {
+            id: 1,
+            card_id: Some(card.id),
+            reviewed_at,
+            kind: ReviewLogKind::Review,
+            rating: Some(rating),
+            // The scheduler has no notion of filtered tags; `rate_card` stamps this on the row it
+            // actually inserts.
+            tag_id: None,
+            scheduler_name: self.get_scheduler_name().to_string(),
+            scheduled_time: Some(step.interval.num_seconds()),
+            recall_duration: Some(recall_duration.num_seconds()),
+            rate_duration: Some(rate_duration.num_seconds()),
+            previous_state: card.state,
+            custom_data: Value::Object(Map::new()),
+        };
         Ok((new_card, new_review_log))
     }
 
@@ -245,8 +282,8 @@ impl SrsScheduler for FSRS {
             SchedulerErrorKind::InvalidRating(rating),
         )))?;
         match rating {
-            rs_fsrs::Rating::Again | rs_fsrs::Rating::Hard => Ok(Some(Value::Object(Map::new()))),
-            rs_fsrs::Rating::Good => {
+            FsrsRating::Again | FsrsRating::Hard => Ok(Some(Value::Object(Map::new()))),
+            FsrsRating::Good => {
                 let current_good_count = filtered_tag_scheduler_data
                     .and_then(|data| data.get(good_key))
                     .and_then(|v| v.as_u64())
@@ -260,7 +297,7 @@ impl SrsScheduler for FSRS {
                 )];
                 Ok(Some(Value::Object(Map::from_iter(map_iter))))
             }
-            rs_fsrs::Rating::Easy => Ok(None),
+            FsrsRating::Easy => Ok(None),
         }
     }
 
@@ -457,7 +494,7 @@ mod tests {
     /// Random histories, each ending with the review that produced the card.
     fn random_cards(count: usize) -> Vec<(Card, Vec<ReviewLog>)> {
         let mut rng = rand::rng();
-        let scheduler = FSRS::default();
+        let scheduler = Fsrs::default();
         (0..count)
             .map(|_| {
                 let created_at = Utc::now() - Duration::days(rng.random_range(0..400));
@@ -469,7 +506,7 @@ mod tests {
     #[test]
     fn due_candidates_stay_within_the_fuzz_range() {
         let config = SparesExternalConfig::default();
-        let scheduler = FSRS::default();
+        let scheduler = Fsrs::default();
         for (card, review_logs) in random_cards(300) {
             let last_review = review_logs.last().unwrap().reviewed_at;
             let candidates = scheduler.due_candidates(&config, &card, &review_logs, last_review);
@@ -505,7 +542,7 @@ mod tests {
     #[test]
     fn due_candidates_are_never_in_the_past() {
         let config = SparesExternalConfig::default();
-        let scheduler = FSRS::default();
+        let scheduler = Fsrs::default();
         for (card, review_logs) in random_cards(100) {
             // Reviewed long enough ago that the whole window has passed.
             let at = card.due + Duration::days(60);
