@@ -37,6 +37,12 @@ function useStepWidth() {
 export default function TypstViewer({ source, onReady }: Props) {
   const [ref, width] = useStepWidth();
   const [result, setResult] = useState<State | null>(null);
+  // Expanding compiles the source without the width input, so the template lays it out at its
+  // default size, e.g. for long equations clipped at the screen's width. Tied to a source so the
+  // next card starts fitted.
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const expanded = expandedSource === source;
+  const [natural, setNatural] = useState<{ source: string; svg?: string; error?: string } | null>(null);
 
   useEffect(() => {
     if (width === null) return;
@@ -49,25 +55,61 @@ export default function TypstViewer({ source, onReady }: Props) {
     return () => { cancelled = true; };
   }, [source, width]);
 
+  const naturalSource = natural?.source;
+  useEffect(() => {
+    if (!expanded || naturalSource === source) return;
+    let cancelled = false;
+    import('../typst/compiler').then(({ compileTypst }) => compileTypst(source)).then(
+      svg => { if (!cancelled) setNatural({ source, svg }); },
+      (e: unknown) => { if (!cancelled) setNatural({ source, error: String(e) }); },
+    );
+    return () => { cancelled = true; };
+  }, [source, expanded, naturalSource]);
+
   const done = result?.source === source;
   useEffect(() => {
     if (done) onReady?.();
   }, [done, onReady]);
 
+  const errorView = (error: string) => (
+    <div>
+      <p style={{ color: 'var(--danger)', fontSize: 13 }}>Typst compilation failed</p>
+      <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{error}</pre>
+    </div>
+  );
+
   let content;
-  // Ignore the result of a previous source while the current one compiles. A result for a previous
-  // width is kept until the new one is ready so resizing does not flicker.
-  if (result?.source !== source) {
-    content = <div>Compiling Typst…</div>;
-  } else if (result.error !== undefined) {
-    content = (
-      <div>
-        <p style={{ color: 'var(--danger)', fontSize: 13 }}>Typst compilation failed</p>
-        <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{result.error}</pre>
+  let canExpand = false;
+  // The fitted render is kept on screen while the expanded one compiles.
+  if (expanded && naturalSource === source) {
+    canExpand = true;
+    content = natural?.error !== undefined ? errorView(natural.error) : (
+      <div style={{ overflowX: 'auto' }}>
+        <div className="typst-viewer typst-viewer-natural" dangerouslySetInnerHTML={{ __html: natural?.svg ?? '' }} />
       </div>
     );
+  // Ignore the result of a previous source while the current one compiles. A result for a previous
+  // width is kept until the new one is ready so resizing does not flicker.
+  } else if (result?.source !== source) {
+    content = <div>Compiling Typst…</div>;
+  } else if (result.error !== undefined) {
+    content = errorView(result.error);
   } else {
+    canExpand = true;
     content = <div className="typst-viewer" dangerouslySetInnerHTML={{ __html: result.svg }} />;
   }
-  return <div ref={ref}>{content}</div>;
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      {content}
+      {canExpand && (
+        <button
+          className="typst-expand touch-target-small"
+          onClick={() => setExpandedSource(expanded ? null : source)}
+          title={expanded ? 'Fit to screen' : 'Show at original size'}
+        >
+          {!expanded ? 'Expand' : naturalSource === source ? 'Fit' : 'Expanding…'}
+        </button>
+      )}
+    </div>
+  );
 }

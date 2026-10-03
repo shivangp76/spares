@@ -85,6 +85,26 @@ a:visited {
   background: light-dark(transparent, #fff);
 }
 
+/* Expanded Typst pages keep the size the template laid them out at, and scroll sideways */
+.typst-viewer-natural svg {
+  width: auto;
+  max-width: none;
+}
+
+.typst-expand {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.typst-expand:hover,
+.typst-expand:focus-visible {
+  opacity: 1;
+}
+
 /* Inline-coloured buttons lose the browser's disabled styling, so dim them here */
 button:disabled {
   opacity: 0.5;
