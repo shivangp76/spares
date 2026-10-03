@@ -165,6 +165,9 @@ pub fn get_fuzz_range(
             factor: 0.05,
         },
     ];
+    // Clamp first: fuzz is a fraction of the interval the card actually gets. Measured on an
+    // interval far beyond the maximum, it would span most of the way down to zero.
+    let interval = interval.min(maximum_interval);
     let mut delta = Duration::days(1);
     for range in fuzz_ranges {
         delta += Duration::fractional_days(
@@ -176,7 +179,6 @@ pub fn get_fuzz_range(
                 .num_fractional_days(),
         );
     }
-    let interval = interval.min(maximum_interval);
     let mut min_ivl = cmp::max(minimum_interval, interval - delta);
     let max_ivl = cmp::min(maximum_interval, interval + delta);
     if interval > elapsed_time {
@@ -276,3 +278,25 @@ pub fn get_fuzz_range(
 // ) -> f64 {
 //     (fuzz_range * 2.0) / (easy_days_review_ratio * num_of_specific_due_dates + (fuzz_range * 2.0))
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuzz_range_is_measured_on_the_clamped_interval() {
+        let maximum = Duration::days(180);
+        let (min_ivl, max_ivl) = get_fuzz_range(
+            Duration::days(3568),
+            Duration::days(500),
+            maximum,
+            Duration::days(2),
+        );
+        assert_eq!(max_ivl, maximum);
+        assert_eq!(
+            (min_ivl, max_ivl),
+            get_fuzz_range(maximum, Duration::days(500), maximum, Duration::days(2)),
+            "an interval beyond the maximum is fuzzed like the maximum itself"
+        );
+    }
+}

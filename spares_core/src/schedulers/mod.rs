@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use itertools::Itertools;
+use placement::PlacementContext;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rand::rngs::ThreadRng;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -21,6 +23,7 @@ use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 
 mod fsrs;
+pub mod placement;
 
 #[cfg(test)]
 pub(crate) use fsrs::optimal_interval_days;
@@ -151,7 +154,11 @@ pub trait SrsScheduler: Send + Sync {
         requested_date: DateTime<Utc>,
     ) -> Result<MoveCardsResult, Error>;
 
-    // - User requests Reschedule -> Compute memory state for each card -> (some combination of applying easy days and dispersing siblings to determine card's new due date) -> Update card (including due date)
+    /// Recomputes each card's memory state from its log and gives it a new due date.
+    ///
+    /// Cards are placed one at a time, earliest due first, and each placement sees the due
+    /// dates already given to the cards before it. That is what spreads the workload and keeps
+    /// siblings apart, so the result depends on the order.
     async fn reschedule(
         &self,
         db: &SqlitePool,
@@ -164,9 +171,9 @@ pub trait SrsScheduler: Send + Sync {
         cards_with_review_logs.retain(|(_card, review_logs)| !review_logs.is_empty());
 
         // Recompute the memory state. The replay also yields the due date the scheduler itself
-        // would assign after the latest review, which is the base that smart scheduling adjusts.
-        // Using the stored `due` instead would keep whatever the card had before, which is
-        // exactly what a reschedule is meant to replace.
+        // would assign after the latest review, which is the base that placement adjusts. Using
+        // the stored `due` instead would keep whatever the card had before, which is exactly what
+        // a reschedule is meant to replace.
         cards_with_review_logs.iter_mut().try_for_each(
             |(card, review_logs)| -> Result<(), Error> {
                 let new_card =
@@ -179,65 +186,49 @@ pub trait SrsScheduler: Send + Sync {
                 Ok(())
             },
         )?;
+        cards_with_review_logs.sort_by_key(|(card, _)| (card.due, card.id));
 
-        // Smart schedule
-        let grouped_cards = cards_with_review_logs
-            .into_iter()
-            .map(|card_data| (card_data.0.note_id, card_data))
-            .into_group_map();
-        for (_note_id, mut siblings_with_review_logs) in grouped_cards {
-            // NOTE: This currently schedules each sibling sequentially so the order of the siblings will impact how they are scheduled.
-            siblings_with_review_logs.sort_by_key(|(card, _)| card.order);
-            for sibling_index in 0..siblings_with_review_logs.len() {
-                // `smart_schedule` takes the card and its siblings separately, so the card must
-                // not also appear among its own siblings.
-                let other_siblings = siblings_with_review_logs
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| *index != sibling_index)
-                    .map(|(_, sibling)| sibling.clone())
-                    .collect::<Vec<_>>();
-                siblings_with_review_logs[sibling_index].0.due = self
-                    .smart_schedule(
-                        config,
-                        &siblings_with_review_logs[sibling_index],
-                        &other_siblings,
-                        at,
-                    )
-                    .await?;
-
-                // Update card
-                let updated_card = &siblings_with_review_logs[sibling_index].0;
-                let _update_card_result = sqlx::query(
-                    r"UPDATE card SET due = ?, stability = ?, difficulty = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(updated_card.due.timestamp())
-                .bind(updated_card.stability)
-                .bind(updated_card.difficulty)
-                .bind(updated_card.state)
-                .bind(updated_card.custom_data.clone())
-                .bind(updated_card.updated_at.timestamp())
-                .bind(updated_card.id)
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+        let mut context = PlacementContext::load_all(db, at).await?;
+        // `ThreadRng` is not `Send`, and this future is held across awaits.
+        let mut rng = StdRng::from_rng(&mut rand::rng());
+        for (card, review_logs) in &mut cards_with_review_logs {
+            let candidates = self.due_candidates(config, card, review_logs, at);
+            if !candidates.is_empty() {
+                card.due = context.place(config, card, &candidates, &mut rng);
             }
+            context.update(card);
+
+            let _update_card_result = sqlx::query(
+                r"UPDATE card SET due = ?, stability = ?, difficulty = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(card.due.timestamp())
+            .bind(card.stability)
+            .bind(card.difficulty)
+            .bind(card.state)
+            .bind(card.custom_data.clone())
+            .bind(card.updated_at.timestamp())
+            .bind(card.id)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
         }
         Ok(())
     }
 
-    /// Schedules a card while accounting for easy days and dispersing siblings.
+    /// The due dates `card` may be given instead of the `card.due` this scheduler proposed for
+    /// it, earliest first. [`placement`] chooses among them to account for easy days, load
+    /// balancing and siblings.
     ///
-    /// Returns the new due date of the card.
-    // Replaces `fsrs4anki-helper`'s `disperse_siblings_when_review()`.
-    // Replaces `fsrs4anki-helper`'s `easy_days(did)` and `apply_easy_day_for_specific_date(self)`.
-    async fn smart_schedule(
+    /// Returns an empty list if the card must keep `card.due`, for example because it is in a
+    /// learning step. `review_logs` must be ordered like for
+    /// [`SrsScheduler::compute_memory_state`] and end with the review that produced `card`.
+    fn due_candidates(
         &self,
         config: &SparesExternalConfig,
-        data: &(Card, Vec<ReviewLog>),
-        siblings_with_review_logs: &[(Card, Vec<ReviewLog>)],
+        card: &Card,
+        review_logs: &[ReviewLog],
         at: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>, Error>;
+    ) -> Vec<DateTime<Utc>>;
 
     /// Replays a card's log to reconstruct the memory state it should currently have.
     ///
