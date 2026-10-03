@@ -1087,4 +1087,26 @@ mod forget_tests {
         assert_eq!(before.recall_duration, after.recall_duration);
         assert_eq!(before.rate_duration, after.rate_duration);
     }
+
+    #[sqlx::test]
+    async fn review_history_counts_reviews_per_day(pool: SqlitePool) {
+        use chrono::Local;
+
+        use crate::api::statistics::get_review_history;
+
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        let earlier = now - Duration::days(3);
+        rate(&pool, card_id, 3, earlier).await;
+        rate(&pool, card_id, 1, now).await;
+        rate(&pool, card_id, 3, now).await;
+        forget_card(&pool, card_id, now, true).await.unwrap();
+
+        let history = get_review_history(&pool).await.unwrap();
+        let local_date = |at: DateTime<Utc>| at.with_timezone(&Local).date_naive();
+        assert_eq!(history.review_count_by_date.len(), 2);
+        assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
+        // Forgetting is not a review
+        assert_eq!(history.review_count_by_date[&local_date(now)], 2);
+    }
 }
