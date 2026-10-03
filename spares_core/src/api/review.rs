@@ -874,7 +874,9 @@ pub async fn rate_card(
     // discarded. Handing either to the scheduler would make this review look like a continuation
     // of a lapse rather than the first review of a reset card.
     let latest_review_log = effective_review_logs(&review_logs).last().cloned();
+    let config = read_external_config()?;
     let (mut updated_card, mut new_review_log) = scheduler.schedule(
+        &config,
         &card,
         latest_review_log,
         rating,
@@ -888,7 +890,6 @@ pub async fn rate_card(
 
     // Place the card among the due dates the scheduler allows.
     review_logs.push(new_review_log.clone());
-    let config = read_external_config()?;
     updated_card.due = place_due(
         db,
         scheduler,

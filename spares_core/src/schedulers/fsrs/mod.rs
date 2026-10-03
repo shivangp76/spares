@@ -29,6 +29,7 @@ use serde_json::Map;
 use serde_json::Number;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use steps::LearningSteps;
 use steps::next_step;
 use utils::Rating as FsrsRating;
 use utils::State;
@@ -157,6 +158,7 @@ impl SrsScheduler for Fsrs {
                         );
                         let (new_card, new_review_log) = self
                             .schedule(
+                                &SparesExternalConfig::default(),
                                 &card,
                                 previous_review_log.cloned(),
                                 *rating,
@@ -197,6 +199,7 @@ impl SrsScheduler for Fsrs {
 
     fn schedule(
         &self,
+        config: &SparesExternalConfig,
         card: &Card,
         previous_review_log: Option<ReviewLog>,
         rating: RatingId,
@@ -212,7 +215,7 @@ impl SrsScheduler for Fsrs {
         ))?;
         // Without a previous review there is nothing to measure from. That only happens for a new
         // card, whose first step ignores the elapsed time anyway.
-        let elapsed_days = previous_review_log.map_or(0, |previous| {
+        let elapsed_days = previous_review_log.as_ref().map_or(0, |previous| {
             u32::try_from((reviewed_at - previous.reviewed_at).num_days().max(0))
                 .unwrap_or(u32::MAX)
         });
@@ -220,12 +223,22 @@ impl SrsScheduler for Fsrs {
             stability: card.stability as f32,
             difficulty: card.difficulty as f32,
         });
+        let previous_delay = previous_review_log
+            .as_ref()
+            .and_then(|previous| previous.scheduled_time)
+            .map(Duration::seconds);
+        let steps = LearningSteps {
+            learning: &config.learning_steps,
+            relearning: &config.relearning_steps,
+        };
         let step = next_step(
             &self.model,
+            steps,
             state,
             memory,
             card.desired_retention as f32,
             elapsed_days,
+            previous_delay,
             fsrs_rating,
         )
         .map_err(|e| {
