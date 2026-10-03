@@ -656,6 +656,7 @@ export default function ReviewPage() {
   return (
     <div className="page">
       <Navbar onLogout={logout} />
+      <h2 style={{ marginBottom: 16 }}>Review</h2>
 
       {phase === 'landing' && (
         <div style={{ marginTop: 48 }}>
