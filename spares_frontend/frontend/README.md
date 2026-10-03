@@ -1,8 +1,6 @@
 # Image Occlusion Utility
 
 Roadmap:
-- Allow customizing initial fill color, along with other settings, specified in `svgedit/src/editor/index.html`
-- The standalone editor still has its own copy of `spares_core/src/parsers/image_occlusion/template.svg` (the embedded editor gets the server's copy).
 - Allow the CLI to open the standalone editor with a background image preloaded.
 
 Requirements:
@@ -24,6 +22,8 @@ Standalone workflow, for those who only use the CLI:
 - Add markup and clozes to the appropriate layer. Add cloze settings string to clozes, as needed.
 - Click "Save SVG".
 - Navigate to note document and use a snippet to insert the image occlusion.
+
+The editor's initial style is set by `[image_occlusion.editor]` in the spares config: `fill_color`, `stroke_color`, `stroke_width`, `font_size`, `font_family` and `initial_tool` (e.g. `rect`, `ellipse`, `fhpath` or `select`). The embedded editor gets them, along with the template, from `GET /api/image-occlusions/editor-config`, and the standalone editor gets them from `spares_frontend`. Reload the editor after changing them.
 
 Keyboard shortcuts specific to image occlusion (hover over a tool for the rest):
 - `1` / `2`: select the Markup / Clozes layer.
