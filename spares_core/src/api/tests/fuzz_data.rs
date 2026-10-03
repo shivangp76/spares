@@ -18,6 +18,7 @@ use crate::api::tests::GenerateNotesRequest;
 use crate::api::tests::NUM_DAYS_TO_SIMULATE_KEY;
 use crate::api::tests::START_DATE_KEY;
 use crate::api::tests::SimulatedReview;
+use crate::config::SparesExternalConfig;
 use crate::model::Card;
 use crate::model::ReviewLog;
 use crate::parsers::BackReveal;
@@ -400,6 +401,7 @@ pub fn generate_review_logs(
                 let previous_review_log = review_logs.last();
                 let (new_card, new_review_log) = scheduler
                     .schedule(
+                        &SparesExternalConfig::default(),
                         &card,
                         previous_review_log.cloned(),
                         review.rating,

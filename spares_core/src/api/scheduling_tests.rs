@@ -367,3 +367,38 @@ async fn reschedule_includes_suspended_and_buried_cards(pool: SqlitePool) {
         assert_due_near_optimal(&card, now - Duration::days(5));
     }
 }
+
+#[sqlx::test]
+async fn rating_walks_the_learning_steps(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let steps = read_external_config().unwrap().learning_steps;
+    assert_eq!(
+        steps.len(),
+        2,
+        "precondition: the default two learning steps"
+    );
+    // Whole seconds, as the database stores them.
+    let mut at = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap() - Duration::days(1);
+
+    rate(&pool, card_id, GOOD, at).await;
+    let card = fetch_card(&pool, card_id).await;
+    assert_eq!((card.state, card.due - at), (LEARNING, steps[1]));
+
+    at += steps[1];
+    rate(&pool, card_id, AGAIN, at).await;
+    let card = fetch_card(&pool, card_id).await;
+    assert_eq!((card.state, card.due - at), (LEARNING, steps[0]));
+
+    at += steps[0];
+    rate(&pool, card_id, GOOD, at).await;
+    let card = fetch_card(&pool, card_id).await;
+    assert_eq!(
+        (card.state, card.due - at),
+        (LEARNING, steps[1]),
+        "Good on the first step moves to the second, read back from the stored delay"
+    );
+
+    at += steps[1];
+    rate(&pool, card_id, GOOD, at).await;
+    assert_eq!(fetch_card(&pool, card_id).await.state, REVIEW);
+}

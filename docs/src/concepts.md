@@ -42,7 +42,16 @@ Adapters allow spares to interface with different spaced repetition software. By
 
 ## Scheduling
 
-Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention. When a card in review is rated or rescheduled, FSRS proposes an interval and a small range of days around it. One day in that range is then chosen at random, weighted by these settings in `config.toml`:
+Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention.
+
+New cards first go through learning steps, and forgotten cards through relearning steps, as in Anki. Again returns to the first step, Hard repeats the current one, Good moves to the next step or graduates the card, and Easy graduates it immediately. Steps are in seconds, shorter than a day, and can be empty:
+
+```toml
+learning_steps = [60, 600]  # 1 and 10 minutes
+relearning_steps = [600]    # 10 minutes
+```
+
+When a card in review is rated or rescheduled, FSRS proposes an interval and a small range of days around it. One day in that range is then chosen at random, weighted by these settings in `config.toml`:
 
 ```toml
 # Prefer days that have fewer cards due.
