@@ -22,7 +22,7 @@ const IMAGE_TYPES: Record<string, string> = {
 }
 
 /** Serves the standalone image occlusion editor its config (see `ext-spares/config.js`).
-    `spares_frontend --image-occlusion` sets it from the user's spares config, along with the image
+    `spares_frontend image-occlusion` sets it from the user's spares config, along with the image
     to open, if any. Otherwise, the editor gets the template and its own default settings. */
 function imageOcclusionEditorConfig(): Plugin {
   return {

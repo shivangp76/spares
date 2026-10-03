@@ -14,7 +14,7 @@ Workflow in the frontend:
 The editor is SVG-Edit (the `svgedit` submodule, a fork with the `ext-spares` extension), embedded in an iframe with `?embedded=1`. The extension then hides its own open/save tools and exposes `window.sparesBridge` to the frontend.
 
 Standalone workflow, for those who only use the CLI:
-- Run `spares_frontend --image-occlusion [--image <PATH>]`. The webpage should automatically open up with the image as its background, if provided, otherwise, click "Change Background Image" and choose an image. Each run is its own instance, on the next free port.
+- Run `spares_frontend image-occlusion [--image <PATH>]` (or `spares_frontend io [--image <PATH>]`). The webpage should automatically open up with the image as its background, if provided, otherwise, click "Change Background Image" and choose an image. Each run is its own instance, on the next free port.
 - Add markup and clozes to the appropriate layer. Add cloze settings string to clozes, as needed.
 - Click "Save SVG".
 - Navigate to note document and use a snippet to insert the image occlusion.
