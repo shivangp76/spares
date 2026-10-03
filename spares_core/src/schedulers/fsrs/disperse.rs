@@ -112,9 +112,9 @@ pub fn disperse_siblings_distance(
     card_siblings: &[(Card, Vec<ReviewLog>)],
     minimum_interval: Duration,
     maximum_interval: Duration,
+    now: DateTime<Utc>,
 ) -> Option<Vec<(i64, DateTime<Utc>)>> {
     let mut due_ranges = Vec::new();
-    let now = Utc::now();
     for (card, review_logs) in card_siblings {
         let due_range = get_due_range(card, review_logs, maximum_interval, minimum_interval, now);
         due_ranges.push((Some(card.id), due_range));
@@ -192,7 +192,8 @@ fn get_due_range(
     if next_interval <= minimum_interval || review_logs.is_empty() {
         return (card.due, card.due);
     }
-    let latest_review_log = review_logs.first().unwrap();
+    // Logs are ordered oldest first.
+    let latest_review_log = review_logs.last().unwrap();
 
     let (mut min_ivl, mut max_ivl) = get_fuzz_range(
         next_interval,
@@ -433,6 +434,33 @@ mod tests {
     }
 
     #[test]
+    fn due_range_is_anchored_on_the_latest_review() {
+        let logs = vec![review_at(0), review_at(1), review_at(5)];
+        let latest = logs.last().unwrap().reviewed_at;
+        let card = Card {
+            stability: 10.0,
+            due: latest + Duration::days(10),
+            ..Card::new(logs[0].reviewed_at)
+        };
+        let (minimum_interval, maximum_interval) = (Duration::days(2), Duration::days(180));
+        let parameters = rs_fsrs::Parameters {
+            request_retention: card.desired_retention,
+            ..Default::default()
+        };
+        let elapsed = Duration::days(4);
+        let (min_ivl, max_ivl) = get_fuzz_range(
+            Duration::fractional_days(parameters.next_interval(card.stability, elapsed.num_days())),
+            elapsed,
+            maximum_interval,
+            minimum_interval,
+        );
+
+        let range = get_due_range(&card, &logs, maximum_interval, minimum_interval, latest);
+
+        assert_eq!(range, (latest + min_ivl, latest + max_ivl));
+    }
+
+    #[test]
     fn test_disperse_siblings_distance() {
         let mut none_count = 0;
         let mut no_changes_count = 0;
@@ -453,6 +481,7 @@ mod tests {
                 &card_siblings,
                 config.minimum_interval,
                 config.maximum_interval,
+                Utc::now(),
             );
             // dbg!(&result);
             if let Some(cards_and_dues) = result {

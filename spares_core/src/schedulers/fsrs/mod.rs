@@ -63,6 +63,7 @@ use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
+use crate::model::SpecialState;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
@@ -70,6 +71,14 @@ use crate::schedulers::stepped_range_inclusive;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 use crate::search::evaluator::Evaluator;
+
+/// The interval, in days, after which a card with `stability` is expected to fall to
+/// `desired_retention`. Not rounded, clamped or fuzzed.
+#[cfg(test)]
+pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f64 {
+    stability / rs_fsrs::Parameters::FACTOR
+        * (desired_retention.powf(1.0 / rs_fsrs::Parameters::DECAY) - 1.0)
+}
 
 // NOTE: Make sure to pass time data as a `Duration` instead of an integer representing days.
 #[async_trait]
@@ -94,46 +103,27 @@ impl SrsScheduler for FSRS {
     }
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
-        let cards_lapses: Vec<(i64, u32)> = sqlx::query_as(
-            r"SELECT
-              c.id AS card_id,
-              COUNT(r.id) AS review_count
-            FROM
-              card c
-            JOIN
-              review_log r ON r.card_id = c.id
-            WHERE
-              c.state = ?
-              AND r.kind = ?
-              AND r.rating = ?
-            GROUP BY
-              c.id",
+        let config = read_external_config()?;
+        // A lapse is forgetting a card that had graduated to review, so `Again` during learning
+        // or relearning steps does not count.
+        let cards = sqlx::query_as(
+            r"SELECT * FROM card
+              WHERE special_state IS NULL
+                AND id IN (
+                  SELECT card_id FROM review_log
+                  WHERE kind = ? AND rating = ? AND previous_state = ?
+                  GROUP BY card_id
+                  HAVING COUNT(*) > ?
+                )
+              ORDER BY due ASC",
         )
-        .bind(state_to_number(State::Review))
         .bind(ReviewLogKind::Review)
         .bind(rating_to_number(rs_fsrs::Rating::Again))
+        .bind(state_to_number(State::Review))
+        .bind(config.leech.lapses_threshold)
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        let config = read_external_config()?;
-        let cards_leeches = cards_lapses
-            .into_iter()
-            .filter(|(_card_id, lapses)| *lapses > config.leech.lapses_threshold)
-            .collect::<Vec<_>>();
-        let mut query = sqlx::query_as(
-            r"SELECT * FROM card
-             WHERE note_id IN (?)
-             AND state = ?
-             AND special_state IS NULL
-           ORDER BY card.due ASC",
-        );
-        for (card_id, _) in cards_leeches {
-            query = query.bind(card_id);
-        }
-        let cards = query
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
         Ok(cards)
     }
 
@@ -226,8 +216,15 @@ impl SrsScheduler for FSRS {
         )))?;
         let last_review = previous_review_log.map_or(DateTime::<Utc>::MIN_UTC, |r| r.reviewed_at);
         let card_fsrs = card_to_fsrs_card(card, state, last_review);
+        // `self` carries the default parameters, whose `request_retention` is fixed at 0.9. The
+        // interval must instead target the card's own desired retention. The maximum interval is
+        // left at FSRS's default here and enforced by `smart_schedule`, which has the config.
+        let fsrs = FSRS::new(rs_fsrs::Parameters {
+            request_retention: card.desired_retention,
+            ..Default::default()
+        });
         // This returns 4 versions of the card, from which we select one depending on the rating chosen by the user.
-        let record_log_fsrs = self.repeat(card_fsrs, reviewed_at);
+        let record_log_fsrs = fsrs.repeat(card_fsrs, reviewed_at);
         let rating = number_to_rating(rating).ok_or(Error::Library(LibraryError::Scheduler(
             SchedulerErrorKind::InvalidRating(rating),
         )))?;
@@ -344,7 +341,7 @@ impl SrsScheduler for FSRS {
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
             let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
-            format!("\nAND c.id IN ({})", card_ids_str)
+            format!("AND id IN ({})", card_ids_str)
         } else {
             String::new()
         };
@@ -389,7 +386,7 @@ impl SrsScheduler for FSRS {
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
             let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
-            format!("\nAND c.id IN ({})", card_ids_str)
+            format!("AND id IN ({})", card_ids_str)
         } else {
             String::new()
         };
@@ -434,9 +431,14 @@ impl SrsScheduler for FSRS {
         config: &SparesExternalConfig,
         data: &(Card, Vec<ReviewLog>),
         siblings_with_review_logs: &[(Card, Vec<ReviewLog>)],
-        _at: DateTime<Utc>,
+        at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, Error> {
         let (main_card, all_main_review_logs) = data;
+        // Learning and relearning steps are short, deliberate intervals. Spreading them out with
+        // review-sized fuzz windows would skip the steps entirely.
+        if main_card.state != state_to_number(State::Review) {
+            return Ok(main_card.due);
+        }
         // Intervals are derived from the log below, so a forget must hide everything before it.
         // When the card was just forgotten this leaves an empty slice and the early return keeps
         // the due date `forget_card` set, which is what a reset card should have.
@@ -445,12 +447,22 @@ impl SrsScheduler for FSRS {
             return Ok(main_card.due);
         }
 
-        let mut all_cards = siblings_with_review_logs.to_vec();
+        // Only siblings that are in review compete for days with this card. New and learning
+        // siblings have no review-sized due date, and suspended ones are not studied at all.
+        let mut all_cards = siblings_with_review_logs
+            .iter()
+            .filter(|(card, _)| {
+                card.state == state_to_number(State::Review)
+                    && card.special_state != Some(SpecialState::Suspended)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         all_cards.push(data.clone());
         let dispersed_siblings = disperse_siblings_distance(
             &all_cards,
             config.minimum_interval,
             config.maximum_interval,
+            at,
         );
         let easy_days_disabled = !config.easy_days.enabled
             || (config.easy_days.specific_dates.is_empty()

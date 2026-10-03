@@ -5,6 +5,8 @@ pub mod note;
 pub mod parser;
 pub mod review;
 pub mod scheduler;
+#[cfg(test)]
+mod scheduling_tests;
 pub mod statistics;
 pub mod tag;
 #[cfg(test)]
