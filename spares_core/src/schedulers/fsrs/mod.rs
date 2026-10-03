@@ -1,19 +1,13 @@
-//! # `fsrs4anki-helper`
-//! - Unmigrated changes: <https://github.com/open-spaced-repetition/fsrs4anki-helper/compare/ee308f9c5f723ebe6eceb6da24c1c8fcb2d50c6a..main>.
+//! The FSRS scheduler, backed by the `rs-fsrs` crate.
 //!
-//! ## Feature status
-//! 1. Reschedule: Implemented differently. This will still reschedule all cards, but uses `Smart Schedule` (see below). Note that `Reschedule recent` is not supported.
-//! 2. Postpone: Implemented.
-//! 3. Advance: Implemented.
-//! 4. (Load) Balance: See `Smart Schedule` below.
-//! 5. Easy days: See `Smart Schedule` below.
-//! 6. Disperse siblings: Always enabled. See `Smart Schedule` below.
-//! 7. Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
-//! 8. Remedy hard misuse: Unsupported
-//!
-//! ### Smart Schedule
-//! - This is a combination of `Easy days` and `Disperse siblings`.
-mod easy_days;
+//! ## `fsrs4anki-helper` features
+//! - Reschedule: Supported. Reschedules every card from its full review history. `Reschedule
+//!   recent` is not supported.
+//! - Postpone and Advance: Supported, see the `reposition` module.
+//! - Load balance, easy days and disperse siblings: Supported, as one step that runs whenever a
+//!   card in review is rated or rescheduled. See [`crate::schedulers::placement`].
+//! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
+//! - Remedy hard misuse: Unsupported.
 mod reposition;
 mod utils;
 
@@ -207,7 +201,7 @@ impl SrsScheduler for FSRS {
         let card_fsrs = card_to_fsrs_card(card, state, last_review);
         // `self` carries the default parameters, whose `request_retention` is fixed at 0.9. The
         // interval must instead target the card's own desired retention. The maximum interval is
-        // left at FSRS's default here and enforced by `smart_schedule`, which has the config.
+        // left at FSRS's default here and enforced by `due_candidates`, which has the config.
         let fsrs = FSRS::new(rs_fsrs::Parameters {
             request_retention: card.desired_retention,
             ..Default::default()
