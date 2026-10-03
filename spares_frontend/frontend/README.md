@@ -21,12 +21,7 @@ Standalone workflow, for those who only use the CLI:
 
 The editor's initial style is set by `[image_occlusion.editor]` in the spares config: `fill_color`, `stroke_color`, `stroke_width`, `font_size`, `font_family` and `initial_tool` (e.g. `rect`, `ellipse`, `fhpath` or `select`). The embedded editor gets them, along with the template, from `GET /api/image-occlusions/editor-config`, and the standalone editor gets them from `spares_frontend` when it starts. After changing them, reload the frontend or restart `spares_frontend`.
 
-Keyboard shortcuts specific to image occlusion (hover over a tool for the rest):
-- `1` / `2`: select the Markup / Clozes layer.
-- `Shift+C`: edit the cloze settings of the selected shape. `Enter` or `Escape` returns to the canvas.
-- `Shift+B`: change the background image (standalone only).
-- `V`: select tool. `R`, `E`, `L`, `P`, `Q`, `T`: rectangle, ellipse, line, path, freehand and text tools.
-- `Cmd/Ctrl+Z` to undo. `Cmd+Shift+Z`, `Cmd+Y` or `Ctrl+Y` to redo.
+Press `?` in the editor, or choose "Keyboard Shortcuts" in its main menu, to list its keyboard shortcuts.
 
 Potentially useful links:
 - <https://github.com/SVG-Edit/svgedit>
