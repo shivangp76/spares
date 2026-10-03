@@ -194,14 +194,9 @@ pub(crate) async fn handle(
                     return Ok(());
                 }
             }
-            let request = SubmitStudyActionRequest {
-                scheduler_name,
-                action: StudyAction::Reschedule,
-            };
-            let url = format!("{}/api/review/submit", base_url);
+            let url = format!("{}/api/scheduler/{}/reschedule", base_url, scheduler_name);
             let response = client
                 .post(&url)
-                .json(&request)
                 .send()
                 .await
                 .map_err(|e| miette!("{}", e))?;

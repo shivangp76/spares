@@ -59,6 +59,7 @@ use crate::handlers::review::submit_study_action_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
+use crate::handlers::scheduler::reschedule_scheduler_handler;
 use crate::handlers::tag::create_tag_handler;
 use crate::handlers::tag::delete_tag_handler;
 use crate::handlers::tag::get_tag_by_name_handler;
@@ -170,6 +171,10 @@ pub(crate) fn create_router(
         .route(
             "/api/scheduler/{name}/optimize",
             post(optimize_scheduler_handler),
+        )
+        .route(
+            "/api/scheduler/{name}/reschedule",
+            post(reschedule_scheduler_handler),
         )
         // Files read by sources that clients compile themselves
         .route("/api/render-assets", get(get_render_asset_handler))

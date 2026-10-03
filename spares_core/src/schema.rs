@@ -650,15 +650,6 @@ pub mod review {
             count: u32,
             query: Option<String>,
         },
-        /// When you either:
-        /// 1. Update easy days
-        /// 2. Change schedulers
-        /// 3. Update the scheduler's parameters
-        // There is deliberately no query to reschedule only some cards. Cards are placed one at a
-        // time against the due dates already given to the others (load balancing, easy days,
-        // sibling dispersal), so rescheduling a subset would leave the load spread across days
-        // unbalanced. The settings that call for a reschedule also apply to every card.
-        Reschedule,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
