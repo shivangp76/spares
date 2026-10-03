@@ -492,10 +492,20 @@ impl SrsScheduler for Fsrs {
         let min_days = min_ivl.num_fractional_days().ceil() as i64;
         let max_days = (max_ivl.num_fractional_days().floor() as i64).max(min_days);
         let today_start = get_start_end_local_date(&at).0;
-        (min_days..=max_days)
+        let candidates = (min_days..=max_days)
             .map(|days| last_review.reviewed_at + Duration::days(days))
+            .collect::<Vec<_>>();
+        let upcoming = candidates
+            .iter()
+            .copied()
             .filter(|due| *due >= today_start)
-            .collect()
+            .collect::<Vec<_>>();
+        if upcoming.is_empty() {
+            // The whole range has passed, so the card is overdue. It is due at the end of the
+            // range, not at `card.due`, which is not clamped to the maximum interval.
+            return candidates.last().copied().into_iter().collect();
+        }
+        upcoming
     }
 }
 
@@ -556,13 +566,42 @@ mod tests {
     fn due_candidates_are_never_in_the_past() {
         let config = SparesExternalConfig::default();
         let scheduler = Fsrs::default();
-        for (card, review_logs) in random_cards(100) {
-            // Reviewed long enough ago that the whole window has passed.
-            let at = card.due + Duration::days(60);
-            assert_eq!(
-                scheduler.due_candidates(&config, &card, &review_logs, at),
-                Vec::<DateTime<Utc>>::new()
-            );
+        for (card, review_logs) in random_cards(300) {
+            let last_review = review_logs.last().unwrap().reviewed_at;
+            // Partway through the card's interval, so part of its range may have passed.
+            let at = last_review + (card.due - last_review) / 2;
+            let today_start = get_start_end_local_date(&at).0;
+            let candidates = scheduler.due_candidates(&config, &card, &review_logs, at);
+            if candidates.iter().any(|candidate| *candidate < today_start) {
+                assert_eq!(
+                    candidates.len(),
+                    1,
+                    "a past date is only offered alone, for an overdue card"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn an_overdue_card_is_due_at_the_end_of_its_range() {
+        let config = SparesExternalConfig::default();
+        let scheduler = Fsrs::default();
+        let mut checked = 0;
+        for (card, review_logs) in random_cards(300) {
+            let last_review = review_logs.last().unwrap().reviewed_at;
+            if card.state != state_to_number(State::Review)
+                || card.due - last_review < config.minimum_interval
+            {
+                continue;
+            }
+            // Long after the whole range has passed, even for an interval past the maximum.
+            let at = last_review + config.maximum_interval + Duration::days(60);
+            let candidates = scheduler.due_candidates(&config, &card, &review_logs, at);
+            assert_eq!(candidates.len(), 1, "{candidates:?}");
+            assert!(candidates[0] < at, "the card is overdue");
+            assert!(candidates[0] - last_review <= config.maximum_interval);
+            checked += 1;
+        }
+        assert!(checked > 0, "precondition: some random cards are in review");
     }
 }
