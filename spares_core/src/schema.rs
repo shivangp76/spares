@@ -371,8 +371,12 @@ pub mod card {
     use crate::model::Card;
     use crate::model::CardId;
     use crate::model::NoteId;
+    use crate::model::RatingId;
+    use crate::model::ReviewLog;
+    use crate::model::ReviewLogKind;
     use crate::model::SpecialState;
     use crate::model::StateId;
+    use crate::model::TagId;
     use crate::schema::some_option;
 
     #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -454,6 +458,49 @@ pub mod card {
     pub struct ForgetCardResponse {
         pub card: CardResponse,
         pub event_id: Option<i64>,
+    }
+
+    /// One row of a card's review log, with the memory state the card had after it.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct CardReviewEntry {
+        pub id: i64,
+        pub kind: ReviewLogKind,
+        pub reviewed_at: DateTime<Utc>,
+        /// Relative to `scheduler_name`.
+        pub rating: Option<RatingId>,
+        pub scheduler_name: String,
+        pub previous_state: StateId,
+        /// Seconds.
+        pub scheduled_time: Option<i64>,
+        /// Seconds.
+        pub recall_duration: Option<i64>,
+        /// Seconds.
+        pub rate_duration: Option<i64>,
+        pub tag_id: Option<TagId>,
+        /// Replayed with the scheduler's current parameters. `None` when the card has no memory
+        /// state after this row, i.e. after a forget.
+        pub stability: Option<f64>,
+        /// See `stability`.
+        pub difficulty: Option<f64>,
+    }
+
+    impl CardReviewEntry {
+        pub fn new(review_log: ReviewLog, memory_state: Option<(f64, f64)>) -> Self {
+            Self {
+                id: review_log.id,
+                kind: review_log.kind,
+                reviewed_at: review_log.reviewed_at,
+                rating: review_log.rating,
+                scheduler_name: review_log.scheduler_name,
+                previous_state: review_log.previous_state,
+                scheduled_time: review_log.scheduled_time,
+                recall_duration: review_log.recall_duration,
+                rate_duration: review_log.rate_duration,
+                tag_id: review_log.tag_id,
+                stability: memory_state.map(|(stability, _)| stability),
+                difficulty: memory_state.map(|(_, difficulty)| difficulty),
+            }
+        }
     }
 }
 

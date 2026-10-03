@@ -17,8 +17,8 @@ use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
-use crate::schema::review::StatisticsRequest;
 use crate::schema::review::ReviewHistoryResponse;
+use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
 
 #[allow(clippy::cast_possible_wrap)]
