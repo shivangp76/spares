@@ -4075,6 +4075,8 @@ name = "spares_frontend"
 version = "0.0.1-alpha.1"
 dependencies = [
  "clap",
+ "serde_json",
+ "spares_core",
 ]
 
 [[package]]

@@ -11,8 +11,8 @@ use axum::response::IntoResponse;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
-use spares_core::api::image_occlusion::IMAGE_OCCLUSION_TEMPLATE;
 use spares_core::api::image_occlusion::create_image_occlusion;
+use spares_core::api::image_occlusion::get_image_occlusion_editor_config;
 use spares_core::api::image_occlusion::list_note_image_occlusions;
 use spares_core::api::image_occlusion::read_image_occlusion_file;
 use spares_core::api::image_occlusion::update_note_image_occlusion;
@@ -28,11 +28,10 @@ fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::BAD_REQUEST, Json(json!({ "message": message })))
 }
 
-pub(crate) async fn get_image_occlusion_template_handler() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "image/svg+xml")],
-        IMAGE_OCCLUSION_TEMPLATE,
-    )
+pub(crate) async fn get_image_occlusion_editor_config_handler()
+-> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let result = get_image_occlusion_editor_config().map_err(error_to_response)?;
+    Ok(Json(result))
 }
 
 /// Multipart fields: `parser_id`, `image` (with a file name) and `clozes` (the SVG).

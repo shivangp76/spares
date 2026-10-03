@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { createImageOcclusion, fetchImageOcclusionFile, getImageOcclusionTemplate } from '../api/client';
-import type { ImageOcclusionData } from '../types/spares';
+import { createImageOcclusion, fetchImageOcclusionFile, getImageOcclusionEditorConfig } from '../api/client';
+import type { ImageOcclusionData, ImageOcclusionEditorConfig } from '../types/spares';
 
 /** Set on the editor's window by the `ext-spares` svgedit extension when it is embedded. */
 interface SparesBridge {
   ready: Promise<void>;
-  load(args: { imageUrl: string; width: number; height: number; svg: string; title?: string }): Promise<void>;
+  /** Without `svg`, the template is loaded. */
+  load(args: { imageUrl: string; width: number; height: number; svg?: string; title?: string }): Promise<void>;
   getClozesSvg(): string;
   isDirty(): boolean;
 }
@@ -46,6 +47,8 @@ function fileName(path: string): string {
 export default function ImageOcclusionEditor(props: Props) {
   const { mode, onClose } = props;
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Read by svgedit as it starts, so the iframe waits for it
+  const [config, setConfig] = useState<ImageOcclusionEditorConfig | null>(null);
   const [bridge, setBridge] = useState<SparesBridge | null>(null);
   const [image, setImage] = useState<File | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -62,6 +65,14 @@ export default function ImageOcclusionEditor(props: Props) {
       document.body.style.overflow = overflow;
       urls.forEach(url => URL.revokeObjectURL(url));
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getImageOcclusionEditorConfig()
+      .then(c => { if (!cancelled) setConfig(c); })
+      .catch(e => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
   }, []);
 
   // The extension posts `spares:ready` once the bridge is set, which may be before React sees the
@@ -82,7 +93,7 @@ export default function ImageOcclusionEditor(props: Props) {
       window.removeEventListener('message', onMessage);
       iframe?.removeEventListener('load', connect);
     };
-  }, []);
+  }, [config]);
 
   function objectUrl(blob: Blob): string {
     const url = URL.createObjectURL(blob);
@@ -117,7 +128,7 @@ export default function ImageOcclusionEditor(props: Props) {
     try {
       const imageUrl = objectUrl(file);
       const { width, height } = await imageSize(imageUrl);
-      await bridge.load({ imageUrl, width, height, svg: await getImageOcclusionTemplate(), title: file.name });
+      await bridge.load({ imageUrl, width, height, title: file.name });
       setImage(file);
       setLoaded(true);
     } catch (e) {
@@ -211,12 +222,14 @@ export default function ImageOcclusionEditor(props: Props) {
           </button>
         </div>
       </div>
-      <iframe
-        ref={iframeRef}
-        src={`${EDITOR_PATH}?embedded=1&storagePrompt=false`}
-        title="Image occlusion editor"
-        style={{ flex: 1, border: 'none', width: '100%' }}
-      />
+      {config && (
+        <iframe
+          ref={iframeRef}
+          src={`${EDITOR_PATH}?embedded=1&storagePrompt=false&config=${encodeURIComponent(JSON.stringify(config))}`}
+          title="Image occlusion editor"
+          style={{ flex: 1, border: 'none', width: '100%' }}
+        />
+      )}
     </div>
   );
 }
