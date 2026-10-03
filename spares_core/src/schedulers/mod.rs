@@ -19,6 +19,7 @@ use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
+use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 
@@ -148,6 +149,21 @@ pub trait SrsScheduler: Send + Sync {
         query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<MoveCardsResult, Error>;
+
+    /// Fits the scheduler's parameters to the review history, and scores them against the ones in
+    /// `config`. Does not save them.
+    async fn optimize(
+        &self,
+        _db: &SqlitePool,
+        _config: &SparesExternalConfig,
+    ) -> Result<OptimizeResponse, Error> {
+        Err(Error::Library(LibraryError::Scheduler(
+            SchedulerErrorKind::InvalidInput(format!(
+                "the `{}` scheduler has no parameters to optimize",
+                self.get_scheduler_name()
+            )),
+        )))
+    }
 
     /// Recomputes each card's memory state from its log and gives it a new due date.
     ///

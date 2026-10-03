@@ -30,6 +30,7 @@ use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
@@ -1134,44 +1135,54 @@ pub async fn submit_study_action(
             }
         }
         StudyAction::Reschedule => {
-            // Suspended and buried cards are included: they keep their special state, but should
-            // come back with a memory state and due date that match their history.
-            let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            // Get all review logs for cards. Every card is a candidate here, so this fetches the
-            // whole table rather than building an `IN` list. Orphaned rows (deleted cards) are
-            // excluded up front rather than in Rust: there is nothing to reschedule for them, and
-            // on a long-lived database they only grow in number. Forget markers are kept for the
-            // cards that remain: `compute_memory_state` needs them to know where to restart replay.
-            let all_review_logs: Vec<ReviewLog> = sqlx::query_as(
-                r"SELECT * FROM review_log WHERE card_id IS NOT NULL
-                  ORDER BY card_id, reviewed_at ASC, id ASC",
-            )
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-            let grouped_review_logs = all_review_logs
-                .into_iter()
-                .filter_map(|rl| rl.card_id.map(|card_id| (card_id, rl)))
-                .into_group_map();
-            let cards_with_review_logs = cards
-                .into_iter()
-                .map(|card| {
-                    let review_logs = grouped_review_logs
-                        .get(&card.id)
-                        .cloned()
-                        .unwrap_or_default();
-                    (card, review_logs)
-                })
-                .collect::<Vec<_>>();
-            scheduler
-                .reschedule(db, &config, cards_with_review_logs, at)
-                .await?;
+            reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
         }
     }
     Ok(SubmitStudyActionResponse { event_id: None })
+}
+
+/// Recomputes every card's memory state from its review log and gives it a new due date.
+pub(crate) async fn reschedule_all_cards(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    // Suspended and buried cards are included: they keep their special state, but should come
+    // back with a memory state and due date that match their history.
+    let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    // Get all review logs for cards. Every card is a candidate here, so this fetches the whole
+    // table rather than building an `IN` list. Orphaned rows (deleted cards) are excluded up front
+    // rather than in Rust: there is nothing to reschedule for them, and on a long-lived database
+    // they only grow in number. Forget markers are kept for the cards that remain:
+    // `compute_memory_state` needs them to know where to restart replay.
+    let all_review_logs: Vec<ReviewLog> = sqlx::query_as(
+        r"SELECT * FROM review_log WHERE card_id IS NOT NULL
+          ORDER BY card_id, reviewed_at ASC, id ASC",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let grouped_review_logs = all_review_logs
+        .into_iter()
+        .filter_map(|rl| rl.card_id.map(|card_id| (card_id, rl)))
+        .into_group_map();
+    let cards_with_review_logs = cards
+        .into_iter()
+        .map(|card| {
+            let review_logs = grouped_review_logs
+                .get(&card.id)
+                .cloned()
+                .unwrap_or_default();
+            (card, review_logs)
+        })
+        .collect::<Vec<_>>();
+    scheduler
+        .reschedule(db, config, cards_with_review_logs, at)
+        .await
 }
 
 #[cfg(test)]
