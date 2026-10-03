@@ -18,6 +18,7 @@ use crate::model::Card;
 use crate::model::CardId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
+use crate::model::SpecialState;
 use crate::parsers::get_all_parsers;
 use crate::schedulers::optimal_interval_days;
 use crate::schema::card::GetLeechesRequest;
@@ -328,4 +329,41 @@ async fn reschedule_spreads_siblings_apart(pool: SqlitePool) {
         assert_due_near_optimal(card, now - Duration::days(5));
     }
     assert_eq!(distinct_local_days(&cards), 3, "{cards:#?}");
+}
+
+#[sqlx::test]
+async fn reschedule_includes_suspended_and_buried_cards(pool: SqlitePool) {
+    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f"]).await;
+    let (suspended, buried) = (cards[0][0], cards[1][0]);
+    let now = Utc::now();
+    let bogus_due = now + Duration::days(3650);
+    for (card_id, special_state) in [
+        (suspended, SpecialState::Suspended),
+        (buried, SpecialState::UserBuried),
+    ] {
+        graduate(&pool, card_id, now, &[10, 9, 5]).await;
+        sqlx::query(r"UPDATE card SET due = ?, stability = 1000, special_state = ? WHERE id = ?")
+            .bind(bogus_due.timestamp())
+            .bind(special_state)
+            .bind(card_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    study(&pool, StudyAction::Reschedule, now).await;
+
+    for (card_id, special_state) in [
+        (suspended, SpecialState::Suspended),
+        (buried, SpecialState::UserBuried),
+    ] {
+        let card = fetch_card(&pool, card_id).await;
+        assert_eq!(
+            card.special_state,
+            Some(special_state),
+            "the special state is kept"
+        );
+        assert!(card.stability < 1000.0, "the memory state is recomputed");
+        assert_due_near_optimal(&card, now - Duration::days(5));
+    }
 }
