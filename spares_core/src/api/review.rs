@@ -1134,9 +1134,6 @@ pub async fn submit_study_action(
                 .await?;
             }
         }
-        StudyAction::Reschedule => {
-            reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
-        }
     }
     Ok(SubmitStudyActionResponse { event_id: None })
 }

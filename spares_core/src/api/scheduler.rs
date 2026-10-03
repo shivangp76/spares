@@ -21,6 +21,22 @@ pub fn resolve_rating_from_score(scheduler_name: &str, score: f64) -> Result<Rat
     scheduler.rating_from_score(score)
 }
 
+/// Recomputes every card's memory state and due date from its review history. Run after changing
+/// the scheduler, its parameters, learning steps or easy days.
+// There is deliberately no query to reschedule only some cards. Cards are placed one at a time
+// against the due dates already given to the others (load balancing, easy days, sibling
+// dispersal), so rescheduling a subset would leave the load spread across days unbalanced. The
+// settings that call for a reschedule also apply to every card.
+pub async fn reschedule_scheduler(
+    db: &SqlitePool,
+    scheduler_name: &str,
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    let config = read_external_config()?;
+    reschedule_all_cards(db, scheduler.as_ref(), &config, at).await
+}
+
 /// Fits the scheduler's parameters to the review history. With `apply`, saves them if they
 /// predict it better than the current ones and reschedules every card with them.
 pub async fn optimize_scheduler(

@@ -772,6 +772,7 @@ mod forget_tests {
     use crate::api::note::create_notes;
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::review::submit_study_action;
+    use crate::api::scheduler::reschedule_scheduler;
     use crate::model::ReviewLog;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
@@ -880,16 +881,7 @@ mod forget_tests {
             .await
             .unwrap();
 
-        submit_study_action(
-            &pool,
-            SubmitStudyActionRequest {
-                scheduler_name: "fsrs".to_string(),
-                action: StudyAction::Reschedule,
-            },
-            now,
-        )
-        .await
-        .unwrap();
+        reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
         let after = fetch_card(&pool, card_id).await;
         assert_ne!(
@@ -910,16 +902,7 @@ mod forget_tests {
 
         forget_card(&pool, card_id, now, true).await.unwrap();
 
-        submit_study_action(
-            &pool,
-            SubmitStudyActionRequest {
-                scheduler_name: "fsrs".to_string(),
-                action: StudyAction::Reschedule,
-            },
-            now,
-        )
-        .await
-        .unwrap();
+        reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
         let after = fetch_card(&pool, card_id).await;
         assert_eq!(
