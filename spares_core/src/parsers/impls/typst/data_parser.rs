@@ -394,6 +394,13 @@ mod tests {
     }
 
     #[test]
+    fn test_paren_linked_note() {
+        let input = "Test #lin([basic [a] b]) #test[p]asd";
+        let parser = TypstDataParser::new(input);
+        assert_eq!(parser.linked_notes, vec![11..22]);
+    }
+
+    #[test]
     fn test_linked_note_in_math() {
         let input = "Test $ a &= b #[(bc of #lin[Rule A])] \\ b &=c $";
         let parser = TypstDataParser::new(input);

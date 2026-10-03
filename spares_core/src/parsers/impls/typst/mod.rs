@@ -463,60 +463,6 @@ fn get_linked_notes_string(
             .collect::<Vec<_>>()
             .join("\n");
         (note_data.to_string(), linked_notes_string)
-
-        // // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        // // TODO: This doesn't match the paren version, only the bracket version.
-        // let mut all_linked_notes = Vec::new();
-        // let mut data_parser = TypstDataParser::new(note_data);
-        // while let Some(linked_note) = data_parser.next_linked_note() {
-        //     all_linked_notes.push(linked_note);
-        // }
-        // let _linked_notes = all_linked_notes.into_iter().collect::<Vec<_>>();
-        //
-        // // NOTE: Regex does not work here so if using this code, this will need to be fixed. See the comment in `get_linked_notes()` for an explanation.
-        // let linked_notes_regex = get_linked_notes_regex();
-        // let new_note_data = linked_notes_regex.replace_all(note_data, |caps: &Captures| {
-        //     count += 1;
-        //     format!("#lin({}, note_link: li{})", &caps[1], count)
-        // });
-        //
-        // let items = linked_notes
-        //     .iter()
-        //     .enumerate()
-        //     .map(|(i, linked_note_request)| {
-        //         let LinkedNote {
-        //             searched_keyword,
-        //             linked_note_id,
-        //             matched_keyword,
-        //         } = linked_note_request;
-        //         assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
-        //         match (linked_note_id, matched_keyword) {
-        //             (None, None) => format!("#let li{} = \"\"", i + 1),
-        //             (Some(linked_note_id), Some(matched_keyword)) => {
-        //                 let mut note_raw_path = get_output_raw_dir(
-        //                     parser.get_parser_name(),
-        //                     RenderOutputType::Note,
-        //                     None,
-        //                 );
-        //                 note_raw_path.push(
-        //                     parser.get_output_filename(RenderOutputType::Note, *linked_note_id),
-        //                 );
-        //                 note_raw_path.set_extension(parser.file_extension());
-        //                 format!(
-        //                     "#let li{} = {} // \"{} -> {}\"",
-        //                     i + 1,
-        //                     note_raw_path.display(),
-        //                     searched_keyword,
-        //                     matched_keyword,
-        //                 )
-        //             }
-        //             (None, Some(_)) | (Some(_), None) => unreachable!(),
-        //         }
-        //     })
-        //     .collect::<Vec<_>>()
-        //     .join("\n");
-        // // format!("{}\n\n{}", new_note_data, items)
-        // format!("{}\n\n{}", items, new_note_data)
     } else {
         (note_data.to_string(), String::new())
     }
