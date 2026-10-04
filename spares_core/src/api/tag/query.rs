@@ -48,7 +48,7 @@ pub async fn tag_cards_from_query(
 }
 
 pub async fn rebuild_tag(db: &SqlitePool, id: i64) -> Result<(), Error> {
-    // NOTE: AUTOMATIC_REBUILD: If in the future we add a column to tags with `enum Rebuild { Manual, Automatic }` and the value is `Automatic`, then it fails since you can't rebuild a tag that is populated automatically. Automatic rebuilds were decided against since it would be expensive to compute if a lot of notes are created/ updated at once. This can also _not_ be made into a config value since we want this to be specific to each filtered tag.
+    // NOTE: Filtered tags are only rebuilt on request, never when notes are created or updated. Most queries depend on card state (due, state, ...), which changes outside note writes, and review snapshot tags must keep the set they were built with.
     // Verify tag has a query, so it can be rebuilt
     let (tag,): (Option<String>,) = sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
         .bind(id)

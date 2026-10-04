@@ -1836,9 +1836,7 @@ mod tests {
             .unwrap();
 
         // Unscoped, `c.state=0 limit=1` picks the suspended card, so re-evaluating the query on
-        // this edit would pull it into the tag. Automatic filtered-tag rebuilds are currently off
-        // (`AUTOMATIC_REBUILD`), and `rebuild_filtered_tags_for_updated_notes` skips limited
-        // queries in case they are turned on.
+        // this edit would pull it into the tag. Note edits must never rebuild filtered tags.
         let suspended_note_id: NoteId =
             sqlx::query_scalar(r"SELECT note_id FROM card WHERE id = ?")
                 .bind(suspended)

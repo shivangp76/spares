@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -68,12 +67,6 @@ pub fn get_start_end_local_date(requested_date: &DateTime<Utc>) -> (DateTime<Utc
         .unwrap()
         .to_utc();
     (lower_limit, upper_limit)
-}
-
-pub fn intersect<T: Eq + std::hash::Hash + Clone>(vec1: &[T], vec2: &[T]) -> Vec<T> {
-    let set1: HashSet<_> = vec1.iter().cloned().collect();
-    let set2: HashSet<_> = vec2.iter().cloned().collect();
-    set1.intersection(&set2).cloned().collect()
 }
 
 /// Merge 2 sorted lists into a new sorted list
