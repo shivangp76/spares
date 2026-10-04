@@ -6,7 +6,6 @@ use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
-use super::AUTOMATIC_REBUILD;
 use super::delete_note_files;
 use crate::Error;
 use crate::LibraryError;
@@ -44,7 +43,6 @@ use crate::schema::note::UpdateNotesResponse;
 
 mod cards;
 mod event;
-mod filtered_tags;
 mod links;
 mod tags;
 
@@ -700,12 +698,6 @@ pub async fn update_notes(
     // ---- File generation and config ----
 
     let has_changed_notes = !parse_note_requests.is_empty();
-
-    if AUTOMATIC_REBUILD {
-        // Add/Remove notes from matched filtered tags.
-        // Must be done after creating other note tags and cards since those affect query matching.
-        filtered_tags::rebuild_filtered_tags_for_updated_notes(db, &note_responses).await?;
-    }
 
     for (pid, requests) in parse_note_requests.into_iter().into_group_map() {
         let parser_name =

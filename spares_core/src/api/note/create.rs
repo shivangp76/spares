@@ -5,21 +5,17 @@ use chrono::Utc;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
-use super::AUTOMATIC_REBUILD;
 use super::BULK_REQUEST_THRESHOLD;
 use crate::CardErrorKind;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
-use crate::api::card::create_card_tags;
 use crate::api::execute_batched_query;
-use crate::api::fetch_batched_query;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::max_rows_for;
 use crate::api::note::basic::fetch_note_snapshot;
 use crate::api::parser::get_parser_name;
-use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag;
@@ -31,7 +27,6 @@ use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
-use crate::helpers::intersect;
 use crate::helpers::remove_ancestor_tags;
 use crate::model::Card;
 use crate::model::CardId;
@@ -54,50 +49,6 @@ use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
 use crate::schema::tag::CreateTagRequest;
-use crate::search::evaluator::Evaluator;
-
-async fn rebuild_filtered_tags_for_created_notes(
-    db: &SqlitePool,
-    note_responses: &[NoteResponse],
-) -> Result<(), Error> {
-    // Find all tags with queries
-    let existing_filtered_tags: Vec<(TagId, String)> =
-        sqlx::query_as(r"SELECT id, query FROM tag WHERE query IS NOT NULL")
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-    // Get card ids from the note.id here
-    let created_card_ids: Vec<CardId> =
-        fetch_batched_query(db, note_responses, MAX_ROWS_IN_QUERY, async |db, chunk| {
-            let query_str = format!(
-                "SELECT id FROM card WHERE note_id IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query_scalar(&query_str);
-            for note in chunk {
-                query = query.bind(note.id);
-            }
-            query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })
-        })
-        .await?;
-    let mut card_filtered_tag_entries = Vec::new();
-    for (tag_id, query) in existing_filtered_tags {
-        // Reexecute query to see if this card matches
-        let evaluator = Evaluator::new(query.as_str());
-        let card_ids = evaluator.get_card_ids(db).await?;
-        let card_ids_to_tag = intersect(&card_ids, &created_card_ids);
-        let card_tags = card_ids_to_tag
-            .into_iter()
-            .map(|card_id| (card_id, tag_id))
-            .collect::<Vec<_>>();
-        card_filtered_tag_entries.extend(card_tags);
-    }
-    create_card_tags(db, &card_filtered_tag_entries).await?;
-    Ok(())
-}
 
 pub async fn validate_tags(db: &SqlitePool, tags_by_note: Vec<&Vec<String>>) -> Result<(), Error> {
     let existing_filtered_tags_names: Vec<String> =
@@ -303,12 +254,6 @@ pub async fn create_notes(
     create_cards(db, &card_entries).await?;
 
     apply_srs_inheritance(db, &inherit_entries).await?;
-
-    if AUTOMATIC_REBUILD {
-        // Add notes to matched filtered tags.
-        // This must be done after creating other note tags and creating cards since that impacts if the note matches a query.
-        rebuild_filtered_tags_for_created_notes(db, &note_responses).await?;
-    }
 
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
     let parse_notes_request = GenerateNoteFilesRequests {
