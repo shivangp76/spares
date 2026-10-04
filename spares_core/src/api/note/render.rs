@@ -17,6 +17,7 @@ use crate::api::note::get_keywords;
 use crate::api::note::keyword_distance::weighted_levenshtein;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
+use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
 use crate::helpers::value_to_string_vec;
@@ -27,6 +28,7 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::GenerateNoteFilesRequests;
 use crate::parsers::generate_files::create_note_files_bulk;
+use crate::parsers::generate_files::generates_render_files;
 use crate::schema::note::LinkedNote;
 use crate::schema::note::MatchedKeywordResponse;
 use crate::schema::note::NotesSelector;
@@ -330,13 +332,19 @@ pub async fn render_notes(
             )
         })
         .into_group_map();
+    let external_config = read_external_config().ok();
     for (parser_name, generate_note_files_request) in grouped_parse_note_requests {
         let parser = find_parser(parser_name, all_parsers)?;
+        // Files requested in another directory are always generated, since the caller asked for
+        // them explicitly.
+        let generate_files = overridden_output_raw_dir.is_some()
+            || generates_render_files(parser.as_ref(), external_config.as_ref());
+        let render = generate_rendered && generate_files;
         let generate_note_files_requests = GenerateNoteFilesRequests {
             requests: generate_note_files_request,
             overridden_output_raw_dir: overridden_output_raw_dir.clone(),
-            include_cards,
-            render: generate_rendered,
+            include_cards: include_cards && generate_files,
+            render,
             force_render: force_generate_rendered,
             precomputed_cards: None,
         };
@@ -344,7 +352,7 @@ pub async fn render_notes(
             .into_iter()
             .collect::<Result<Vec<_>, _>>();
         // Record dependencies even if some notes failed to render.
-        if generate_rendered && overridden_output_raw_dir.is_none() {
+        if render && overridden_output_raw_dir.is_none() {
             sync_render_assets(db, parser.as_ref(), requested_note_ids.as_ref()).await?;
         }
         let _card_paths = card_paths?;
