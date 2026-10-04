@@ -4094,6 +4094,7 @@ dependencies = [
  "sqlx",
  "strum",
  "strum_macros",
+ "terminal_size",
  "tokio",
  "walkdir",
 ]
