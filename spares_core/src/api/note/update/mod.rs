@@ -36,6 +36,7 @@ use crate::parsers::extract_and_combine_keywords;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::GenerateNoteFilesRequests;
 use crate::parsers::generate_files::create_note_files_bulk;
+use crate::parsers::generate_files::generates_render_files;
 use crate::parsers::get_cards;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::UpdateNotesRequest;
@@ -724,7 +725,7 @@ pub async fn update_notes(
         let parse_notes_request = GenerateNoteFilesRequests {
             requests,
             overridden_output_raw_dir: None,
-            include_cards: true,
+            include_cards: generates_render_files(parser.as_ref(), external_config.as_ref()),
             render: false,
             force_render: false,
             precomputed_cards: Some(group_precomputed_cards),
