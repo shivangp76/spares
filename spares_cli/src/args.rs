@@ -287,6 +287,13 @@ pub(crate) enum CardCommands {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+    /// Show a card's review log and totals (card info)
+    Reviews {
+        id: CardId,
+        /// Print the raw review log as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// View cards matching a search query (opens card backs)
     View(ViewCardArgs),
     /// Search for cards
@@ -581,6 +588,13 @@ mod tests {
         assert!(Cli::try_parse_from(["spares", "card", "get"]).is_err());
         assert!(Cli::try_parse_from(["spares", "card", "get", "--id", "1"]).is_ok());
         assert!(Cli::try_parse_from(["spares", "card", "get", "--note-id", "1"]).is_ok());
+    }
+
+    #[test]
+    fn card_reviews_requires_id() {
+        assert!(Cli::try_parse_from(["spares", "card", "reviews"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "card", "reviews", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "card", "reviews", "1", "--json"]).is_ok());
     }
 
     #[test]

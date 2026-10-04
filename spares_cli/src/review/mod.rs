@@ -13,6 +13,7 @@ use serde_json::Value;
 use spares_core::adapters::impls::spares::SparesAdapter;
 use spares_core::adapters::impls::spares::SparesRequestProcessor;
 use spares_core::config::read_external_config;
+use spares_core::model::CardId;
 use spares_core::model::NoteId;
 use spares_core::model::RatingId;
 use spares_core::model::TagId;
@@ -56,6 +57,7 @@ use utils::suspend_cards;
 use utils::suspend_note;
 use utils::tag_note;
 
+use crate::card_info::print_card_info;
 use crate::import::import_from_files;
 
 pub(crate) mod utils;
@@ -127,6 +129,10 @@ enum ReviewAction {
     BrowseKeywords,
     #[strum(serialize = "Open Linked Notes")]
     OpenLinkedNotes,
+    #[strum(serialize = "Card Info")]
+    CardInfo,
+    #[strum(serialize = "Previous Card Info")]
+    PreviousCardInfo,
     #[strum(serialize = "Tag to modify later")]
     TagNote,
     #[strum(serialize = "Forget Card")]
@@ -623,6 +629,8 @@ pub(crate) async fn review_cards(
     // The undo event to redo, and whether it undid a rating. Cleared by any new action.
     let mut last_undo: Option<(i64, bool)> = None;
     let mut pending_cli_rating: Option<Rating> = None;
+    // The card rated last, for Previous Card Info
+    let mut previous_card_id: Option<CardId> = None;
 
     if review_card_response.cli.is_some() {
         match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client).await {
@@ -751,6 +759,8 @@ pub(crate) async fn review_cards(
                 | ReviewAction::OpenNote
                 | ReviewAction::BrowseKeywords
                 | ReviewAction::OpenLinkedNotes
+                | ReviewAction::CardInfo
+                | ReviewAction::PreviousCardInfo
                 | ReviewAction::Undo
                 | ReviewAction::Redo
                 | ReviewAction::Exit
@@ -791,6 +801,7 @@ pub(crate) async fn review_cards(
                 last_action_event_id =
                     submit_rating(scheduler_name, rating_submission, base_url, client).await?;
                 last_action_was_rating = true;
+                previous_card_id = Some(review_card_response.card_id);
 
                 // let old_card_rendered_path = review_card_response.card_rendered_path;
                 // Advance to next review card
@@ -870,6 +881,17 @@ pub(crate) async fn review_cards(
                     }
                 }
             }
+            ReviewAction::CardInfo => {
+                println!("Card Info (card {}):", review_card_response.card_id);
+                print_card_info(review_card_response.card_id, base_url, client).await?;
+            }
+            ReviewAction::PreviousCardInfo => match previous_card_id {
+                Some(card_id) => {
+                    println!("Previous Card Info (card {}):", card_id);
+                    print_card_info(card_id, base_url, client).await?;
+                }
+                None => println!("No card has been rated yet."),
+            },
             ReviewAction::OpenLinkedNotes => {
                 if review_card_response.linked_notes.is_empty() {
                     println!("No linked notes found.");
@@ -1242,8 +1264,11 @@ pub(crate) async fn review_cards(
                         }
                     }
 
-                    if last_action_was_rating && reviewed_cards_count > 0 {
-                        reviewed_cards_count -= 1;
+                    if last_action_was_rating {
+                        reviewed_cards_count = reviewed_cards_count.saturating_sub(1);
+                        // The rated card is back on screen, and the one rated before it isn't
+                        // tracked
+                        previous_card_id = None;
                     }
                     last_action_was_rating = false;
 
@@ -1276,6 +1301,8 @@ pub(crate) async fn review_cards(
                         last_action_was_rating = was_rating;
                         if was_rating {
                             reviewed_cards_count += 1;
+                            // The card on screen is the one whose rating was undone
+                            previous_card_id = Some(review_card_response.card_id);
                         }
                     }
                     None => {
