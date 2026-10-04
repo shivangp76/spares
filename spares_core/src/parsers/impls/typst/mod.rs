@@ -38,6 +38,9 @@ use crate::schema::note::LinkedNote;
 
 mod data_parser;
 
+/// Separates notes in a note file, and the metadata from the card data in a card file.
+const SEPARATOR: &str = "#divider()";
+
 /// See <https://typst.app/>
 ///
 /// Note that clozes must pass arguments using markup syntax, not code syntax. For example,
@@ -216,7 +219,7 @@ impl Parseable for TypstParser {
                     // self.construct_comment("spares: end"),
                 ];
                 if include_separator {
-                    lines.push("#line(length: 100%)".to_string());
+                    lines.push(SEPARATOR.to_string());
                 }
                 let note_file_data = lines.into_iter().collect::<String>();
                 note_file_data
@@ -234,7 +237,7 @@ impl Parseable for TypstParser {
                 lines.extend(vec![
                     format!("- tags{} {}", settings_key_value_delim, tags_str),
                     String::new(),
-                    "#line(length: 100%)".to_string(),
+                    SEPARATOR.to_string(),
                     String::new(),
                     card_data_str,
                 ]);
