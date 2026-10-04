@@ -18,6 +18,7 @@ use rayon::prelude::*;
 
 use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;
+use crate::config::SparesExternalConfig;
 use crate::model::NoteId;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
@@ -31,6 +32,16 @@ use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::schema::note::LinkedNote;
+
+/// Whether to compile `parser`'s notes and cards and write its cards' raw files. Parsers that
+/// render in the browser skip these if [`SparesExternalConfig::render_browser_parsers`] is off.
+/// A missing config uses the default.
+pub fn generates_render_files(
+    parser: &dyn Parseable,
+    config: Option<&SparesExternalConfig>,
+) -> bool {
+    !parser.renders_in_browser() || config.is_none_or(|c| c.render_browser_parsers)
+}
 
 fn blake3_hex(data: impl AsRef<[u8]>) -> String {
     blake3::hash(data.as_ref()).to_hex().to_string()
@@ -509,4 +520,26 @@ fn create_raw_and_rendered_file(
     }
 
     Ok(output_text_filepath)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generates_render_files;
+    use crate::config::SparesExternalConfig;
+    use crate::parsers::impls::markdown::MarkdownParser;
+    use crate::parsers::impls::typst::TypstParser;
+
+    #[test]
+    fn test_generates_render_files() {
+        let browser = TypstParser::new();
+        let local = MarkdownParser::new();
+        let mut config = SparesExternalConfig::default();
+        assert!(generates_render_files(&browser, Some(&config)));
+        assert!(generates_render_files(&browser, None));
+
+        config.render_browser_parsers = false;
+        assert!(!generates_render_files(&browser, Some(&config)));
+        // Parsers rendered on the server are unaffected.
+        assert!(generates_render_files(&local, Some(&config)));
+    }
 }
