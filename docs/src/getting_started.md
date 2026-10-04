@@ -23,6 +23,13 @@ Run the following command in the terminal:
 spares_server
 ```
 
+### Running on a remote server (optional)
+
+To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. On the server:
+
+- Set `render_browser_parsers = false` in its `config.toml`. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
+- Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.
+
 ### Migration (optional)
 
 Spares ships with a script to migrate data from Anki. See `spares migrate --help`.

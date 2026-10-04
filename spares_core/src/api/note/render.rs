@@ -20,6 +20,7 @@ use crate::api::placeholders_2d;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
+use crate::helpers::run_blocking;
 use crate::helpers::value_to_string_vec;
 use crate::model::NoteId;
 use crate::model::NoteLink;
@@ -132,18 +133,26 @@ async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Er
             .map_err(|e| Error::Sqlx { source: e })?;
 
     // Re-match existing linked notes against keywords
-    let updated_note_links: Vec<NoteLink> = existing_note_links
+    let updated_note_links =
+        run_blocking(move || rematch_note_links(&existing_note_links, &keywords)).await;
+    Ok(updated_note_links)
+}
+
+fn rematch_note_links(
+    existing_note_links: &[NoteLink],
+    keywords: &[(NoteId, String)],
+) -> Vec<NoteLink> {
+    existing_note_links
         .par_iter()
         .filter_map(|existing_link| {
-            let matched_keyword_data =
-                match_keyword(&existing_link.searched_keyword, keywords.as_ref())
-                    .into_iter()
-                    .min_by(|a, b| {
-                        a.score
-                            .partial_cmp(&b.score)
-                            // ignore NaN and always rank it last (i.e., treat NaN as largest)
-                            .unwrap_or(std::cmp::Ordering::Greater)
-                    });
+            let matched_keyword_data = match_keyword(&existing_link.searched_keyword, keywords)
+                .into_iter()
+                .min_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        // ignore NaN and always rank it last (i.e., treat NaN as largest)
+                        .unwrap_or(std::cmp::Ordering::Greater)
+                });
             if matched_keyword_data.as_ref().map(|x| x.score) == existing_link.score
                 && (matched_keyword_data
                     .as_ref()
@@ -165,8 +174,7 @@ async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Er
                 score: matched_keyword_data.as_ref().map(|x| x.score),
             })
         })
-        .collect();
-    Ok(updated_note_links)
+        .collect()
 }
 
 /// Deletes the old rows for the given note links and re-inserts the updated ones.
@@ -348,9 +356,12 @@ pub async fn render_notes(
             force_render: force_generate_rendered,
             precomputed_cards: None,
         };
-        let card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests)?
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>();
+        let (parser, card_paths) = run_blocking(move || {
+            let card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests);
+            (parser, card_paths)
+        })
+        .await;
+        let card_paths = card_paths?.into_iter().collect::<Result<Vec<_>, _>>();
         // Record dependencies even if some notes failed to render.
         if render && overridden_output_raw_dir.is_none() {
             sync_render_assets(db, parser.as_ref(), requested_note_ids.as_ref()).await?;
