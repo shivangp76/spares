@@ -325,6 +325,15 @@ pub(crate) enum CardCommands {
     /// Studying statistics
     #[command(alias = "stats")]
     Statistics(StatisticsArgs),
+    /// Review heatmap of the past weeks, with streaks and daily average
+    History {
+        /// Number of weeks to show. Defaults to as many as fit in the terminal, up to a year.
+        #[arg(short, long)]
+        weeks: Option<usize>,
+        /// Print the review count of each day as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -595,6 +604,15 @@ mod tests {
         assert!(Cli::try_parse_from(["spares", "card", "reviews"]).is_err());
         assert!(Cli::try_parse_from(["spares", "card", "reviews", "1"]).is_ok());
         assert!(Cli::try_parse_from(["spares", "card", "reviews", "1", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn card_history_parses() {
+        assert!(Cli::try_parse_from(["spares", "card", "history"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["spares", "card", "history", "--weeks", "10", "--json"]).is_ok()
+        );
+        assert!(Cli::try_parse_from(["spares", "card", "history", "--weeks", "x"]).is_err());
     }
 
     #[test]
