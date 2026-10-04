@@ -15,6 +15,14 @@ use serde_json::Value;
 #[cfg(test)]
 use crate::DelimiterErrorKind;
 
+/// Runs CPU-heavy `f` on a blocking thread, so it does not stall other requests on the async
+/// runtime. A panic in `f` is resumed in the caller.
+pub(crate) async fn run_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    tokio::task::spawn_blocking(f)
+        .await
+        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
+}
+
 /// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
 /// Returns an empty vector if the value is not an array or if any elements are not strings.
 /// Compile a `fancy_regex` pattern once and cache it forever, keyed by the
