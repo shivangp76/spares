@@ -26,6 +26,8 @@ use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
 use crate::args::SpecialStateLocal;
 use crate::args::StatisticsArgs;
+use crate::card_info::fetch_card_reviews;
+use crate::card_info::print_card_info;
 use crate::review::forget_card;
 use crate::review::review_cards;
 use crate::search::search;
@@ -120,6 +122,18 @@ pub(crate) async fn handle(
             let card_responses: Vec<CardResponse> =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
+        }
+        CardCommands::Reviews { id, json } => {
+            if json {
+                let entries = fetch_card_reviews(id, base_url, client)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                println!("{}", serde_json::to_string_pretty(&entries).unwrap());
+            } else {
+                print_card_info(id, base_url, client)
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+            }
         }
         CardCommands::View(view_args) => {
             view_cards(view_args, base_url, client)

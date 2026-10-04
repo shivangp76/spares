@@ -549,7 +549,7 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn format_duration(duration: chrono::Duration) -> String {
+pub(crate) fn format_duration(duration: chrono::Duration) -> String {
     let total_seconds = duration.num_seconds();
     let days = total_seconds / (24 * 3600);
     let hours = (total_seconds % (24 * 3600)) / 3600;

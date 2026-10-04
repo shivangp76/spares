@@ -1,5 +1,6 @@
 mod args;
 mod card;
+mod card_info;
 mod event;
 mod graph;
 mod import;
