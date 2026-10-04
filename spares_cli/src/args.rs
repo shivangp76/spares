@@ -412,6 +412,9 @@ pub(crate) struct StatisticsArgs {
     pub(crate) scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
     pub(crate) date: DateTime<Utc>,
+    /// Print the statistics as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Args, Debug)]

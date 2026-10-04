@@ -77,7 +77,7 @@ fn rating_label<'a>(
         .map(|r| r.description.as_str())
 }
 
-fn state_label(state: StateId) -> String {
+pub(crate) fn state_label(state: StateId) -> String {
     match state {
         0 => "New".to_string(),
         1 => "Learning".to_string(),

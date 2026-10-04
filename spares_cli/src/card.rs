@@ -33,6 +33,7 @@ use crate::review::forget_card;
 use crate::review::review_cards;
 use crate::search::search;
 use crate::search::search_cards;
+use crate::statistics::format_statistics;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::view::view_cards;
@@ -294,6 +295,7 @@ pub(crate) async fn handle(
         CardCommands::Statistics(StatisticsArgs {
             scheduler_name,
             date,
+            json,
         }) => {
             let request = StatisticsRequest {
                 scheduler_name,
@@ -309,7 +311,11 @@ pub(crate) async fn handle(
             let response = ensure_ok(response).await?;
             let response: StatisticsResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
-            println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            } else {
+                print!("{}", format_statistics(&response));
+            }
         }
     }
     Ok(())
