@@ -265,6 +265,11 @@ pub struct SparesExternalConfig {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub set_card_due_date_duration: Duration,
     pub remote_host: Option<String>,
+    /// Compile the notes and cards of parsers that render in the browser, and write their cards'
+    /// raw files. Web clients compile these cards themselves from the database, so a remote server
+    /// can turn this off to save compute. Keep it on where notes are rendered before
+    /// `spares sync cloud`, since rendering is what records the files their sources read.
+    pub render_browser_parsers: bool,
 }
 
 impl Default for SparesExternalConfig {
@@ -286,6 +291,7 @@ impl Default for SparesExternalConfig {
             overlapper: OverlapperConfig::default(),
             set_card_due_date_duration: Duration::weeks(1),
             remote_host: None,
+            render_browser_parsers: true,
         }
     }
 }
