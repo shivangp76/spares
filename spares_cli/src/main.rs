@@ -12,6 +12,7 @@ mod note;
 mod parser;
 mod review;
 mod search;
+mod statistics;
 mod sync;
 mod tag;
 mod tree;
