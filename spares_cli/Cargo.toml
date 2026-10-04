@@ -39,6 +39,7 @@ spares_core = { path = "../spares_core" }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
 strum = { version = "0.28.0", features = ["derive"] }
 strum_macros = "0.28.0"
+terminal_size = "0.4.4"
 tokio = { version = "1.53.1", features = ["full"] }
 walkdir = "2.5.0"
 

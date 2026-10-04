@@ -3,6 +3,7 @@ mod card;
 mod card_info;
 mod event;
 mod graph;
+mod history;
 mod import;
 mod keyword;
 mod link;
