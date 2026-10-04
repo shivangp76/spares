@@ -44,6 +44,7 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::GenerateNoteFilesRequests;
 use crate::parsers::generate_files::create_note_files_bulk;
+use crate::parsers::generate_files::generates_render_files;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::NoteResponse;
@@ -256,10 +257,12 @@ pub async fn create_notes(
     apply_srs_inheritance(db, &inherit_entries).await?;
 
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
+    let include_cards =
+        generates_render_files(parser.as_ref(), read_external_config().ok().as_ref());
     let parse_notes_request = GenerateNoteFilesRequests {
         requests: generate_files_requests,
         overridden_output_raw_dir: None,
-        include_cards: true,
+        include_cards,
         render: false,
         force_render: false,
         precomputed_cards: None,
