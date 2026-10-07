@@ -28,6 +28,7 @@ use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
+use crate::parsers::render_command_output;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
@@ -497,7 +498,8 @@ fn render_file(
     outdir_arg.push(output_rendered_dir);
     // Example for testing:
     // `cd $XDG_DATA_HOME/spares/notes/latex-note/ && time latexmk -verbose -file-line-error -synctex=1 -interaction=nonstopmode -pdf -auxdir=$XDG_CACHE_HOME/vimtex/aux/2051 $XDG_DATA_HOME/spares/notes/latex-note/2051.tex`
-    let output = Command::new("latexmk")
+    let mut command = Command::new("latexmk");
+    command
         .arg("-verbose")
         .arg("-file-line-error")
         .arg("-synctex=1")
@@ -507,13 +509,8 @@ fn render_file(
         .arg(&outdir_arg)
         .arg(output_text_filepath)
         // Current directory is changed to ensure first vimtex compilation is fast.
-        .current_dir(output_text_filepath.parent().unwrap())
-        .output()
-        .map_err(|e| Error::Io {
-            description: "Failed to run latex command".to_string(),
-            source: e,
-        })?;
-    Ok(output)
+        .current_dir(output_text_filepath.parent().unwrap());
+    render_command_output(&mut command, "latexmk")
 }
 
 #[cfg(test)]
