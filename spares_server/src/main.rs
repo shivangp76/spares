@@ -17,6 +17,7 @@ use spares_core::config::get_env_config;
 use spares_core::config::get_files_dir;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
+use spares_core::parsers::kill_running_renders;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -100,9 +101,40 @@ async fn start_server(args: Args) -> Result<(), String> {
     };
     info!("Starting server at {:?}", env_config.socket_address);
     axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| format!("Server error: {}", e))?;
     Ok(())
+}
+
+/// Waits for Ctrl+C or SIGTERM, then stops running renders so in-flight requests finish quickly.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            warn!("Failed to listen for Ctrl+C: {}", e);
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(e) => {
+                warn!("Failed to listen for SIGTERM: {}", e);
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
+    info!("Shutting down server");
+    kill_running_renders();
 }
 
 /// Spares Web Server

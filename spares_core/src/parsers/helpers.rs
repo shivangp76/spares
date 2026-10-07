@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
@@ -5,6 +6,9 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Output;
 use std::process::Stdio;
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -89,6 +93,32 @@ pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathD
 /// How long a command rendering a note or card may run before it is stopped.
 pub const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
 
+#[derive(Default)]
+struct RunningRenders {
+    /// Process groups of render commands that have been spawned but not yet reaped. An id is
+    /// removed while holding the lock before or as its process is reaped, so a group in here
+    /// cannot have had its id reused.
+    process_groups: HashSet<u32>,
+    /// Set by [`kill_running_renders`], after which no more render commands are started.
+    stopped: bool,
+}
+
+static RUNNING_RENDERS: LazyLock<Mutex<RunningRenders>> = LazyLock::new(Default::default);
+
+fn running_renders() -> MutexGuard<'static, RunningRenders> {
+    RUNNING_RENDERS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Stops every running render command, along with any processes it started, and makes any later
+/// render command fail without being started. Killing does nothing on platforms other than Unix.
+pub fn kill_running_renders() {
+    let mut running_renders = running_renders();
+    running_renders.stopped = true;
+    for &process_group in &running_renders.process_groups {
+        kill_process_group(process_group);
+    }
+}
+
 /// Like [`Command::output`], but stops the command, and any processes it started (e.g. `pdflatex`
 /// under `latexmk`), if it runs longer than [`RENDER_TIMEOUT`].
 pub fn render_command_output(command: &mut Command, name: &str) -> Result<Output, Error> {
@@ -103,15 +133,28 @@ fn command_output_with_timeout(
     // Its own process group, so the whole tree can be killed at once
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(command, 0);
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| Error::Io {
-            description: format!("Failed to run {name} command"),
-            source: e,
-        })?;
+    // The lock is held while spawning, so a command cannot start after `kill_running_renders`
+    // without being refused or killed.
+    let mut child = {
+        let mut running_renders = running_renders();
+        if running_renders.stopped {
+            return Err(Error::Io {
+                description: format!("{name} command was not run since renders were stopped"),
+                source: std::io::ErrorKind::Interrupted.into(),
+            });
+        }
+        let child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::Io {
+                description: format!("Failed to run {name} command"),
+                source: e,
+            })?;
+        running_renders.process_groups.insert(child.id());
+        child
+    };
     // Pipes are drained while waiting, so a command filling one is not blocked writing to it.
     let read_pipe = |pipe: Option<Box<dyn Read + Send>>| {
         thread::spawn(move || {
@@ -131,10 +174,18 @@ fn command_output_with_timeout(
         source: e,
     };
     let status = loop {
-        if let Some(status) = child.try_wait().map_err(wait_error)? {
-            break status;
+        {
+            let mut running_renders = running_renders();
+            let result = child.try_wait();
+            if !matches!(result, Ok(None)) {
+                running_renders.process_groups.remove(&child.id());
+            }
+            if let Some(status) = result.map_err(wait_error)? {
+                break status;
+            }
         }
         if Instant::now() >= deadline {
+            running_renders().process_groups.remove(&child.id());
             kill_process_tree(&mut child);
             let _ = child.wait();
             return Err(Error::Io {
@@ -155,14 +206,22 @@ fn command_output_with_timeout(
 }
 
 fn kill_process_tree(child: &mut Child) {
-    #[cfg(unix)]
-    if let Ok(process_group) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: `killpg` only sends a signal. The group is the child's, which has not been
-        // reaped yet, so its id cannot have been reused.
-        unsafe { libc::killpg(process_group, libc::SIGKILL) };
-        return;
+    // The group is the child's, which has not been reaped yet, so its id cannot have been reused.
+    if !kill_process_group(child.id()) {
+        let _ = child.kill();
     }
-    let _ = child.kill();
+}
+
+/// Sends `SIGKILL` to a process group whose leader has not been reaped yet. Returns whether the
+/// signal could be sent.
+fn kill_process_group(process_group: u32) -> bool {
+    #[cfg(unix)]
+    if let Ok(process_group) = libc::pid_t::try_from(process_group) {
+        // SAFETY: `killpg` only sends a signal.
+        return unsafe { libc::killpg(process_group, libc::SIGKILL) } == 0;
+    }
+    let _ = process_group;
+    false
 }
 
 #[cfg(test)]
