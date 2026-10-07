@@ -39,9 +39,10 @@ echo "==> Installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
+# texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
 apt-get install -y -q build-essential pkg-config git curl unzip rsync sqlite3 openssl nodejs npm \
   pandoc latexmk texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
-  texlive-xetex lmodern
+  texlive-xetex texlive-fonts-extra lmodern inkscape
 
 # Building needs ~2 GB of memory, more than small VPSs have
 if [[ $(free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}') -lt 2500 && ! -f /swapfile ]]; then
