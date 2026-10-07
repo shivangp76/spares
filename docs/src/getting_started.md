@@ -25,6 +25,8 @@ spares_server
 
 ### Running on a remote server (optional)
 
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --domain <domain>` on the server, then follow the steps it prints.
+
 To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. On the server:
 
 - Set `render_browser_parsers = false` in its `config.toml`. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
