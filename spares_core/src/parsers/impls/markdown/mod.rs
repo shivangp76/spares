@@ -1,11 +1,15 @@
+use std::fs::read_to_string;
+use std::fs::remove_file;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use cloze_parser::ClozeParser;
 use fancy_regex::Captures;
+use log::warn;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -24,6 +28,7 @@ use crate::parsers::GenerateNoteFilesRequest;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
@@ -32,6 +37,7 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
+use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
@@ -323,17 +329,114 @@ impl Parseable for MarkdownParser {
         output_rendered_filepath: &Path,
     ) -> Result<std::process::Output, Error> {
         // Output is rendered as a pdf. This is because some formats, like png, do not support text selection. Other formats, such as svg, do not have popular viewers on all platforms.
+        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
+        // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
+        let mut log_filepath = dependencies_filepath.clone();
+        log_filepath.set_extension("pandoc-log.json");
         let mut base_command = Command::new("pandoc");
         let mut command = base_command
             .arg("-o")
             .arg(output_rendered_filepath)
-            .arg(output_text_filepath);
+            .arg(output_text_filepath)
+            .arg("--log")
+            .arg(&log_filepath);
         let config = read_external_config().unwrap();
-        if let Some(defaults_file) = config.parser.markdown.defaults_file {
+        if let Some(defaults_file) = &config.parser.markdown.defaults_file {
             command = command.arg("--defaults").arg(defaults_file);
         }
-        render_command_output(command, "pandoc")
+        let output = render_command_output(command, "pandoc");
+        if output.is_ok()
+            && let Err(e) = record_dependencies(
+                &log_filepath,
+                config
+                    .parser
+                    .markdown
+                    .defaults_file
+                    .as_deref()
+                    .map(Path::new),
+                &dependencies_filepath,
+            )
+        {
+            warn!(
+                "Failed to record dependencies of {}: {e}",
+                output_text_filepath.display()
+            );
+        }
+        let _ = remove_file(&log_filepath);
+        output
     }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum PandocLogMessage {
+    LoadedResource {
+        from: String,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// Writes the [`RenderDependencies`] of a rendered file from the resources in pandoc's log and the
+/// defaults file. Files that are only referenced by the defaults file, such as a template, are not
+/// logged, so they are not included.
+fn record_dependencies(
+    log_filepath: &Path,
+    defaults_file: Option<&Path>,
+    dependencies_filepath: &Path,
+) -> Result<(), String> {
+    let log = read_to_string(log_filepath)
+        .map_err(|e| format!("Failed to read {}: {e}", log_filepath.display()))?;
+    let mut files = loaded_resources(&log)?;
+    if let Some(defaults_file) = defaults_file {
+        files.extend(find_defaults_file(defaults_file));
+    }
+    RenderDependencies {
+        files,
+        packages: Vec::new(),
+    }
+    .write(dependencies_filepath)
+}
+
+/// Absolute paths of the local files pandoc loaded according to its JSON log.
+fn loaded_resources(log: &str) -> Result<Vec<PathBuf>, String> {
+    let messages: Vec<PandocLogMessage> = serde_json::from_str(log).map_err(|e| e.to_string())?;
+    Ok(messages
+        .into_iter()
+        .filter_map(|message| match message {
+            PandocLogMessage::LoadedResource { from } => Some(PathBuf::from(from)),
+            PandocLogMessage::Other => None,
+        })
+        // Skips URLs.
+        .filter(|path| path.is_absolute())
+        .collect())
+}
+
+/// The path of a defaults file given to `pandoc --defaults`. Like pandoc, looks relative to the
+/// working directory, then in the `defaults` directory of pandoc's user data directory.
+fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
+    let defaults_file = if defaults_file.extension().is_none() {
+        defaults_file.with_extension("yaml")
+    } else {
+        defaults_file.to_path_buf()
+    };
+    if defaults_file.is_file() {
+        return std::path::absolute(defaults_file).ok();
+    }
+    let path = pandoc_user_data_dir()?.join("defaults").join(defaults_file);
+    path.is_file().then_some(path)
+}
+
+fn pandoc_user_data_dir() -> Option<&'static Path> {
+    static DIR: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+        let output = Command::new("pandoc").arg("--version").output().ok()?;
+        String::from_utf8(output.stdout)
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix("User data directory: "))
+            .map(|dir| PathBuf::from(dir.trim()))
+    });
+    DIR.as_deref()
 }
 
 /// <https://pandoc.org/MANUAL.html?pandocs-markdown#reference-links>
@@ -399,7 +502,10 @@ fn get_linked_notes_string(
 
 #[cfg(test)]
 pub mod tests {
+    use std::path::PathBuf;
+
     use super::get_linked_notes_string;
+    use super::loaded_resources;
     use crate::parsers::ClozeMatch;
     use crate::parsers::Parseable;
     use crate::parsers::impls::markdown::MarkdownParser;
@@ -460,6 +566,20 @@ pub mod tests {
                 end_match: 24..26,
                 settings_match: 8..11,
             }]
+        );
+    }
+
+    #[test]
+    fn test_loaded_resources() {
+        let log = r#"[
+            {"type": "LoadedResource", "verbosity": "INFO", "for": "header.tex", "from": "/home/a/.config/pandoc/defaults/header.tex"},
+            {"type": "LoadedResource", "verbosity": "INFO", "for": "https://example.com/a.png", "from": "https://example.com/a.png"},
+            {"type": "Extracting", "verbosity": "INFO", "path": "/tmp/media/a.png"},
+            {"type": "MakePDFInfo", "verbosity": "INFO", "contents": "/tmp/media", "description": "Temp dir:"}
+        ]"#;
+        assert_eq!(
+            loaded_resources(log).unwrap(),
+            [PathBuf::from("/home/a/.config/pandoc/defaults/header.tex")]
         );
     }
 }

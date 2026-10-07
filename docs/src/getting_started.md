@@ -25,9 +25,9 @@ spares_server
 
 ### Running on a remote server (optional)
 
-On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --domain <domain>` on the server, then follow the steps it prints.
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server, then follow the steps it prints.
 
-To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. On the server:
+To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides the database, it copies the rendered files to `remote_rendered_dir` on the server (default: `~/.cache/spares`), your templates (but not `config.toml`), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
 
 - Set `render_browser_parsers = false` in its `config.toml`. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
 - Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.

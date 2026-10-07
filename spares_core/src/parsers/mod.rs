@@ -40,6 +40,7 @@ pub use cli::CliBlockMatch;
 pub use cli::CliData;
 pub use clozes::*;
 pub use helpers::*;
+pub use image_occlusion::get_image_occlusion_rendered_directory;
 pub use notes::*;
 pub use settings::*;
 
@@ -374,9 +375,8 @@ pub trait Parseable: Send + Sync {
     }
 
     /// Whether web clients compile this parser's cards themselves from the raw source instead of
-    /// displaying the rendered file. Such parsers must write a [`RenderDependencies`] file next to
-    /// each rendered file (see [`render_dependencies_filepath`]) so the files the source needs can
-    /// be shipped to the client.
+    /// displaying the rendered file. The files their sources need are shipped to the client from the
+    /// [`RenderDependencies`] file written next to each rendered file, so such parsers must write it.
     fn renders_in_browser(&self) -> bool {
         false
     }
