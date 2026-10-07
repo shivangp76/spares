@@ -31,6 +31,7 @@ use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
 use crate::config::SparesExternalConfig;
+use crate::config::get_files_dir;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
@@ -73,11 +74,11 @@ use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
 use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
-pub(crate) fn maybe_relativize(path: PathBuf) -> PathBuf {
-    if let Ok(base) = std::env::var("SPARES_FILES_DIR") {
-        path.strip_prefix(&base).unwrap_or(&path).to_path_buf()
-    } else {
-        path
+/// Makes a path relative to the [files directory](get_files_dir), when it is inside it.
+pub(crate) fn relative_to_files_dir(path: PathBuf) -> PathBuf {
+    match path.strip_prefix(get_files_dir()) {
+        Ok(relative) => relative.to_path_buf(),
+        Err(_) => path,
     }
 }
 
@@ -138,7 +139,7 @@ async fn get_linked_notes_for_review(
             searched_keyword: row.searched_keyword,
             note_id: row.linked_note_id,
             matched_keyword: row.matched_keyword,
-            note_raw_path: maybe_relativize(note_raw_path),
+            note_raw_path: relative_to_files_dir(note_raw_path),
         });
     }
     Ok(linked_notes)
@@ -169,7 +170,7 @@ fn build_review_card_response(
         RenderOutputType::Card(card_order as usize, CardSide::Front),
         note_id,
     ));
-    let card_front_rendered_path = maybe_relativize(card_front_rendered_path);
+    let card_front_rendered_path = relative_to_files_dir(card_front_rendered_path);
 
     let mut card_front_raw_path = get_output_raw_dir(
         parser.get_parser_name(),
@@ -181,20 +182,20 @@ fn build_review_card_response(
         note_id,
     ));
     card_front_raw_path.set_extension(parser.file_extension());
-    let card_front_raw_path = maybe_relativize(card_front_raw_path);
+    let card_front_raw_path = relative_to_files_dir(card_front_raw_path);
 
     let mut note_raw_path =
         get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
     note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
     note_raw_path.set_extension(parser.file_extension());
-    let note_raw_path = maybe_relativize(note_raw_path);
+    let note_raw_path = relative_to_files_dir(note_raw_path);
 
     let card_back_rendered_path = match card_back_type {
         BackType::NoteFilePath | BackType::Cli => {
             let mut note_rendered_path =
                 parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
             note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-            CardBackRenderedPath::Note(maybe_relativize(note_rendered_path))
+            CardBackRenderedPath::Note(relative_to_files_dir(note_rendered_path))
         }
         BackType::CardFilePath => {
             let mut card_back_rendered_path =
@@ -203,7 +204,7 @@ fn build_review_card_response(
                 RenderOutputType::Card(card_order as usize, CardSide::Back),
                 note_id,
             ));
-            CardBackRenderedPath::CardBack(maybe_relativize(card_back_rendered_path))
+            CardBackRenderedPath::CardBack(relative_to_files_dir(card_back_rendered_path))
         }
     };
 
@@ -213,7 +214,7 @@ fn build_review_card_response(
                 get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
             path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
             path.set_extension(parser.file_extension());
-            CardBackRenderedPath::Note(maybe_relativize(path))
+            CardBackRenderedPath::Note(relative_to_files_dir(path))
         }
         BackType::CardFilePath => {
             let mut path = get_output_raw_dir(
@@ -226,7 +227,7 @@ fn build_review_card_response(
                 note_id,
             ));
             path.set_extension(parser.file_extension());
-            CardBackRenderedPath::CardBack(maybe_relativize(path))
+            CardBackRenderedPath::CardBack(relative_to_files_dir(path))
         }
     };
 
@@ -1197,6 +1198,18 @@ mod tests {
     use crate::schema::note::UpdateNotesRequest;
     use crate::schema::note::UpdateTags;
     use crate::schema::review::StatisticsRequest;
+
+    #[test]
+    fn paths_relative_to_files_dir_resolve_back() {
+        let inside = get_files_dir().join("markdown").join("0001.md");
+        let relative = relative_to_files_dir(inside.clone());
+        assert_eq!(relative, PathBuf::from("markdown/0001.md"));
+        assert_eq!(crate::config::resolve_in_files_dir(&relative), inside);
+
+        let outside = PathBuf::from("/elsewhere/0001.md");
+        assert_eq!(relative_to_files_dir(outside.clone()), outside);
+        assert_eq!(crate::config::resolve_in_files_dir(&outside), outside);
+    }
 
     async fn create_note(pool: &sqlx::SqlitePool) -> (NoteResponse, Vec<Card>) {
         // Create note

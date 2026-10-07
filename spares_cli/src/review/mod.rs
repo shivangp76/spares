@@ -179,8 +179,11 @@ async fn get_review_card(
             .unwrap_or("Unknown error");
         return Err(message.to_string());
     }
-    let review_card_response: Option<GetReviewCardResponse> =
-        response.json().await.map_err(|e| format!("{}", e))?;
+    let review_card_response: Option<GetReviewCardResponse> = response
+        .json::<Option<GetReviewCardResponse>>()
+        .await
+        .map_err(|e| format!("{}", e))?
+        .map(GetReviewCardResponse::resolve_paths);
 
     match review_card_response {
         Some(review_card) => {
@@ -330,7 +333,9 @@ async fn get_review_card_by_id(
             .unwrap_or("Unknown error");
         return Err(message.to_string());
     }
-    response.json().await.map_err(|e| format!("{}", e))
+    let response: Option<GetReviewCardResponse> =
+        response.json().await.map_err(|e| format!("{}", e))?;
+    Ok(response.map(GetReviewCardResponse::resolve_paths))
 }
 
 pub(crate) async fn sync_note(

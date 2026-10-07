@@ -276,7 +276,7 @@ pub mod note {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct NoteRenderResponse {
         pub parser_name: String,
-        /// Path to the rendered note. Relative to `SPARES_FILES_DIR` when set.
+        /// Path to the rendered note. Relative to the files directory when inside it.
         pub rendered_path: PathBuf,
         /// The raw note source for a client to compile itself. Present iff the parser
         /// [renders in the browser](crate::parsers::Parseable::renders_in_browser).
@@ -516,6 +516,7 @@ pub mod review {
     use serde::Serialize;
     use serde_with;
 
+    use crate::config::resolve_in_files_dir;
     use crate::model::CardId;
     use crate::model::NoteId;
     use crate::model::RatingId;
@@ -556,6 +557,15 @@ pub mod review {
         Note(PathBuf),
     }
 
+    impl CardBackRenderedPath {
+        fn resolve(self) -> Self {
+            match self {
+                Self::CardBack(path) => Self::CardBack(resolve_in_files_dir(&path)),
+                Self::Note(path) => Self::Note(resolve_in_files_dir(&path)),
+            }
+        }
+    }
+
     /// Review info for a CLI card. The spares CLI uses `exec` to spawn an
     /// external command, reads a JSON score from its trailing stdout, and
     /// submits the score to the server's `rating_from_score` endpoint.
@@ -579,10 +589,9 @@ pub mod review {
 
     /// Response for a review card.
     ///
-    /// All `PathBuf` fields are absolute paths when `SPARES_FILES_DIR` is unset.
-    /// When `SPARES_FILES_DIR` is set (e.g. in `spares_server`), paths are returned
-    /// relative to that directory so a web client can construct
-    /// `{server_url}/files/{path}` directly.
+    /// `PathBuf` fields inside the [files directory](crate::config::get_files_dir) are relative to
+    /// it, so a web client can request `{server_url}/files/{path}` directly. Local clients call
+    /// [`Self::resolve_paths`] first.
     #[serde_with::serde_as]
     #[derive(Debug, Deserialize, Serialize)]
     pub struct GetReviewCardResponse {
@@ -590,15 +599,15 @@ pub mod review {
         pub card_order: u32,
         pub card_id: CardId,     // For submitting a rating
         pub card_state: StateId, // For showing to the user
-        /// Path to the rendered card front. Relative to `SPARES_FILES_DIR` when set.
+        /// Path to the rendered card front. Relative to the files directory when inside it.
         pub card_front_rendered_path: PathBuf,
-        /// Path(s) to the rendered card back. Relative to `SPARES_FILES_DIR` when set.
+        /// Path(s) to the rendered card back. Relative to the files directory when inside it.
         pub card_back_rendered_path: CardBackRenderedPath,
-        /// Path to the raw card front source file. Relative to `SPARES_FILES_DIR` when set.
+        /// Path to the raw card front source file. Relative to the files directory when inside it.
         pub card_front_raw_path: PathBuf,
-        /// Path(s) to the raw card back source file. Relative to `SPARES_FILES_DIR` when set.
+        /// Path(s) to the raw card back source file. Relative to the files directory when inside it.
         pub card_back_raw_path: CardBackRenderedPath,
-        /// Path to the raw note source file. Relative to `SPARES_FILES_DIR` when set.
+        /// Path to the raw note source file. Relative to the files directory when inside it.
         pub note_raw_path: PathBuf,
         pub parser_name: String,
         pub keywords: Vec<String>,
@@ -612,6 +621,22 @@ pub mod review {
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
         pub linked_notes: Vec<ReviewLinkedNote>,
+    }
+
+    impl GetReviewCardResponse {
+        /// Turns the paths into local ones, for clients on the server's machine.
+        #[must_use]
+        pub fn resolve_paths(mut self) -> Self {
+            self.card_front_rendered_path = resolve_in_files_dir(&self.card_front_rendered_path);
+            self.card_back_rendered_path = self.card_back_rendered_path.resolve();
+            self.card_front_raw_path = resolve_in_files_dir(&self.card_front_raw_path);
+            self.card_back_raw_path = self.card_back_raw_path.resolve();
+            self.note_raw_path = resolve_in_files_dir(&self.note_raw_path);
+            for linked_note in &mut self.linked_notes {
+                linked_note.note_raw_path = resolve_in_files_dir(&linked_note.note_raw_path);
+            }
+            self
+        }
     }
 
     /// Raw sources for a client to compile itself. Files they read are served by the render asset

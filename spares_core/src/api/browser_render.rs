@@ -32,7 +32,7 @@ use crate::LibraryError;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
-use crate::api::review::maybe_relativize;
+use crate::api::review::relative_to_files_dir;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::Parseable;
@@ -144,7 +144,7 @@ pub async fn get_note_render(
     };
     Ok(NoteRenderResponse {
         parser_name,
-        rendered_path: maybe_relativize(rendered_path),
+        rendered_path: relative_to_files_dir(rendered_path),
         browser_source,
     })
 }
