@@ -285,8 +285,9 @@ pub async fn sync_render_assets<S: BuildHasher>(
     Ok(())
 }
 
-/// Collects the dependency files written next to `parser`'s rendered files of `note_ids`.
-fn read_render_dependencies<S: BuildHasher>(
+/// Collects the dependency files written next to `parser`'s rendered files of `note_ids` (all
+/// notes if `None`).
+pub fn read_render_dependencies<S: BuildHasher>(
     parser: &dyn Parseable,
     note_ids: Option<&HashSet<NoteId, S>>,
 ) -> (BTreeSet<PathBuf>, BTreeSet<String>) {

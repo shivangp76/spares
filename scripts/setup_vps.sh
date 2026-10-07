@@ -2,22 +2,27 @@
 # Sets up (or updates) a spares server on a Debian/Ubuntu VPS. Safe to re-run: it pulls, rebuilds
 # and restarts, keeping the API key and data.
 #
-#   sudo bash setup_vps.sh --data-dir <local data dir> [--domain <domain>]
+#   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>] [--domain <domain>]
 #
-# --data-dir  The data directory on the machine you sync from (`spares sync cloud` copies it to the
-#             same path on the server), e.g. /Users/you/.local/share/spares.
-# --domain    Serve over HTTPS at this domain with Caddy. Point its DNS at this server first.
-#             Without it, the server only listens on 127.0.0.1:8080 (use an SSH tunnel).
+# --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
+#               the same path on the server), e.g. /Users/you/.local/share/spares.
+# --local-home  Your home directory on the machine you sync from, e.g. /Users/you. It is made a
+#               symlink to the home directory here, where `spares sync cloud` copies the files your
+#               notes read, so absolute paths to them (e.g. to a preamble) work on the server too.
+# --domain      Serve over HTTPS at this domain with Caddy. Point its DNS at this server first.
+#               Without it, the server only listens on 127.0.0.1:8080 (use an SSH tunnel).
 #
 # Runs spares as the user who ran sudo, since `spares sync cloud` logs in as that user.
 set -euo pipefail
 
 REPO_URL="https://github.com/shivangp76/spares.git"
 DATA_DIR=""
+LOCAL_HOME=""
 DOMAIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
+    --local-home) LOCAL_HOME="${2%/}"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -25,12 +30,24 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || { echo "Run with sudo as the user that syncs, not as root." >&2; exit 1; }
 [[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
+[[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 
 SPARES_USER="$SUDO_USER"
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
+# Checked before installing anything, and created before the data directory, which may be inside it
+if [[ -n "$LOCAL_HOME" && "$LOCAL_HOME" != "$USER_HOME" ]]; then
+  if [[ -L "$LOCAL_HOME" ]]; then
+    [[ "$(readlink "$LOCAL_HOME")" == "$USER_HOME" ]] || { echo "$LOCAL_HOME already links to $(readlink "$LOCAL_HOME")." >&2; exit 1; }
+  elif [[ -e "$LOCAL_HOME" ]]; then
+    echo "$LOCAL_HOME exists. Move its contents into $USER_HOME, remove it and re-run." >&2; exit 1
+  else
+    mkdir -p "$(dirname "$LOCAL_HOME")" && ln -s "$USER_HOME" "$LOCAL_HOME"
+  fi
+fi
 SRC_DIR="$USER_HOME/spares"
 CONFIG_DIR="$USER_HOME/.config/spares"
 # Rendered files. Only this directory is served under `/files`, so the database stays private.
+# `spares sync cloud` copies them to `remote_rendered_dir` (default: ~/.cache/spares).
 RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
@@ -115,7 +132,8 @@ ProtectSystem=full
 WantedBy=multi-user.target
 EOF
 
-# Renders every note on the server, e.g. after the first `spares sync cloud`
+# Renders every note on the server. `spares sync cloud` copies the rendered files, so this is only
+# for recovery, e.g. if they were deleted.
 cat > /usr/local/bin/spares-render <<'EOF'
 #!/usr/bin/env bash
 # Usage: sudo spares-render [--force]
@@ -173,11 +191,8 @@ API key: $API_KEY   (also in $ENV_FILE)
 
 Next, on the machine you sync from:
   1. Add to its config.toml:   remote_host = "$SPARES_USER@$HOST"
-  2. Copy your templates:      rsync -av ~/.config/spares/ $SPARES_USER@$HOST:$CONFIG_DIR/ --exclude config.toml
-     and pandoc defaults, if config.toml sets parser.markdown.defaults_file:
-                               rsync -av ~/.local/share/pandoc/ $SPARES_USER@$HOST:.local/share/pandoc/
-  3. Run:                      spares sync cloud
-  4. Then here, render cards:  sudo spares-render
+  2. Render your notes there, then run:  spares sync cloud
+     This copies the rendered files, your templates and the files your notes read.
 
 Logs: journalctl -u spares -f      Update: re-run this script.
 EOF

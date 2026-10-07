@@ -1,13 +1,17 @@
 mod data_parser;
 
+use std::collections::HashSet;
 use std::ffi::OsString;
+use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
+use std::sync::LazyLock;
 
 use data_parser::LatexDataParser;
+use log::warn;
 
 use crate::Error;
 use crate::LibraryError;
@@ -23,6 +27,7 @@ use crate::parsers::GenerateNoteFilesRequest;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
@@ -32,6 +37,7 @@ use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
+use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -476,7 +482,7 @@ fn render_file(
     aux_dir: &Path,
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
-    _output_rendered_filepath: &Path,
+    output_rendered_filepath: &Path,
 ) -> Result<Output, Error> {
     // This is currently the same `pdflatex` command that `latexmk` ends up running.
     // let output = Command::new("pdflatex")
@@ -510,14 +516,113 @@ fn render_file(
         .arg(output_text_filepath)
         // Current directory is changed to ensure first vimtex compilation is fast.
         .current_dir(output_text_filepath.parent().unwrap());
-    render_command_output(&mut command, "latexmk")
+    let output = render_command_output(&mut command, "latexmk")?;
+    if let Err(e) = record_dependencies(
+        aux_dir,
+        output_text_filepath,
+        output_rendered_dir,
+        output_rendered_filepath,
+    ) {
+        warn!(
+            "Failed to record dependencies of {}: {e}",
+            output_text_filepath.display()
+        );
+    }
+    Ok(output)
+}
+
+/// Writes the [`RenderDependencies`] of a rendered file from the recorder file (`.fls`) that
+/// `latexmk` has `pdflatex` write to the aux directory. It is kept when `latexmk` skips an
+/// up-to-date file, so it always describes the last compilation.
+fn record_dependencies(
+    aux_dir: &Path,
+    output_text_filepath: &Path,
+    output_rendered_dir: &Path,
+    output_rendered_filepath: &Path,
+) -> Result<(), String> {
+    let output_text_filepath =
+        std::path::absolute(output_text_filepath).map_err(|e| e.to_string())?;
+    let file_name = output_text_filepath
+        .file_name()
+        .ok_or("Raw file has no name")?;
+    let recorder_filepath = aux_dir.join(file_name).with_extension("fls");
+    let recorder = read_to_string(&recorder_filepath)
+        .map_err(|e| format!("Failed to read {}: {e}", recorder_filepath.display()))?;
+    let mut excluded_dirs = vec![aux_dir, output_rendered_dir];
+    excluded_dirs.extend(tex_distribution_dirs().iter().map(PathBuf::as_path));
+    let files = recorded_inputs(&recorder, &excluded_dirs)
+        .into_iter()
+        .filter(|path| *path != output_text_filepath)
+        .collect();
+    RenderDependencies {
+        files,
+        packages: Vec::new(),
+    }
+    .write(&render_dependencies_filepath(output_rendered_filepath))
+}
+
+/// Absolute paths of the files read according to a recorder file, except files it also wrote and
+/// files in `excluded_dirs`.
+fn recorded_inputs(recorder: &str, excluded_dirs: &[&Path]) -> Vec<PathBuf> {
+    let mut working_dir = PathBuf::from("/");
+    let mut inputs = Vec::new();
+    let mut outputs = HashSet::new();
+    for line in recorder.lines() {
+        if let Some(dir) = line.strip_prefix("PWD ") {
+            working_dir = PathBuf::from(dir);
+        } else if let Some(path) = line.strip_prefix("INPUT ") {
+            // Joining drops `.` components, e.g. of `./0001.tex`.
+            inputs.push(working_dir.join(path).components().collect::<PathBuf>());
+        } else if let Some(path) = line.strip_prefix("OUTPUT ") {
+            outputs.insert(working_dir.join(path).components().collect::<PathBuf>());
+        }
+    }
+    inputs.sort();
+    inputs.dedup();
+    inputs.retain(|path| {
+        !outputs.contains(path) && !excluded_dirs.iter().any(|dir| path.starts_with(dir))
+    });
+    inputs
+}
+
+/// Directories of the TeX distribution, along with its caches and configuration. `TEXMFHOME` is
+/// not included, since it holds packages the user added.
+fn tex_distribution_dirs() -> &'static [PathBuf] {
+    static DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
+        [
+            "TEXMFROOT",
+            "TEXMFDIST",
+            "TEXMFLOCAL",
+            "TEXMFSYSVAR",
+            "TEXMFSYSCONFIG",
+            "TEXMFVAR",
+            "TEXMFCONFIG",
+        ]
+        .into_iter()
+        .filter_map(|variable| {
+            let output = Command::new("kpsewhich")
+                .arg(format!("-var-value={variable}"))
+                .output()
+                .ok()?;
+            let value = String::from_utf8(output.stdout).ok()?;
+            let value = value.trim();
+            // Skip values that are lists of directories or unset.
+            (value.starts_with('/') && !value.contains(['{', ':', ';'])).then(|| value.into())
+        })
+        .collect()
+    });
+    &DIRS
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::path::PathBuf;
+
     use indoc::indoc;
     use serde_json::Number;
 
+    use super::recorded_inputs;
     use crate::adapters::get_adapter_from_string;
     use crate::parsers::BackReveal;
     use crate::parsers::BackType;
@@ -646,5 +751,32 @@ mod tests {
 
         let value = note_settings.custom_data.get("anki-note-id");
         assert_eq!(value, Some(&serde_json::Value::String("99".to_string())));
+    }
+
+    #[test]
+    fn test_recorded_inputs() {
+        let recorder = indoc! {"
+            PWD /notes
+            INPUT ./0001.tex
+            OUTPUT /aux/0001.log
+            INPUT /texlive/2026/texmf-dist/tex/latex/base/article.cls
+            INPUT /home/a/preambles/pre.tex
+            INPUT /home/a/preambles/pre.tex
+            INPUT figures/plot.pdf
+            INPUT /aux/0001.aux
+            OUTPUT /aux/0001.aux
+            INPUT /out/0001-io-1.png
+            OUTPUT /home/a/written.txt
+            INPUT /home/a/written.txt
+        "};
+        let excluded_dirs = [Path::new("/aux"), Path::new("/out"), Path::new("/texlive")];
+        assert_eq!(
+            recorded_inputs(recorder, &excluded_dirs),
+            [
+                PathBuf::from("/home/a/preambles/pre.tex"),
+                PathBuf::from("/notes/0001.tex"),
+                PathBuf::from("/notes/figures/plot.pdf"),
+            ]
+        );
     }
 }
