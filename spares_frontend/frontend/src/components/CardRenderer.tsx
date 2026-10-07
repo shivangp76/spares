@@ -1,4 +1,5 @@
-import { fileUrl } from '../api/client';
+import { useEffect } from 'react';
+import { useAuthedFileUrl } from '../hooks/useAuthedFileUrl';
 import MarkdownViewer from './MarkdownViewer';
 import PdfViewer from './PdfViewer';
 import TypstViewer from './TypstViewer';
@@ -16,8 +17,18 @@ interface Props {
 
 export default function CardRenderer({ path, parserName, source, version, onReady }: Props) {
   if (source !== undefined) return <TypstViewer source={source} onReady={onReady} />;
+  return <RenderedFile path={path} parserName={parserName} version={version} onReady={onReady} />;
+}
 
-  const url = version === undefined ? fileUrl(path) : `${fileUrl(path)}?v=${version}`;
+function RenderedFile({ path, parserName, version, onReady }: Omit<Props, 'source'>) {
+  const { url, error } = useAuthedFileUrl(path, version);
+
+  useEffect(() => {
+    if (error !== null) onReady?.();
+  }, [error, onReady]);
+
+  if (error) return <div style={{ color: 'var(--error)' }}>Error loading card: {error}</div>;
+  if (url === null) return <div>Loading…</div>;
   // Chosen by the rendered file, since a parser's template decides its output, e.g. markdown to PDF
   const name = parserName.toLowerCase();
   if (name.includes('latex') || path.toLowerCase().endsWith('.pdf')) return <PdfViewer url={url} onReady={onReady} />;

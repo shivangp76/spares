@@ -29,9 +29,9 @@ use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
-use crate::parsers::render_command_output;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
