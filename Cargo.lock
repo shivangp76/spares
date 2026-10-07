@@ -4117,6 +4117,7 @@ dependencies = [
  "indoc",
  "inquire",
  "itertools 0.15.0",
+ "libc",
  "log",
  "miette",
  "pretty_assertions",
