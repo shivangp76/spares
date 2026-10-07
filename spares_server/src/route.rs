@@ -191,6 +191,8 @@ pub(crate) fn create_router(
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .merge(image_occlusion_routes())
+        // Rendered notes and cards
+        .nest_service("/files", ServeDir::new(files_dir))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
@@ -199,7 +201,6 @@ pub(crate) fn create_router(
     let mut router = Router::new()
         .route("/api/healthcheck", get(health_check_handler))
         .merge(protected)
-        .nest_service("/files", ServeDir::new(files_dir))
         .with_state(app_state);
 
     if let Some(dir) = frontend_dir {

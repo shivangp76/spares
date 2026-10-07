@@ -132,6 +132,13 @@ export function fileUrl(relativePath: string): string {
   return `${serverUrl.replace(/\/$/, '')}/files/${relativePath}`;
 }
 
+/** Downloads a rendered file, which needs the API key like every other request. */
+export async function fetchFile(relativePath: string): Promise<Blob> {
+  const res = await fetch(fileUrl(relativePath), { headers: authHeaders() });
+  await throwIfNotOk(res, 'Loading file');
+  return res.blob();
+}
+
 /** Package specs (`namespace/name/version`) that browser-rendered sources import. */
 export async function listRenderPackages(): Promise<string[]> {
   const { serverUrl } = getCredentials();
