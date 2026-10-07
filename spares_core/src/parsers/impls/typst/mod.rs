@@ -31,6 +31,7 @@ use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
+use crate::parsers::render_command_output;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_dependencies_filepath;
@@ -342,7 +343,8 @@ impl Parseable for TypstParser {
             render_dependencies_filepath(&to_absolute(output_rendered_filepath)?);
         let mut raw_dependencies_filepath = dependencies_filepath.clone();
         raw_dependencies_filepath.set_extension("raw.json");
-        let output = Command::new("typst")
+        let mut command = Command::new("typst");
+        command
             .arg("compile")
             .arg("--no-pdf-tags") // To reduce output filesize
             .arg("--root")
@@ -352,12 +354,8 @@ impl Parseable for TypstParser {
             .arg(&raw_dependencies_filepath)
             .arg(&output_text_filepath)
             .arg(output_rendered_filepath)
-            .current_dir("/")
-            .output()
-            .map_err(|e| Error::Io {
-                description: "Failed to run typst command".to_string(),
-                source: e,
-            })?;
+            .current_dir("/");
+        let output = render_command_output(&mut command, "typst")?;
         // The raw dependency list holds every file of every package, so only a summary is kept.
         if let Err(e) = summarize_dependencies(
             &raw_dependencies_filepath,

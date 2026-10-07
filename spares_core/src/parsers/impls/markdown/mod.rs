@@ -29,6 +29,7 @@ use crate::parsers::RenderOutputType;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
+use crate::parsers::render_command_output;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::schema::note::LinkedNote;
@@ -331,10 +332,7 @@ impl Parseable for MarkdownParser {
         if let Some(defaults_file) = config.parser.markdown.defaults_file {
             command = command.arg("--defaults").arg(defaults_file);
         }
-        command.output().map_err(|e| Error::Io {
-            description: "Failed to run pandoc command".to_string(),
-            source: e,
-        })
+        render_command_output(command, "pandoc")
     }
 }
 
