@@ -42,14 +42,29 @@ pub fn get_output_raw_dir(
     output_raw_dir
 }
 
-/// What compiling a rendered file read, besides the raw file itself. Written next to the rendered
-/// file by parsers that [render in the browser](crate::parsers::Parseable::renders_in_browser).
+/// What compiling a rendered file read, besides the raw file itself and files the renderer ships
+/// with (e.g. a TeX distribution). Written next to each rendered file (see
+/// [`render_dependencies_filepath`]). For parsers that
+/// [render in the browser](crate::parsers::Parseable::renders_in_browser), the files are shipped to
+/// web clients. For the others, `spares sync cloud` copies them to the server so it can render too.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RenderDependencies {
     /// Absolute paths of local files.
     pub files: Vec<PathBuf>,
     /// Package specs as `namespace/name/version`, e.g. `preview/cetz/0.5.2`.
     pub packages: Vec<String>,
+}
+
+impl RenderDependencies {
+    /// Sorts and deduplicates the dependencies, then writes them to `dependencies_filepath`.
+    pub fn write(mut self, dependencies_filepath: &Path) -> Result<(), String> {
+        self.files.sort();
+        self.files.dedup();
+        self.packages.sort();
+        self.packages.dedup();
+        let contents = serde_json::to_string(&self).map_err(|e| e.to_string())?;
+        std::fs::write(dependencies_filepath, contents).map_err(|e| e.to_string())
+    }
 }
 
 pub fn render_dependencies_filepath(output_rendered_filepath: &Path) -> PathBuf {

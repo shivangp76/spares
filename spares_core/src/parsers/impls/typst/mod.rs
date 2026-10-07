@@ -1,6 +1,5 @@
 use std::fs::read_to_string;
 use std::fs::remove_file;
-use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -402,12 +401,7 @@ fn summarize_dependencies(
             None => dependencies.files.push(input),
         }
     }
-    dependencies.files.sort();
-    dependencies.files.dedup();
-    dependencies.packages.sort();
-    dependencies.packages.dedup();
-    let contents = serde_json::to_string(&dependencies).map_err(|e| e.to_string())?;
-    write(dependencies_filepath, contents).map_err(|e| e.to_string())
+    dependencies.write(dependencies_filepath)
 }
 
 /// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid

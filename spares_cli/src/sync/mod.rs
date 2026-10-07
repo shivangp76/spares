@@ -91,8 +91,10 @@ pub(crate) struct SyncArgs {
 pub(crate) enum SyncSubcommand {
     /// Push local DB and files to a remote server via rsync.
     ///
-    /// Reads `remote_host` from config.toml (e.g. "user@myserver.com").
-    /// Runs two rsync passes: `SQLite` DB first, then all other files.
+    /// Reads `remote_host` from config.toml (e.g. "user@myserver.com"). Copies the `SQLite` DB
+    /// first, then the other data files, the rendered files, the templates, and the files that
+    /// rendering recorded the notes as reading (preambles, figures, ...), so the server can render
+    /// notes edited there.
     Cloud,
 }
 
