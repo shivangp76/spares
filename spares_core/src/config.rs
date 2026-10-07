@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::fs::create_dir_all;
 use std::fs::read_to_string;
 use std::fs::write;
+use std::path::Path;
 use std::path::PathBuf;
 
 use chrono::DateTime;
@@ -85,6 +86,19 @@ pub fn get_cache_dir() -> PathBuf {
     strategy.cache_dir().push(SPARES);
     create_dir_all(strategy.cache_dir()).unwrap();
     strategy.cache_dir()
+}
+
+/// The directory the server serves at `/files`. Paths in API responses are relative to it, so
+/// web clients can request them and local clients can [resolve](resolve_in_files_dir) them.
+/// Defaults to the rendered files, never the data directory, which holds the database.
+pub fn get_files_dir() -> PathBuf {
+    std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_cache_dir(), PathBuf::from)
+}
+
+/// The local path of a path from an API response. Paths outside the files directory are
+/// already absolute and returned as is.
+pub fn resolve_in_files_dir(path: &Path) -> PathBuf {
+    get_files_dir().join(path)
 }
 
 #[allow(clippy::missing_panics_doc)]

@@ -12,9 +12,9 @@ use clap::Parser;
 use log::info;
 use log::warn;
 use spares_core::config::Environment;
-use spares_core::config::get_cache_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_env_config;
+use spares_core::config::get_files_dir;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -36,9 +36,7 @@ async fn start_server(args: Args) -> Result<(), String> {
     // Ensure default data directory exists (no-op when DATABASE_URL is set explicitly)
     let _ = get_data_dir();
     let api_key = std::env::var("SPARES_API_KEY").ok();
-    // Defaults to the rendered files, never the data directory, which holds the database
-    let files_dir: PathBuf =
-        std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_cache_dir(), PathBuf::from);
+    let files_dir = get_files_dir();
     let frontend_dir: Option<PathBuf> =
         std::env::var("SPARES_FRONTEND_DIR").ok().map(PathBuf::from);
 
