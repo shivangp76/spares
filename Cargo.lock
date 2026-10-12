@@ -616,27 +616,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap_complete_command"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da8e198c052315686d36371e8a3c5778b7852fc75cc313e4e11eeb7a644a1b62"
-dependencies = [
- "clap",
- "clap_complete",
- "clap_complete_nushell",
-]
-
-[[package]]
-name = "clap_complete_nushell"
-version = "4.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb66bc82eb9c92b1727310ae2c5868df22ae7cf46185bc5c544a4fa71955e49"
-dependencies = [
- "clap",
- "clap_complete",
-]
-
-[[package]]
 name = "clap_derive"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4087,7 +4066,6 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "clap_complete_command",
  "colored",
  "copy_dir",
  "env_logger",
