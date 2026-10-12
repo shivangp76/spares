@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::exit;
 
+use clap::CommandFactory;
 use clap::Parser;
 use clap::Subcommand;
 use spares_core::api::image_occlusion::get_image_occlusion_editor_config;
@@ -24,6 +25,8 @@ enum Commands {
 }
 
 fn main() {
+    // Answers shell completion requests (COMPLETE=zsh) and exits.
+    clap_complete::CompleteEnv::with_factory(Args::command).complete();
     let args = Args::parse();
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let frontend_dir = project_root.join("frontend");

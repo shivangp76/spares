@@ -40,6 +40,8 @@ use sync::sync_notes;
 
 #[tokio::main]
 async fn main() {
+    // Answers shell completion requests (COMPLETE=zsh) and exits.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     env_logger::init();
 
     let args = Cli::parse();
