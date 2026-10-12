@@ -8,6 +8,7 @@ use std::sync::Arc;
 use axum::http::Method;
 use axum::http::header::AUTHORIZATION;
 use axum::http::header::CONTENT_TYPE;
+use clap::CommandFactory;
 use clap::Parser;
 use log::info;
 use log::warn;
@@ -147,6 +148,8 @@ struct Args {
 
 #[tokio::main(worker_threads = 5)]
 async fn main() {
+    // Answers shell completion requests (COMPLETE=zsh) and exits.
+    clap_complete::CompleteEnv::with_factory(Args::command).complete();
     env_logger::init();
 
     let args = Args::parse();

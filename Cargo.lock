@@ -610,6 +610,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "037e2a1a92236d0aff7e845093f64661d6df4c02c9fcc61a60e9e1d736fa392f"
 dependencies = [
  "clap",
+ "clap_lex",
+ "is_executable",
+ "shlex",
 ]
 
 [[package]]
@@ -2132,6 +2135,15 @@ name = "is_ci"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
+
+[[package]]
+name = "is_executable"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82cb6a9f675da968c63b6208c641b9dca58fc0133ae53375736b1767b0cab8bd"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -4074,6 +4086,7 @@ dependencies = [
  "blake3",
  "chrono",
  "clap",
+ "clap_complete",
  "clap_complete_command",
  "colored",
  "copy_dir",
@@ -4148,6 +4161,7 @@ name = "spares_frontend"
 version = "0.0.1-alpha.1"
 dependencies = [
  "clap",
+ "clap_complete",
  "serde_json",
  "spares_core",
 ]
@@ -4159,6 +4173,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "clap_complete",
  "env_logger",
  "log",
  "serde",
