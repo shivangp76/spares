@@ -19,7 +19,6 @@ mod tree;
 mod utils;
 mod view;
 
-use std::io;
 use std::str::FromStr;
 
 use args::Cli;
@@ -130,10 +129,6 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             .await
             .into_diagnostic()
             .map_err(|e| miette!("{:?}", e))?;
-            Ok(())
-        }
-        Commands::Completion { shell } => {
-            shell.generate(&mut Cli::command(), &mut io::stdout());
             Ok(())
         }
     }

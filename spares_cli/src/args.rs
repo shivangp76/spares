@@ -68,11 +68,6 @@ pub(crate) enum Commands {
     Keyword(KeywordArgs),
     #[command(arg_required_else_help = true)]
     Event(EventArgs),
-    /// Generate shell completions
-    Completion {
-        #[arg(value_enum)]
-        shell: clap_complete_command::Shell,
-    },
 }
 
 #[derive(Args, Debug)]
