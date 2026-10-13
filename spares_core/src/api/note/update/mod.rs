@@ -1301,6 +1301,91 @@ mod tests {
         }
     }
 
+    /// Two clozes referencing the same old order (a cloze copy-pasted along with its `o:` marker)
+    /// must not both claim that card. The original keeps its card and the copy gets a fresh one.
+    ///
+    /// Previously both claimed it: card 1 was deleted and nothing was created in its place,
+    /// leaving the note's orders as `[2]`. `verify_card_consistency` then filled the gap with a
+    /// clone of card 2, review history included, so the copy inherited card 2's schedule.
+    #[sqlx::test]
+    async fn test_update_note_duplicate_order_reference(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let note_id = create_test_note(
+            &pool,
+            parser.id,
+            indoc! {r"
+            {{[o:1] First cloze }}
+            {{[o:2] Second cloze }}"},
+            Vec::new(),
+        )
+        .await;
+        let original_cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(original_cards.len(), 2);
+
+        // Review card 2 so that a clone of it is distinguishable from a fresh card.
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id: original_cards[1].id,
+                    rating: 4,
+                    recall_duration: Duration::seconds(5),
+                    rate_duration: Duration::seconds(5),
+                    tag_id: None,
+                }),
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        // Replace the first cloze with a copy of the second, `o:2` marker included.
+        update_note_data(
+            &pool,
+            note_id,
+            indoc! {r"
+            {{[o:2] Copy of second cloze }}
+            {{[o:2] Second cloze }}"},
+        )
+        .await;
+
+        let cards: Vec<Card> =
+            sqlx::query_as(r#"SELECT * FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            cards.iter().map(|c| c.order).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            cards[1].id, original_cards[1].id,
+            "the original second cloze keeps its card"
+        );
+        assert!(
+            cards[0].id != original_cards[0].id && cards[0].id != original_cards[1].id,
+            "the copy gets a new card"
+        );
+        assert_eq!(cards[0].stability, Card::new(Utc::now()).stability);
+        let copy_review_logs: Vec<ReviewLog> =
+            sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ?")
+                .bind(cards[0].id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            copy_review_logs.is_empty(),
+            "the copy must not inherit card 2's review history"
+        );
+    }
+
     async fn update_note_change_sides_helper(
         pool: &SqlitePool,
         new_settings_string: &str,

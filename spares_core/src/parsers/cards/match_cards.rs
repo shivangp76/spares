@@ -95,6 +95,19 @@ pub fn match_cards(
     let mut same_indices: Vec<usize> = Vec::new();
     let mut move_card_indices: Vec<(usize, usize)> = Vec::new();
 
+    // Each old card can continue at most one new card. Several new cards can reference the same
+    // old order (e.g. a cloze copy-pasted along with its `o:` marker). Letting all of them claim
+    // it would leave one position without a card and delete nothing in its place, since
+    // `update_cards` can only move an old card to one position. An old card that is referenced at
+    // its own position stays there; every other reference goes to the first one in document
+    // order, and the remaining duplicates become new cards.
+    let mut claimed_orders: HashSet<usize> = new_cards
+        .iter()
+        .enumerate()
+        .filter(|(i, new_card_order)| **new_card_order == Some(i + 1))
+        .map(|(i, _)| i + 1)
+        .collect();
+
     let old_cards_padded = old_cards.iter().copied().chain(std::iter::repeat(None));
     for (i, (old_card_order, new_card_order)) in old_cards_padded
         .into_iter()
@@ -103,25 +116,16 @@ pub fn match_cards(
     {
         let new_index = i + 1;
         match (old_card_order, *new_card_order) {
-            (Some(old_order), Some(new_order)) => {
-                if old_order == new_order {
-                    same_indices.push(old_order);
-                } else {
-                    // Move card
-                    move_card_indices.push((new_order, old_order));
-                }
+            (Some(old_order), Some(new_order)) if old_order == new_order => {
+                same_indices.push(old_order);
             }
-            (None, None) => {
-                // Create new card
-                create_card_indices.push(new_index);
-            }
-            (None, Some(new_order)) => {
+            (_, Some(new_order)) if claimed_orders.insert(new_order) => {
                 // Move card
                 move_card_indices.push((new_order, new_index));
             }
-            (Some(old_order), None) => {
+            _ => {
                 // Create new card
-                create_card_indices.push(old_order);
+                create_card_indices.push(new_index);
             }
         }
     }
@@ -232,5 +236,41 @@ mod tests {
             assert!(create_card_indices.is_empty(), "{create_card_indices:?}");
             assert!(same_indices.is_empty(), "{same_indices:?}");
         }
+    }
+
+    /// A cloze copy-pasted in front of the original (keeping its `o:2`) must not claim card 2:
+    /// card 2 stays at its own position, and the copy becomes a new card.
+    #[test]
+    fn test_match_cards_duplicate_reference_keeps_same_position() {
+        let old_cards = vec![Some(1), Some(2)];
+        let new_cards = vec![Some(2), Some(2)];
+        let MatchCardsResult {
+            move_card_indices,
+            delete_card_indices,
+            create_card_indices,
+            same_indices,
+        } = match_cards(&old_cards, &new_cards).unwrap();
+        assert!(move_card_indices.is_empty(), "{move_card_indices:?}");
+        assert_eq!(delete_card_indices, vec![1]);
+        assert_eq!(create_card_indices, vec![1]);
+        assert_eq!(same_indices, vec![2]);
+    }
+
+    /// When no position keeps the referenced card, the first reference in document order gets it.
+    #[test]
+    fn test_match_cards_duplicate_reference_first_wins() {
+        let old_cards = vec![Some(1), Some(2), Some(3)];
+        let new_cards = vec![Some(3), Some(1), Some(1)];
+        let MatchCardsResult {
+            move_card_indices,
+            mut delete_card_indices,
+            create_card_indices,
+            same_indices,
+        } = match_cards(&old_cards, &new_cards).unwrap();
+        delete_card_indices.sort_unstable();
+        assert_eq!(move_card_indices, vec![(3, 1), (1, 2)]);
+        assert_eq!(delete_card_indices, vec![2]);
+        assert_eq!(create_card_indices, vec![3]);
+        assert!(same_indices.is_empty(), "{same_indices:?}");
     }
 }
