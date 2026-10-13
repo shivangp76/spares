@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import { RedoIcon, UndoIcon } from './Icons';
+import OfflineIndicator from './OfflineIndicator';
 
 interface NavbarProps {
   onLogout: () => void;
@@ -68,6 +69,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
         )}
       </div>
       <div className="navbar-actions">
+        <OfflineIndicator />
         {extra}
         <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>
         {lastUndoId !== null && <button onClick={redoLast} className="navbar-button" title="Redo the change just undone"><RedoIcon />Redo last undo</button>}
