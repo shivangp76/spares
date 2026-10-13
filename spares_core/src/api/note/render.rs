@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 // use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
@@ -17,6 +18,7 @@ use crate::api::note::get_keywords;
 use crate::api::note::keyword_distance::weighted_levenshtein;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
@@ -24,6 +26,7 @@ use crate::helpers::run_blocking;
 use crate::helpers::value_to_string_vec;
 use crate::model::NoteId;
 use crate::model::NoteLink;
+use crate::notes_vcs;
 use crate::parsers::Parseable;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
@@ -319,7 +322,9 @@ pub async fn render_notes(
 
     // Load all note links for the notes we're rendering (if include_linked_notes)
     let mut linked_notes_map: Option<HashMap<_, _>> = None;
-    if include_linked_notes {
+    // Files in the notes repository always carry the stored links, so they do not change depending
+    // on which request wrote them last.
+    if include_linked_notes || (overridden_output_raw_dir.is_none() && notes_vcs::enabled()) {
         let note_ids_for_links: Vec<NoteId> = notes_data.iter().map(|n| n.note_id).collect();
         linked_notes_map = Some(get_note_links_map(db, &note_ids_for_links).await?);
     }
@@ -341,16 +346,72 @@ pub async fn render_notes(
         })
         .into_group_map();
     let external_config = read_external_config().ok();
+    // Note files written to the notes repository, committed even if some notes fail to render
+    let mut commit_paths = Vec::new();
+    let mut rendered_ids = Vec::new();
+    let result = render_note_groups(
+        db,
+        grouped_parse_note_requests,
+        all_parsers,
+        overridden_output_raw_dir.as_ref(),
+        external_config.as_ref(),
+        GenerateOptions {
+            include_cards,
+            generate_rendered,
+            force_generate_rendered,
+        },
+        requested_note_ids.as_ref(),
+        &mut commit_paths,
+        &mut rendered_ids,
+    )
+    .await;
+    if overridden_output_raw_dir.is_none() {
+        notes_vcs::commit_note_files(
+            &commit_paths,
+            &notes_vcs::commit_message("render", &rendered_ids),
+        );
+    }
+    result
+}
+
+#[derive(Clone, Copy)]
+struct GenerateOptions {
+    include_cards: bool,
+    generate_rendered: bool,
+    force_generate_rendered: bool,
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn render_note_groups(
+    db: &SqlitePool,
+    grouped_parse_note_requests: HashMap<&String, Vec<GenerateNoteFilesRequest>>,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+    overridden_output_raw_dir: Option<&PathBuf>,
+    external_config: Option<&SparesExternalConfig>,
+    options: GenerateOptions,
+    requested_note_ids: Option<&HashSet<NoteId>>,
+    commit_paths: &mut Vec<PathBuf>,
+    rendered_ids: &mut Vec<NoteId>,
+) -> Result<(), Error> {
+    let GenerateOptions {
+        include_cards,
+        generate_rendered,
+        force_generate_rendered,
+    } = options;
     for (parser_name, generate_note_files_request) in grouped_parse_note_requests {
         let parser = find_parser(parser_name, all_parsers)?;
+        for request in &generate_note_files_request {
+            commit_paths.push(notes_vcs::note_rel_path(parser.as_ref(), request.note_id));
+            rendered_ids.push(request.note_id);
+        }
         // Files requested in another directory are always generated, since the caller asked for
         // them explicitly.
         let generate_files = overridden_output_raw_dir.is_some()
-            || generates_render_files(parser.as_ref(), external_config.as_ref());
+            || generates_render_files(parser.as_ref(), external_config);
         let render = generate_rendered && generate_files;
         let generate_note_files_requests = GenerateNoteFilesRequests {
             requests: generate_note_files_request,
-            overridden_output_raw_dir: overridden_output_raw_dir.clone(),
+            overridden_output_raw_dir: overridden_output_raw_dir.cloned(),
             include_cards: include_cards && generate_files,
             render,
             force_render: force_generate_rendered,
@@ -364,7 +425,7 @@ pub async fn render_notes(
         let card_paths = card_paths?.into_iter().collect::<Result<Vec<_>, _>>();
         // Record dependencies even if some notes failed to render.
         if render && overridden_output_raw_dir.is_none() {
-            sync_render_assets(db, parser.as_ref(), requested_note_ids.as_ref()).await?;
+            sync_render_assets(db, parser.as_ref(), requested_note_ids).await?;
         }
         let _card_paths = card_paths?;
     }

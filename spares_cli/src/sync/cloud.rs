@@ -42,6 +42,15 @@ pub(crate) async fn sync_cloud() -> Result<(), String> {
         // The database, its WAL/SHM/journal files and local backups. The database is synced above.
         "--exclude=*.sqlite*".to_string(),
         "--exclude=/notes/".to_string(),
+        // The notes repository (see `spares note init-vcs`), what setting it up leaves behind, and
+        // its interrupted setup
+        format!(
+            "--exclude=/{}/",
+            spares_core::notes_vcs::SERVER_REPO_DIR_NAME
+        ),
+        "--exclude=/notes.pre-vcs-*/".to_string(),
+        "--exclude=/.notes-spares-init/".to_string(),
+        "--exclude=/.notes-clone-tmp/".to_string(),
     ];
     excludes.extend(
         get_all_parsers()

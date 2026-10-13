@@ -23,6 +23,7 @@ use crate::config::write_internal_config;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::TagId;
+use crate::notes_vcs;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::find_parser;
@@ -60,14 +61,20 @@ pub fn delete_note_files(
     // - All image occlusion rendered files
     // Do NOT delete all image occlusion raw files, in case they are used elsewhere
 
-    // Note raw path
-    let mut note_raw_path =
-        get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
-    note_raw_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-    note_raw_path.set_extension(parser.file_extension());
+    // Note raw path. The notes repository keeps its history, so the file is not sent to the Trash.
+    let note_raw_path =
+        notes_vcs::server_notes_dir().join(notes_vcs::note_rel_path(parser, note_id));
     if note_raw_path.exists() {
-        delete_file(&note_raw_path)?;
+        if notes_vcs::enabled() {
+            std::fs::remove_file(&note_raw_path).map_err(|e| Error::Io {
+                source: e,
+                description: format!("Failed to remove {}", note_raw_path.display()),
+            })?;
+        } else {
+            delete_file(&note_raw_path)?;
+        }
     }
+    notes_vcs::remove_render_hash(parser.get_parser_name(), note_id);
 
     // Note rendered path
     let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
@@ -229,14 +236,27 @@ pub async fn delete_notes(
         .into_iter()
         .map(|s| (s.parser_id, (s.id, s.data, s.cards)))
         .into_group_map();
-    for (parser_id, notes) in grouped_note_data {
-        let parser_response = get_parser(db, parser_id).await?;
-        let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
-        for (note_id, note_data, card_snapshots) in notes {
-            let card_orders: Vec<usize> = card_snapshots.iter().map(|c| c.order as usize).collect();
-            delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
+    let mut commit_paths = Vec::new();
+    let deleted: Result<(), Error> = async {
+        for (parser_id, notes) in grouped_note_data {
+            let parser_response = get_parser(db, parser_id).await?;
+            let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
+            for (note_id, note_data, card_snapshots) in notes {
+                commit_paths.push(notes_vcs::note_rel_path(parser.as_ref(), note_id));
+                let card_orders: Vec<usize> =
+                    card_snapshots.iter().map(|c| c.order as usize).collect();
+                delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
+            }
         }
+        Ok(())
     }
+    .await;
+    // Commit whatever was removed, even if removing some files failed.
+    notes_vcs::commit_note_files(
+        &commit_paths,
+        &notes_vcs::commit_message("delete", &note_ids),
+    );
+    deleted?;
 
     // Update config
     let mut config = read_internal_config(db).await?;

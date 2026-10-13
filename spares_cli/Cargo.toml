@@ -21,7 +21,6 @@ chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.7", features = ["derive", "cargo", "env"] }
 clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 colored = "3.1.1"
-copy_dir = "0.1.3"
 env_logger = "0.11.11"
 indexmap = "2.14.2"
 indicatif = { version = "0.18.6", features = ["rayon"] }

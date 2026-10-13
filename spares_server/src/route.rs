@@ -43,6 +43,11 @@ use crate::handlers::note::list_notes_handler;
 use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
 use crate::handlers::note::update_notes_handler;
+use crate::handlers::notes_vcs::notes_vcs_check_handler;
+use crate::handlers::notes_vcs::notes_vcs_finish_handler;
+use crate::handlers::notes_vcs::notes_vcs_init_handler;
+use crate::handlers::notes_vcs::notes_vcs_receive_handler;
+use crate::handlers::notes_vcs::notes_vcs_status_handler;
 use crate::handlers::parser::create_parser_handler;
 use crate::handlers::parser::delete_parser_handler;
 use crate::handlers::parser::get_parser_handler;
@@ -187,6 +192,12 @@ pub(crate) fn create_router(
             "/api/render-assets/packages",
             get(list_render_packages_handler),
         )
+        // Notes repository (`spares note init-vcs` and its push hooks)
+        .route("/api/notes/vcs/status", get(notes_vcs_status_handler))
+        .route("/api/notes/vcs/receive", post(notes_vcs_receive_handler))
+        .route("/api/notes/vcs/finish", post(notes_vcs_finish_handler))
+        .route("/api/notes/vcs/init", post(notes_vcs_init_handler))
+        .route("/api/notes/vcs/check", post(notes_vcs_check_handler))
         // Undo
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))

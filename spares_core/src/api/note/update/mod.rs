@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -22,6 +23,7 @@ use crate::api::undo::payloads::NoteSnapshot;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
@@ -29,6 +31,7 @@ use crate::model::Card;
 use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
+use crate::notes_vcs;
 use crate::parsers::CardData;
 use crate::parsers::Parseable;
 use crate::parsers::add_order_to_note_data;
@@ -165,6 +168,7 @@ pub async fn update_notes(
     } = body;
 
     let mut note_responses = Vec::new();
+    let mut commit_paths: Vec<PathBuf> = Vec::new();
     let mut parse_note_requests = Vec::new();
     let mut update_note_payloads: Vec<UpdateNotePayload> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
@@ -622,6 +626,7 @@ pub async fn update_notes(
                         )))
                     })?;
                 let parser = get_parser_only(old_parser_name, &parser_factories)?;
+                commit_paths.push(notes_vcs::note_rel_path(parser.as_ref(), note_id));
                 delete_note_files(
                     parser.as_ref(),
                     note_id,
@@ -699,41 +704,23 @@ pub async fn update_notes(
     // ---- File generation and config ----
 
     let has_changed_notes = !parse_note_requests.is_empty();
-
-    for (pid, requests) in parse_note_requests.into_iter().into_group_map() {
-        let parser_name =
-            parser_name_map
-                .get(&pid)
-                .copied()
-                .ok_or(Error::Library(LibraryError::Parser(
-                    ParserErrorKind::NotFound(String::new()),
-                )))?;
-        let parser = get_parser_only(parser_name, &parser_factories)?;
-
-        // Update note and card files, without compiling. This will also ensure that updated notes
-        // will have their clozes renumbered sequentially so the note is ready to be edited again.
-        // Only this group's notes' cards are passed: lookups are keyed by `note_id`, and a note
-        // belongs to exactly one parser, so each card vec is used by exactly one group.
-        let group_precomputed_cards: HashMap<NoteId, Vec<CardData>> = requests
-            .iter()
-            .filter_map(|r| {
-                precomputed_cards
-                    .get(&r.note_id)
-                    .map(|cards| (r.note_id, cards.clone()))
-            })
-            .collect();
-        let parse_notes_request = GenerateNoteFilesRequests {
-            requests,
-            overridden_output_raw_dir: None,
-            include_cards: generates_render_files(parser.as_ref(), external_config.as_ref()),
-            render: false,
-            force_render: false,
-            precomputed_cards: Some(group_precomputed_cards),
-        };
-        let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
-    }
+    let generated = generate_updated_note_files(
+        db,
+        parse_note_requests,
+        &parser_name_map,
+        &parser_factories,
+        &precomputed_cards,
+        external_config.as_ref(),
+        &mut commit_paths,
+    )
+    .await;
+    let committed_ids: Vec<NoteId> = note_responses.iter().map(|n| n.id).collect();
+    // Commit whatever was written, even if some files failed.
+    notes_vcs::commit_note_files(
+        &commit_paths,
+        &notes_vcs::commit_message("update", &committed_ids),
+    );
+    generated?;
 
     if has_changed_notes {
         let mut config = read_internal_config(db).await?;
@@ -786,6 +773,59 @@ pub async fn update_notes(
         notes: note_responses,
         event_id,
     })
+}
+
+/// Writes the files of updated notes and their cards, without compiling, and adds the note files
+/// to `commit_paths`. This also renumbers updated notes' clozes sequentially, so the note is ready
+/// to be edited again.
+async fn generate_updated_note_files(
+    db: &SqlitePool,
+    parse_note_requests: Vec<(i64, GenerateNoteFilesRequest)>,
+    parser_name_map: &HashMap<i64, &str>,
+    parser_factories: &HashMap<&'static str, fn() -> Box<dyn Parseable>>,
+    precomputed_cards: &HashMap<NoteId, Vec<CardData>>,
+    external_config: Option<&SparesExternalConfig>,
+    commit_paths: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    for (pid, mut requests) in parse_note_requests.into_iter().into_group_map() {
+        let parser_name =
+            parser_name_map
+                .get(&pid)
+                .copied()
+                .ok_or(Error::Library(LibraryError::Parser(
+                    ParserErrorKind::NotFound(String::new()),
+                )))?;
+        let parser = get_parser_only(parser_name, parser_factories)?;
+        notes_vcs::fill_linked_notes(db, &mut requests).await?;
+        commit_paths.extend(
+            requests
+                .iter()
+                .map(|r| notes_vcs::note_rel_path(parser.as_ref(), r.note_id)),
+        );
+
+        // Only this group's notes' cards are passed: lookups are keyed by `note_id`, and a note
+        // belongs to exactly one parser, so each card vec is used by exactly one group.
+        let group_precomputed_cards: HashMap<NoteId, Vec<CardData>> = requests
+            .iter()
+            .filter_map(|r| {
+                precomputed_cards
+                    .get(&r.note_id)
+                    .map(|cards| (r.note_id, cards.clone()))
+            })
+            .collect();
+        let parse_notes_request = GenerateNoteFilesRequests {
+            requests,
+            overridden_output_raw_dir: None,
+            include_cards: generates_render_files(parser.as_ref(), external_config),
+            render: false,
+            force_render: false,
+            precomputed_cards: Some(group_precomputed_cards),
+        };
+        let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

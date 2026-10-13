@@ -9,6 +9,7 @@ mod keyword;
 mod link;
 mod migrate;
 mod note;
+mod notes_vcs;
 mod parser;
 mod review;
 mod search;

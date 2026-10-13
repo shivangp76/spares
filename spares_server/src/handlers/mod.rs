@@ -18,6 +18,7 @@ use crate::AppState;
 pub(crate) mod card;
 pub(crate) mod image_occlusion;
 pub(crate) mod note;
+pub(crate) mod notes_vcs;
 pub(crate) mod parser;
 pub(crate) mod render_asset;
 pub(crate) mod review;
@@ -30,6 +31,13 @@ pub(crate) mod undo;
     reason = "can easily call `.map_err()`"
 )]
 fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
+    if matches!(e, Error::NotesVcsBusy) {
+        // Nothing was written, so clients can retry.
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "message": e.to_string() })),
+        );
+    }
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
