@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 
 use chrono::DateTime;
@@ -34,6 +35,7 @@ use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
+use crate::config::resolve_in_files_dir;
 use crate::config::write_internal_config;
 use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
@@ -56,6 +58,8 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_output_raw_dir;
+use crate::parsers::has_web_render_file;
+use crate::parsers::web_render_filepath;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
@@ -80,6 +84,13 @@ pub(crate) fn relative_to_files_dir(path: PathBuf) -> PathBuf {
         Ok(relative) => relative.to_path_buf(),
         Err(_) => path,
     }
+}
+
+/// The HTML for web clients next to `rendered_path` (relative to the files directory when inside
+/// it), in the same form, if there is HTML to show.
+pub(crate) fn web_render_path(rendered_path: &Path) -> Option<PathBuf> {
+    has_web_render_file(&resolve_in_files_dir(rendered_path))
+        .then(|| web_render_filepath(rendered_path))
 }
 
 #[derive(Clone, Debug, Default, FromRow)]
@@ -270,6 +281,22 @@ fn build_review_card_response(
         None
     };
 
+    // Both sides are shown in the same format, so HTML is used only if both sides have it.
+    let web_paths = if parser.has_web_render() {
+        let card_back_web_path = match &card_back_rendered_path {
+            CardBackRenderedPath::CardBack(path) => {
+                web_render_path(path).map(CardBackRenderedPath::CardBack)
+            }
+            CardBackRenderedPath::Note(path) => {
+                web_render_path(path).map(CardBackRenderedPath::Note)
+            }
+        };
+        web_render_path(&card_front_rendered_path).zip(card_back_web_path)
+    } else {
+        None
+    };
+    let (card_front_web_path, card_back_web_path) = web_paths.unzip();
+
     Ok(GetReviewCardResponse {
         note_id,
         card_order,
@@ -277,6 +304,8 @@ fn build_review_card_response(
         card_state,
         card_front_rendered_path,
         card_back_rendered_path,
+        card_front_web_path,
+        card_back_web_path,
         card_front_raw_path,
         card_back_raw_path,
         note_raw_path,

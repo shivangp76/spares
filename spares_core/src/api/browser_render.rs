@@ -33,6 +33,7 @@ use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::review::relative_to_files_dir;
+use crate::api::review::web_render_path;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::Parseable;
@@ -142,9 +143,16 @@ pub async fn get_note_render(
     } else {
         None
     };
+    let rendered_path = relative_to_files_dir(rendered_path);
+    let web_path = if parser.has_web_render() {
+        web_render_path(&rendered_path)
+    } else {
+        None
+    };
     Ok(NoteRenderResponse {
         parser_name,
-        rendered_path: relative_to_files_dir(rendered_path),
+        rendered_path,
+        web_path,
         browser_source,
     })
 }

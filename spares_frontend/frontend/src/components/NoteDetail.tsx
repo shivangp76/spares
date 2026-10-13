@@ -269,8 +269,9 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           {render && 'result' in render && (
             <CardRenderer
               path={render.result.rendered_path}
-              parserName={render.result.parser_name}
               source={render.result.browser_source}
+              webPath={render.result.web_path}
+              onOpenNote={onOpenNote}
               version={render.version}
             />
           )}

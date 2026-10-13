@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
-import { backPath, sectionLabel } from '../utils';
+import { backPath, backWebPath, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
@@ -158,11 +158,11 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         <>
           <div style={sectionLabel}>Front</div>
           <div style={renderBox}>
-            <CardRenderer path={reviewCard.card_front_rendered_path} parserName={reviewCard.parser_name} source={reviewCard.browser_sources?.card_front} version={loaded?.version} />
+            <CardRenderer path={reviewCard.card_front_rendered_path} source={reviewCard.browser_sources?.card_front} webPath={reviewCard.card_front_web_path} onOpenNote={openNote} version={loaded?.version} />
           </div>
           <div style={sectionLabel}>Back</div>
           <div style={renderBox}>
-            <CardRenderer path={backPath(reviewCard)} parserName={reviewCard.parser_name} source={reviewCard.browser_sources?.card_back} version={loaded?.version} />
+            <CardRenderer path={backPath(reviewCard)} source={reviewCard.browser_sources?.card_back} webPath={backWebPath(reviewCard)} onOpenNote={openNote} version={loaded?.version} />
           </div>
         </>
       ))}
