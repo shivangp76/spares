@@ -42,7 +42,7 @@ import {
   type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { backPath, formatDuration, sectionLabel } from '../utils';
+import { backPath, backWebPath, formatDuration, sectionLabel } from '../utils';
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
@@ -790,7 +790,7 @@ export default function ReviewPage() {
               </div>
             ) : (
               <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                <CardRenderer path={card.card_front_rendered_path} parserName={card.parser_name} source={card.browser_sources?.card_front} onReady={onFrontRendered} />
+                <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} />
               </div>
             )}
           </div>
@@ -798,7 +798,7 @@ export default function ReviewPage() {
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
-                <CardRenderer path={backPath(card)} parserName={card.parser_name} source={card.browser_sources?.card_back} />
+                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} />
               </div>
             </div>
           )}

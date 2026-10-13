@@ -32,6 +32,7 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
+use crate::parsers::web_render_filepath;
 use crate::schema::note::DeleteNotesRequest;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
@@ -44,6 +45,19 @@ fn delete_file(file_path: &Path) -> Result<(), Error> {
     } else {
         trash::delete(file_path).map_err(Error::Trash)
     }
+}
+
+/// Deletes a rendered file and the HTML for web clients next to it, if they exist.
+fn delete_rendered_file(output_rendered_filepath: &Path) -> Result<(), Error> {
+    for path in [
+        output_rendered_filepath.to_path_buf(),
+        web_render_filepath(output_rendered_filepath),
+    ] {
+        if path.exists() {
+            delete_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn delete_note_files(
@@ -79,9 +93,7 @@ pub fn delete_note_files(
     // Note rendered path
     let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
     note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-    if note_rendered_path.exists() {
-        delete_file(&note_rendered_path)?;
-    }
+    delete_rendered_file(&note_rendered_path)?;
 
     // Only the number of image occlusions is needed to find their rendered files, so avoid fully parsing them, which requires the original image and clozes files to still exist
     let image_occlusion_count = parser.get_image_occlusions(note_data)?.len();
@@ -109,9 +121,7 @@ pub fn delete_note_files(
             RenderOutputType::Card(*current_card_order, CardSide::Front),
             note_id,
         ));
-        if card_front_rendered_path.exists() {
-            delete_file(&card_front_rendered_path)?;
-        }
+        delete_rendered_file(&card_front_rendered_path)?;
 
         // Card back raw path
         let mut card_back_raw_path = get_output_raw_dir(
@@ -135,9 +145,7 @@ pub fn delete_note_files(
             RenderOutputType::Card(*current_card_order, CardSide::Back),
             note_id,
         ));
-        if card_back_rendered_path.exists() {
-            delete_file(&card_back_rendered_path)?;
-        }
+        delete_rendered_file(&card_back_rendered_path)?;
 
         // Image occlusion rendered paths
         for i in 0..image_occlusion_count {

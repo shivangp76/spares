@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::Error;
 use crate::LibraryError;
 use crate::config::get_cache_dir;
+use crate::config::get_config_dir;
 use crate::config::is_test_mode;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
@@ -31,6 +32,7 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::WebRenderMode;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
@@ -41,6 +43,11 @@ use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
+
+/// Between a card's header and body. Explicit raw blocks, since `\hrulefill` cannot be converted
+/// to `MathML`, so as math it would make every card's HTML lose content. HTML drops the LaTeX block
+/// without counting it as lost (see [`is_content_loss`]).
+const CARD_SEPARATOR: &str = "```{=latex}\n\\hrulefill\n```\n\n```{=html}\n<hr>\n```";
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
@@ -157,7 +164,9 @@ impl Parseable for MarkdownParser {
                 let (note_data, mut linked_notes_string) =
                     get_linked_notes_string(self, note_data.as_str(), linked_notes.as_ref());
                 if !linked_notes_string.is_empty() {
-                    linked_notes_string = format!("\nLinked Notes:\n{}", linked_notes_string);
+                    // The blank line lets pandoc read the link definitions, which cannot interrupt
+                    // a paragraph.
+                    linked_notes_string = format!("\nLinked Notes:\n\n{}", linked_notes_string);
                 }
                 let custom_data_str = if custom_data.is_empty() {
                     String::new()
@@ -244,7 +253,7 @@ impl Parseable for MarkdownParser {
                 lines.extend(vec![
                     format!("- tags{} {}", settings_key_value_delim, tags_str),
                     String::new(),
-                    "$\\hrulefill$".to_string(),
+                    CARD_SEPARATOR.to_string(),
                     String::new(),
                     card_data_str,
                 ]);
@@ -365,6 +374,99 @@ impl Parseable for MarkdownParser {
         let _ = remove_file(&log_filepath);
         output
     }
+
+    fn has_web_render(&self) -> bool {
+        true
+    }
+
+    fn render_web_file(
+        &self,
+        output_text_filepath: &Path,
+        output_rendered_filepath: &Path,
+        output_web_filepath: &Path,
+        mode: WebRenderMode,
+    ) -> Result<(), String> {
+        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
+        let mut log_filepath = dependencies_filepath.clone();
+        log_filepath.set_extension("pandoc-web-log.json");
+        let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
+        let page_title = output_rendered_filepath
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut command = Command::new("pandoc");
+        command
+            .arg(output_text_filepath)
+            .arg("-o")
+            .arg(output_web_filepath)
+            .args(["-t", "html5", "--standalone", "--embed-resources"])
+            .arg("--math-method=mathml")
+            // Web clients style it like the app. The web defaults file can turn these back on.
+            .arg("--metadata=document-css=false")
+            .arg("--metadata")
+            .arg(format!("pagetitle={page_title}"))
+            .arg("--log")
+            .arg(&log_filepath);
+        // The PDF defaults file is never passed, since its options may not apply to HTML.
+        if let Some(web_defaults_file) = &web_defaults_file {
+            command.arg("--defaults").arg(web_defaults_file);
+        }
+        let result = render_web_command(
+            &mut command,
+            &log_filepath,
+            web_defaults_file.as_deref(),
+            &dependencies_filepath,
+            mode,
+        );
+        let _ = remove_file(&log_filepath);
+        result
+    }
+}
+
+/// Optional pandoc defaults file for the HTML for web clients.
+fn web_defaults_filepath() -> PathBuf {
+    get_config_dir().join("markdown").join("web-defaults.yaml")
+}
+
+fn render_web_command(
+    command: &mut Command,
+    log_filepath: &Path,
+    web_defaults_file: Option<&Path>,
+    dependencies_filepath: &Path,
+    mode: WebRenderMode,
+) -> Result<(), String> {
+    let output = render_command_output(command, "pandoc").map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "pandoc exited with {}: {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    let log = read_to_string(log_filepath)
+        .map_err(|e| format!("Failed to read {}: {e}", log_filepath.display()))?;
+    let messages: Vec<PandocLogMessage> =
+        serde_json::from_str(&log).map_err(|e| format!("Failed to parse pandoc's log: {e}"))?;
+
+    // The web defaults file and what it loads, such as stylesheets, are synced to the server like
+    // the PDF's.
+    let mut files = loaded_resources_of(&messages);
+    files.extend(web_defaults_file.map(Path::to_path_buf));
+    if let Err(e) = RenderDependencies::extend_file(dependencies_filepath, files) {
+        warn!(
+            "Failed to record dependencies in {}: {e}",
+            dependencies_filepath.display()
+        );
+    }
+
+    match mode {
+        WebRenderMode::Auto => match messages.iter().find_map(content_loss) {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        },
+        WebRenderMode::Html | WebRenderMode::Pdf => Ok(()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -373,8 +475,137 @@ enum PandocLogMessage {
     LoadedResource {
         from: String,
     },
+    /// `contents` is the pandoc AST element, e.g. `{"t":"RawBlock","c":["tex","..."]}`.
+    BlockNotRendered {
+        contents: serde_json::Value,
+    },
+    InlineNotRendered {
+        contents: serde_json::Value,
+    },
+    CouldNotConvertTeXMath {
+        contents: String,
+    },
     #[serde(other)]
     Other,
+}
+
+/// Why the HTML lost content according to a log message of its render, if it did.
+fn content_loss(message: &PandocLogMessage) -> Option<String> {
+    match message {
+        PandocLogMessage::BlockNotRendered { contents }
+        | PandocLogMessage::InlineNotRendered { contents } => {
+            is_content_loss(contents).then(|| match raw_contents(contents) {
+                Some((_, text)) => format!("raw TeX: {}", shorten(text)),
+                None => format!("not rendered: {}", shorten(&contents.to_string())),
+            })
+        }
+        PandocLogMessage::CouldNotConvertTeXMath { contents } => {
+            Some(format!("math: {}", shorten(contents)))
+        }
+        PandocLogMessage::LoadedResource { .. } | PandocLogMessage::Other => None,
+    }
+}
+
+/// Whether an element the HTML writer did not render lost content. Explicit raw elements for
+/// another format (e.g. ```` ```{=latex} ````) are only meant for that format. Implicit raw TeX
+/// that only defines macros was already applied by pandoc.
+fn is_content_loss(contents: &serde_json::Value) -> bool {
+    match raw_contents(contents) {
+        Some(("tex", text)) => !only_defines_macros(text),
+        Some(_) => false,
+        None => true,
+    }
+}
+
+/// The format and text of a raw block or inline.
+fn raw_contents(contents: &serde_json::Value) -> Option<(&str, &str)> {
+    if !matches!(contents.get("t")?.as_str()?, "RawBlock" | "RawInline") {
+        return None;
+    }
+    match contents.get("c")?.as_array()?.as_slice() {
+        [format, text] => Some((format.as_str()?, text.as_str()?)),
+        _ => None,
+    }
+}
+
+/// Whether `tex` consists only of macro definitions, such as `\newcommand{\R}{\mathbb{R}}`.
+/// Conservative: anything it does not recognize is not a definition.
+fn only_defines_macros(tex: &str) -> bool {
+    const DEFINITIONS: [&str; 6] = [
+        "newcommand",
+        "renewcommand",
+        "providecommand",
+        "def",
+        "gdef",
+        "DeclareMathOperator",
+    ];
+    let mut chars = tex.chars().peekable();
+    let mut depth = 0_usize;
+    let mut found_definition = false;
+    // Whether the next control sequence at the top level is the name being defined
+    let mut expects_name = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '%' => {
+                // Comment until the end of the line
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            '{' | '[' => {
+                if depth == 0 {
+                    expects_name = false;
+                }
+                depth += 1;
+            }
+            '}' | ']' => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => return false,
+            },
+            '\\' => {
+                let mut name = String::new();
+                while let Some(&c) = chars.peek() {
+                    if !c.is_ascii_alphabetic() {
+                        break;
+                    }
+                    name.push(c);
+                    chars.next();
+                }
+                if name.is_empty() {
+                    // A control symbol, such as `\{`
+                    chars.next();
+                }
+                if depth > 0 {
+                    continue;
+                }
+                if DEFINITIONS.contains(&name.as_str()) {
+                    found_definition = true;
+                    expects_name = true;
+                } else if expects_name {
+                    expects_name = false;
+                } else {
+                    return false;
+                }
+            }
+            _ if depth > 0 => {}
+            c if c.is_whitespace() || c == '*' || c == '#' || c.is_ascii_digit() => {}
+            _ => return false,
+        }
+    }
+    found_definition && depth == 0
+}
+
+fn shorten(text: &str) -> String {
+    const MAX_CHARS: usize = 60;
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= MAX_CHARS {
+        text
+    } else {
+        let shortened = text.chars().take(MAX_CHARS).collect::<String>();
+        format!("{shortened}…")
+    }
 }
 
 /// Writes the [`RenderDependencies`] of a rendered file from the resources in pandoc's log and the
@@ -401,15 +632,19 @@ fn record_dependencies(
 /// Absolute paths of the local files pandoc loaded according to its JSON log.
 fn loaded_resources(log: &str) -> Result<Vec<PathBuf>, String> {
     let messages: Vec<PandocLogMessage> = serde_json::from_str(log).map_err(|e| e.to_string())?;
-    Ok(messages
-        .into_iter()
+    Ok(loaded_resources_of(&messages))
+}
+
+fn loaded_resources_of(messages: &[PandocLogMessage]) -> Vec<PathBuf> {
+    messages
+        .iter()
         .filter_map(|message| match message {
             PandocLogMessage::LoadedResource { from } => Some(PathBuf::from(from)),
-            PandocLogMessage::Other => None,
+            _ => None,
         })
         // Skips URLs.
         .filter(|path| path.is_absolute())
-        .collect())
+        .collect()
 }
 
 /// The path of a defaults file given to `pandoc --defaults`. Like pandoc, looks relative to the
@@ -581,5 +816,191 @@ pub mod tests {
             loaded_resources(log).unwrap(),
             [PathBuf::from("/home/a/.config/pandoc/defaults/header.tex")]
         );
+    }
+
+    mod web_render {
+        use std::fs::read_to_string;
+        use std::fs::write;
+        use std::path::Path;
+        use std::path::PathBuf;
+
+        use super::super::CARD_SEPARATOR;
+        use super::super::MarkdownParser;
+        use super::super::PandocLogMessage;
+        use super::super::content_loss;
+        use super::super::only_defines_macros;
+        use crate::parsers::Parseable;
+        use crate::parsers::RenderDependencies;
+        use crate::parsers::WebRenderMode;
+        use crate::parsers::render_dependencies_filepath;
+
+        /// A 1x1 PNG.
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
+            0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+
+        fn test_dir(name: &str) -> PathBuf {
+            let dir = std::env::temp_dir()
+                .join(format!("spares-web-render-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        /// Renders `markdown` to HTML in a new directory, returning the result and the HTML path.
+        fn render(
+            name: &str,
+            markdown: &str,
+            mode: WebRenderMode,
+        ) -> (Result<(), String>, PathBuf) {
+            let dir = test_dir(name);
+            let text = dir.join("0001.md");
+            write(&text, markdown).unwrap();
+            let html = dir.join("0001.html");
+            let result =
+                MarkdownParser::new().render_web_file(&text, &dir.join("0001.pdf"), &html, mode);
+            (result, html)
+        }
+
+        fn loss(markdown: &str) -> Option<String> {
+            render("loss", markdown, WebRenderMode::Auto).0.err()
+        }
+
+        #[test]
+        fn test_only_defines_macros() {
+            for tex in [
+                r"\newcommand{\R}{\mathbb{R}}",
+                r"\newcommand{\norm}[1]{\left\lVert#1\right\rVert}",
+                "\\renewcommand*{\\a}{b} % comment\n\\def\\c#1{d#1}",
+                r"\DeclareMathOperator{\tr}{tr}",
+                r"\def\e{\{}",
+            ] {
+                assert!(only_defines_macros(tex), "{tex}");
+            }
+            for tex in [
+                r"\begin{tikzpicture}\draw (0,0);\end{tikzpicture}",
+                r"\newcommand{\R}{\mathbb{R}} \hrulefill",
+                r"\newcommand{\R}{\mathbb{R}} text",
+                r"\textcolor{red}{x}",
+                "",
+                r"\newcommand{\R}{",
+            ] {
+                assert!(!only_defines_macros(tex), "{tex}");
+            }
+        }
+
+        #[test]
+        fn test_content_loss_from_log() {
+            let log = r#"[
+                {"type": "BlockNotRendered", "verbosity": "INFO", "contents": {"t": "RawBlock", "c": ["tex", "\\newcommand{\\R}{x}"]}},
+                {"type": "BlockNotRendered", "verbosity": "INFO", "contents": {"t": "RawBlock", "c": ["latex", "\\hrulefill"]}},
+                {"type": "NoLangSpecified", "verbosity": "INFO"},
+                {"type": "LoadedResource", "verbosity": "INFO", "for": "a.png", "from": "/a.png"},
+                {"type": "BlockNotRendered", "verbosity": "INFO", "contents": {"t": "RawBlock", "c": ["tex", "\\begin{tikzpicture}\\end{tikzpicture}"]}},
+                {"type": "InlineNotRendered", "verbosity": "INFO", "contents": {"t": "RawInline", "c": ["tex", "\\textcolor{red}{hi}"]}},
+                {"type": "CouldNotConvertTeXMath", "verbosity": "WARNING", "contents": "\\foo{x}", "message": "..."}
+            ]"#;
+            let messages: Vec<PandocLogMessage> = serde_json::from_str(log).unwrap();
+            let reasons = messages.iter().filter_map(content_loss).collect::<Vec<_>>();
+            assert_eq!(
+                reasons,
+                [
+                    r"raw TeX: \begin{tikzpicture}\end{tikzpicture}",
+                    r"raw TeX: \textcolor{red}{hi}",
+                    r"math: \foo{x}",
+                ]
+            );
+        }
+
+        #[test]
+        fn test_render_web_file_plain_note() {
+            let dir = test_dir("plain");
+            let image = dir.join("a.png");
+            write(&image, PNG).unwrap();
+            let text = dir.join("0001.md");
+            write(
+                &text,
+                format!(
+                    "# Title\n\n- item with $x^2$\n\n![a]({})\n",
+                    image.display()
+                ),
+            )
+            .unwrap();
+            let rendered = dir.join("0001.pdf");
+            let html = dir.join("0001.html");
+            MarkdownParser::new()
+                .render_web_file(&text, &rendered, &html, WebRenderMode::Auto)
+                .unwrap();
+            let html = read_to_string(html).unwrap();
+            assert!(!html.contains("<script"));
+            assert!(html.contains("data:image/png"));
+            assert!(html.contains("<math"));
+            // The image is recorded so sync copies it to the server
+            let dependencies: RenderDependencies = serde_json::from_str(
+                &read_to_string(render_dependencies_filepath(&rendered)).unwrap(),
+            )
+            .unwrap();
+            assert!(dependencies.files.contains(&image));
+        }
+
+        #[test]
+        fn test_render_web_file_card_separator() {
+            let (result, html) = render(
+                "separator",
+                &format!("- note-id: 1\n\n{CARD_SEPARATOR}\n\nFront"),
+                WebRenderMode::Auto,
+            );
+            result.unwrap();
+            assert!(read_to_string(html).unwrap().contains("<hr"));
+        }
+
+        #[test]
+        fn test_render_web_file_content_loss() {
+            let tikz = "\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n";
+            assert!(loss(tikz).unwrap().starts_with("raw TeX"));
+            assert!(loss("Some \\textcolor{red}{text}.").is_some());
+            assert!(loss("$\\foo{x}$").unwrap().starts_with("math"));
+            assert_eq!(loss("\\newcommand{\\R}{\\mathbb{R}}\n\n$\\R$"), None);
+            assert_eq!(loss("```{=latex}\n\\vspace{1em}\n```\n\nText"), None);
+            assert!(loss("\\vspace{1em}\n\nText").is_some());
+            // `html` keeps the HTML anyway
+            let (result, _) = render("html-mode", tikz, WebRenderMode::Html);
+            result.unwrap();
+        }
+
+        #[test]
+        fn test_render_web_file_missing_image() {
+            let (result, _) = render(
+                "missing-image",
+                "![a](/nonexistent/spares/a.png)",
+                WebRenderMode::Html,
+            );
+            assert!(result.unwrap_err().starts_with("pandoc exited"));
+        }
+
+        #[test]
+        fn test_extend_dependencies_file() {
+            let dir = test_dir("dependencies");
+            let path = dir.join("0001.deps.json");
+            RenderDependencies {
+                files: vec![PathBuf::from("/b")],
+                packages: Vec::new(),
+            }
+            .write(&path)
+            .unwrap();
+            RenderDependencies::extend_file(&path, vec![PathBuf::from("/a"), PathBuf::from("/b")])
+                .unwrap();
+            let dependencies: RenderDependencies =
+                serde_json::from_str(&read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(dependencies.files, [Path::new("/a"), Path::new("/b")]);
+            // A missing file is created
+            let new_path = dir.join("0002.deps.json");
+            RenderDependencies::extend_file(&new_path, vec![PathBuf::from("/c")]).unwrap();
+            assert!(new_path.exists());
+        }
     }
 }

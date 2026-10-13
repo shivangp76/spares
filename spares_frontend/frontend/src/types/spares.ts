@@ -12,6 +12,9 @@ export interface GetReviewCardResponse {
   card_front_rendered_path: string;
   // Externally-tagged serde enum: { "CardBack": "path" } | { "Note": "path" }
   card_back_rendered_path: { CardBack: string } | { Note: string };
+  // HTML shown instead of the rendered files. Present iff both sides have it (Markdown)
+  card_front_web_path?: string;
+  card_back_web_path?: { CardBack: string } | { Note: string };
   card_front_raw_path: string;
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
@@ -298,6 +301,8 @@ export interface NoteLink {
 export interface NoteRenderResponse {
   parser_name: string;
   rendered_path: string;
+  // HTML shown instead of the rendered file, if the note has it (Markdown)
+  web_path?: string;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_source?: string;
 }
