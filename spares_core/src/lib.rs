@@ -3,6 +3,7 @@ pub mod api;
 pub mod config;
 pub(crate) mod helpers;
 pub mod model;
+pub mod notes_vcs;
 pub mod parsers;
 pub mod schedulers;
 pub mod schema;
@@ -33,6 +34,12 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Library(#[from] LibraryError),
+    /// An error from keeping the notes repository (see [`notes_vcs`]) in sync with the database.
+    #[error("{0}")]
+    NotesVcs(String),
+    /// A `git push` into spares holds the notes lock, so note changes cannot be made right now.
+    #[error("a git push into spares is in progress; retry shortly")]
+    NotesVcsBusy,
     // #[error("{0}")]
     // Other(String),
 }

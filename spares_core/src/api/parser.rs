@@ -12,6 +12,7 @@ use crate::api::undo::payloads::UpdateParserPayload;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::Parser;
+use crate::notes_vcs;
 use crate::schema::FilterOptions;
 use crate::schema::parser::CreateParserRequest;
 use crate::schema::parser::ParserResponse;
@@ -108,6 +109,27 @@ pub async fn update_parser_event(
 }
 
 pub async fn update_parser(
+    db: &SqlitePool,
+    body: UpdateParserRequest,
+    id: i64,
+    log: bool,
+) -> Result<ParserResponse, Error> {
+    // The parser's name is the directory of its notes' files.
+    let affected: Vec<NoteId> = if body.name.is_some() {
+        sqlx::query_scalar(r"SELECT id FROM note WHERE parser_id = ?")
+            .bind(id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?
+    } else {
+        Vec::new()
+    };
+    let result = update_parser_inner(db, body, id, log).await;
+    notes_vcs::reconcile_after(db, affected, "move").await;
+    result
+}
+
+async fn update_parser_inner(
     db: &SqlitePool,
     body: UpdateParserRequest,
     id: i64,

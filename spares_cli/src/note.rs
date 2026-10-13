@@ -214,10 +214,13 @@ pub(crate) async fn handle(
             render,
             force_render,
         }) => {
-            let prompt = "Note that this will overwrite any unsaved changes you have. Please sync your notes before proceeding. Are you sure you want to continue?";
-            let ans = Confirm::new(prompt).with_default(false).prompt();
-            if !ans.unwrap_or(false) {
-                return Ok(());
+            // With a notes repository, files are written to spares' copy, never over your edits.
+            if !spares_core::notes_vcs::enabled() {
+                let prompt = "Note that this will overwrite any unsaved changes you have. Please sync your notes before proceeding. Are you sure you want to continue?";
+                let ans = Confirm::new(prompt).with_default(false).prompt();
+                if !ans.unwrap_or(false) {
+                    return Ok(());
+                }
             }
             let request = RenderNotesRequest {
                 selector: query.map_or(NotesSelector::All, NotesSelector::Query),
@@ -237,6 +240,17 @@ pub(crate) async fn handle(
                 .map_err(|e| miette!("{}", e))?;
             let _ = ensure_ok(response).await?;
             println!("Done");
+        }
+        NoteCommands::InitVcs { jj, repair_hooks } => {
+            crate::notes_vcs::init_vcs(base_url, client, jj, repair_hooks).await?;
+        }
+        NoteCommands::VcsCheck { fix } => {
+            crate::notes_vcs::check(base_url, client, fix).await?;
+        }
+        NoteCommands::VcsHook { phase, args } => {
+            if !crate::notes_vcs::run_hook(base_url, client, phase, &args).await {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())

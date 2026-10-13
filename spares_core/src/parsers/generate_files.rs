@@ -20,6 +20,8 @@ use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::config::SparesExternalConfig;
 use crate::model::NoteId;
+use crate::notes_vcs;
+use crate::notes_vcs::note_write_dir;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
 use crate::parsers::ConstructFileDataType;
@@ -292,13 +294,13 @@ fn create_note_files(
     } = request;
 
     let output_rendered_filename = parser.get_output_filename(RenderOutputType::Note, *note_id);
-    let mut output_text_filepath = get_output_raw_dir(
-        parser.get_parser_name(),
-        RenderOutputType::Note,
-        overridden_output_raw_dir,
-    );
+    let mut output_text_filepath =
+        note_write_dir(parser.get_parser_name(), overridden_output_raw_dir);
     output_text_filepath.push(&output_rendered_filename);
     output_text_filepath.set_extension(parser.file_extension());
+    // Files in the notes repository carry no hash line, which would change on every render and
+    // conflict with users' edits. The hash of the content last compiled is kept beside the cache.
+    let vcs_format = overridden_output_raw_dir.is_none() && notes_vcs::enabled();
     let output_rendered_dir = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
     let mut output_rendered_filepath = output_rendered_dir.clone();
     output_rendered_filepath.push(&output_rendered_filename);
@@ -312,15 +314,24 @@ fn create_note_files(
             .strip_prefix("hash: ")
             .map(|x| x.to_string())
     };
-    let in_cache = file_in_cache(
-        render,
-        force_render,
-        &output_text_filepath,
-        &output_rendered_filepath,
-        &file_contents,
-        *note_id,
-        line_to_hash,
-    )?;
+    let in_cache = if vcs_format {
+        render
+            && !force_render
+            && output_rendered_filepath.exists()
+            && notes_vcs::read_render_hash(parser.get_parser_name(), *note_id)
+                .is_some_and(|hash| hash == blake3_hex(&file_contents))
+            && std::fs::read(&output_text_filepath).is_ok_and(|raw| raw == file_contents.as_bytes())
+    } else {
+        file_in_cache(
+            render,
+            force_render,
+            &output_text_filepath,
+            &output_rendered_filepath,
+            &file_contents,
+            *note_id,
+            line_to_hash,
+        )?
+    };
 
     let result = if in_cache {
         Ok(output_text_filepath)
@@ -381,20 +392,32 @@ fn create_note_files(
         // Add hash to file if:
         // - it is a note
         // - the note was rendered OR the note was created somewhere else for comparison purposes
-        if render || overridden_output_raw_dir.is_some() {
-            let file_contents_hash = blake3_hex(&file_contents);
+        let file_contents_hash = blake3_hex(&file_contents);
+        if !vcs_format && (render || overridden_output_raw_dir.is_some()) {
             let file_contents_hash_str = format!("hash: {}", file_contents_hash);
             let hash_line = parser.construct_comment(&file_contents_hash_str);
             file_contents.push_str(hash_line.as_str());
         }
-        create_raw_and_rendered_file(
+        let result = create_raw_and_rendered_file(
             parser,
             *note_id,
             ConstructFileDataType::Note,
             &file_contents,
             overridden_output_raw_dir,
             render,
-        )
+        );
+        if vcs_format {
+            if render && result.is_ok() && output_rendered_filepath.exists() {
+                notes_vcs::write_render_hash(
+                    parser.get_parser_name(),
+                    *note_id,
+                    &file_contents_hash,
+                );
+            } else if result.is_err() {
+                notes_vcs::remove_render_hash(parser.get_parser_name(), *note_id);
+            }
+        }
+        result
     };
     // let done_count = counter.fetch_add(1, Ordering::SeqCst) + 1;
     // info!("Parsed {} out of {} notes", done_count, total_notes);
@@ -424,11 +447,16 @@ fn create_raw_and_rendered_file(
 
     // Write to raw file
     let output_rendered_filename = parser.get_output_filename(render_output_type, note_id);
-    let mut output_text_filepath = get_output_raw_dir(
-        parser.get_parser_name(),
-        render_output_type,
-        overridden_output_raw_dir,
-    );
+    let mut output_text_filepath = match render_output_type {
+        RenderOutputType::Note => {
+            note_write_dir(parser.get_parser_name(), overridden_output_raw_dir)
+        }
+        RenderOutputType::Card(..) => get_output_raw_dir(
+            parser.get_parser_name(),
+            render_output_type,
+            overridden_output_raw_dir,
+        ),
+    };
     output_text_filepath.push(&output_rendered_filename);
     output_text_filepath.set_extension(parser.file_extension());
     create_dir_all(output_text_filepath.parent().unwrap()).unwrap();

@@ -4,7 +4,6 @@ mod utils;
 
 use std::collections::HashMap;
 use std::fs;
-use std::fs::remove_dir_all;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -26,7 +25,6 @@ use spares_core::adapters::impls::anki::AnkiAdapter;
 use spares_core::adapters::impls::spares::SparesAdapter;
 use spares_core::adapters::impls::spares::SparesRequestProcessor;
 use spares_core::config::get_cache_dir;
-use spares_core::config::get_data_dir;
 use spares_core::model::NoteId;
 use spares_core::parsers::NoteFilepathData;
 use spares_core::parsers::find_parser;
@@ -60,7 +58,7 @@ pub(crate) struct SyncArgs {
 
     // Having `from` and `to` is clearer than just specifying `source` to sync with the Hub (SparesDb). This also allows the git diffs to be highlighted appropriately.
     /// Sync Source
-    #[arg(short, long, default_value = "spares-local-files")]
+    #[arg(short, long, default_value = "anki")]
     pub(crate) from: SyncSource,
     /// Sync Destination
     #[arg(short, long, default_value = "spares")]
@@ -103,7 +101,6 @@ pub(crate) enum SyncSubcommand {
 pub(crate) enum SyncSource {
     #[default]
     Spares,
-    SparesLocalFiles,
     Anki,
 }
 
@@ -138,7 +135,6 @@ enum UpdateDirection {
 /// | Delete | 3    | 1    |
 ///
 /// Returns modified note.
-#[expect(clippy::too_many_lines)]
 async fn update_changes(
     original_sync_source_from: SyncSource,
     original_sync_source_to: SyncSource,
@@ -166,50 +162,15 @@ async fn update_changes(
             }
         }
     }
-    let mut adapter_opt: Option<Box<dyn SrsAdapter>> = None;
-    match (sync_source_from, sync_source_to) {
-        (SyncSource::Spares, SyncSource::Spares)
-        | (SyncSource::Anki, SyncSource::Anki)
-        | (SyncSource::SparesLocalFiles, SyncSource::SparesLocalFiles) => {
+    let mut adapter_opt: Option<Box<dyn SrsAdapter>> = match (sync_source_from, sync_source_to) {
+        (SyncSource::Spares, SyncSource::Spares) | (SyncSource::Anki, SyncSource::Anki) => {
             return Err("The sources `from` and `to` must be different.".to_string());
         }
-        (SyncSource::Anki, SyncSource::SparesLocalFiles)
-        | (SyncSource::SparesLocalFiles, SyncSource::Anki) => {
-            return Err(hub_spoke_error(sync_source_from, sync_source_to));
+        (SyncSource::Anki, SyncSource::Spares) => {
+            Some(Box::new(SparesAdapter::new(SparesRequestProcessor::Server)))
         }
-        (SyncSource::Spares, SyncSource::SparesLocalFiles) => {
-            // Overwrite note file with cache file
-            for import_data in &mut *import_datas {
-                match import_data.action {
-                    SyncImportAction::Add { .. } | SyncImportAction::Update { .. } => {
-                        if dry_run {
-                            println!("This will be handled when render notes is called.");
-                        }
-                        // fs::copy(note_from_filepath, note_to_filepath).map_err(|e| format!("{}", e))?;
-                        // println!(
-                        //     "Copied {} to {}",
-                        //     &note_from_filepath.display(),
-                        //     &note_to_filepath.display()
-                        // );
-                    }
-                    SyncImportAction::Delete { .. } => match direction {
-                        UpdateDirection::Push => {
-                            return Err("Unsupported. Notes cannot be manually deleted from the Spares database. The Spares API must be used which will ensure local files stay synced.".to_string());
-                        }
-                        UpdateDirection::Pull => {
-                            return Err("Unsupported. Notes cannot be created through files. The Spares import API must be used which will ensure local files stay synced and the proper id is assigned.".to_string());
-                        }
-                    },
-                }
-            }
-        }
-        (SyncSource::SparesLocalFiles | SyncSource::Anki, SyncSource::Spares) => {
-            adapter_opt = Some(Box::new(SparesAdapter::new(SparesRequestProcessor::Server)));
-        }
-        (SyncSource::Spares, SyncSource::Anki) => {
-            adapter_opt = Some(Box::new(AnkiAdapter::new()));
-        }
-    }
+        (SyncSource::Spares, SyncSource::Anki) => Some(Box::new(AnkiAdapter::new())),
+    };
 
     let grouped_import_datas = import_datas
         .iter()
@@ -649,13 +610,11 @@ async fn generate_notes(
                 }
 
                 info!("Rendering notes from Spares...");
-                let include_linked_notes = sync_source_from == SyncSource::SparesLocalFiles
-                    || sync_source_to == SyncSource::SparesLocalFiles;
                 let request = RenderNotesRequest {
                     selector: NotesSelector::All,
                     immutable_note_ids: None,
                     overridden_output_raw_dir: Some(output_dir.clone()),
-                    include_linked_notes,
+                    include_linked_notes: false,
                     include_cards: false,
                     generate_rendered: false,
                     force_generate_rendered: false,
@@ -672,25 +631,6 @@ async fn generate_notes(
                     let response: Value = response.json().await.map_err(|e| format!("{}", e))?;
                     return Err(response.to_string());
                 }
-            }
-            SyncSource::SparesLocalFiles => {
-                let mut output_dir = base_dir.clone();
-                output_dir.push("spares_local_files");
-                output_dir.push("notes");
-                output_dirs.push(output_dir.clone());
-
-                // Create empty parent directory since `copy_dir` requires that the directory to
-                // not exist but its parent directories to exist
-                if output_dir.exists() {
-                    remove_dir_all(&output_dir).map_err(|e| format!("{}", e))?;
-                } else {
-                    std::fs::create_dir_all(output_dir.parent().unwrap())
-                        .map_err(|e| format!("Failed to create directory: {}", e))?;
-                }
-
-                let mut local_notes_dir = get_data_dir();
-                local_notes_dir.push("notes");
-                copy_dir::copy_dir(local_notes_dir, output_dir).map_err(|e| format!("{}", e))?;
             }
             SyncSource::Anki => {
                 let mut output_dir = base_dir.clone();

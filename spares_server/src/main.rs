@@ -61,6 +61,15 @@ async fn start_server(args: Args) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to migrate the database: {:?}", e))?;
     info!("Migration successful.");
+    // Before serving: settle a push the server stopped in the middle of, and commit or revert note
+    // files left uncommitted.
+    spares_core::notes_vcs::startup(&pool).await;
+    if spares_core::notes_vcs::enabled() {
+        info!(
+            "Notes are kept in the git repository {}",
+            spares_core::notes_vcs::server_repo_dir().display()
+        );
+    }
     for parser in get_all_parsers().iter().map(|p| p()) {
         info!(
             "Parser `{}` renders to {}",

@@ -21,6 +21,7 @@ use spares_core::api::note::render_notes;
 use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
 use spares_core::api::note::update_notes;
+use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::note::CreateNotesRequest;
@@ -41,7 +42,11 @@ pub(crate) async fn create_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CreateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let result = create_notes(&data.db, body, Utc::now(), &get_all_parsers(), true)
+    let db = data.db.clone();
+    let result =
+        run_shared(
+            async move { create_notes(&db, body, Utc::now(), &get_all_parsers(), true).await },
+        )
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))
@@ -69,7 +74,11 @@ pub(crate) async fn update_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_notes_res = update_notes(&data.db, body, Utc::now(), &get_all_parsers(), true)
+    let db = data.db.clone();
+    let update_notes_res =
+        run_shared(
+            async move { update_notes(&db, body, Utc::now(), &get_all_parsers(), true).await },
+        )
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_notes_res))
@@ -79,7 +88,8 @@ pub(crate) async fn delete_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_notes(&data.db, body, &get_all_parsers(), true)
+    let db = data.db.clone();
+    run_shared(async move { delete_notes(&db, body, &get_all_parsers(), true).await })
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)
@@ -119,7 +129,8 @@ pub(crate) async fn generate_note_files_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<RenderNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    render_notes(&data.db, body, &get_all_parsers())
+    let db = data.db.clone();
+    run_shared(async move { render_notes(&db, body, &get_all_parsers()).await })
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)
