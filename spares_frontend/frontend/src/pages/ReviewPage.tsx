@@ -14,14 +14,26 @@ import {
   getSchedulerRatings,
   getTagByName,
   getTodayStatistics,
+  isNetworkError,
   postReview,
   redoEvent,
   searchNotes,
-  submitAction,
   tagNote,
   undoEvent,
   updateCards,
 } from '../api/client';
+import { queueKey } from '../offline/db';
+import {
+  cancelPendingAction,
+  forgetQueuedCard,
+  getOfflineQueue,
+  nextOfflineCard,
+  performStudyAction,
+  refreshQueue,
+  returnToQueue,
+  syncPendingActions,
+  type ActionResult,
+} from '../offline/review';
 import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
 import { RedoIcon, UndoIcon } from '../components/Icons';
@@ -213,6 +225,12 @@ export default function ReviewPage() {
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
+  // The filter as entered, which identifies the queue downloaded for it (see src/offline)
+  const sessionKey = useRef(queueKey('query', ''));
+  // Whether the current card came from the downloaded queue because the server could not be reached
+  const [offline, setOffline] = useState(false);
+  // The last rating or bury if it is yet to be sent, so Undo can take it back before it is
+  const lastPendingAction = useRef<{ clientId: string; card: GetReviewCardResponse } | null>(null);
   // The undo event that Redo reverses, and whether it undid a rating. Any new action clears it.
   const [lastUndo, setLastUndo] = useState<{ eventId: number; wasRating: boolean; ratedCardId: number | null } | null>(null);
   // The card rated last, for Previous Card Info. `version` is bumped on every rating so the panel
@@ -229,7 +247,29 @@ export default function ReviewPage() {
     setKeywordResults(null);
     setDueDatePicker(null);
     try {
-      const next = await postReview(filter);
+      let next: GetReviewCardResponse | null;
+      try {
+        // Actions taken offline go first, so the server does not show those cards again
+        const synced = await syncPendingActions();
+        const pending = lastPendingAction.current;
+        if (pending && synced.applied.has(pending.clientId)) {
+          // Undo now undoes it on the server
+          lastEventId.current = synced.applied.get(pending.clientId) ?? null;
+          lastPendingAction.current = null;
+        }
+        next = await postReview(filter);
+        setOffline(false);
+      } catch (e) {
+        if (!isNetworkError(e)) throw e;
+        const key = sessionKey.current;
+        if (!(await getOfflineQueue(key))) {
+          setError(`${String(e)}. No cards were downloaded for this filter to review offline.`);
+          setPhase('error');
+          return;
+        }
+        next = await nextOfflineCard(key);
+        setOffline(true);
+      }
       if (!next) { setCard(null); setSessionEnd(Date.now()); setPhase('done'); return; }
       setCard(next);
       recallStart.current = Date.now();
@@ -265,30 +305,44 @@ export default function ReviewPage() {
     setError(null);
     setSessionInfo(null);
     const input = rawInput.trim();
+    const key = queueKey(mode, input);
     let filter: ReviewFilter | undefined;
+    let info: string | null = null;
     try {
-      if (mode === 'query' && input) {
-        if (queryHasLimit(input)) {
-          const snapshot = await createReviewSnapshot(input);
-          filter = { FilteredTag: { tag_id: snapshot.tag_id } };
-          setSessionInfo(`Reviewing filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? 'built for today' : 'resumed from earlier today'}, ${snapshot.card_count} cards left)`);
-        } else {
-          filter = { Query: input };
+      try {
+        if (mode === 'query' && input) {
+          if (queryHasLimit(input)) {
+            const snapshot = await createReviewSnapshot(input);
+            filter = { FilteredTag: { tag_id: snapshot.tag_id } };
+            info = `Reviewing filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? 'built for today' : 'resumed from earlier today'}, ${snapshot.card_count} cards left)`;
+          } else {
+            filter = { Query: input };
+          }
+        } else if (mode === 'tagName' && input) {
+          const tag = await getTagByName(input);
+          filter = { FilteredTag: { tag_id: tag.id } };
+          info = `Reviewing filtered tag \`${tag.name}\``;
+        } else if (mode === 'tagId' && input) {
+          const id = Number(input);
+          if (!Number.isInteger(id)) throw new Error(`Invalid tag id: ${input}`);
+          filter = { FilteredTag: { tag_id: id } };
         }
-      } else if (mode === 'tagName' && input) {
-        const tag = await getTagByName(input);
-        filter = { FilteredTag: { tag_id: tag.id } };
-        setSessionInfo(`Reviewing filtered tag \`${tag.name}\``);
-      } else if (mode === 'tagId' && input) {
-        const id = Number(input);
-        if (!Number.isInteger(id)) throw new Error(`Invalid tag id: ${input}`);
-        filter = { FilteredTag: { tag_id: id } };
+        // Download the session's cards in case the connection drops
+        refreshQueue(key, filter ?? null, info);
+      } catch (e) {
+        // Offline, use what the filter resolved to when its cards were downloaded
+        const queue = isNetworkError(e) ? await getOfflineQueue(key) : null;
+        if (!queue) throw e;
+        filter = queue.filter ?? undefined;
+        info = queue.sessionInfo;
       }
     } catch (e) {
       setError(String(e));
       setPhase('error');
       return;
     }
+    setSessionInfo(info);
+    sessionKey.current = key;
     if (input) recentFilters.save({ mode, input });
     setSearchParams(filterParams(mode, input), { replace: true });
     setActiveFilter(filter);
@@ -299,6 +353,7 @@ export default function ReviewPage() {
     setSessionEnd(null);
     lastEventId.current = null;
     lastActionWasRating.current = false;
+    lastPendingAction.current = null;
     setLastUndo(null);
     loadCard(filter);
   }
@@ -333,26 +388,24 @@ export default function ReviewPage() {
     const recallSeconds = msToSeconds(recallDuration.current);
     const rateSeconds = msToSeconds(rateMs);
     try {
-      const res = await submitAction({
-        scheduler_name: credentials.schedulerName,
-        action: {
-          Rate: {
-            card_id: card.card_id,
-            rating: ratingId,
-            recall_duration: recallSeconds,
-            rate_duration: rateSeconds,
-            tag_id: tagId,
-          },
+      const res = await performStudyAction(credentials.schedulerName, {
+        Rate: {
+          card_id: card.card_id,
+          rating: ratingId,
+          recall_duration: recallSeconds,
+          rate_duration: rateSeconds,
+          tag_id: tagId,
         },
       });
       setSessionRateMs(ms => ms + rateMs);
       setReviewedCount(c => c + 1);
-      lastEventId.current = res.event_id;
+      lastEventId.current = res.eventId;
       lastActionWasRating.current = true;
+      lastPendingAction.current = pendingAction(res, card);
       setLastUndo(null);
       const ratedCardId = card.card_id;
       setPreviousCard(prev => ({ id: ratedCardId, version: (prev?.version ?? 0) + 1 }));
-      setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`);
+      setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}${res.sent ? '' : ' · Saved offline, sent once the server can be reached'}`);
       loadCard(activeFilter);
     } catch (e) {
       setError(String(e));
@@ -362,24 +415,36 @@ export default function ReviewPage() {
 
   /** Runs an action that removes the current card from today's queue, then advances. */
   async function runCardAction(action: () => Promise<number | null>, message?: string) {
+    if (!card) return;
+    const cardId = card.card_id;
     try {
+      lastPendingAction.current = null;
       lastEventId.current = await action();
       lastActionWasRating.current = false;
       setLastUndo(null);
       setStatus(message ?? null);
+      // Not to be shown again from the downloaded queue if the connection drops
+      await forgetQueuedCard(cardId);
       loadCard(activeFilter);
     } catch (e) {
       setStatus(String(e));
     }
   }
 
+  /** The record of an action that is yet to be sent, for Undo to take back. */
+  function pendingAction(res: ActionResult, actedOn: GetReviewCardResponse) {
+    return res.sent ? null : { clientId: res.clientId, card: actedOn };
+  }
+
   function buryCard() {
     if (!card || !credentials) return;
     const { schedulerName } = credentials;
-    runCardAction(
-      async () => (await submitAction({ scheduler_name: schedulerName, action: { Bury: { card_id: card.card_id } } })).event_id,
-      'Card buried.',
-    );
+    const buried = card;
+    runCardAction(async () => {
+      const res = await performStudyAction(schedulerName, { Bury: { card_id: buried.card_id } });
+      lastPendingAction.current = pendingAction(res, buried);
+      return res.eventId;
+    }, 'Card buried.');
   }
 
   function buryNote() {
@@ -475,6 +540,24 @@ export default function ReviewPage() {
       setPhase('front');
       return;
     }
+    const pending = lastPendingAction.current;
+    if (pending) {
+      lastPendingAction.current = null;
+      // Sent since, e.g. when the connection came back. Its event is unknown here.
+      if (!(await cancelPendingAction(pending.clientId))) {
+        setStatus('It was already sent to the server. Use Undo last change to undo it there.');
+        return;
+      }
+      await returnToQueue(sessionKey.current, pending.card);
+      setStatus('Undone before it was sent.');
+      if (lastActionWasRating.current) {
+        setReviewedCount(c => Math.max(0, c - 1));
+        setPreviousCard(null);
+      }
+      lastActionWasRating.current = false;
+      loadCard(activeFilter);
+      return;
+    }
     try {
       // Use the tracked event id so syncs from elsewhere don't cause the wrong event to be undone
       const res = await undoEvent(lastEventId.current);
@@ -557,10 +640,13 @@ export default function ReviewPage() {
     if (panelNoteId !== undefined) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [panelNoteId]);
 
-  // Load the Typst compiler while the filter is picked, so the first Typst card isn't delayed by it
+  // Load the Typst compiler while the filter is picked, so the first Typst card isn't delayed by it.
+  // Also download today's cards, so a review can start, or continue, without a connection.
   const onLanding = phase === 'landing';
   useEffect(() => {
-    if (onLanding) import('../typst/compiler').then(({ warmUpTypst }) => warmUpTypst()).catch(console.error);
+    if (!onLanding) return;
+    import('../typst/compiler').then(({ warmUpTypst }) => warmUpTypst()).catch(e => { if (!isNetworkError(e)) console.error(e); });
+    refreshQueue(queueKey('query', ''), null, null);
   }, [onLanding]);
 
   // Load the note editor while a card is shown, so opening the note isn't delayed by it
@@ -748,7 +834,7 @@ export default function ReviewPage() {
 
       {(phase === 'done' || phase === 'summary') && (
         <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>
-          {phase === 'done' && <p>Nothing left to review.</p>}
+          {phase === 'done' && <p>Nothing left to review{offline ? ' of the cards downloaded for offline review' : ''}.</p>}
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
           {summary}
           <p style={{ marginTop: 24, display: 'flex', gap: 16, justifyContent: 'center' }}>
@@ -771,6 +857,7 @@ export default function ReviewPage() {
           {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>{sessionInfo}</div>}
           <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>Note {card.note_id} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
+            {offline && <span style={{ color: 'var(--warning)' }} title="The server cannot be reached. Ratings are saved and sent once it can.">Offline</span>}
             {cardCounts && <span style={{ color: 'var(--text-secondary)' }}>{cardCounts}</span>}
             <span className="review-meta-right" style={{ marginLeft: 'auto' }}>
               Reviewed {reviewedCount} · ~{formatDuration(card.time_estimate)} left
