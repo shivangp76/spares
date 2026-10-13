@@ -1,5 +1,6 @@
-import { cpSync, createReadStream, readFileSync } from 'node:fs'
-import { basename, extname } from 'node:path'
+import { createHash } from 'node:crypto'
+import { cpSync, createReadStream, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, extname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -72,6 +73,43 @@ function copySvgeditAssets(): Plugin {
   }
 }
 
+const SERVICE_WORKER_TEMPLATE = fileURLToPath(new URL('./service-worker.js', import.meta.url))
+
+function listFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name)
+    return entry.isDirectory() ? listFiles(path) : [path]
+  })
+}
+
+/** Writes `dist/sw.js` from service-worker.js, with the files to cache for offline use. These are
+    the page and everything it may load except the image occlusion editor and WebAssembly modules,
+    which are large and only cached once used. */
+function serviceWorker(): Plugin {
+  return {
+    name: 'service-worker',
+    apply: 'build',
+    // After `copySvgeditAssets`, so the build hash covers every file
+    closeBundle: {
+      order: 'post',
+      handler() {
+        const files = listFiles(DIST_DIR)
+          .map(path => relative(DIST_DIR, path).split(sep).join('/'))
+          .filter(path => path !== 'sw.js')
+          .sort()
+        const template = readFileSync(SERVICE_WORKER_TEMPLATE, 'utf8')
+        const hash = createHash('sha256').update(template)
+        for (const path of files) hash.update(path).update(readFileSync(join(DIST_DIR, path)))
+        const precache = files.filter(path => !path.startsWith('svgedit/') && !path.endsWith('.wasm'))
+        const source = template
+          .replace('__BUILD__', JSON.stringify(hash.digest('hex').slice(0, 16)))
+          .replace('__PRECACHE__', JSON.stringify(precache, null, 2))
+        writeFileSync(join(DIST_DIR, 'sw.js'), source)
+      },
+    },
+  }
+}
+
 export default defineConfig({
   optimizeDeps: {
     exclude: ['@myriaddreamin/typst.ts', '@myriaddreamin/typst-ts-renderer'],
@@ -95,7 +133,7 @@ export default defineConfig({
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [react(), wasm(), copySvgeditAssets(), imageOcclusionEditorConfig(), {
+  plugins: [react(), wasm(), copySvgeditAssets(), serviceWorker(), imageOcclusionEditorConfig(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files
