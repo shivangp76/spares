@@ -49,6 +49,7 @@ use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::model::Tag;
+use crate::model::TagId;
 use crate::parsers::BackType;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
@@ -94,14 +95,22 @@ pub(crate) fn web_render_path(rendered_path: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Clone, Debug, Default, FromRow)]
-struct ReviewCard {
+pub(crate) struct ReviewCard {
     note_id: NoteId,
     parser_name: String,
     card_order: u32,
     card_back_type: BackType,
-    card_id: i64,
-    card_state: StateId,
+    pub(crate) card_id: i64,
+    pub(crate) card_state: StateId,
 }
+
+/// The columns of a [`ReviewCard`], for a query on `card c JOIN note n JOIN parser p`.
+pub(crate) const REVIEW_CARD_COLUMNS: &str = r#"n.id as note_id,
+            p.name as parser_name,
+            c."order" as card_order,
+            c.back_type as card_back_type,
+            c.id as card_id,
+            c.state as card_state"#;
 
 /// Fetch the raw note text for a CLI card. Only called when the card's
 /// `back_type` is [`BackType::Cli`]; non-CLI cards skip this query entirely.
@@ -321,12 +330,11 @@ fn build_review_card_response(
 
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
-/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up, otherwise an empty
-/// string.
-async fn not_new_card_clause(
+/// The new cards that can still be studied on `requested_date`'s local day.
+pub(crate) async fn new_cards_left(
     db: &SqlitePool,
     requested_date: DateTime<Utc>,
-) -> Result<String, Error> {
+) -> Result<u32, Error> {
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
     let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
         r"SELECT COUNT(DISTINCT card_id) FROM review_log
@@ -341,13 +349,22 @@ async fn not_new_card_clause(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
     let config = read_external_config()?;
-    Ok(
-        if new_cards_studied_on_requested_date >= config.new_cards_daily_limit {
-            format!("\nAND c.state != {}", NEW_CARD_STATE)
-        } else {
-            String::new()
-        },
-    )
+    Ok(config
+        .new_cards_daily_limit
+        .saturating_sub(new_cards_studied_on_requested_date))
+}
+
+/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up, otherwise an empty
+/// string.
+async fn not_new_card_clause(
+    db: &SqlitePool,
+    requested_date: DateTime<Utc>,
+) -> Result<String, Error> {
+    Ok(if new_cards_left(db, requested_date).await? == 0 {
+        format!("\nAND c.state != {}", NEW_CARD_STATE)
+    } else {
+        String::new()
+    })
 }
 
 /// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
@@ -463,10 +480,11 @@ pub async fn create_review_snapshot_tag(
     })
 }
 
-struct ReviewFilterQuery {
-    where_clause: String,
-    is_filtered_tag: bool,
-    card_due_limit: DateTime<Utc>,
+pub(crate) struct ReviewFilterQuery {
+    /// Binds `card_due_limit` unless `is_filtered_tag`.
+    pub(crate) where_clause: String,
+    pub(crate) is_filtered_tag: bool,
+    pub(crate) card_due_limit: DateTime<Utc>,
 }
 
 /// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
@@ -474,7 +492,7 @@ struct ReviewFilterQuery {
 /// Returns `Ok(None)` when a `FilteredTag` filter references a tag that does not exist.
 /// Returns `Err` when a `FilteredTag` filter references a tag that has no query.
 /// Returns `Ok(Some(…))` on success.
-async fn build_review_filter_query(
+pub(crate) async fn build_review_filter_query(
     db: &SqlitePool,
     filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
@@ -527,7 +545,7 @@ async fn build_review_filter_query(
     }))
 }
 
-async fn get_cards_left_by_state_and_time_estimate(
+pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     where_clause: &str,
     card_due_limit: DateTime<Utc>,
@@ -597,7 +615,7 @@ async fn get_cards_left_by_state_and_time_estimate(
     Ok((cards_left_by_state, time_estimate))
 }
 
-async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
+pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
     let mut config = read_internal_config(db).await?;
     let now = Utc::now();
     // Compare dates in local timezone to determine if cards should be unburied.
@@ -690,32 +708,50 @@ pub async fn get_review_card(
     .await?;
 
     if let Some(review_card) = review_card_opt {
-        let note_data = if matches!(review_card.card_back_type, BackType::Cli) {
-            Some(fetch_note_data_for_cli(db, review_card.note_id).await?)
-        } else {
-            None
-        };
-        let linked_notes =
-            get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
-        let keywords: Vec<String> =
-            sqlx::query_scalar(r"SELECT keyword FROM note_keyword WHERE note_id = ?")
-                .bind(review_card.note_id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        let mut response = build_review_card_response(
+        let response = review_card_response(
+            db,
             review_card,
-            note_data,
             cards_left_by_state,
             time_estimate,
             all_parsers,
-            linked_notes,
-            keywords,
-        )?;
-        add_browser_render_sources(db, &mut response, all_parsers).await?;
+        )
+        .await?;
         return Ok(Some(response));
     }
     Ok(None)
+}
+
+/// Everything a client needs to show `review_card`.
+pub(crate) async fn review_card_response(
+    db: &SqlitePool,
+    review_card: ReviewCard,
+    cards_left_by_state: HashMap<StateId, u32>,
+    time_estimate: Duration,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<GetReviewCardResponse, Error> {
+    let note_data = if matches!(review_card.card_back_type, BackType::Cli) {
+        Some(fetch_note_data_for_cli(db, review_card.note_id).await?)
+    } else {
+        None
+    };
+    let linked_notes = get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
+    let keywords: Vec<String> =
+        sqlx::query_scalar(r"SELECT keyword FROM note_keyword WHERE note_id = ?")
+            .bind(review_card.note_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let mut response = build_review_card_response(
+        review_card,
+        note_data,
+        cards_left_by_state,
+        time_estimate,
+        all_parsers,
+        linked_notes,
+        keywords,
+    )?;
+    add_browser_render_sources(db, &mut response, all_parsers).await?;
+    Ok(response)
 }
 
 pub async fn get_review_card_by_id(
@@ -745,20 +781,6 @@ pub async fn get_review_card_by_id(
 
     match review_card_opt {
         Some(review_card) => {
-            let note_data = if matches!(review_card.card_back_type, BackType::Cli) {
-                Some(fetch_note_data_for_cli(db, review_card.note_id).await?)
-            } else {
-                None
-            };
-            let linked_notes =
-                get_linked_notes_for_review(db, review_card.note_id, all_parsers).await?;
-            let keywords: Vec<String> =
-                sqlx::query_scalar(r"SELECT keyword FROM note_keyword WHERE note_id = ?")
-                    .bind(review_card.note_id)
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-
             // Compute cards_left_by_state and time_estimate using the same filter as the review session
             let (cards_left_by_state, time_estimate) =
                 match build_review_filter_query(db, filter, requested_date).await? {
@@ -779,16 +801,14 @@ pub async fn get_review_card_by_id(
                     None => (HashMap::new(), Duration::zero()),
                 };
 
-            let mut response = build_review_card_response(
+            let response = review_card_response(
+                db,
                 review_card,
-                note_data,
                 cards_left_by_state,
                 time_estimate,
                 all_parsers,
-                linked_notes,
-                keywords,
-            )?;
-            add_browser_render_sources(db, &mut response, all_parsers).await?;
+            )
+            .await?;
             Ok(Some(response))
         }
         None => Ok(None),
@@ -949,24 +969,7 @@ pub async fn rate_card(
     }
 
     // Add entry to review_log
-    let review_log_id: i64 =
-        sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
-            .bind(new_review_log.card_id)
-            .bind(new_review_log.reviewed_at.timestamp())
-            .bind(ReviewLogKind::Review)
-            .bind(new_review_log.rating)
-            .bind(new_review_log.scheduler_name)
-            .bind(new_review_log.scheduled_time)
-            .bind(new_review_log.recall_duration)
-            .bind(new_review_log.rate_duration)
-            .bind(new_review_log.previous_state)
-            // Records which filtered tag the card was answered under, if any. The scheduler has
-            // no notion of tags, so this is stamped here rather than in `schedule`.
-            .bind(tag_id)
-            .bind(&new_review_log.custom_data)
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+    let review_log_id = insert_review(db, &new_review_log, tag_id).await?;
 
     // Update card with all new properties from updated_card
     // special_state is explicitly set to None to clear any burial state (e.g. BuriedUntilLaterToday)
@@ -1032,6 +1035,31 @@ pub async fn rate_card(
     }
 
     Ok(None)
+}
+
+/// Adds `review_log`, a review produced by [`SrsScheduler::schedule`], to the review log.
+pub(crate) async fn insert_review(
+    db: &SqlitePool,
+    review_log: &ReviewLog,
+    tag_id: Option<TagId>,
+) -> Result<i64, Error> {
+    sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+        .bind(review_log.card_id)
+        .bind(review_log.reviewed_at.timestamp())
+        .bind(ReviewLogKind::Review)
+        .bind(review_log.rating)
+        .bind(&review_log.scheduler_name)
+        .bind(review_log.scheduled_time)
+        .bind(review_log.recall_duration)
+        .bind(review_log.rate_duration)
+        .bind(review_log.previous_state)
+        // Records which filtered tag the card was answered under, if any. The scheduler has
+        // no notion of tags, so this is stamped here rather than in `schedule`.
+        .bind(tag_id)
+        .bind(&review_log.custom_data)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
 }
 
 pub async fn bury_card(

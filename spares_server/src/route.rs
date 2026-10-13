@@ -61,8 +61,10 @@ use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
 use crate::handlers::review::get_review_config_handler;
 use crate::handlers::review::get_review_history_handler;
+use crate::handlers::review::get_review_queue_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::submit_study_action_handler;
+use crate::handlers::review::sync_offline_actions_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
@@ -101,6 +103,13 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
             "/api/notes/{id}/image-occlusions/{index}",
             put(update_note_image_occlusion_handler),
         )
+}
+
+/// Offline review on web clients
+fn offline_review_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/review/queue", post(get_review_queue_handler))
+        .route("/api/review/sync", post(sync_offline_actions_handler))
 }
 
 pub(crate) fn create_router(
@@ -202,6 +211,7 @@ pub(crate) fn create_router(
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .merge(image_occlusion_routes())
+        .merge(offline_review_routes())
         // Rendered notes and cards
         .nest_service("/files", ServeDir::new(files_dir))
         .route_layer(middleware::from_fn_with_state(
