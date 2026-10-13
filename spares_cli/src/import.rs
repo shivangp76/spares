@@ -22,12 +22,12 @@ use spares_core::parsers::NoteSettings;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::add_cloze_uid_to_note_data;
 use spares_core::parsers::get_all_parsers;
-use spares_core::parsers::get_notes;
+use spares_core::parsers::get_file_notes;
 use spares_core::parsers::remove_cloze_uid_from_note_data;
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
-    // NOTE: To import to spares-local-files, refer to `spares note generate`
+    // NOTE: To write note files from the database, refer to `spares note generate`
     #[arg(short, long, default_value = "spares")]
     pub(crate) adapter: String,
 
@@ -130,27 +130,6 @@ struct ParserAggregate<'a> {
     update_note_ids: Vec<NoteId>,
 }
 
-fn collect_blocks<'a>(parser: &dyn Parseable, contents: &'a str) -> Result<Vec<&'a str>, Error> {
-    let mut blocks = Vec::new();
-    for result in parser.start_end_regex().captures_iter(contents) {
-        let caps = result.map_err(|e| {
-            Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
-                format!("regex error in collect_blocks: {e}"),
-            )))
-        })?;
-        let block = caps
-            .get(1)
-            .ok_or_else(|| {
-                Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
-                    "capture group 1 not found in start_end_regex".to_string(),
-                )))
-            })?
-            .as_str();
-        blocks.push(block);
-    }
-    Ok(blocks)
-}
-
 fn parse_blocks(
     parser: &dyn Parseable,
     to_parser_opt: Option<&dyn Parseable>,
@@ -159,19 +138,14 @@ fn parse_blocks(
     dry_run: bool,
     external_config: Option<&SparesExternalConfig>,
 ) -> Result<ParsedNotes, Error> {
-    let mut all_notes = Vec::new();
-    for block in collect_blocks(parser, contents)? {
-        let notes = get_notes(
-            parser,
-            to_parser_opt,
-            block,
-            adapter,
-            !dry_run,
-            external_config.as_ref().map(|c| &c.overlapper),
-        )?;
-        all_notes.extend(notes);
-    }
-    Ok(all_notes)
+    get_file_notes(
+        parser,
+        to_parser_opt,
+        contents,
+        adapter,
+        !dry_run,
+        external_config.as_ref().map(|c| &c.overlapper),
+    )
 }
 
 fn guess_and_parse_notes<'a>(

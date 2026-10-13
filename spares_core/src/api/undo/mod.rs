@@ -17,6 +17,8 @@
 //!     the same way, so a redo is an event that reverts an undo. The `event_action` view derives
 //!     whether an event is an action, an undo or a redo from that chain.
 
+use std::collections::BTreeSet;
+
 use chrono::Utc;
 use sqlx::SqlitePool;
 
@@ -39,6 +41,8 @@ use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventAction;
 use crate::model::EventType;
+use crate::model::NoteId;
+use crate::notes_vcs;
 use crate::schema::undo::EventSummary;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
@@ -207,7 +211,12 @@ pub async fn undo_event(
 
     let events = expand_group(db, event, body.undo_group).await?;
     let undone_events = summarize_all(db, &events).await?;
-    let undo_event_ids = revert_events(db, &events).await?;
+    let note_ids = affected_note_ids(db, &events).await?;
+    let reverted = revert_events(db, &events).await;
+    // Undo changes the database only, so the notes' files are regenerated from it, also if part
+    // of the group was already reverted when an event failed.
+    notes_vcs::reconcile_after(db, note_ids, "undo").await;
+    let undo_event_ids = reverted?;
     Ok(Some(UndoEventResponse {
         undone_events,
         undo_event_ids,
@@ -248,11 +257,43 @@ pub async fn redo_event(
 
     let events = expand_group(db, event, body.redo_group).await?;
     let redone_events = summarize_all(db, &events).await?;
-    let redo_event_ids = revert_events(db, &events).await?;
+    let note_ids = affected_note_ids(db, &events).await?;
+    let reverted = revert_events(db, &events).await;
+    notes_vcs::reconcile_after(db, note_ids, "redo").await;
+    let redo_event_ids = reverted?;
     Ok(Some(RedoEventResponse {
         redone_events,
         redo_event_ids,
     }))
+}
+
+/// Notes whose files reverting `events` changes: notes they create, delete or update, and notes
+/// with a tag they rename or delete, or with a parser they rename.
+async fn affected_note_ids(db: &SqlitePool, events: &[Event]) -> Result<Vec<NoteId>, Error> {
+    let mut ids: BTreeSet<NoteId> = BTreeSet::new();
+    for event in events {
+        let payload = &event.payload;
+        if let Some(notes) = payload.get("notes").and_then(|n| n.as_array()) {
+            ids.extend(notes.iter().filter_map(|n| n.get("id")?.as_i64()));
+        }
+        if let Some(note_ids) = payload.get("note_ids").and_then(|n| n.as_array()) {
+            ids.extend(note_ids.iter().filter_map(serde_json::Value::as_i64));
+        }
+        let query = match event.kind {
+            EventType::UpdateTag => Some(r"SELECT note_id FROM note_tag WHERE tag_id = ?"),
+            EventType::UpdateParser => Some(r"SELECT id FROM note WHERE parser_id = ?"),
+            _ => None,
+        };
+        if let (Some(query), Some(id)) = (query, payload.get("id").and_then(|i| i.as_i64())) {
+            let rows: Vec<NoteId> = sqlx::query_scalar(query)
+                .bind(id)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            ids.extend(rows);
+        }
+    }
+    Ok(ids.into_iter().collect())
 }
 
 // Validates that undoing `event` won't violate referential integrity.

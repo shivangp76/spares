@@ -12,6 +12,7 @@ use spares_core::api::tag::get_tag_by_name;
 use spares_core::api::tag::list_tags;
 use spares_core::api::tag::rebuild_tag;
 use spares_core::api::tag::update_tag;
+use spares_core::notes_vcs::run_exclusive;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::tag::CreateTagRequest;
 use spares_core::schema::tag::UpdateTagRequest;
@@ -51,7 +52,8 @@ pub(crate) async fn update_tag_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_tag_res = update_tag(&data.db, body, true)
+    let db = data.db.clone();
+    let update_tag_res = run_exclusive(async move { update_tag(&db, body, true).await })
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_tag_res))
@@ -61,7 +63,8 @@ pub(crate) async fn delete_tag_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_tag(&data.db, id, true)
+    let db = data.db.clone();
+    run_exclusive(async move { delete_tag(&db, id, true).await })
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)

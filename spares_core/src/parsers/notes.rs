@@ -7,6 +7,7 @@ use crate::CardErrorKind;
 use crate::Error;
 use crate::LibraryError;
 use crate::NoteErrorKind;
+use crate::ParserErrorKind;
 use crate::parsers::CardData;
 use crate::parsers::CliData;
 use crate::parsers::NoteImportAction;
@@ -79,6 +80,55 @@ pub enum NotePart {
     Cli {
         data: CliData,
     },
+}
+
+/// The parts of `contents` between the parser's start and end markers. Each holds one or more
+/// notes.
+pub fn collect_blocks<'a>(
+    parser: &dyn Parseable,
+    contents: &'a str,
+) -> Result<Vec<&'a str>, Error> {
+    let mut blocks = Vec::new();
+    for result in parser.start_end_regex().captures_iter(contents) {
+        let caps = result.map_err(|e| {
+            Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
+                format!("regex error in collect_blocks: {e}"),
+            )))
+        })?;
+        let block = caps
+            .get(1)
+            .ok_or_else(|| {
+                Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
+                    "capture group 1 not found in start_end_regex".to_string(),
+                )))
+            })?
+            .as_str();
+        blocks.push(block);
+    }
+    Ok(blocks)
+}
+
+/// The notes in every block of a file. See [`get_notes`].
+pub fn get_file_notes(
+    parser: &dyn Parseable,
+    to_parser_opt: Option<&dyn Parseable>,
+    contents: &str,
+    adapter: &dyn SrsAdapter,
+    move_files: bool,
+    overlapper: Option<&OverlapperConfig>,
+) -> Result<Vec<(NoteSettings, Option<String>)>, Error> {
+    let mut all_notes = Vec::new();
+    for block in collect_blocks(parser, contents)? {
+        all_notes.extend(get_notes(
+            parser,
+            to_parser_opt,
+            block,
+            adapter,
+            move_files,
+            overlapper,
+        )?);
+    }
+    Ok(all_notes)
 }
 
 // This doesn't process cards, but it does validate them. `get_cards()` needs to be called on each element of the returned vector.

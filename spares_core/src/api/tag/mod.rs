@@ -15,6 +15,7 @@ use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::Tag;
 use crate::model::TagId;
+use crate::notes_vcs;
 use crate::schema::FilterOptions;
 use crate::schema::tag::CreateTagRequest;
 use crate::schema::tag::TagResponse;
@@ -263,12 +264,38 @@ async fn merge_tag_into(
     get_tag(db, target_id).await
 }
 
+/// Notes with tag `id`, whose files list the tag.
+async fn notes_with_tag(db: &SqlitePool, id: TagId) -> Result<Vec<NoteId>, Error> {
+    sqlx::query_scalar(r"SELECT note_id FROM note_tag WHERE tag_id = ?")
+        .bind(id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
 pub async fn update_tag(
     db: &SqlitePool,
     body: UpdateTagRequest,
     log: bool,
 ) -> Result<TagResponse, Error> {
-    let id = tag_selector_to_id(db, body.tag_to_modify).await?;
+    let id = tag_selector_to_id(db, body.tag_to_modify.clone()).await?;
+    // Renaming, merging or making a tag filtered changes the files of its notes, which list it.
+    let affected = if body.name.is_some() || body.query.is_some() {
+        notes_with_tag(db, id).await?
+    } else {
+        Vec::new()
+    };
+    let result = update_tag_inner(db, body, id, log).await;
+    notes_vcs::reconcile_after(db, affected, "retag").await;
+    result
+}
+
+async fn update_tag_inner(
+    db: &SqlitePool,
+    body: UpdateTagRequest,
+    id: TagId,
+    log: bool,
+) -> Result<TagResponse, Error> {
     let existing_tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -362,6 +389,13 @@ pub async fn update_tag(
 }
 
 pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
+    let affected = notes_with_tag(db, id).await?;
+    let result = delete_tag_inner(db, id, log).await;
+    notes_vcs::reconcile_after(db, affected, "untag").await;
+    result
+}
+
+async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
     let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
         .fetch_one(db)

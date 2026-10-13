@@ -114,13 +114,9 @@ The other directories can be overridden with `SPARES_CONFIG_DIR` (config file an
 
 ## Editing notes
 
-Notes can be edited by directly editing their corresponding file which is created after rendering. They can then be reimported in (see `spares import --help`).
+Notes can be edited in the web UI, with `spares note edit`, or by editing their files.
 
-To facilitate importing multiple notes, you can sync notes between your local files and spares:
-```sh
-spares sync
-```
-This will walk you through your changes, letting you decide what to keep and what to discard.
+To edit the files, keep them in a git or jj repository: run `spares note init-vcs` (or `spares note init-vcs --jj`), edit, commit, and push to import your changes. See [Notes as a git or jj repository](./workflows.md#notes-as-a-git-or-jj-repository).
 
 # Reviewing
 

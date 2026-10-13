@@ -36,6 +36,7 @@ use crate::model::NoteId;
 use crate::model::NoteLink;
 use crate::model::SpecialState;
 use crate::model::TagId;
+use crate::notes_vcs;
 use crate::parsers::Parseable;
 use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::add_order_to_note_data;
@@ -257,6 +258,8 @@ pub async fn create_notes(
     apply_srs_inheritance(db, &inherit_entries).await?;
 
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
+    notes_vcs::fill_linked_notes(db, &mut generate_files_requests).await?;
+    let created_ids: Vec<NoteId> = generate_files_requests.iter().map(|r| r.note_id).collect();
     let include_cards =
         generates_render_files(parser.as_ref(), read_external_config().ok().as_ref());
     let parse_notes_request = GenerateNoteFilesRequests {
@@ -267,9 +270,13 @@ pub async fn create_notes(
         force_render: false,
         precomputed_cards: None,
     };
-    let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    let generated = create_note_files_bulk(parser.as_ref(), &parse_notes_request);
+    // Commit whatever was written, even if some files failed.
+    notes_vcs::commit_note_files(
+        &notes_vcs::note_rel_paths(parser.get_parser_name(), &created_ids),
+        &notes_vcs::commit_message("create", &created_ids),
+    );
+    let _card_paths = generated?.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     // Update config — only invalidate linked-note cache if any note has keywords or note links
     let has_keywords = note_keyword_entries.iter().any(|(_, ks)| !ks.is_empty());

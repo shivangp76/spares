@@ -242,6 +242,38 @@ pub(crate) enum NoteCommands {
     Export(ExportArgs),
     /// Generate note and card files
     Generate(GenerateArgs),
+    /// Keep notes in a git (or jj) repository you push to, instead of syncing local files
+    ///
+    /// Spares writes notes to a repository it commits to (`notes-spares` in the data directory),
+    /// and your notes directory becomes a clone of it. Fetch to get changes made in spares; push
+    /// to `main` to import your changes. Rerunning continues an interrupted setup.
+    InitVcs {
+        /// Make the notes directory a jj repository colocated with git
+        #[arg(long)]
+        jj: bool,
+        /// Only rewrite the push hooks, e.g. after reinstalling spares or changing its address
+        #[arg(long)]
+        repair_hooks: bool,
+    },
+    /// Compare the notes repository with the database
+    VcsCheck {
+        /// Rewrite note files that differ from the database, and commit them
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Run by the notes repository's git hooks
+    #[command(hide = true)]
+    VcsHook {
+        phase: VcsHookPhase,
+        args: Vec<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum VcsHookPhase {
+    PreReceive,
+    PushToCheckout,
+    PostReceive,
 }
 
 #[derive(Args, Debug)]

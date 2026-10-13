@@ -11,6 +11,7 @@ use spares_core::api::parser::delete_parser;
 use spares_core::api::parser::get_parser;
 use spares_core::api::parser::list_parsers;
 use spares_core::api::parser::update_parser;
+use spares_core::notes_vcs::run_exclusive;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::parser::CreateParserRequest;
 use spares_core::schema::parser::UpdateParserRequest;
@@ -41,7 +42,8 @@ pub(crate) async fn update_parser_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateParserRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let update_parser_res = update_parser(&data.db, body, id, true)
+    let db = data.db.clone();
+    let update_parser_res = run_exclusive(async move { update_parser(&db, body, id, true).await })
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_parser_res))
@@ -51,7 +53,8 @@ pub(crate) async fn delete_parser_handler(
     Path(id): Path<i64>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    delete_parser(&data.db, id, true)
+    let db = data.db.clone();
+    run_exclusive(async move { delete_parser(&db, id, true).await })
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::OK)
