@@ -20,10 +20,14 @@ import type {
   ReviewConfig,
   ReviewFilter,
   ReviewHistoryResponse,
+  ReviewQueueRequest,
+  ReviewQueueResponse,
   ReviewSnapshotResponse,
   StatisticsResponse,
   SubmitStudyActionRequest,
   SubmitStudyActionResponse,
+  SyncOfflineActionsRequest,
+  SyncOfflineActionsResponse,
   TagResponse,
   UndoEventResponse,
   UnmatchedKeywordResponse,
@@ -31,6 +35,7 @@ import type {
   UpdateCardsResponse,
   UpdateTagRequest,
 } from '../types/spares';
+import { clearOfflineQueues } from '../offline/db';
 
 const STORAGE_KEY = 'spares_credentials';
 
@@ -43,11 +48,13 @@ export function getCredentials(): Credentials {
 export function saveCredentials(creds: Credentials): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
   clearCaches();
+  clearOfflineCopies().catch(console.error);
 }
 
 export function clearCredentials(): void {
   localStorage.removeItem(STORAGE_KEY);
   clearCaches();
+  clearOfflineCopies().catch(console.error);
 }
 
 // Responses kept in memory until a reload or a credentials change, so revisiting a page doesn't wait
@@ -80,6 +87,25 @@ function memoize<T>(key: string, fetch: () => Promise<T>): Promise<T> {
   return result;
 }
 
+const OFFLINE_COPY_PREFIX = 'spares_offline_copy:';
+
+/** `fetch`'s result, keeping a copy to return instead when the server cannot be reached. For small responses that reviewing offline needs. */
+async function withOfflineCopy<T>(key: string, fetch: () => Promise<T>): Promise<T> {
+  try {
+    const result = await fetch();
+    try {
+      localStorage.setItem(OFFLINE_COPY_PREFIX + key, JSON.stringify(result));
+    } catch (e) {
+      console.error(e);
+    }
+    return result;
+  } catch (e) {
+    const copy = isNetworkError(e) ? localStorage.getItem(OFFLINE_COPY_PREFIX + key) : null;
+    if (copy === null) throw e;
+    return JSON.parse(copy) as T;
+  }
+}
+
 async function cacheListPage<T>(key: string, fetch: Promise<T[]>): Promise<T[]> {
   const page = await fetch;
   listPages.set(key, page);
@@ -92,6 +118,88 @@ function authHeaders(): HeadersInit {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
+}
+
+/** The server could not be reached, e.g. because the device is offline. */
+export class NetworkError extends Error {
+  constructor(label: string) {
+    super(`${label} failed: the server could not be reached`);
+    this.name = 'NetworkError';
+  }
+}
+
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof NetworkError;
+}
+
+let reachabilityListener: ((reachable: boolean) => void) | null = null;
+
+/** Called with whether the server could be reached, after every request to it. */
+export function onServerReachability(listener: (reachable: boolean) => void): void {
+  reachabilityListener = listener;
+}
+
+/** `fetch`, throwing a `NetworkError` if the server cannot be reached. */
+async function send(label: string, url: string, init: RequestInit = {}): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    // An abort is the caller's, not the network's
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    reachabilityListener?.(false);
+    throw new NetworkError(label);
+  }
+  reachabilityListener?.(true);
+  return res;
+}
+
+// Copies of server responses kept for offline use, by URL without the API key. Rendered files are
+// kept while a downloaded review queue uses them (see src/offline), and the files Typst sources
+// read until logout.
+const FILES_CACHE = 'spares-offline-files';
+const RENDER_ASSETS_CACHE = 'spares-offline-render-assets';
+
+/**
+ * Fetches `url` from the server, keeping a copy in `cacheName`, and falls back to the copy if the
+ * server cannot be reached. Cache Storage is only available on secure origins (HTTPS or
+ * localhost), so elsewhere this is a plain fetch.
+ */
+async function sendKeepingCopy(label: string, url: string, cacheName: string): Promise<Response> {
+  const cache = typeof caches === 'undefined' ? null : await caches.open(cacheName).catch(() => null);
+  try {
+    // Revalidated, so the browser's HTTP cache does not answer for a server that cannot be reached
+    const res = await send(label, url, { headers: authHeaders(), cache: 'no-cache' });
+    // 404s are kept too, so a file the server does not have is not requested offline
+    if (cache && (res.ok || res.status === 404)) await cache.put(url, res.clone()).catch(console.error);
+    return res;
+  } catch (e) {
+    const copy = await cache?.match(url, { ignoreVary: true });
+    if (copy && isNetworkError(e)) return copy;
+    throw e;
+  }
+}
+
+/** Drops copies of rendered files that are not in `keep` (paths relative to the files directory). */
+export async function pruneOfflineFiles(keep: Iterable<string>): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  const keepUrls = new Set([...keep].map(fileUrl));
+  const cache = await caches.open(FILES_CACHE);
+  for (const request of await cache.keys()) {
+    if (!keepUrls.has(request.url)) await cache.delete(request);
+  }
+}
+
+/** Drops everything downloaded for offline use, except actions that are yet to be synced. */
+async function clearOfflineCopies(): Promise<void> {
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith(OFFLINE_COPY_PREFIX)) localStorage.removeItem(key);
+  }
+  if (typeof caches !== 'undefined') {
+    await caches.delete(FILES_CACHE);
+    await caches.delete(RENDER_ASSETS_CACHE);
+  }
+  await clearOfflineQueues();
 }
 
 /** Throws with the server's `{ message }` (or plain-text body) when present, falling back to the status code. */
@@ -118,7 +226,7 @@ async function apiFetch<T>(label: string, path: string, init: RequestInit = {}):
 async function apiSend(label: string, path: string, init: RequestInit = {}): Promise<Response> {
   const { serverUrl } = getCredentials();
   if ((init.method ?? 'GET') !== 'GET') listPages.clear();
-  const res = await fetch(`${serverUrl}${path}`, { ...init, headers: authHeaders() });
+  const res = await send(label, `${serverUrl}${path}`, { ...init, headers: authHeaders() });
   await throwIfNotOk(res, label);
   return res;
 }
@@ -132,9 +240,9 @@ export function fileUrl(relativePath: string): string {
   return `${serverUrl.replace(/\/$/, '')}/files/${relativePath}`;
 }
 
-/** Downloads a rendered file, which needs the API key like every other request. */
+/** Downloads a rendered file, which needs the API key like every other request. Offline, the copy kept from the last download is returned. */
 export async function fetchFile(relativePath: string): Promise<Blob> {
-  const res = await fetch(fileUrl(relativePath), { headers: authHeaders() });
+  const res = await sendKeepingCopy('Loading file', fileUrl(relativePath), FILES_CACHE);
   await throwIfNotOk(res, 'Loading file');
   return res.blob();
 }
@@ -142,7 +250,8 @@ export async function fetchFile(relativePath: string): Promise<Blob> {
 /** Package specs (`namespace/name/version`) that browser-rendered sources import. */
 export async function listRenderPackages(): Promise<string[]> {
   const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/render-assets/packages`, { headers: authHeaders() });
+  const url = `${serverUrl}/api/render-assets/packages`;
+  const res = await sendKeepingCopy('Render packages fetch', url, RENDER_ASSETS_CACHE);
   if (!res.ok) throw new Error(`Render packages fetch failed: ${res.status}`);
   return res.json();
 }
@@ -150,9 +259,8 @@ export async function listRenderPackages(): Promise<string[]> {
 /** A file a browser-rendered source reads, by the absolute path the source uses. `null` if the server does not have it. */
 export async function fetchRenderAsset(path: string): Promise<Uint8Array | null> {
   const { serverUrl } = getCredentials();
-  const res = await fetch(`${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`, {
-    headers: authHeaders(),
-  });
+  const url = `${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`;
+  const res = await sendKeepingCopy('Render asset fetch', url, RENDER_ASSETS_CACHE);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Render asset fetch failed for ${path}: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
@@ -232,7 +340,7 @@ export async function createReviewSnapshot(query: string): Promise<ReviewSnapsho
 }
 
 export async function getReviewConfig(): Promise<ReviewConfig> {
-  return memoize('reviewConfig', () => apiFetch('Review config fetch', '/api/review/config'));
+  return memoize('reviewConfig', () => withOfflineCopy('reviewConfig', () => apiFetch('Review config fetch', '/api/review/config')));
 }
 
 export async function getTagByName(name: string): Promise<TagResponse> {
@@ -343,7 +451,17 @@ export function cachedReviewHistory(): ReviewHistoryResponse | undefined {
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {
-  return memoize(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`));
+  return memoize(`ratings:${name}`, () => withOfflineCopy(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`)));
+}
+
+/** The cards a review would show next, to review offline. */
+export async function fetchReviewQueue(req: ReviewQueueRequest): Promise<ReviewQueueResponse> {
+  return apiFetch('Review queue fetch', '/api/review/queue', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Submits actions performed offline. */
+export async function syncOfflineActions(req: SyncOfflineActionsRequest): Promise<SyncOfflineActionsResponse> {
+  return apiFetch('Sync', '/api/review/sync', { method: 'POST', body: JSON.stringify(req) });
 }
 
 export async function submitAction(req: SubmitStudyActionRequest): Promise<SubmitStudyActionResponse> {

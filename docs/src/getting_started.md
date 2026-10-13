@@ -41,6 +41,16 @@ Rendering a Markdown note also writes an HTML file next to its PDF, which the we
 - Style the HTML with a pandoc defaults file at `markdown/web-defaults.yaml` in the config directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so notes using them show their PDF; define macros in the note itself to have them apply to both.
 - Notes rendered before upgrading show their PDF until they are rendered again, e.g. with `spares note generate --render --force-render`.
 
+#### Reviewing offline
+
+The web app can be installed as an app (e.g. "Add to Home Screen" on a phone) and opened without a connection. This needs the server to be reached over HTTPS, or at `localhost`.
+
+- While the Review page is open and online, it downloads the next 200 cards due today and tomorrow for the default review, and for each filter a session is started with, along with what they display. New cards are included up to what is left of today's limit.
+- When the server cannot be reached, a review shows those cards instead, and the navbar shows "Offline". Ratings and buries are saved on the device and sent once the server can be reached again, and the navbar shows how many are waiting. Other actions, such as editing a note or suspending a card, need the server.
+- A card rated Again offline is not shown again until the rating has been sent, since the device does not schedule cards itself.
+- A rating sent after a later review of the same card, e.g. from another device that synced first, is placed at its time in the card's history, which is then replayed. Such a rating cannot be undone from the review page.
+- Undo takes back a rating or bury that has not been sent yet. Logging out keeps unsent actions, which are sent the next time you log in to the same server.
+
 ### Migration (optional)
 
 Spares ships with a script to migrate data from Anki. See `spares migrate --help`.

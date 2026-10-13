@@ -79,6 +79,48 @@ export interface SubmitStudyActionResponse {
 // Externally-tagged serde enum
 export type ReviewFilter = { Query: string } | { FilteredTag: { tag_id: number } };
 
+export interface ReviewQueueRequest {
+  filter: ReviewFilter | null;
+  limit: number;
+  // Also include cards due on the next `days_ahead` days
+  days_ahead: number;
+}
+
+export interface ReviewQueueCard extends GetReviewCardResponse {
+  due: string; // ISO 8601
+}
+
+export interface ReviewQueueResponse {
+  // In the order a review would show them
+  cards: ReviewQueueCard[];
+  new_cards_left_today: number;
+}
+
+// The study actions that can be performed offline
+export type OfflineStudyActionKind = { Rate: RatingSubmission } | { Bury: { card_id: number } };
+
+export interface OfflineStudyAction {
+  // Unique per action, so a resent action is not applied twice
+  client_id: string;
+  performed_at: string; // ISO 8601
+  action: OfflineStudyActionKind;
+}
+
+export interface SyncOfflineActionsRequest {
+  scheduler_name: string;
+  actions: OfflineStudyAction[];
+}
+
+export type OfflineActionOutcome =
+  | { Applied: { event_id: number | null } }
+  | 'Duplicate'
+  | { Rejected: { message: string } };
+
+export interface SyncOfflineActionsResponse {
+  // One per action, in the order they were submitted
+  results: { client_id: string; outcome: OfflineActionOutcome }[];
+}
+
 export interface ReviewSnapshotResponse {
   tag_id: number;
   tag_name: string;
