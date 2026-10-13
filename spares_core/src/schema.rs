@@ -278,6 +278,10 @@ pub mod note {
         pub parser_name: String,
         /// Path to the rendered note. Relative to the files directory when inside it.
         pub rendered_path: PathBuf,
+        /// HTML for web clients, shown instead of the rendered file. Present iff the parser has a
+        /// [web render](crate::parsers::Parseable::has_web_render) and the note has HTML.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub web_path: Option<PathBuf>,
         /// The raw note source for a client to compile itself. Present iff the parser
         /// [renders in the browser](crate::parsers::Parseable::renders_in_browser).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -603,6 +607,14 @@ pub mod review {
         pub card_front_rendered_path: PathBuf,
         /// Path(s) to the rendered card back. Relative to the files directory when inside it.
         pub card_back_rendered_path: CardBackRenderedPath,
+        /// HTML for web clients of the card front, shown instead of the rendered file. Present iff
+        /// the parser has a [web render](crate::parsers::Parseable::has_web_render) and both sides
+        /// have HTML. Relative to the files directory when inside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub card_front_web_path: Option<PathBuf>,
+        /// HTML for web clients of the card back. Present iff `card_front_web_path` is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub card_back_web_path: Option<CardBackRenderedPath>,
         /// Path to the raw card front source file. Relative to the files directory when inside it.
         pub card_front_raw_path: PathBuf,
         /// Path(s) to the raw card back source file. Relative to the files directory when inside it.
@@ -629,6 +641,10 @@ pub mod review {
         pub fn resolve_paths(mut self) -> Self {
             self.card_front_rendered_path = resolve_in_files_dir(&self.card_front_rendered_path);
             self.card_back_rendered_path = self.card_back_rendered_path.resolve();
+            self.card_front_web_path = self
+                .card_front_web_path
+                .map(|path| resolve_in_files_dir(&path));
+            self.card_back_web_path = self.card_back_web_path.map(CardBackRenderedPath::resolve);
             self.card_front_raw_path = resolve_in_files_dir(&self.card_front_raw_path);
             self.card_back_raw_path = self.card_back_raw_path.resolve();
             self.note_raw_path = resolve_in_files_dir(&self.note_raw_path);

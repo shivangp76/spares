@@ -381,6 +381,28 @@ pub trait Parseable: Send + Sync {
         false
     }
 
+    /// Whether rendering also writes HTML for web clients next to each rendered file (see
+    /// [`web_render_filepath`]), with [`Self::render_web_file`].
+    fn has_web_render(&self) -> bool {
+        false
+    }
+
+    /// Writes HTML for web clients to `output_web_filepath`, after [`Self::render_file`] wrote
+    /// `output_rendered_filepath`. Returns why web clients should show the rendered file instead,
+    /// either since rendering failed or, in [`WebRenderMode::Auto`], since the HTML loses content.
+    fn render_web_file(
+        &self,
+        _output_text_filepath: &Path,
+        _output_rendered_filepath: &Path,
+        _output_web_filepath: &Path,
+        _mode: WebRenderMode,
+    ) -> Result<(), String> {
+        Err(format!(
+            "the {} parser has no web render",
+            self.get_parser_name()
+        ))
+    }
+
     // This can be overridden for a specific parser, so it is in the trait.
     fn get_aux_dir(&self, output_type: RenderOutputType, _note_id: NoteId) -> PathBuf {
         let directory_output_type = match output_type {

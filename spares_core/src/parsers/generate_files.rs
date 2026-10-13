@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fs::create_dir_all;
 use std::fs::read_to_string;
+use std::fs::remove_file;
+use std::fs::rename;
 use std::fs::write;
 use std::io::Read;
 use std::io::Seek;
@@ -14,6 +16,7 @@ use indicatif::ParallelProgressIterator;
 use indicatif::ProgressStyle;
 use log::debug;
 use log::info;
+use log::warn;
 use rayon::prelude::*;
 
 use super::image_occlusion::get_image_occlusion_rendered_directory;
@@ -30,9 +33,11 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
+use crate::parsers::WebRenderMode;
 use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
+use crate::parsers::web_render_filepath;
 use crate::schema::note::LinkedNote;
 
 /// Whether to compile `parser`'s notes and cards and write its cards' raw files. Parsers that
@@ -290,8 +295,12 @@ fn create_note_files(
     let start = Instant::now();
 
     let GenerateNoteFilesRequest {
-        note_id, note_data, ..
+        note_id,
+        note_data,
+        custom_data,
+        ..
     } = request;
+    let web_render_mode = WebRenderMode::from_custom_data(custom_data);
 
     let output_rendered_filename = parser.get_output_filename(RenderOutputType::Note, *note_id);
     let mut output_text_filepath =
@@ -363,6 +372,7 @@ fn create_note_files(
                         &file_contents,
                         overridden_output_raw_dir,
                         render,
+                        web_render_mode,
                     )?;
 
                     if matches!(card.back_type, BackType::CardFilePath) {
@@ -382,6 +392,7 @@ fn create_note_files(
                             &file_contents,
                             overridden_output_raw_dir,
                             render,
+                            web_render_mode,
                         )?;
                     }
                     Ok(())
@@ -405,6 +416,7 @@ fn create_note_files(
             &file_contents,
             overridden_output_raw_dir,
             render,
+            web_render_mode,
         );
         if vcs_format {
             if render && result.is_ok() && output_rendered_filepath.exists() {
@@ -433,6 +445,7 @@ fn create_raw_and_rendered_file(
     file_contents: &str,
     overridden_output_raw_dir: Option<&Path>,
     render: bool,
+    web_render_mode: WebRenderMode,
 ) -> Result<PathBuf, Error> {
     let render_output_type: RenderOutputType = match output_type {
         ConstructFileDataType::Note => RenderOutputType::Note,
@@ -545,15 +558,75 @@ fn create_raw_and_rendered_file(
                 ),
             });
         }
+
+        if parser.has_web_render() {
+            create_web_render_file(
+                parser,
+                note_id,
+                &output_text_filepath,
+                &output_rendered_filepath,
+                web_render_mode,
+            );
+        }
     }
 
     Ok(output_text_filepath)
 }
 
+/// Writes the HTML for web clients next to the rendered file, or an empty file if they should show
+/// the rendered file instead (see [`web_render_filepath`]). Never fails the render, since the
+/// rendered file is always there to fall back to.
+fn create_web_render_file(
+    parser: &dyn Parseable,
+    note_id: NoteId,
+    output_text_filepath: &Path,
+    output_rendered_filepath: &Path,
+    mode: WebRenderMode,
+) {
+    let output_web_filepath = web_render_filepath(output_rendered_filepath);
+    let tmp_filepath = output_web_filepath.with_extension("html.tmp");
+    let result = match mode {
+        WebRenderMode::Pdf => Err(None),
+        WebRenderMode::Auto | WebRenderMode::Html => parser
+            .render_web_file(
+                output_text_filepath,
+                output_rendered_filepath,
+                &tmp_filepath,
+                mode,
+            )
+            .map_err(Some)
+            .and_then(|()| {
+                rename(&tmp_filepath, &output_web_filepath)
+                    .map_err(|e| Some(format!("failed to move the HTML into place: {e}")))
+            }),
+    };
+    if let Err(reason) = result {
+        let _ = remove_file(&tmp_filepath);
+        if let Some(reason) = reason {
+            warn!(
+                "[Note Id: {note_id}] Web uses the rendered file for {}: {reason}",
+                output_rendered_filepath.display()
+            );
+        }
+        if let Err(e) = write(&output_web_filepath, "") {
+            warn!(
+                "[Note Id: {note_id}] Failed to write {}: {e}",
+                output_web_filepath.display()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs::metadata;
+    use std::fs::write;
+
+    use super::create_web_render_file;
     use super::generates_render_files;
     use crate::config::SparesExternalConfig;
+    use crate::parsers::WebRenderMode;
+    use crate::parsers::has_web_render_file;
     use crate::parsers::impls::markdown::MarkdownParser;
     use crate::parsers::impls::typst::TypstParser;
 
@@ -569,5 +642,60 @@ mod tests {
         assert!(!generates_render_files(&browser, Some(&config)));
         // Parsers rendered on the server are unaffected.
         assert!(generates_render_files(&local, Some(&config)));
+    }
+
+    #[test]
+    fn test_create_web_render_file_tombstones() {
+        let dir = std::env::temp_dir().join(format!("spares-web-tombstone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let parser = MarkdownParser::new();
+        let text = dir.join("0001.md");
+        let rendered = dir.join("0001.pdf");
+        let html = dir.join("0001.html");
+        let tikz = "\\begin{tikzpicture}\n\\end{tikzpicture}\n";
+        let render = |contents: &str, mode| {
+            write(&text, contents).unwrap();
+            create_web_render_file(&parser, 1, &text, &rendered, mode);
+        };
+
+        render("Text", WebRenderMode::Auto);
+        assert!(has_web_render_file(&rendered));
+        // A later render that decides on the rendered file replaces the HTML with an empty file
+        render("Text", WebRenderMode::Pdf);
+        assert_eq!(metadata(&html).unwrap().len(), 0);
+        assert!(!has_web_render_file(&rendered));
+
+        render(tikz, WebRenderMode::Html);
+        assert!(has_web_render_file(&rendered));
+        render(tikz, WebRenderMode::Auto);
+        assert!(!has_web_render_file(&rendered));
+        assert!(html.exists());
+        assert!(!dir.join("0001.html.tmp").exists());
+
+        // A failed render, here from a missing image, also leaves an empty file
+        render("Text", WebRenderMode::Auto);
+        render("![a](/nonexistent/spares/a.png)", WebRenderMode::Html);
+        assert!(!has_web_render_file(&rendered));
+    }
+
+    #[test]
+    fn test_web_render_mode_from_custom_data() {
+        let mode =
+            |value: serde_json::Value| WebRenderMode::from_custom_data(value.as_object().unwrap());
+        assert_eq!(mode(serde_json::json!({})), WebRenderMode::Auto);
+        assert_eq!(
+            mode(serde_json::json!({"render": "pdf"})),
+            WebRenderMode::Pdf
+        );
+        assert_eq!(
+            mode(serde_json::json!({"render": "html"})),
+            WebRenderMode::Html
+        );
+        assert_eq!(
+            mode(serde_json::json!({"render": "other"})),
+            WebRenderMode::Auto
+        );
+        assert_eq!(mode(serde_json::json!({"render": 1})), WebRenderMode::Auto);
     }
 }

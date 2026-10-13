@@ -33,7 +33,15 @@ export const td: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px
 
 /** The rendered file shown as a card's back: its own back, or the whole note. */
 export function backPath(card: GetReviewCardResponse): string {
-  const b = card.card_back_rendered_path;
+  return backPathOf(card.card_back_rendered_path);
+}
+
+/** The HTML shown as a card's back instead of its rendered file, if it has one. */
+export function backWebPath(card: GetReviewCardResponse): string | undefined {
+  return card.card_back_web_path && backPathOf(card.card_back_web_path);
+}
+
+function backPathOf(b: { CardBack: string } | { Note: string }): string {
   return 'CardBack' in b ? b.CardBack : b.Note;
 }
 

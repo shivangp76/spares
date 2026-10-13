@@ -71,6 +71,59 @@ pub fn render_dependencies_filepath(output_rendered_filepath: &Path) -> PathBuf 
     output_rendered_filepath.with_extension("deps.json")
 }
 
+impl RenderDependencies {
+    /// Adds `files` to the dependencies already written to `dependencies_filepath`, if any.
+    pub fn extend_file(dependencies_filepath: &Path, files: Vec<PathBuf>) -> Result<(), String> {
+        let mut dependencies = match std::fs::read_to_string(dependencies_filepath) {
+            Ok(contents) => serde_json::from_str(&contents).map_err(|e| e.to_string())?,
+            Err(_) => Self::default(),
+        };
+        dependencies.files.extend(files);
+        dependencies.write(dependencies_filepath)
+    }
+}
+
+/// The HTML written for web clients next to a rendered file by parsers with a
+/// [web render](crate::parsers::Parseable::has_web_render). An empty file means web clients show
+/// the rendered file instead. It replaces a stale HTML file on the server when synced, since sync
+/// does not delete files.
+pub fn web_render_filepath(output_rendered_filepath: &Path) -> PathBuf {
+    output_rendered_filepath.with_extension("html")
+}
+
+/// Whether `output_rendered_filepath` has HTML for web clients.
+pub fn has_web_render_file(output_rendered_filepath: &Path) -> bool {
+    std::fs::metadata(web_render_filepath(output_rendered_filepath)).is_ok_and(|m| m.len() > 0)
+}
+
+/// Whether a note's web clients are shown HTML, read from the `render` key of its custom data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WebRenderMode {
+    /// HTML unless rendering it loses content.
+    #[default]
+    Auto,
+    /// Always the rendered file.
+    Pdf,
+    /// HTML whenever it renders, even if content is lost.
+    Html,
+}
+
+impl WebRenderMode {
+    pub const CUSTOM_DATA_KEY: &str = "render";
+
+    /// Unrecognized values are [`Self::Auto`].
+    pub fn from_custom_data(custom_data: &crate::model::CustomData) -> Self {
+        match custom_data
+            .get(Self::CUSTOM_DATA_KEY)
+            .and_then(|v| v.as_str())
+        {
+            Some("pdf") => Self::Pdf,
+            Some("html") => Self::Html,
+            _ => Self::Auto,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct NoteFilepathData {
     pub parser_name: String,
