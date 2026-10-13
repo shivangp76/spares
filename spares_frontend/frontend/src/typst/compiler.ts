@@ -66,27 +66,46 @@ function fetchPackageSync(url: string): Uint8Array | undefined {
   return data;
 }
 
-let ready: Promise<void> | null = null;
+let configured = false;
 
-function init(): Promise<void> {
-  ready ??= (async () => {
-    $typst.setCompilerInitOptions({ getModule: () => compilerWasmUrl });
-    $typst.setRendererInitOptions({ getModule: () => rendererWasmUrl });
-    const accessModel = new RecordingAccessModel();
-    $typst.use(
-      TypstSnippet.withAccessModel(accessModel),
-      TypstSnippet.fetchPackageBy(accessModel, (_spec, url) =>
-        packageTarballs.get(url) ?? fetchPackageSync(url)),
-      // The browser has no system fonts, so fonts that sources set are bundled.
-      TypstSnippet.preloadFonts([herosRegularUrl, herosBoldUrl, herosItalicUrl, herosBoldItalicUrl]),
-      TypstSnippet.preloadFontAssets({ assets: ['text'] }),
-    );
+/** Sets up `$typst`. Only once: setting it up again registers a second access model, which fails every compile. */
+function configure(): void {
+  if (configured) return;
+  configured = true;
+  $typst.setCompilerInitOptions({ getModule: () => compilerWasmUrl });
+  $typst.setRendererInitOptions({ getModule: () => rendererWasmUrl });
+  const accessModel = new RecordingAccessModel();
+  $typst.use(
+    TypstSnippet.withAccessModel(accessModel),
+    TypstSnippet.fetchPackageBy(accessModel, (_spec, url) =>
+      packageTarballs.get(url) ?? fetchPackageSync(url)),
+    // The browser has no system fonts, so fonts that sources set are bundled.
+    TypstSnippet.preloadFonts([herosRegularUrl, herosBoldUrl, herosItalicUrl, herosBoldItalicUrl]),
+    TypstSnippet.preloadFontAssets({ assets: ['text'] }),
+  );
+}
+
+let packagesPrefetched: Promise<void> | null = null;
+
+function prefetchPackages(): Promise<void> {
+  packagesPrefetched ??= (async () => {
     const specs = await listRenderPackages();
     await Promise.allSettled(specs.map(prefetchPackage));
   })();
   // Allow retrying after e.g. a network error.
-  ready.catch(() => { ready = null; });
-  return ready;
+  packagesPrefetched.catch(() => { packagesPrefetched = null; });
+  return packagesPrefetched;
+}
+
+async function init(): Promise<void> {
+  configure();
+  try {
+    await prefetchPackages();
+  } catch (e) {
+    // Sources that import no packages still compile, and a package missing here is fetched when
+    // the compiler asks for it. The prefetch is retried on the next compile.
+    console.error('Prefetching Typst packages', e);
+  }
 }
 
 async function compileNow(source: string, inputs: Record<string, string>): Promise<string> {
