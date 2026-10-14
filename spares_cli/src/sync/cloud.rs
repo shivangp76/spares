@@ -9,7 +9,9 @@ use spares_core::api::browser_render::read_render_dependencies;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
+use spares_core::config::get_external_config_file;
 use spares_core::config::read_external_config;
+use spares_core::config::server_config;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
@@ -78,15 +80,16 @@ pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result
     println!("Syncing rendered files → {}", remote_host);
     sync_rendered_files(remote_host, remote_rendered_dir)?;
 
-    // Pass 4: Templates. The remote keeps its own config.toml (e.g. with
-    // `render_browser_parsers = false`).
-    println!("Syncing templates → {}", remote_host);
+    // Pass 4: Templates, and config.toml as the server needs it (see `server_config`), so reviews
+    // there are scheduled with the same settings.
+    println!("Syncing templates and settings → {}", remote_host);
     run_rsync(&[
         "-avz",
         "--exclude=/config.toml",
         &dir_source(&get_config_dir())?,
         &format!("{remote_host}:{REMOTE_CONFIG_DIR}/"),
     ])?;
+    push_server_config(remote_host)?;
 
     // Pass 5: Files the notes read, so the server can render notes edited there.
     println!("Syncing files read by notes → {}", remote_host);
@@ -94,6 +97,24 @@ pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result
 
     println!("Done.");
     Ok(())
+}
+
+/// Copies this machine's config.toml to the server, adapted by [`server_config`].
+fn push_server_config(remote_host: &str) -> Result<(), String> {
+    let path = get_external_config_file();
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let server = server_config(&contents).map_err(|e| e.to_string())?;
+    let staging = get_cache_dir().join("server-config.toml");
+    std::fs::write(&staging, server)
+        .map_err(|e| format!("Failed to write {}: {e}", staging.display()))?;
+    let result = run_rsync(&[
+        "-avz",
+        staging.to_str().ok_or("The cache directory is not valid UTF-8")?,
+        &format!("{remote_host}:{REMOTE_CONFIG_DIR}/config.toml"),
+    ]);
+    let _ = std::fs::remove_file(&staging);
+    result
 }
 
 /// Parsers whose notes the server renders.
