@@ -1,6 +1,6 @@
 # Two-way sync for spares: design plan
 
-Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) section 5 (change tracking) and the sync engine of section 6 are implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
+Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) sections 5–10 (change tracking, the sync engine, endpoints, CLI, frontend, auto-sync and deployment) are implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
 
 ## 1. Goal and context
 
@@ -448,22 +448,25 @@ The client does all of this and pushes the result, so the server never re-parses
 - **Conflicts only exist on the laptop,** because the merge runs there. The phone would see the `sync-conflict` badge, but its server has no conflict rows to show.
 - **rsync order:** the asset rsync of `cards/` runs after the laptop regenerates its files (`spares sync cloud` copies files after the sync). It can still overwrite cards the server rendered itself for a note edited on the phone since the sync.
 
-## 10. Deployment, ready to use when the VPS arrives (`deploy/`)
-- `deploy/spares.service`: a systemd unit with `SPARES_SOCKET_ADDRESS=127.0.0.1:8080`, `SPARES_FRONTEND_DIR`, `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server`, the API key from an `EnvironmentFile`, and `Restart=always`.
-- `deploy/setup-vps.sh`: an idempotent script that installs tailscale, rsync and typst (plus pandoc/latexmk only if server-side rendering of those formats is needed), creates the data dir at the same path as on the laptop, installs the unit, and runs `tailscale serve --bg 8080`.
-- A `spares_deploy` zsh function next to `spares_serve` that builds the frontend and the linux binary (`cargo zigbuild --target x86_64-unknown-linux-gnu`), rsyncs them, and restarts the service.
-- **When the VPS arrives:**
-  1. Create the Debian 12 VPS and run `setup-vps.sh`.
-  2. Install Tailscale on the phone.
-  3. Set `sync_url`/`remote_host`.
-  4. Run `spares sync cloud --full-upload` once.
+## 10. Deployment (`scripts/setup_vps.sh`, implemented)
+The repo already had `scripts/setup_vps.sh`, an idempotent script that installs the build tools, pandoc and LaTeX, builds spares from source on the server, writes `/etc/spares/spares.env` and a systemd unit, and optionally serves HTTPS with Caddy (`--domain`). It was extended rather than duplicated in a new `deploy/` directory:
+- the env file sets `SPARES_REPLICA=1` and `SPARES_SYNC_ROLE=server` (the server refuses to start without them);
+- the unit restarts always;
+- `--tailscale` installs Tailscale, joins the tailnet with Tailscale SSH (`tailscale up --ssh`), and serves the app privately with `tailscale serve --bg 8080`. No port is opened to the internet;
+- the closing instructions give the laptop's `remote_host`, `sync_url`, env and the first `spares sync cloud --full-upload`.
+
+Updating is re-running the script (it pulls and rebuilds on the server). The planned `spares_deploy` zsh function, which would cross-build locally with `cargo zigbuild`, lives in `~/.config/spares/spares.zsh` outside the repo and was not written.
+
+**When the VPS arrives:**
+1. Create a Debian 13 VPS and run `sudo bash setup_vps.sh --data-dir <laptop data dir> --local-home <laptop home> --tailscale`.
+2. Install Tailscale on the phone.
+3. On the laptop, set `remote_host`, `sync_url` (and optionally `sync_interval_minutes`) in `config.toml`, and `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client` and `SPARES_SYNC_API_KEY` where the local server starts (`spares_serve`).
+4. Run `spares sync cloud --full-upload` once.
 
 ### Open issues
-- **Debian:** Debian 12's regular security support ended in June 2026, so use Debian 13.
-- **pandoc/latexmk:**
-  - Editing markdown or LaTeX notes from the phone regenerates their cards on the server, which runs pandoc or latexmk.
-  - So the server needs them, unless those notes are read-only on the web.
-  - Not tested: whether a missing tool fails the request or just leaves stale cards.
+- **SSH:** Tailscale SSH replaces the public SSH port for logging in, but the script doesn't close port 22. Do it by hand (e.g. with `ufw`) once Tailscale SSH works, since a mistake there locks you out.
+- **Hetzner:** the CX22's name and price may have changed. Check when buying.
+- **pandoc/latexmk:** the script installs them, so markdown and LaTeX notes edited on the phone render on the server. The server builds from source, which needs about 2 GB of memory (the script adds swap).
 
 ## 11. Delivery order (one commit each)
 1. ID newtype, allocator and `spares migrate ids`.
