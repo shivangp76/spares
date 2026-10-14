@@ -1,6 +1,39 @@
 import type { EditorView } from '@uiw/react-codemirror';
 import type { GetReviewCardResponse } from './types/spares';
 
+const NOTE_ID_PLACES = 8;
+const NOTE_ID_RADIX = 27;
+
+/**
+ * A note id's letters, e.g. `gir`. The API sends note ids as their letters read as a base-27
+ * number left-aligned to 8 places (`a` = 1 … `z` = 26, an empty place = 0), so that sorting the
+ * numbers sorts the letters. Division is used rather than bit shifts, which work on 32 bits and
+ * would corrupt these 39-bit values. A value that is not a note id is shown as `#<number>`.
+ */
+export function formatNoteId(id: number): string {
+  const places: number[] = [];
+  let rest = id;
+  for (let i = 0; i < NOTE_ID_PLACES; i++) {
+    places.unshift(rest % NOTE_ID_RADIX);
+    rest = Math.floor(rest / NOTE_ID_RADIX);
+  }
+  const length = places.indexOf(0) === -1 ? NOTE_ID_PLACES : places.indexOf(0);
+  const valid = Number.isInteger(id) && rest === 0 && length > 0 && places.slice(length).every(p => p === 0);
+  if (!valid) return `#${id}`;
+  return places.slice(0, length).map(p => String.fromCharCode(96 + p)).join('');
+}
+
+/** The number the API uses for a note id written as 1 to 8 letters, in any case, or `null`. */
+export function parseNoteId(letters: string): number | null {
+  const s = letters.trim().toLowerCase();
+  if (!/^[a-z]{1,8}$/.test(s)) return null;
+  let id = 0;
+  for (let i = 0; i < NOTE_ID_PLACES; i++) {
+    id = id * NOTE_ID_RADIX + (i < s.length ? s.charCodeAt(i) - 96 : 0);
+  }
+  return id;
+}
+
 /** Port of the CLI's `format_duration`, e.g. `7d 0h 0m 0s` or `1m 30s`. */
 export function formatDuration(totalSeconds: number): string {
   const days = Math.floor(totalSeconds / 86400);

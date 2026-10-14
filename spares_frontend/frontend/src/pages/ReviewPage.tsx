@@ -54,7 +54,7 @@ import {
   type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { backPath, backWebPath, formatDuration, sectionLabel } from '../utils';
+import { backPath, backWebPath, formatDuration, formatNoteId, sectionLabel } from '../utils';
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
@@ -856,7 +856,7 @@ export default function ReviewPage() {
         <>
           {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>{sessionInfo}</div>}
           <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span>Note {card.note_id} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
+            <span>Note {formatNoteId(card.note_id)} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
             {offline && <span style={{ color: 'var(--warning)' }} title="The server cannot be reached. Ratings are saved and sent once it can.">Offline</span>}
             {cardCounts && <span style={{ color: 'var(--text-secondary)' }}>{cardCounts}</span>}
             <span className="review-meta-right" style={{ marginLeft: 'auto' }}>
@@ -1019,7 +1019,7 @@ export default function ReviewPage() {
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                   {card.linked_notes.map(ln => (
                     <button key={`${ln.searched_keyword}-${ln.note_id}`} onClick={() => openNote(ln.note_id)} style={toned(TONES.gray)}>
-                      {ln.searched_keyword} ({ln.note_id})
+                      {ln.searched_keyword} ({formatNoteId(ln.note_id)})
                     </button>
                   ))}
                 </div>
