@@ -25,19 +25,20 @@ const DATABASE_FILENAME: &str = "spares-main.sqlite";
 /// The server's config directory, relative to the remote home directory. Matches `setup_vps.sh`.
 const REMOTE_CONFIG_DIR: &str = ".config/spares";
 
-/// Pushes the database and files to `remote_host`, replacing the server's database. Used when
-/// two-way sync (`sync_url`) is not set up.
+/// Pushes the database and files to `sync.remote_host`, replacing the server's database. Used when
+/// two-way sync (`sync.url`) is not set up.
 pub(crate) async fn push_to_remote_host() -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;
     let remote_host = config
+        .sync
         .remote_host
-        .ok_or("remote_host is not set in config.toml")?;
+        .ok_or("`sync.remote_host` is not set in config.toml")?;
 
     // Pass 1: DB only
     println!("Syncing database → {}", remote_host);
     sync_database(&remote_host, &get_data_dir()).await?;
 
-    push_files(&remote_host, &config.remote_rendered_dir).await
+    push_files(&remote_host, &config.sync.remote_rendered_dir).await
 }
 
 /// Copies everything but the database to `remote_host`: the data files the server does not
@@ -113,7 +114,9 @@ fn push_server_config(remote_host: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to write {}: {e}", staging.display()))?;
     let result = run_rsync(&[
         "-avz",
-        staging.to_str().ok_or("The cache directory is not valid UTF-8")?,
+        staging
+            .to_str()
+            .ok_or("The cache directory is not valid UTF-8")?,
         &format!("{remote_host}:{REMOTE_CONFIG_DIR}/config.toml"),
     ]);
     let _ = std::fs::remove_file(&staging);
@@ -217,7 +220,12 @@ fn sync_rendered_files(
         if names.is_empty() {
             continue;
         }
-        run_rsync_files_from(&names.join("\n"), &["-avz"], &dir_source(&dir)?, &destination)?;
+        run_rsync_files_from(
+            &names.join("\n"),
+            &["-avz"],
+            &dir_source(&dir)?,
+            &destination,
+        )?;
     }
     run_rsync(&[
         "-avz",
@@ -270,9 +278,7 @@ fn sync_render_dependencies(
 
 /// Existing files read by rendered notes of parsers the server renders, except those synced by
 /// other passes or written by rendering. Records left by deleted notes are ignored.
-fn render_dependency_files(
-    note_ids: &HashMap<&'static str, HashSet<NoteId>>,
-) -> BTreeSet<PathBuf> {
+fn render_dependency_files(note_ids: &HashMap<&'static str, HashSet<NoteId>>) -> BTreeSet<PathBuf> {
     let excluded_dirs: Vec<PathBuf> = [
         get_data_dir(),
         get_cache_dir(),
@@ -511,13 +517,12 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
+    use spares_core::ids::NoteId;
     use sqlx::ConnectOptions;
     use sqlx::Connection;
     use sqlx::SqliteConnection;
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::sqlite::SqliteJournalMode;
-
-    use spares_core::ids::NoteId;
 
     use super::SymlinkTarget;
     use super::plan_dependency_sync;
