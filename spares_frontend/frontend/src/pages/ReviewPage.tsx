@@ -38,6 +38,7 @@ import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
+import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
 import ReviewHeatmap from '../components/ReviewHeatmap';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
@@ -170,6 +171,8 @@ export default function ReviewPage() {
 
   const [phase, setPhase] = useState<Phase>('landing');
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
+  // What was typed into each blank of the card's typed answer
+  const [typedAnswers, setTypedAnswers] = useState<string[]>([]);
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [config, setConfig] = useState<ReviewConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -246,6 +249,7 @@ export default function ReviewPage() {
   const loadCard = useCallback(async (filter: ReviewFilter | undefined) => {
     setPhase('loading');
     setFrontRendered(false);
+    setTypedAnswers([]);
     setPanelNote(null);
     setKeywordResults(null);
     setDueDatePicker(null);
@@ -878,14 +882,21 @@ export default function ReviewPage() {
                 </p>
               </div>
             ) : (
-              <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} />
-              </div>
+              <>
+                <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} />
+                </div>
+                {/* Unmounted on the back, so no hidden box keeps the focus from the rating hotkeys */}
+                {phase === 'front' && card.typed_answer && (
+                  <TypedAnswerInputs info={card.typed_answer} answers={typedAnswers} onChange={setTypedAnswers} onSubmit={showAnswer} />
+                )}
+              </>
             )}
           </div>
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
+              {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
                 <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} />
               </div>
