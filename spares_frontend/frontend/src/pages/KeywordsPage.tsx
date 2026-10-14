@@ -8,7 +8,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
-import { td, th } from '../utils';
+import { formatNoteId, td, th } from '../utils';
 
 type Tab = 'all' | 'search' | 'unmatched' | 'duplicate' | 'links';
 
@@ -26,7 +26,7 @@ const hint: React.CSSProperties = { fontSize: 13, color: 'var(--text-muted)', ma
 /** A note id that opens the note in the side pane. */
 function NoteLinkButton({ id, onOpen }: { id: number; onOpen: (id: number) => void }) {
   return (
-    <a href="#" onClick={e => { e.preventDefault(); onOpen(id); }}>{id}</a>
+    <a href="#" onClick={e => { e.preventDefault(); onOpen(id); }}>{formatNoteId(id)}</a>
   );
 }
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { forgetCard, getLeeches, searchCards, unburyCards, updateCards } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type CardResponse, type CardsSelector, type SpecialStateUpdate, type UpdateCardsRequest } from '../types/spares';
-import { sectionLabel, td, th } from '../utils';
+import { formatNoteId, sectionLabel, td, th } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 
 type SelectorMode = 'query' | 'ids';
@@ -234,7 +234,7 @@ export default function CardTools({ onOpenCard }: {
                     style={onOpenCard ? { cursor: 'pointer' } : undefined}
                   >
                     <td style={td}>{c.id}</td>
-                    <td style={td}>{c.note_id}</td>
+                    <td style={td}>{formatNoteId(c.note_id)}</td>
                     <td style={td}>{STATE_LABELS[c.state] ?? c.state}</td>
                     <td style={td}>{new Date(c.due).toLocaleString()}</td>
                     <td style={td}>{c.special_state ?? '—'}</td>

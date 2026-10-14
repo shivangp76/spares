@@ -9,7 +9,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
-import { td, th, withSearch } from '../utils';
+import { formatNoteId, td, th, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 
@@ -163,7 +163,7 @@ export default function CardsPage() {
                       style={{ cursor: 'pointer' }}
                     >
                       <td style={td}>{card.id}</td>
-                      <td style={td}>{card.note_id}</td>
+                      <td style={td}>{formatNoteId(card.note_id)}</td>
                       <td style={td} className="hide-narrow">{card.order}</td>
                       <td style={td}>{STATE_LABELS[card.state] ?? card.state}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>

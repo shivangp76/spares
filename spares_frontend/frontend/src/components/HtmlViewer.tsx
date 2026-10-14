@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFile } from '../api/client';
 import { useResolvedTheme } from '../theme';
+import { parseNoteId } from '../utils';
 
 interface Props {
   path: string;
@@ -11,7 +12,7 @@ interface Props {
 }
 
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
-const NOTE_LINK = /(?:^|\/)(\d+)\.md$/;
+const NOTE_LINK = /(?:^|\/)([a-z]{1,8})\.md$/;
 const STYLE_ID = 'spares-theme';
 
 /**
@@ -121,6 +122,7 @@ function onClick(e: MouseEvent, onOpenNote: ((noteId: number) => void) | undefin
   if (href.startsWith('#')) return;
   e.preventDefault();
   const noteLink = NOTE_LINK.exec(href);
-  if (noteLink) onOpenNote?.(parseInt(noteLink[1], 10));
+  const noteId = noteLink ? parseNoteId(noteLink[1]) : null;
+  if (noteId !== null) onOpenNote?.(noteId);
   else window.open(href, '_blank', 'noopener,noreferrer');
 }

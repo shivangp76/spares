@@ -6,7 +6,7 @@ import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
-import { insertBlock } from '../utils';
+import { formatNoteId, insertBlock } from '../utils';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
@@ -135,7 +135,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         aria-label="Close detail"
         className="tap-area"
       >×</button>
-      <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note #{note.id}</h3>
+      <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note {formatNoteId(note.id)}</h3>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -240,7 +240,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
                   title={id === null ? 'No note matches this keyword' : ln.matched_keyword ?? undefined}
                   style={{ padding: '4px 8px', fontSize: 12 }}
                 >
-                  {ln.searched_keyword} ({id ?? 'unmatched'})
+                  {ln.searched_keyword} ({id === null ? 'unmatched' : formatNoteId(id)})
                 </button>
               );
             })}
