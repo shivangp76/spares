@@ -3,7 +3,10 @@
 # and restarts, keeping the API key and data.
 #
 #   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
-#                          [--domain <domain> | --tailscale]
+#                          [--domain <domain> | --tailscale] [--user <name>]
+#   sudo bash setup_vps.sh     # update, with the arguments of the last run
+#
+# `scripts/deploy_vps.sh` on your laptop runs this for you, and sets up the laptop's side.
 #
 # --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
 #               the same path on the server), e.g. /Users/you/.local/share/spares.
@@ -14,33 +17,71 @@
 # --tailscale   Serve over HTTPS on your tailnet only, with `tailscale serve`. No port is opened
 #               to the internet. The first run prints a link to add this server to the tailnet.
 #               Without either, the server only listens on 127.0.0.1:8080 (use an SSH tunnel).
+# --user        The user spares runs as, and that `spares sync cloud` logs in as. Defaults to the
+#               user who ran sudo, so pass it when running as root. A missing user is created,
+#               with sudo and root's SSH keys.
 #
 # The server is the sync server (replica 1) for two-way sync with your laptop (`sync_url`).
 #
-# Runs spares as the user who ran sudo, since `spares sync cloud` logs in as that user.
 set -euo pipefail
 
 REPO_URL="https://github.com/shivangp76/spares.git"
+# The arguments of the last run, for updating without them
+SETUP_CONF="/etc/spares/setup.conf"
 DATA_DIR=""
 LOCAL_HOME=""
 DOMAIN=""
 TAILSCALE=false
+SPARES_USER="${SUDO_USER:-}"
+[[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
+if [[ $# -eq 0 && -f "$SETUP_CONF" ]]; then
+  # shellcheck source=/dev/null
+  source "$SETUP_CONF"
+  echo "==> Using the arguments of the last run ($SETUP_CONF)"
+fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --local-home) LOCAL_HOME="${2%/}"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     --tailscale) TAILSCALE=true; shift ;;
+    --user) SPARES_USER="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
-[[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
-[[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || { echo "Run with sudo as the user that syncs, not as root." >&2; exit 1; }
+[[ -n "$SPARES_USER" && "$SPARES_USER" != root ]] || { echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2; exit 1; }
 [[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
 
-SPARES_USER="$SUDO_USER"
+if ! id "$SPARES_USER" >/dev/null 2>&1; then
+  echo "==> Creating the user $SPARES_USER"
+  adduser --disabled-password --gecos "" "$SPARES_USER"
+  usermod -aG sudo "$SPARES_USER"
+  if [[ -f /root/.ssh/authorized_keys ]]; then
+    install -d -m 700 -o "$SPARES_USER" -g "$SPARES_USER" "/home/$SPARES_USER/.ssh"
+    install -m 600 -o "$SPARES_USER" -g "$SPARES_USER" /root/.ssh/authorized_keys "/home/$SPARES_USER/.ssh/"
+  fi
+fi
+# sudo needs a password to update later, as root may not be able to log in then
+if [[ "$(passwd -S "$SPARES_USER" | awk '{print $2}')" != P ]]; then
+  if [[ -t 0 ]]; then
+    echo "==> Set a password for $SPARES_USER (for sudo)"
+    until passwd "$SPARES_USER"; do :; done
+  else
+    echo "Note: $SPARES_USER has no password, so it cannot use sudo. Set one with: passwd $SPARES_USER" >&2
+  fi
+fi
+
+mkdir -p /etc/spares
+{
+  printf 'DATA_DIR=%q\n' "$DATA_DIR"
+  printf 'LOCAL_HOME=%q\n' "$LOCAL_HOME"
+  printf 'DOMAIN=%q\n' "$DOMAIN"
+  printf 'TAILSCALE=%q\n' "$TAILSCALE"
+  printf 'SPARES_USER=%q\n' "$SPARES_USER"
+} > "$SETUP_CONF"
+
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
 # Checked before installing anything, and created before the data directory, which may be inside it
 if [[ -n "$LOCAL_HOME" && "$LOCAL_HOME" != "$USER_HOME" ]]; then
@@ -119,7 +160,6 @@ else
   as_user "{ echo 'render_browser_parsers = false'; cat '$CONFIG_FILE' 2>/dev/null || true; } > '$CONFIG_FILE.new' && mv '$CONFIG_FILE.new' '$CONFIG_FILE'"
 fi
 
-mkdir -p /etc/spares
 API_KEY="$(grep -s '^SPARES_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
 [[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
 install -m 600 /dev/null "$ENV_FILE"
@@ -216,6 +256,8 @@ fi
 
 sleep 1
 systemctl is-active --quiet spares || { journalctl -u spares -n 30 --no-pager; exit 1; }
+# For `deploy_vps.sh`, which reads where the server is from here
+echo "$URL" > /etc/spares/url
 HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
 [[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"
 cat <<EOF
@@ -234,5 +276,5 @@ Next, on the machine you sync from (replica 0):
      After that, \`spares sync cloud\` syncs both ways and copies the rendered files, your
      templates and the files your notes read.
 
-Logs: journalctl -u spares -f      Update: re-run this script.
+Logs: journalctl -u spares -f      Update: sudo bash setup_vps.sh (no arguments needed)
 EOF
