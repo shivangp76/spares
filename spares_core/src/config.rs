@@ -565,7 +565,7 @@ pub(crate) async fn write_internal_config(
     Ok(())
 }
 
-fn get_external_config_file() -> PathBuf {
+pub fn get_external_config_file() -> PathBuf {
     let mut config_file_path = get_config_dir();
     config_file_path.push("config.toml");
     config_file_path
@@ -628,6 +628,32 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     Ok(config)
 }
 
+/// Keys of `config.toml` that only mean something on the machine that syncs, and are left out of
+/// the copy [`server_config`] makes.
+const LOCAL_ONLY_CONFIG_KEYS: [&str; 4] = [
+    "remote_host",
+    "sync_url",
+    "sync_interval_minutes",
+    "remote_rendered_dir",
+];
+
+/// The `config.toml` for the sync server, made from this machine's (`contents`), so reviews and
+/// rendering there use the same settings: the same, without the keys about reaching the server,
+/// and with `render_browser_parsers = false`, since web clients compile those parsers' cards.
+pub fn server_config(contents: &str) -> Result<String, Error> {
+    let mut doc = contents
+        .parse::<DocumentMut>()
+        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+    for key in LOCAL_ONLY_CONFIG_KEYS {
+        doc.remove(key);
+    }
+    doc.insert("render_browser_parsers", toml_edit::value(false));
+    Ok(format!(
+        "# Copied from the config.toml of the machine that syncs by `spares sync cloud`, which \
+         overwrites\n# changes made here. Change that one instead.\n{doc}"
+    ))
+}
+
 pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
@@ -651,6 +677,31 @@ mod tests {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
         config.validate().unwrap();
         config
+    }
+
+    #[test]
+    fn server_config_keeps_settings_but_not_how_to_reach_the_server() {
+        let laptop = "maximum_interval = 100 # days, roughly\nremote_host = \"me@vps\"\n\
+                      sync_url = \"https://vps\"\nsync_interval_minutes = 15\n\n\
+                      [leech]\nlapses_threshold = 8\n";
+        let server = server_config(laptop).unwrap();
+        let config = parse(&server);
+        assert_eq!(config.maximum_interval, Duration::seconds(100));
+        assert_eq!(config.leech.lapses_threshold, 8);
+        assert!(!config.render_browser_parsers);
+        assert_eq!(config.remote_host, None);
+        assert_eq!(config.sync_url, None);
+        assert_eq!(config.sync_interval_minutes, 0);
+        assert!(server.contains("# days, roughly"), "{server}");
+        // A top-level key after a table would belong to the table.
+        assert!(
+            server.find("render_browser_parsers") < server.find("[leech]"),
+            "{server}"
+        );
+        // An existing value is replaced.
+        let server = server_config("render_browser_parsers = true\n").unwrap();
+        assert!(!parse(&server).render_browser_parsers);
+        assert_eq!(server.matches("render_browser_parsers").count(), 1);
     }
 
     #[test]
