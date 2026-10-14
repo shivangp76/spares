@@ -404,13 +404,13 @@ The client does all of this and pushes the result, so the server never re-parses
   - card files left over from cards a sync removed (orders past the note's last card) are deleted.
 
   The server does this after a push or a full upload; the client after `sync_now` (which `POST /api/sync/run` calls).
+- **Change number** (implemented): the nvim plugin refreshes its keyword cache when `spares event latest` changes, and sync writes create no events. So that number is the newest note event id plus `app_state.notes_version_offset`, which every sync that changes notes moves on. A full sync, which clears `event`, adds more than the newest event id, so the number never repeats.
 - **Undo:** record `last_sync_event_id`. `/api/undo` refuses events at or below it (Anki also clears undo on sync). The server sets it when it answers a pull or a push, the client when it commits a sync.
 
 ### Open issues
 - **Regenerating files after a sync and edits not imported yet.**
   - With the notes repository (`notes_vcs`), regenerated files are committed to the server copy (`notes-spares`). Edits not pushed yet live in the user's clone in `notes/`, so they are never overwritten. They meet the sync's commit when the clone is rebased, as with any other server-side change.
   - Without it, files under `<data_dir>/notes/` are rewritten in place. `spares sync cloud` imports pending file edits (`spares sync`) first (section 8). An edit made during the sync could still be overwritten.
-- **The nvim keyword cache goes stale.** The plugin refreshes keywords when `event latest` changes. Sync writes don't create events, so completion goes stale after a sync.
 
 ## 8. Fewer conflicts to begin with
 - **Note file edits.** With the notes repository, edits to note files reach the database by `jj git push` from `notes/`. Push them before `spares sync cloud` so they're in this sync; otherwise they go in the next one. Nothing is lost either way, since the sync's own file changes are commits that the clone rebases onto.

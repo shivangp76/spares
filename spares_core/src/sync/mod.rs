@@ -40,6 +40,10 @@ pub const LAST_SYNC_AT_KEY: &str = "last_sync_at";
 pub const LAST_SYNC_EVENT_ID_KEY: &str = "last_sync_event_id";
 /// Set (to the reason) when only a full sync can bring the replicas back in step.
 pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
+/// Added to the newest note event id by [`crate::api::undo::get_latest_note_event_id`], so the
+/// number readers use to notice note changes (the nvim plugin's keyword cache) also changes when
+/// a sync changes notes, which writes no events. See [`bump_notes_version`].
+pub const NOTES_VERSION_OFFSET_KEY: &str = "notes_version_offset";
 
 /// The tables with a `usn` column.
 pub(crate) const USN_TABLES: [&str; 5] = ["parser", "tag", "note", "card", "review_log"];
@@ -101,6 +105,23 @@ pub(crate) async fn guard_undo(conn: &mut SqliteConnection) -> Result<(), Error>
         .await
         .map_err(sqlx_error)?;
     set_state(conn, LAST_SYNC_EVENT_ID_KEY, latest).await
+}
+
+/// Moves the note change number on after a sync changed notes. Call it before clearing `event`
+/// (as a full sync does), with that clearing in the same transaction: the offset then grows by
+/// more than the newest event id, so the number never comes back to a value it had before.
+pub(crate) async fn bump_notes_version(conn: &mut SqliteConnection) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value)
+         VALUES (?1, (SELECT COALESCE(MAX(id), 0) + 1 FROM event))
+         ON CONFLICT (key) DO UPDATE
+         SET value = CAST(value AS INTEGER) + (SELECT COALESCE(MAX(id), 0) + 1 FROM event)",
+    )
+    .bind(NOTES_VERSION_OFFSET_KEY)
+    .execute(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    Ok(())
 }
 
 /// The newest migration this database has run.

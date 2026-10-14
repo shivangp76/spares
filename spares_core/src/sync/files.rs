@@ -13,6 +13,7 @@ use log::error;
 use log::info;
 use sqlx::SqlitePool;
 
+use super::bump_notes_version;
 use super::http::HttpRemote;
 use super::run::SyncMode;
 use super::run::SyncReport;
@@ -65,9 +66,19 @@ pub async fn note_ids(db: &SqlitePool) -> Result<BTreeSet<NoteId>, Error> {
 }
 
 /// Regenerates the files of `changed` notes and removes those of `deleted` ones, and card files
-/// left over from cards a sync removed. The database change has happened, so failures are
-/// logged rather than returned.
+/// left over from cards a sync removed, and lets readers of the note change number know. The
+/// database change has happened, so failures are logged rather than returned.
 pub async fn after_sync(db: &SqlitePool, changed: &BTreeSet<NoteId>, deleted: &BTreeSet<NoteId>) {
+    if changed.is_empty() && deleted.is_empty() {
+        return;
+    }
+    let bumped = match db.acquire().await {
+        Ok(mut conn) => bump_notes_version(&mut conn).await,
+        Err(e) => Err(Error::Sqlx { source: e }),
+    };
+    if let Err(e) = bumped {
+        error!("Failed to record that a sync changed notes: {e}");
+    }
     if let Err(e) = update_files(db, changed, deleted).await {
         error!("Failed to update note files after a sync: {e}");
     }
