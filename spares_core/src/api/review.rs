@@ -10,6 +10,7 @@ use chrono::Utc;
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
+use log::warn;
 use serde_json::Value;
 use serde_json::to_value;
 use sqlx::FromRow;
@@ -21,6 +22,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::browser_render::add_browser_render_sources;
+use crate::api::browser_render::load_review_card;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
@@ -62,6 +64,7 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::has_web_render_file;
+use crate::parsers::typed_answer::typed_answer_info;
 use crate::parsers::web_render_filepath;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
@@ -326,6 +329,7 @@ fn build_review_card_response(
         keywords,
         cli,
         browser_sources: None,
+        typed_answer: None,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -754,8 +758,35 @@ pub(crate) async fn review_card_response(
         linked_notes,
         keywords,
     )?;
-    add_browser_render_sources(db, &mut response, all_parsers).await?;
+    add_card_extras(db, &mut response, all_parsers).await?;
     Ok(response)
+}
+
+/// Fills in the parts of `response` that come from parsing its card's note: the sources to compile
+/// in the browser and the answers to type.
+async fn add_card_extras(
+    db: &SqlitePool,
+    response: &mut GetReviewCardResponse,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<(), Error> {
+    let parser = find_parser(&response.parser_name, all_parsers)?;
+    let loaded = load_review_card(db, parser.as_ref(), response).await;
+    // Only cards compiled in the browser need their note parsed to be shown at all
+    let (request, card) = match loaded {
+        Ok(loaded) => loaded,
+        Err(e) if !parser.renders_in_browser() => {
+            warn!(
+                "Note {} card {} could not be parsed for its typed answer: {e}",
+                response.note_id.letters(),
+                response.card_order
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    add_browser_render_sources(parser.as_ref(), response, &request, &card)?;
+    response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
+    Ok(())
 }
 
 pub async fn get_review_card_by_id(
@@ -1290,6 +1321,66 @@ mod tests {
         assert!(!cards.is_empty());
 
         (last_note.clone(), cards)
+    }
+
+    #[sqlx::test]
+    async fn test_review_card_typed_answer(pool: SqlitePool) -> () {
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::parsers::TypeAnswer;
+        use crate::parsers::typed_answer::TypedAnswerInfo;
+        use crate::parsers::typed_answer::TypedBlank;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "The capital of France is {{[t:ci;h:city] *Paris*}}. {{Not typed}}"
+                    .to_string(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let now = Utc::now();
+        create_notes(&pool, request, now, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let card_ids: Vec<CardId> = sqlx::query_scalar(r"SELECT id FROM card ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let mut typed_answers = Vec::new();
+        for card_id in card_ids {
+            let review_card = get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+                .await
+                .unwrap()
+                .unwrap();
+            typed_answers.push((review_card.card_order, review_card.typed_answer));
+        }
+        typed_answers.sort_by_key(|(order, _)| *order);
+        assert_eq!(
+            typed_answers,
+            vec![
+                (
+                    1,
+                    Some(TypedAnswerInfo {
+                        mode: TypeAnswer::Diff {
+                            ignore_case: true,
+                            ignore_combining: false,
+                        },
+                        blanks: vec![TypedBlank {
+                            expected: "Paris".to_string(),
+                            hint: Some("city".to_string()),
+                        }],
+                    })
+                ),
+                (2, None),
+            ]
+        );
     }
 
     #[sqlx::test]

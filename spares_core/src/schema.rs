@@ -526,6 +526,7 @@ pub mod review {
     use crate::model::RatingId;
     use crate::model::StateId;
     use crate::model::TagId;
+    use crate::parsers::typed_answer::TypedAnswerInfo;
 
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct GetReviewCardRequest {
@@ -629,6 +630,9 @@ pub mod review {
         /// Present iff the parser [renders in the browser](crate::parsers::Parseable::renders_in_browser).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub browser_sources: Option<BrowserRenderSources>,
+        /// Present iff the card asks for its answers to be typed (the cloze key `t`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub typed_answer: Option<TypedAnswerInfo>,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
