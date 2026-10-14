@@ -1,6 +1,5 @@
 [book]
 authors = ["Shivang Patel"]
 language = "en"
-multilingual = false
 src = "src"
 title = "Spares Manual"
