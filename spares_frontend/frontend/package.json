@@ -9,6 +9,7 @@
     "build": "bun run prepare-svgedit && tsc -b && vite build",
     "prepare-svgedit": "cd ./svgedit/ && bun install && ([ -d packages/svgcanvas/dist ] || npm run build --workspace @svgedit/svgcanvas)",
     "lint": "eslint .",
+    "test": "bun test ./src",
     "preview": "vite preview",
     "start-main": "bun install && bun run prepare-svgedit && bun run dev",
     "start-image-occlusion": "bun install && bun run prepare-svgedit && bun run dev-image-occlusion"

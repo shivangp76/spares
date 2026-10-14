@@ -20,5 +20,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Run by `bun test`, with its own types
+  "exclude": ["src/**/*.test.ts"]
 }

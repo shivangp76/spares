@@ -24,6 +24,8 @@ export interface GetReviewCardResponse {
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_sources?: BrowserRenderSources;
+  // Present iff the card asks for its answers to be typed (the cloze key `t`)
+  typed_answer?: TypedAnswerInfo;
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
@@ -32,6 +34,22 @@ export interface GetReviewCardResponse {
 export interface CliReviewInfo {
   exec: string;
   surrounding: string;
+}
+
+// Internally-tagged serde enum
+export type TypeAnswer =
+  | { kind: 'diff'; ignore_case: boolean; ignore_combining: boolean }
+  | { kind: 'manual' };
+
+export interface TypedBlank {
+  expected: string;
+  hint?: string;
+}
+
+export interface TypedAnswerInfo {
+  mode: TypeAnswer;
+  // One per answer cloze, in reading order
+  blanks: TypedBlank[];
 }
 
 export interface BrowserRenderSources {
