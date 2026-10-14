@@ -4138,6 +4138,7 @@ dependencies = [
  "toml_edit 0.25.15+spec-1.1.0",
  "trash",
  "typst-syntax",
+ "unicode-normalization",
  "unscanny",
  "uuid",
  "xmltree",

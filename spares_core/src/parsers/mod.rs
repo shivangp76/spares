@@ -34,6 +34,7 @@ pub(crate) mod image_occlusion;
 pub(crate) mod impls;
 mod notes;
 mod settings;
+pub mod typed_answer;
 
 pub use cards::*;
 pub use cli::CliBlockMatch;
@@ -133,6 +134,12 @@ pub trait Parseable: Send + Sync {
         side: CardSide,
         id: Option<&str>,
     ) -> String;
+
+    /// `text`, an answer cloze's source with the delimiters of nested clozes removed, as it is
+    /// expected to be typed, i.e. without markup. Whitespace is collapsed afterwards.
+    fn typed_answer_text(&self, text: &str) -> String {
+        text.to_string()
+    }
 
     fn construct_setting(&self, data: &str) -> String;
 
