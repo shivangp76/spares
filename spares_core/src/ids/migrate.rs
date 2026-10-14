@@ -1,6 +1,5 @@
 //! `spares migrate ids`: renumbers a database's notes from the old numeric ids to letter ids, once,
-//! before a second replica exists. See "Migrating existing data" in section 4 of
-//! `docs/sync-plan.md`.
+//! before a second replica exists. See "The migration" in `docs/src/sync_design.md`.
 //!
 //! Notes keep their order: the oldest gets `aaa`, the next `aab`, and so on through consecutive
 //! laptop slots, so slot `z` stays free in every block for the server.

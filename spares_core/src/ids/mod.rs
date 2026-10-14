@@ -1,6 +1,6 @@
 //! Note ids: short lowercase letter strings (`gir`, `giza`) that are unique across replicas without
 //! coordination, sort in creation order, and keep notes created together next to each other. See
-//! section 4 of `docs/sync-plan.md` for the reasoning.
+//! "Note ids" in `docs/src/sync_design.md` for the reasoning.
 //!
 //! An id is stored as an `i64`: its letters read as a base-27 number left-aligned to
 //! [`MAX_LETTERS`] places (`a` = 1 … `z` = 26, an empty place = 0). Comparing the integers
@@ -340,7 +340,7 @@ fn ids_after(replica: Replica, newest: Option<NoteId>, n: usize) -> Result<Vec<N
         number => {
             return Err(note_error(format!(
                 "Replica {number} cannot create notes yet: only replicas 0 (laptop) and 1 (server) \
-                 have note id rules. See \"A third replica\" in docs/sync-plan.md."
+                 have note id rules. See \"A third replica\" in docs/src/sync_design.md."
             )));
         }
     };
