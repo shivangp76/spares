@@ -143,6 +143,9 @@ function queryHasLimit(query: string): boolean {
   return /(^|[\s(])limit\s*=/.test(query);
 }
 
+/** Border, padding and line heights of a due count card on the landing page. */
+const DUE_CARD_HEIGHT = 2 + 12 + 26 + 16;
+
 function initialFilter(params: URLSearchParams): { mode: FilterMode; input: string } {
   const tagId = params.get('tagId');
   if (tagId !== null) return { mode: 'tagId', input: tagId };
@@ -767,21 +770,20 @@ export default function ReviewPage() {
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>
           {sessionStarted && <div style={{ marginBottom: 24 }}>{summary}</div>}
-          {statistics && (
-            <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-              {Object.entries(statistics.due_count_by_state)
-                .filter(([, count]) => count > 0)
-                .map(([stateId, count]) => (
-                  <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 20, fontWeight: 600 }}>{count}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
-                  </div>
-                ))}
-              {Object.values(statistics.due_count_by_state).every(c => c === 0) && (
-                <p style={{ color: 'var(--text-secondary)' }}>Nothing due to review.</p>
-              )}
-            </div>
-          )}
+          {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift. */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center', minHeight: DUE_CARD_HEIGHT }}>
+            {statistics && Object.entries(statistics.due_count_by_state)
+              .filter(([, count]) => count > 0)
+              .map(([stateId, count]) => (
+                <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', textAlign: 'center', boxSizing: 'border-box', height: DUE_CARD_HEIGHT }}>
+                  <div style={{ fontSize: 20, fontWeight: 600, lineHeight: '26px' }}>{count}</div>
+                  <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
+                </div>
+              ))}
+            {statistics && Object.values(statistics.due_count_by_state).every(c => c === 0) && (
+              <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Nothing due to review.</p>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 16, marginBottom: 8, fontSize: 14 }}>
             {FILTER_MODES.map(({ mode, label }) => (
               <label key={mode} style={{ cursor: 'pointer' }}>
