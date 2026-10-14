@@ -416,7 +416,7 @@ The client does all of this and pushes the result, so the server never re-parses
 - **Note file edits.** With the notes repository, edits to note files reach the database by `jj git push` from `notes/`. Push them before `spares sync cloud` so they're in this sync; otherwise they go in the next one. Nothing is lost either way, since the sync's own file changes are commits that the clone rebases onto.
   - `spares sync` (the Anki adapter's sync) is not involved. Section 2's description of it as files → DB was wrong.
   - Without the notes repository, `spares sync cloud` warns that file edits not imported yet are overwritten if the sync changes those notes.
-- **Optional auto-sync:** the laptop's local server syncs on startup and every `sync_interval_minutes` whenever the remote is reachable. Failures are logged, not fatal.
+- **Optional auto-sync** (`spares_server/src/auto_sync.rs`, implemented): with `sync_url` and `sync_interval_minutes` set, a `client` server syncs on startup and every that many minutes. Failures (the server being unreachable, for one) are logged, not fatal. A required full sync pauses it with one warning until `spares sync cloud` does it. It doesn't run the rsync of rendered files; `spares sync cloud` does.
 - Live notes are read-only on the web.
 
 ## 9. Interfaces
