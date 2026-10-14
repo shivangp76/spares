@@ -1,6 +1,6 @@
 # Two-way sync for spares: design plan
 
-Status: proposed. Note ids (section 4, except "Other tables") are implemented, including `spares migrate ids`; the rest is not started. Last updated 2026-10-13. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
+Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) is implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
 
 ## 1. Goal and context
 
@@ -107,7 +107,7 @@ server:  <block>z<tail>         e.g. block "gi" + "z" + tail "a"  → "giza"
 - **The tail** (server only) is 1 letter (`a`–`y`) for the server's first 25 notes in a block, then `z` + 2 letters for the next 650.
 - **No ID is the start of another.** No block is the start of another block, and after its block a laptop ID has `a`–`y` where a server ID has `z`. So sorting the strings sorts by block, then slot, then tail. Checked with `localizedStandardCompare` (Finder's order) and byte order on names like `giy.typ`, `giza.typ`, `gizzaa.typ`, `gja.typ`, `taaa.typ` and their card files.
 - A replica's identity comes from **config/env, never the DB**. A full download replaces the DB file, and the laptop must not take on the server's identity. There are two separate settings. Both are required with no default, and the server refuses to start without them. Tests default to replica `0`, role `client`.
-  - **`SPARES_REPLICA`**: the replica number, `0`–`15`. `0` is the laptop and `1` is the server. A later replica takes the next unused number. The number decides which ID form the replica writes (see "Allocation" and "A third replica") and its residue for the other tables (see "Other tables").
+  - **`SPARES_REPLICA`**: the replica number, `0`–`7` (one per residue mod 8, see "Other tables"). `0` is the laptop and `1` is the server. A later replica takes the next unused number. The number decides which ID form the replica writes (see "Allocation" and "A third replica") and its residue for the other tables (see "Other tables").
   - **`SPARES_SYNC_ROLE`**: `server` or `client`. It decides whether this instance answers `/api/sync/*` or runs the client side, including the merge.
   - Keeping the two apart means adding a replica only takes a new number, and code never has to infer the role from the number.
 - Creation time stays in `created_at`.
@@ -139,7 +139,7 @@ Each replica keeps a cursor: the last note ID it handed out (see "The high-water
   - It's keyed by replica because full syncs copy the whole DB, including the other side's rows.
 - **The next ID** starts from `max(last, largest in the table)`. Taking the max with the table counts IDs that arrived from the other replica.
   - Notes: that's M in "Allocation".
-  - Other tables: the smallest number above it that is congruent to the replica number mod 16 (see "Other tables").
+  - Other tables: the smallest number above it that is congruent to the replica number mod 8 (see "Other tables").
 - **Locking.** The allocation's first statement is a no-op write (`UPDATE id_counter SET last = last WHERE replica = ? AND tbl = ?`), so the transaction takes SQLite's write lock before it reads the table's maximum.
   - The slot arithmetic for notes is too involved for SQL, so it runs in Rust, and the new `last` is written in the same transaction.
   - With sqlx's default deferred transaction, reading first would let two concurrent creates read the same maximum, and one would fail with `SQLITE_BUSY`.
@@ -192,12 +192,12 @@ All of these use the letter form:
 ### Other tables (card, review_log, tag, parser)
 - These have no human-facing requirement, but they still need IDs that are unique across replicas.
 - **Existing rows keep their IDs.**
-  - New rows take the smallest ID above `max(high-water mark, MAX(id))` that is congruent to the replica number mod 16 (`SPARES_REPLICA`: laptop `≡ 0`, server `≡ 1`, a third replica `≡ 2`).
-  - The modulus is fixed at 16 from the start, not at the current replica count, so adding a replica never changes the rule for the existing ones.
-  - These IDs are never shown, so wasting 15/16 of the numbers costs nothing. At a few thousand rows a year, i64 doesn't come close to running out.
+  - New rows take the smallest ID above `max(high-water marks, MAX(id))` that is congruent to the replica number mod 8 (`SPARES_REPLICA`: laptop `≡ 0`, server `≡ 1`, a third replica `≡ 2`). The high-water marks are this replica's and any other replica's a full sync brought along, so IDs keep increasing even after the newest rows are deleted.
+  - The modulus is fixed at 8 from the start, not at the current replica count, so adding a replica never changes the rule for the existing ones.
+  - These IDs are never shown, so wasting 7/8 of the numbers costs nothing. At a few thousand rows a year, i64 doesn't come close to running out.
   - New IDs are always above the old ones, so they can't collide.
   - Not re-keying keeps the card IDs that `review_log`, the phone's offline queue and undo payloads refer to.
-  - All of this goes in one shared helper, `next_ids(conn, table, n)`.
+  - All of this goes in one shared helper, `next_ids(conn, table, n)` (`spares_core/src/ids/mod.rs`). It is a single `INSERT … ON CONFLICT … RETURNING` on `id_counter`, so it is atomic without a surrounding transaction.
 - Call sites that allocate new IDs (checked against the code on 2026-10-13):
   - card: `create_cards_on` (`api/note/create.rs`), also reached from `api/note/update/cards.rs`;
   - review_log: `rate_card` (`api/review.rs`), `copy_review_logs_on` (`api/note/create.rs`), `forget_card` (`api/card.rs`);
@@ -451,7 +451,7 @@ Open the web app online beforehand, so the phone sends its offline queue.
   - live notes read-only;
   - IDs shown in letter form.
 - **Config** (`SparesExternalConfig`, `spares_core/src/config.rs`): `sync_url` and `sync_interval`, next to `remote_host`.
-- **Env:** `SPARES_REPLICA` (`0`–`15`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY`.
+- **Env:** `SPARES_REPLICA` (`0`–`7`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY`.
 
 ### Open issues
 - **Conflicts only exist on the laptop,** because the merge runs there. The phone would see the `sync-conflict` badge, but its server has no conflict rows to show.
@@ -501,7 +501,7 @@ Open the web app online beforehand, so the phone sends its offline queue.
   - the laptop moves to the next block after it sees a server note in its current block;
   - no ID is handed out twice after a delete, after create, undo, create, redo, or after a full download;
   - allocation errors instead of producing a 9th letter;
-  - card, review_log, tag and parser IDs are congruent to the replica number mod 16, and replicas `0`, `1` and `2` allocating in random interleavings never collide;
+  - card, review_log, tag and parser IDs are congruent to the replica number mod 8, and replicas `0`, `1` and `2` allocating in random interleavings never collide;
   - the server refuses to start when `SPARES_REPLICA` or `SPARES_SYNC_ROLE` is missing or invalid;
   - letter IDs parse in any case, and digits are rejected;
   - `migrate ids --dry-run` on a copy of the real DB gives `aaa`…`giq`.
