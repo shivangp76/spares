@@ -1,4 +1,4 @@
-//! Automatic sync: a sync client with `sync_url` and `sync_interval_minutes` set syncs on startup
+//! Automatic sync: a sync client with `sync.url` and `sync.interval_minutes` set syncs on startup
 //! and then every that many minutes. Failures (the server being unreachable, for one) are logged
 //! and the next attempt goes ahead as planned.
 
@@ -24,7 +24,7 @@ pub(crate) fn spawn(db: SqlitePool) {
     let Ok(config) = read_external_config() else {
         return;
     };
-    let (Some(url), minutes) = (config.sync_url, config.sync_interval_minutes) else {
+    let (Some(url), minutes) = (config.sync.url, config.sync.interval_minutes) else {
         return;
     };
     if minutes == 0 {
@@ -40,7 +40,10 @@ pub(crate) fn spawn(db: SqlitePool) {
             let db = db.clone();
             let temp_dir = get_cache_dir().join("sync");
             if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-                warn!("Automatic sync failed: cannot create {}: {e}", temp_dir.display());
+                warn!(
+                    "Automatic sync failed: cannot create {}: {e}",
+                    temp_dir.display()
+                );
                 continue;
             }
             let result =

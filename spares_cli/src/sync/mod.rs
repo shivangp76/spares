@@ -90,14 +90,14 @@ pub(crate) struct SyncArgs {
 pub(crate) enum SyncSubcommand {
     /// Sync with the server both ways.
     ///
-    /// With `sync_url` set in config.toml, exchanges changes with the server, merging notes both
+    /// With `sync.url` set in config.toml, exchanges changes with the server, merging notes both
     /// sides changed. If only a full sync is possible (the first sync, for one), it says why and
-    /// asks which way. Then, with `remote_host` set (e.g. "user@myserver.com"), copies the files
-    /// the server cannot generate itself: the rendered files, the templates, and the files that
-    /// rendering recorded the notes as reading (preambles, figures, ...).
+    /// asks which way. Then, with `sync.remote_host` set (e.g. "user@myserver.com"), copies the
+    /// files the server cannot generate itself: the rendered files, the templates, and the files
+    /// that rendering recorded the notes as reading (preambles, figures, ...).
     ///
-    /// Without `sync_url`, pushes the database to `remote_host`, replacing the server's, and then
-    /// the files.
+    /// Without `sync.url`, pushes the database to `sync.remote_host`, replacing the server's, and
+    /// then the files.
     Cloud {
         /// Replace the server's database with this one
         #[arg(long, conflicts_with = "full_download")]

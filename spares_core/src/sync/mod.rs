@@ -6,6 +6,8 @@
 //! the three-way merge. Triggers maintain all of this, so no write path can be missed. Sync turns
 //! them off with [`set_applying`] while it writes the other replica's changes.
 
+use serde::Deserialize;
+use serde::Serialize;
 use sqlx::SqliteConnection;
 
 use crate::Error;
@@ -27,6 +29,35 @@ pub mod server;
 mod tests;
 #[cfg(test)]
 mod tracking_tests;
+
+/// The `[sync]` table of `config.toml`. Only the machine that syncs uses it, so it is left out of
+/// the copy `spares sync cloud` makes for the server (see [`crate::config::server_config`]).
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SyncConfig {
+    /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
+    /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
+    pub url: Option<String>,
+    /// With `url`, the local server syncs on startup and then every this many minutes. `0` turns
+    /// automatic syncing off.
+    pub interval_minutes: u64,
+    /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`.
+    pub remote_host: Option<String>,
+    /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
+    /// to the remote user's home directory. Must match the server's `SPARES_CACHE_DIR`.
+    pub remote_rendered_dir: String,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            interval_minutes: 0,
+            remote_host: None,
+            remote_rendered_dir: ".cache/spares".to_string(),
+        }
+    }
+}
 
 /// `app_state` keys. On the server, `sync_usn` is its counter; on a client, the server's counter
 /// at its last sync.

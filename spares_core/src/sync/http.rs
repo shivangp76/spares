@@ -1,4 +1,4 @@
-//! The server over HTTP: `/api/sync/*` on `sync_url` (see `spares_server`'s sync handlers).
+//! The server over HTTP: `/api/sync/*` on `sync.url` (see `spares_server`'s sync handlers).
 
 use std::path::Path;
 use std::time::Duration;

@@ -80,7 +80,7 @@ It takes 10–15 minutes. What it does, and what it asks:
 4. **Sets up the laptop:**
    - stores the server's API key in the Keychain (service `spares-sync`);
    - asks **how often to sync in the background** (Enter keeps 15 minutes);
-   - sets `remote_host`, `sync_url` and `sync_interval_minutes` in `~/.config/spares/config.toml` (keeping the old one as `config.toml.bak` if it changed);
+   - sets `remote_host`, `url` and `interval_minutes` in the `[sync]` table of `~/.config/spares/config.toml` (keeping the old one as `config.toml.bak` if it changed);
    - offers to add `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client` and `SPARES_SYNC_API_KEY` to `~/.config/spares/spares.zsh`. Say **yes**.
 5. **Waits for you to restart the local server**, so it picks up the new settings. Stop it, open a new terminal (or `source ~/.config/spares/spares.zsh`), start it again, and press Enter. If your local server has an API key (`spares_serve`), the script reads it from the Keychain (`spares-api-key`) or asks for it.
 6. **Uploads your database** after you confirm, then shows the note, card and review counts on both sides. They should match.
@@ -100,7 +100,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 
 ## Day to day
 
-- **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync_interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
+- **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
 - **Update the server** after changing spares: `scripts/deploy_vps.sh update`, then restart the local server, so both run the same version.
