@@ -609,6 +609,7 @@ pub mod tests {
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
+                    type_answer: None,
                     inherit: None,
                     cloze_uid: None,
                     data: vec![
@@ -629,6 +630,7 @@ pub mod tests {
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
+                    type_answer: None,
                     inherit: None,
                     cloze_uid: None,
                     data: vec![
@@ -665,6 +667,7 @@ pub mod tests {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![

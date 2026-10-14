@@ -26,7 +26,7 @@ fn make_cards(data: &str, config: &OverlapperConfig) -> Vec<CardData> {
         data.to_string(),
         false,
         MOVE_FILES,
-        (FrontConceal::default(), BackReveal::default(), false),
+        (FrontConceal::default(), BackReveal::default(), false, None),
         Some(config),
         false,
     )
@@ -41,7 +41,7 @@ fn make_cards_with_order(data: &str, config: &OverlapperConfig) -> Vec<CardData>
         data.to_string(),
         true,
         MOVE_FILES,
-        (FrontConceal::default(), BackReveal::default(), false),
+        (FrontConceal::default(), BackReveal::default(), false, None),
         Some(config),
         false,
     )
@@ -58,6 +58,7 @@ fn blank_card(grouping: ClozeGrouping, data: Vec<NotePart>) -> CardData {
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
         back_type: BackType::NoteFilePath,
+        type_answer: None,
         inherit: None,
         cloze_uid: None,
         data,
@@ -656,7 +657,7 @@ fn test_overlapper_no_config_fallback() {
         data.to_string(),
         false,
         MOVE_FILES,
-        (FrontConceal::default(), BackReveal::default(), false),
+        (FrontConceal::default(), BackReveal::default(), false, None),
         None,
         false,
     )

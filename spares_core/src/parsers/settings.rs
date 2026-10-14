@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::BackReveal;
 use super::FrontConceal;
+use super::TypeAnswer;
 use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::adapters::SrsAdapter;
@@ -50,6 +51,8 @@ pub struct NoteSettings {
     pub back_reveal: BackReveal,
     /// Shortcut for applying this settings to all of the note's cards
     pub back_emphasis: bool,
+    /// Shortcut for applying this settings to all of the note's cards
+    pub type_answer: Option<TypeAnswer>,
     pub custom_data: CustomData,
     /// Internal
     pub linked_notes: Vec<String>,
@@ -69,6 +72,7 @@ impl Default for NoteSettings {
             front_conceal: FrontConceal::default(),
             back_reveal: BackReveal::default(),
             back_emphasis: DEFAULT_BACK_EMPHASIS,
+            type_answer: None,
             custom_data: Map::default(),
             linked_notes: Vec::default(),
             errors_and_warnings: Vec::default(),
@@ -118,6 +122,7 @@ pub struct NoteSettingsKeys {
     pub front_conceal: ReadWriteValue,
     pub back_reveal: ReadWriteValue,
     pub back_emphasis: ReadWriteValue,
+    pub type_answer: ReadWriteValue,
     pub custom_data: ReadWriteValue,
     pub live_sync_name: ReadWriteValue,
     pub settings_delim: &'static str,
@@ -147,6 +152,7 @@ impl Default for NoteSettingsKeys {
             front_conceal: ReadWriteValue::Same("front-conceal"),
             back_reveal: ReadWriteValue::Same("back-reveal"),
             back_emphasis: ReadWriteValue::Same("back-emphasis"),
+            type_answer: ReadWriteValue::Same("type-answer"),
             custom_data: ReadWriteValue::Same("custom-data"),
             live_sync_name: ReadWriteValue::Same("live-sync-name"),
             settings_delim: ";",
@@ -189,6 +195,7 @@ pub fn parse_note_settings(
         front_conceal: front_conceal_key,
         back_reveal: back_reveal_key,
         back_emphasis: back_emphasis_key,
+        type_answer: type_answer_key,
         custom_data: custom_data_key,
         live_sync_name: live_sync_name_key,
         global_settings_prefix: global_prefix,
@@ -203,6 +210,7 @@ pub fn parse_note_settings(
             settings_indices,
             settings_delim,
             settings_key_value_delim,
+            false,
         )
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
@@ -332,6 +340,20 @@ pub fn parse_note_settings(
                 }
             } else if back_emphasis_key.matches_read(key) {
                 settings.back_emphasis = true;
+            } else if type_answer_key.matches_read(key) {
+                match TypeAnswer::from_str(value) {
+                    Ok(type_answer) => settings.type_answer = Some(type_answer),
+                    Err(e) => {
+                        settings.errors_and_warnings.push(LibraryError::Note(
+                            NoteErrorKind::InvalidSettings {
+                                description: format!("Failed to parse type answer: {}", e),
+                                advice: None,
+                                src: data.to_string(),
+                                at: settings_indices.clone().into(),
+                            },
+                        ));
+                    }
+                }
             } else if custom_data_key.matches_read(key) {
                 let parsed_custom_data: Result<CustomData, _> = serde_json::from_str(value);
                 match parsed_custom_data {
@@ -482,6 +504,9 @@ pub fn get_settings_pairs<'a>(
     settings_indices: &Range<usize>,
     settings_delim: &str,
     settings_key_value_delim: &str,
+    // Whether a key without a value, such as `t` in `{{[t] Paris}}`, is read as having an empty
+    // value, like `t:`.
+    allow_bare_keys: bool,
 ) -> Vec<Result<(&'a str, &'a str), (String, Range<usize>)>> {
     data[settings_indices.clone()]
         .split(settings_delim)
@@ -491,7 +516,10 @@ pub fn get_settings_pairs<'a>(
                 .map(|x| x.trim())
                 .collect::<Vec<_>>()
         })
-        .map(|parts: Vec<&str>| {
+        .map(|mut parts: Vec<&str>| {
+            if allow_bare_keys && parts.len() == 1 && !parts[0].is_empty() {
+                parts.push("");
+            }
             if parts.len() != 2 {
                 return Err((
                     format!(

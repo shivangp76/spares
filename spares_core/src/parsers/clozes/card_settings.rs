@@ -11,6 +11,7 @@ use super::data::ClozeUid;
 use super::data::FrontConceal;
 use super::data::ModifyDefaultsFn;
 use super::data::ReadableCardIdentifier;
+use super::data::TypeAnswer;
 use crate::CardErrorKind;
 use crate::LibraryError;
 use crate::helpers::GroupByInsertion;
@@ -32,6 +33,8 @@ pub struct ClozeSettingsKeys {
     pub front_conceal: &'static str,
     pub back_reveal: &'static str,
     pub back_emphasis: &'static str,
+    /// The answer is typed before the card is flipped. See [`TypeAnswer`] for its values.
+    pub type_answer: &'static str,
     pub inherit: &'static str,
     pub overlapper: &'static str,
     pub id: &'static str,
@@ -50,6 +53,7 @@ impl Default for ClozeSettingsKeys {
             front_conceal: "f",
             back_reveal: "b",
             back_emphasis: "be",
+            type_answer: "t",
             inherit: "inh",
             overlapper: "ov",
             id: "id",
@@ -115,6 +119,7 @@ pub fn construct_cloze_string(
             front_conceal,
             back_reveal,
             back_emphasis,
+            type_answer,
             skip_serialization,
         },
     ) in grouping_settings_with_all.iter().enumerate()
@@ -185,6 +190,20 @@ pub fn construct_cloze_string(
                 "{}{}{}",
                 cloze_settings_keys.back_emphasis, settings_key_value_delim, back_emphasis
             ));
+        }
+        if *type_answer != default.type_answer
+            && let Some(type_answer) = type_answer
+        {
+            let value = type_answer.to_string();
+            // A bare key is read as an empty value (see `parse_card_settings`)
+            grouping_parts.push(if value.is_empty() {
+                cloze_settings_keys.type_answer.to_string()
+            } else {
+                format!(
+                    "{}{}{}",
+                    cloze_settings_keys.type_answer, settings_key_value_delim, value
+                )
+            });
         }
         if serialize_ephemeral && let Some(identifier) = inherit {
             grouping_parts.push(format!(
@@ -304,6 +323,7 @@ fn parse_grouping_settings(
         front_conceal: front_conceal_key,
         back_reveal: back_reveal_key,
         back_emphasis: back_emphasis_key,
+        type_answer: type_answer_key,
         inherit: inherit_key,
         overlapper: overlapper_key,
         id: id_key,
@@ -345,6 +365,15 @@ fn parse_grouping_settings(
             })?;
         } else if key == back_emphasis_key {
             current_grouping_settings.back_emphasis = true;
+        } else if key == type_answer_key {
+            current_grouping_settings.type_answer =
+                Some(TypeAnswer::from_str(value).map_err(|e| {
+                    LibraryError::Card(CardErrorKind::InvalidSettings {
+                        description: format!("The typed answer `{}` is invalid. {}", value, e),
+                        src: data.to_string(),
+                        at: card_settings_indices.clone().into(),
+                    })
+                })?);
         } else if key == overlapper_key {
             settings.is_overlapper = true;
         } else if key == inherit_key {
@@ -434,6 +463,7 @@ pub fn parse_card_settings(
         card_settings_indices,
         settings_delim,
         settings_key_value_delim,
+        true,
     )
     .into_iter()
     .collect::<Result<Vec<_>, _>>()

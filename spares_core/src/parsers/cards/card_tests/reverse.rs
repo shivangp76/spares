@@ -30,6 +30,7 @@ fn test_get_cards_reverse_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -52,6 +53,7 @@ fn test_get_cards_reverse_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -89,6 +91,7 @@ fn test_get_cards_reverse_2() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![

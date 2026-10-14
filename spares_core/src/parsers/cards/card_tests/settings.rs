@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
 
+use crate::adapters::get_adapter_from_string;
 use crate::parsers::BackReveal;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
@@ -9,8 +10,11 @@ use crate::parsers::FrontConceal;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::ReadableCardIdentifier;
+use crate::parsers::TypeAnswer;
 use crate::parsers::get_cards;
+use crate::parsers::get_notes;
 use crate::parsers::impls::markdown::MarkdownParser;
+use crate::parsers::impls::typst::TypstParser;
 
 const MOVE_FILES: bool = false;
 
@@ -31,6 +35,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -55,6 +60,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -77,6 +83,7 @@ fn test_get_cards_front_conceal_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -124,6 +131,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -153,6 +161,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -175,6 +184,7 @@ fn test_get_cards_front_conceal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -209,6 +219,7 @@ fn test_get_cards_back_reveal_1() {
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -243,6 +254,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -267,6 +279,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -289,6 +302,7 @@ fn test_get_cards_back_reveal_2() {
                 back_reveal: BackReveal::OnlyAnswered,
                 back_emphasis: false,
                 back_type: BackType::CardFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -344,6 +358,7 @@ fn test_get_cards_suspended_only_deserialized() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -378,6 +393,7 @@ fn test_get_cards_suspended_false() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -416,6 +432,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -438,6 +455,7 @@ fn test_get_cards_previous_order_reorder() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -477,6 +495,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -499,6 +518,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -521,6 +541,7 @@ fn test_get_cards_previous_order_new_card() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -560,6 +581,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -582,6 +604,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -604,6 +627,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -642,6 +666,7 @@ fn test_get_cards_inherit_basic() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: Some(ReadableCardIdentifier {
                 note_id: "dt".parse().unwrap(),
                 order: 1,
@@ -678,6 +703,7 @@ fn test_get_cards_inherit_with_order() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: Some(ReadableCardIdentifier {
                 note_id: "gir".parse().unwrap(),
                 order: 2,
@@ -755,4 +781,156 @@ fn test_get_cards_inherit_missing_order() {
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_err());
+}
+
+/// The typed answer setting of each card of `data`, and the note data after its settings are
+/// serialized again.
+fn type_answer_settings(
+    parser: &dyn Parseable,
+    data: &str,
+) -> Result<(Vec<Option<TypeAnswer>>, String), String> {
+    let cards = get_cards(parser, None, data, true, MOVE_FILES).map_err(|e| e.to_string())?;
+    let note_data = cards
+        .first()
+        .unwrap()
+        .data
+        .iter()
+        .map(|part| match part {
+            NotePart::SurroundingData(text)
+            | NotePart::ClozeStart(text)
+            | NotePart::ClozeEnd(text)
+            | NotePart::ClozeData(text, _) => text.as_str(),
+            _ => unreachable!(),
+        })
+        .collect::<String>();
+    Ok((
+        cards.iter().map(|card| card.type_answer).collect(),
+        note_data,
+    ))
+}
+
+const DIFF: TypeAnswer = TypeAnswer::Diff {
+    ignore_case: false,
+    ignore_combining: false,
+};
+
+type TypeAnswerCase<'a> = (&'a dyn Parseable, &'a str, Vec<Option<TypeAnswer>>, &'a str);
+
+#[test]
+fn test_get_cards_type_answer() {
+    let markdown = MarkdownParser::new();
+    let typst = TypstParser::new();
+    let cases: [TypeAnswerCase; 9] = [
+        (&markdown, "a{{[t] b}}", vec![Some(DIFF)], "a{{[o:1;t] b}}"),
+        // Like other flags, the key can be followed by an empty value
+        (&markdown, "a{{[t:] b}}", vec![Some(DIFF)], "a{{[o:1;t] b}}"),
+        (
+            &markdown,
+            "a{{[t:ci] b}}",
+            vec![Some(TypeAnswer::Diff {
+                ignore_case: true,
+                ignore_combining: false,
+            })],
+            "a{{[o:1;t:ci] b}}",
+        ),
+        (
+            &markdown,
+            "a{{[t:nc,ci] b}}",
+            vec![Some(TypeAnswer::Diff {
+                ignore_case: true,
+                ignore_combining: true,
+            })],
+            "a{{[o:1;t:ci,nc] b}}",
+        ),
+        (
+            &markdown,
+            "a{{[t:m] b}}c{{d}}",
+            vec![Some(TypeAnswer::Manual), None],
+            "a{{[o:1;t:m] b}}c{{[o:2]d}}",
+        ),
+        (
+            &markdown,
+            "a{{[t;h:°C] b}}",
+            vec![Some(DIFF)],
+            "a{{[h:°C;o:1;t] b}}",
+        ),
+        // A setting on any cloze of a grouping applies to the grouping's card, and is moved to its
+        // first cloze
+        (
+            &markdown,
+            "{{[g:1] a}}{{[g:1;t] b}}",
+            vec![Some(DIFF)],
+            "{{[g:1;o:1;t] a}}{{[g:1] b}}",
+        ),
+        (
+            &typst,
+            "a #cl[$2x$][t:m]",
+            vec![Some(TypeAnswer::Manual)],
+            "a #cl[$2x$][o:1;t:m]",
+        ),
+        (&typst, "#cl[a][t]", vec![Some(DIFF)], "#cl[a][o:1;t]"),
+    ];
+    for (parser, data, expected_settings, expected_data) in cases {
+        let (settings, note_data) = type_answer_settings(parser, data).unwrap();
+        assert_eq!(settings, expected_settings, "{data}");
+        assert_eq!(note_data, expected_data, "{data}");
+        // Reading the serialized settings gives the same settings
+        let (settings_again, note_data_again) = type_answer_settings(parser, &note_data).unwrap();
+        assert_eq!(settings_again, expected_settings, "{note_data}");
+        assert_eq!(note_data_again, note_data);
+    }
+}
+
+#[test]
+fn test_get_cards_type_answer_invalid() {
+    let parser = MarkdownParser::new();
+    for data in ["a{{[t:x] b}}", "a{{[t:m,ci] b}}"] {
+        let err = type_answer_settings(&parser, data).unwrap_err();
+        assert!(err.contains("The typed answer"), "{data}: {err}");
+    }
+}
+
+#[test]
+fn test_get_notes_type_answer_shortcut() {
+    let adapter = get_adapter_from_string("spares").unwrap();
+    let markdown = MarkdownParser::new();
+    let typst = TypstParser::new();
+    let cases: [(&dyn Parseable, &str, &str); 3] = [
+        (
+            &markdown,
+            "<!--- # type-answer: ci --->\n<!--- spares: note start --->\na{{b}}c{{[t:m]d}}\n<!--- spares: note end --->",
+            "a{{[o:1;t:ci]b}}c{{[o:2;t:m]d}}",
+        ),
+        (
+            &markdown,
+            "<!--- # type-answer: --->\n<!--- spares: note start --->\na{{b}}\n<!--- spares: note end --->",
+            "a{{[o:1;t]b}}",
+        ),
+        (
+            &typst,
+            "#se[type-answer: m]\n// spares: note start\na #cl[b]\n// spares: note end\n",
+            "a #cl[b][o:1;t:m]",
+        ),
+    ];
+    for (parser, data, expected) in cases {
+        let notes = get_notes(parser, None, data, adapter.as_ref(), false, None).unwrap();
+        let (settings, note_data) = notes.into_iter().next().unwrap();
+        assert!(settings.errors_and_warnings.is_empty(), "{data}");
+        assert_eq!(note_data.unwrap(), expected);
+    }
+
+    let notes = get_notes(
+        &markdown,
+        None,
+        "<!--- # type-answer: x --->\n<!--- spares: note start --->\na{{b}}\n<!--- spares: note end --->",
+        adapter.as_ref(),
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(
+        notes[0].0.errors_and_warnings[0]
+            .to_string()
+            .contains("Failed to parse type answer")
+    );
 }
