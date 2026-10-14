@@ -436,10 +436,10 @@ The client does all of this and pushes the result, so the server never re-parses
 
     The chosen text's card IDs are turned back into this side's orders, so each cloze keeps its card and reviews.
   - `spares migrate ids [--dry-run]` (section 4).
-- **Frontend:**
-  - a Sync button, last-synced time and conflict count (only when `sync_url` is set);
-  - a `sync-conflict` badge on notes;
-  - live notes read-only;
+- **Frontend** (implemented):
+  - a Sync button in the navbar with the last-synced time and conflict count. It is shown only on a `client` with `sync_url` set, i.e. the laptop's own web app; a full sync is left to `spares sync cloud`;
+  - a `sync-conflict` badge on notes in the list and in the note view, pointing to `spares sync conflicts`;
+  - live notes read-only (their text; tags and keywords stay editable);
   - IDs shown in letter form.
 - **Config** (`SparesExternalConfig`, `spares_core/src/config.rs`): `sync_url` and `sync_interval_minutes` (0 = off), next to `remote_host`.
 - **Env:** `SPARES_REPLICA` (`0`–`7`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY` (the server's `SPARES_API_KEY`, for the client).

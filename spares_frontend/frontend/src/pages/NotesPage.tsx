@@ -9,7 +9,7 @@ import RecentSearches from '../components/RecentSearches';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { formatNoteId, td, th, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, formatNoteId, td, th, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
@@ -177,7 +177,10 @@ export default function NotesPage() {
                       onClick={() => selectNote(selectedNote?.id === note.id ? null : note)}
                       style={{ cursor: 'pointer' }}
                     >
-                      <td style={td}>{formatNoteId(note.id)}</td>
+                      <td style={td}>
+                        {formatNoteId(note.id)}
+                        {note.tags.includes(SYNC_CONFLICT_TAG) && <span className="sync-conflict-badge" title="A sync could not merge this note. Resolve it with `spares sync conflicts`." style={{ marginLeft: 6 }}>conflict</span>}
+                      </td>
                       <td style={dataTd} className="clamp-narrow" title={note.data}>
                         <span>
                           {note.data.length > DATA_PREVIEW_LEN

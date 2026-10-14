@@ -6,7 +6,7 @@ import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
-import { formatNoteId, insertBlock } from '../utils';
+import { SYNC_CONFLICT_TAG, formatNoteId, insertBlock, isLiveNote } from '../utils';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
@@ -32,6 +32,8 @@ interface Props {
 
 export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
   const theme = useResolvedTheme();
+  // A live note's text comes from a file on the laptop, which would overwrite edits made here
+  const live = isLiveNote(note);
   const editor = useEditorSetup(note.parser_name);
   const [dataContent, setDataContent] = useState(note.data);
   // The editor's data as last saved, so edits made since can be told apart
@@ -136,20 +138,34 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         className="tap-area"
       >×</button>
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note {formatNoteId(note.id)}</h3>
+      {note.tags.includes(SYNC_CONFLICT_TAG) && (
+        <div style={{ marginBottom: 12, fontSize: 13 }}>
+          <span className="sync-conflict-badge">conflict</span> A sync could not merge this note. Resolve it on the laptop with <code>spares sync conflicts</code>.
+        </div>
+      )}
+      {live && (
+        <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
+          This is a live note: its text comes from <code>{String(note.custom_data.live_sync_name)}</code> on the laptop, so it can't be edited here. Tags and keywords can.
+        </div>
+      )}
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
-          <InsertImageOcclusionButton
-            parserId={note.parser_id}
-            onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
-          />
+          {!live && (
+            <InsertImageOcclusionButton
+              parserId={note.parser_id}
+              onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
+            />
+          )}
         </div>
         <CodeMirror
           ref={dataEditorRef}
           theme={theme}
           value={dataContent}
           onChange={setDataContent}
+          editable={!live}
+          readOnly={live}
           extensions={editor.dataExtensions}
           basicSetup={{ lineNumbers: editor.lineNumbers }}
           style={cmStyle}
@@ -207,7 +223,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
                 key={occlusion.clozes_filepath}
                 onClick={() => setEditingOcclusion({ index, occlusion })}
                 // The server edits the saved text, which would drop unsaved edits
-                disabled={dataContent !== savedData}
+                disabled={live || dataContent !== savedData}
                 title={dataContent !== savedData ? 'Save or undo your changes to the data first' : occlusion.original_image_filepath}
                 style={{ padding: '4px 8px', fontSize: 12 }}
               >
