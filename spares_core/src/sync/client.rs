@@ -5,7 +5,7 @@
 //! pull's usn, and every row the server has to receive (local changes, merge results) with
 //! `usn = -1`, so the push is simply everything dirty afterwards.
 //!
-//! The rules (section 6 of `docs/sync-plan.md`):
+//! The rules ("Merge rules" in `docs/src/sync_design.md`):
 //! - A row changed on one side only takes that side's version, whatever its timestamps.
 //! - Changed on both sides: a three-way merge against the last synced version ([`super::merge`]).
 //!   Note text that both sides changed in the same lines keeps the local text, stores the other

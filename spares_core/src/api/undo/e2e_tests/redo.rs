@@ -492,9 +492,6 @@ async fn e2e_undo_and_redo_describe_the_original_action(pool: SqlitePool) {
 }
 
 /// Undoing a create deletes the newest note, so its id must not be handed out again.
-///
-/// Redoing the first create afterwards still fails, on `card.id`: card ids are still the largest
-/// plus one (see "Other tables" in docs/sync-plan.md).
 #[sqlx::test]
 async fn e2e_create_undo_create_does_not_reuse_the_note_id(pool: SqlitePool) {
     let parser = create_parser_helper(&pool, "markdown").await;
