@@ -75,7 +75,7 @@ It takes 10–15 minutes. What it does, and what it asks:
 
 1. **Backs up your database** to `~/.local/share/spares/spares-main.before-deploy-<time>.sqlite`.
 2. **Builds** spares for the server and the web app (a 60 MB archive), and uploads them with `setup_vps.sh`.
-3. **Sets up the server** as root: your user (it asks you to choose a **sudo password** for it, needed for `sudo` on the server later), swap, the `spares` service, and Tailscale's HTTPS.
+3. **Sets up the server** as root: your user (it asks you to choose a **sudo password** for it, needed for `sudo` on the server later), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS.
    - **The first time on a tailnet**, Tailscale prints a link to enable HTTPS (`https://login.tailscale.com/f/serve?node=...`) and waits. Open it and enable **HTTPS**. **Don't enable Funnel**, which would put the server on the public internet.
 4. **Sets up the laptop:**
    - stores the server's API key in the Keychain (service `spares-sync`);
@@ -103,7 +103,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 - **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `scripts/deploy_vps.sh update`, then restart the local server, so both run the same version.
+- **Update the server** after changing spares: `scripts/deploy_vps.sh update`, then restart the local server, so both run the same version. It also sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server
@@ -122,5 +122,6 @@ Spares uses about 15 MB of memory idle and 30 MB while sending the whole databas
 ## Troubleshooting
 
 - **"No spares server answers at 127.0.0.1:8080"**: the local server isn't running yet (it compiles first), or listens elsewhere (`SPARES_SOCKET_ADDRESS`).
+- **The phone shows other streaks, or reviews on the wrong day of the heatmap, than the laptop**: the server is in another time zone (VPSs start in UTC), and spares counts days in the server's. Run `scripts/deploy_vps.sh update` to set it to the laptop's; `timedatectl` on the server shows it.
 - **The local server can't reach the VPS**: check that `tailscale status` on the laptop lists `spares`, and that Tailscale is running (`sudo brew services start tailscale`).
 - **`spares sync cloud` is refused (401) by your local server**: it was started with an API key (`spares_serve`); the `spares` CLI sends `SPARES_API_KEY`, so set it (the `spares` function in `spares.zsh` does).
