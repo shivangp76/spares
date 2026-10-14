@@ -16,6 +16,8 @@
 //!
 //! No id is the start of another, so sorting the strings sorts by block, then slot, then tail.
 
+pub mod migrate;
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -741,7 +743,7 @@ mod tests {
             .unwrap();
     }
 
-    #[sqlx::test(migrations = "./migrations")]
+    #[sqlx::test]
     async fn test_allocate_never_reuses_deleted_ids(pool: SqlitePool) {
         sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
             .execute(&pool)
@@ -769,7 +771,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrations = "./migrations")]
+    #[sqlx::test]
     async fn test_concurrent_allocations_do_not_collide(pool: SqlitePool) {
         let handles: Vec<_> = (0..8)
             .map(|_| {
@@ -786,7 +788,7 @@ mod tests {
         assert_eq!(all.len(), 40);
     }
 
-    #[sqlx::test(migrations = "./migrations")]
+    #[sqlx::test]
     async fn test_ensure_note_ids_migrated(pool: SqlitePool) {
         sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
             .execute(&pool)

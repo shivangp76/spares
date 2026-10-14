@@ -9,9 +9,8 @@ use serde_json::Map;
 use serde_json::Value;
 use sqlx::FromRow;
 
-use crate::parsers::BackType;
-
 pub use crate::ids::NoteId;
+use crate::parsers::BackType;
 pub type CardId = i64;
 pub type TagId = i64;
 pub type StateId = u32;

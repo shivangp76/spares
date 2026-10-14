@@ -1,6 +1,6 @@
 # Two-way sync for spares: design plan
 
-Status: proposed, not started. Last updated 2026-10-13. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
+Status: proposed. Note ids (section 4, except "Other tables") are implemented, including `spares migrate ids`; the rest is not started. Last updated 2026-10-13. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
 
 ## 1. Goal and context
 
