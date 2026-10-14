@@ -1,6 +1,14 @@
 import type { EditorView } from '@uiw/react-codemirror';
 import type { GetReviewCardResponse } from './types/spares';
 
+/** The tag sync puts on notes that need a look (see `spares sync conflicts`). */
+export const SYNC_CONFLICT_TAG = 'sync-conflict';
+
+/** Whether a note's text comes from a file on the laptop (`spares import --live`). */
+export function isLiveNote(note: { custom_data: Record<string, unknown> }): boolean {
+  return typeof note.custom_data.live_sync_name === 'string';
+}
+
 const NOTE_ID_PLACES = 8;
 const NOTE_ID_RADIX = 27;
 
