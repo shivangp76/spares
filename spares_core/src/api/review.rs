@@ -38,6 +38,8 @@ use crate::config::read_internal_config;
 use crate::config::resolve_in_files_dir;
 use crate::config::write_internal_config;
 use crate::helpers::get_start_end_local_date;
+use crate::ids::IdTable;
+use crate::ids::next_id_in;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
@@ -1045,7 +1047,9 @@ pub(crate) async fn insert_review(
     review_log: &ReviewLog,
     tag_id: Option<TagId>,
 ) -> Result<i64, Error> {
-    sqlx::query_scalar(r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+    let id = next_id_in(db, IdTable::ReviewLog).await?;
+    sqlx::query_scalar(r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+        .bind(id)
         .bind(review_log.card_id)
         .bind(review_log.reviewed_at.timestamp())
         .bind(ReviewLogKind::Review)

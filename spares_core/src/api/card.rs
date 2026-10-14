@@ -17,6 +17,8 @@ use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
 use crate::config::read_external_config;
+use crate::ids::IdTable;
+use crate::ids::next_id_in;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
@@ -382,19 +384,21 @@ pub async fn forget_card(
     //
     // `rating`, `scheduled_time`, `recall_duration` and `rate_duration` are NULL: a forget is not
     // a review. `previous_state` is the state the card was in immediately before the forget.
-    let review_log_id: i64 = sqlx::query_scalar(
+    let review_log_id = next_id_in(db, IdTable::ReviewLog).await?;
+    sqlx::query(
         r"INSERT INTO review_log
-            (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
+            (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
              recall_duration, rate_duration, previous_state, tag_id, custom_data)
-          VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?) RETURNING id",
+          VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?)",
     )
+    .bind(review_log_id)
     .bind(card_id)
     .bind(now.timestamp())
     .bind(ReviewLogKind::Forget)
     .bind(&scheduler_name)
     .bind(before_card.state)
     .bind(Value::Object(Map::new()))
-    .fetch_one(db)
+    .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 

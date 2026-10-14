@@ -166,7 +166,8 @@ pub fn get_env_config(env: Environment) -> EnvironmentConfig {
 pub struct Replica(u8);
 
 impl Replica {
-    pub const MAX: u8 = 15;
+    /// The largest replica number. Each replica owns one residue modulo [`crate::ids::ID_STEP`].
+    pub const MAX: u8 = crate::ids::ID_STEP as u8 - 1;
 
     pub(crate) const fn new_unchecked(number: u8) -> Self {
         Self(number)

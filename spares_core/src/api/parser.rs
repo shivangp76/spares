@@ -9,6 +9,8 @@ use crate::api::undo::payloads::CreateParserPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateParserPayload;
+use crate::ids::IdTable;
+use crate::ids::next_id_in;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::Parser;
@@ -46,7 +48,9 @@ pub async fn create_parser_event(
             .map_err(|e| Error::Sqlx { source: e })?;
         id
     } else {
-        sqlx::query_scalar(r"INSERT INTO parser (name) VALUES (?) RETURNING id")
+        let id = next_id_in(db, IdTable::Parser).await?;
+        sqlx::query_scalar(r"INSERT INTO parser (id, name) VALUES (?, ?) RETURNING id")
+            .bind(id)
             .bind(payload.name)
             .fetch_one(db)
             .await
