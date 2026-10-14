@@ -194,7 +194,7 @@ impl Parseable for TypstParser {
                     "{}{} {}",
                     note_id_key.get_write(),
                     settings_key_value_delim,
-                    note_id
+                    note_id.letters()
                 );
                 let keywords_string =
                     format!("keywords{} {}", settings_key_value_delim, keywords_str);
@@ -227,7 +227,11 @@ impl Parseable for TypstParser {
             ConstructFileDataType::Card(card_order, card_data, side) => {
                 let card_data_str =
                     construct_card_data(self, card_order, card_data, side, *note_id);
-                let mut lines = vec![format!("- note-id{} {}", settings_key_value_delim, note_id)];
+                let mut lines = vec![format!(
+                    "- note-id{} {}",
+                    settings_key_value_delim,
+                    note_id.letters()
+                )];
                 if !keywords_str.is_empty() {
                     lines.push(format!(
                         "- keywords{} {}",
@@ -545,17 +549,17 @@ pub mod tests {
         let linked_notes_opt = Some(vec![
             LinkedNote {
                 searched_keyword: "keyword 1".to_string(),
-                linked_note_id: Some(1),
+                linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
             },
             LinkedNote {
                 searched_keyword: "keyword 1.5".to_string(),
-                linked_note_id: Some(1),
+                linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
-                linked_note_id: Some(2),
+                linked_note_id: Some("aab".parse().unwrap()),
                 matched_keyword: Some("keyword 2".to_string()),
             },
         ]);
@@ -566,9 +570,9 @@ pub mod tests {
         );
         let expected_new_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
         assert_eq!(new_note_data, expected_new_note_data);
-        let expected_linked_notes_string = "+ keyword 1 $->$ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1]\n+ keyword 1.5 $->$ #link(\"/tmp/spares/data/notes/typst/0001.typ\")[keyword 1]\n+ keyword 2 $->$ #link(\"/tmp/spares/data/notes/typst/0002.typ\")[keyword 2]";
+        let expected_linked_notes_string = "+ keyword 1 $->$ #link(\"/tmp/spares/data/notes/typst/aaa.typ\")[keyword 1]\n+ keyword 1.5 $->$ #link(\"/tmp/spares/data/notes/typst/aaa.typ\")[keyword 1]\n+ keyword 2 $->$ #link(\"/tmp/spares/data/notes/typst/aab.typ\")[keyword 2]";
         assert_eq!(linked_notes_string, expected_linked_notes_string);
-        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/0001.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/0002.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
+        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/aaa.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/aaa.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/aab.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
     }
 
     #[test]

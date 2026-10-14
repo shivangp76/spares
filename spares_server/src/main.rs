@@ -16,6 +16,8 @@ use spares_core::config::Environment;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_env_config;
 use spares_core::config::get_files_dir;
+use spares_core::config::get_replica;
+use spares_core::config::get_sync_role;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::kill_running_renders;
@@ -35,6 +37,10 @@ struct AppState {
 }
 
 async fn start_server(args: Args) -> Result<(), String> {
+    // Which replica this is decides the ids it hands out, so it is required (see `ids`).
+    let replica = get_replica().map_err(|e| e.to_string())?;
+    let sync_role = get_sync_role().map_err(|e| e.to_string())?;
+    info!("Replica {}, sync role `{sync_role}`", replica.number());
     // Ensure default data directory exists (no-op when DATABASE_URL is set explicitly)
     let _ = get_data_dir();
     let api_key = std::env::var("SPARES_API_KEY").ok();
@@ -61,6 +67,9 @@ async fn start_server(args: Args) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to migrate the database: {:?}", e))?;
     info!("Migration successful.");
+    spares_core::ids::ensure_note_ids_migrated(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
     // Before serving: settle a push the server stopped in the middle of, and commit or revert note
     // files left uncommitted.
     spares_core::notes_vcs::startup(&pool).await;
@@ -164,6 +173,7 @@ async fn main() {
     let args = Args::parse();
     let res = start_server(args).await;
     if let Err(e) = res {
-        println!("{}", e);
+        eprintln!("{}", e);
+        std::process::exit(1);
     }
 }

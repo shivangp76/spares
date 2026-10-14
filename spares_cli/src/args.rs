@@ -223,7 +223,7 @@ pub(crate) enum NoteCommands {
         selector: NotesSelectorLocal,
     },
     /// Get a note
-    Get { id: i64 },
+    Get { id: NoteId },
     /// List notes
     List {
         #[arg(short, long)]
@@ -305,7 +305,7 @@ pub(crate) enum CardCommands {
         )]
         id: Option<i64>,
         #[arg(short, long, required_unless_present = "id", conflicts_with = "id")]
-        note_id: Option<i64>,
+        note_id: Option<NoteId>,
     },
     /// List cards
     List {
@@ -626,7 +626,12 @@ mod tests {
     fn card_get_requires_id_or_note_id() {
         assert!(Cli::try_parse_from(["spares", "card", "get"]).is_err());
         assert!(Cli::try_parse_from(["spares", "card", "get", "--id", "1"]).is_ok());
-        assert!(Cli::try_parse_from(["spares", "card", "get", "--note-id", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "card", "get", "--note-id", "gir"]).is_ok());
+        // Old numeric note ids are rejected.
+        assert!(Cli::try_parse_from(["spares", "card", "get", "--note-id", "1"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "note", "get", "42"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "note", "get", "GIR"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "note", "delete", "--ids", "gir", "giza"]).is_ok());
     }
 
     #[test]

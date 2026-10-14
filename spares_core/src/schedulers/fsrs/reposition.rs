@@ -303,15 +303,13 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO note (data, custom_data, parser_id) VALUES ('n', '{}', 1)")
-            .execute(pool)
-            .await
-            .unwrap();
+        let note_id = crate::ids::insert_test_note(pool, "n", 1).await;
         let card_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
                desired_retention, state, custom_data)
-               VALUES (1, 1, 1, ?, 5.0, 4.0, 0.9, 2, '{}') RETURNING id"#,
+               VALUES (?, 1, 1, ?, 5.0, 4.0, 0.9, 2, '{}') RETURNING id"#,
         )
+        .bind(note_id)
         .bind(newer.timestamp())
         .fetch_one(pool)
         .await

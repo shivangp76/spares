@@ -92,7 +92,7 @@ pub(super) fn replace_action(
         "{}{} {}",
         note_id_key.get_write(),
         settings_key_value_delim,
-        note_id
+        note_id.letters()
     );
     let new_action_note_id_string = format!(
         "{}{} {}{} {}",

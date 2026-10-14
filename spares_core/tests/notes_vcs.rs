@@ -18,6 +18,7 @@ use spares_core::api::parser::create_parser;
 use spares_core::api::tag::create_tag;
 use spares_core::api::tag::update_tag;
 use spares_core::api::undo::undo_event;
+use spares_core::model::NoteId;
 use spares_core::notes_vcs;
 use spares_core::notes_vcs::FinishRequest;
 use spares_core::notes_vcs::FinishResponse;
@@ -55,6 +56,7 @@ async fn setup() -> tokio::sync::MutexGuard<'static, ()> {
             std::env::set_var("SPARES_CACHE_DIR", base.join("cache"));
             std::env::set_var("SPARES_CONFIG_DIR", base.join("config"));
             std::env::set_var("SPARES_FILES_DIR", base.join("cache"));
+            std::env::set_var("SPARES_REPLICA", "0");
             for variable in [
                 "SPARES_TEST_MODE",
                 "MARKDOWN_OUT_DIR",
@@ -139,7 +141,7 @@ fn status(dir: &Path) -> String {
 }
 
 /// Creates the markdown parser and three notes, then the repository. Returns the note ids.
-async fn init(pool: &SqlitePool) -> Vec<i64> {
+async fn init(pool: &SqlitePool) -> Vec<NoteId> {
     let parser = create_parser(
         pool,
         CreateParserRequest {
@@ -193,8 +195,18 @@ async fn init(pool: &SqlitePool) -> Vec<i64> {
     notes.notes.iter().map(|n| n.id).collect()
 }
 
-fn note_path(dir: &Path, id: i64) -> PathBuf {
-    dir.join("markdown").join(format!("{id:0>4}.md"))
+/// The id of the first note [`init`] creates.
+fn first() -> NoteId {
+    "aaa".parse().unwrap()
+}
+
+/// The id of the second note [`init`] creates.
+fn second() -> NoteId {
+    "aab".parse().unwrap()
+}
+
+fn note_path(dir: &Path, id: NoteId) -> PathBuf {
+    dir.join("markdown").join(format!("{id}.md"))
 }
 
 fn read(path: &Path) -> String {
@@ -216,7 +228,7 @@ fn clone() -> PathBuf {
 }
 
 /// Edits a note file in the clone and commits it.
-fn commit_edit(clone: &Path, id: i64, edit: impl FnOnce(String) -> String) {
+fn commit_edit(clone: &Path, id: NoteId, edit: impl FnOnce(String) -> String) {
     let path = note_path(clone, id);
     std::fs::write(&path, edit(read(&path))).unwrap();
     git(clone, &["commit", "-qam", "edit"]);
@@ -271,7 +283,7 @@ async fn push(pool: &SqlitePool, clone: &Path, update_ref: bool) -> Pushed {
     Pushed { receive, finish }
 }
 
-async fn note_data(pool: &SqlitePool, id: i64) -> String {
+async fn note_data(pool: &SqlitePool, id: NoteId) -> String {
     get_note(pool, id).await.unwrap().data
 }
 
@@ -423,20 +435,20 @@ async fn test_push_rejections(pool: SqlitePool) {
         (
             "adds a note",
             Box::new(|c: &Path| {
-                std::fs::copy(note_path(c, 1), c.join("markdown/0099.md")).unwrap();
+                std::fs::copy(note_path(c, first()), c.join("markdown/zzz.md")).unwrap();
             }),
         ),
         (
             "deletes a note",
             Box::new(move |c: &Path| {
-                std::fs::remove_file(note_path(c, 1)).unwrap();
+                std::fs::remove_file(note_path(c, first())).unwrap();
             }),
         ),
         (
             "only in case",
             Box::new(move |c: &Path| {
                 // Through the index, since on a case-insensitive file system writing the file would
-                // overwrite `markdown/0001.md` right here.
+                // overwrite `markdown/aaa.md` right here.
                 let blob = git_stdin(c, &["hash-object", "-w", "--stdin"], "x\n");
                 git(
                     c,
@@ -444,7 +456,7 @@ async fn test_push_rejections(pool: SqlitePool) {
                         "update-index",
                         "--add",
                         "--cacheinfo",
-                        &format!("100644,{blob},Markdown/0001.md"),
+                        &format!("100644,{blob},Markdown/aaa.md"),
                     ],
                 );
             }),
@@ -464,7 +476,7 @@ async fn test_push_rejections(pool: SqlitePool) {
         (
             "conflict marker",
             Box::new(move |c: &Path| {
-                let path = note_path(c, 1);
+                let path = note_path(c, first());
                 let s = read(&path).replace(
                     "First",
                     "<<<<<<< HEAD\nFirst\n=======\nOther\n>>>>>>> theirs\n",
@@ -473,23 +485,23 @@ async fn test_push_rejections(pool: SqlitePool) {
             }),
         ),
         (
-            "names note 2",
+            "names note aab",
             Box::new(move |c: &Path| {
-                std::fs::copy(note_path(c, 2), note_path(c, 1)).unwrap();
+                std::fs::copy(note_path(c, second()), note_path(c, first())).unwrap();
             }),
         ),
         (
             "would delete the note",
             Box::new(move |c: &Path| {
-                let path = note_path(c, 1);
-                let s = read(&path).replace("# note-id: 1", "# action: delete; note-id: 1");
+                let path = note_path(c, first());
+                let s = read(&path).replace("# note-id: aaa", "# action: delete; note-id: aaa");
                 std::fs::write(path, s).unwrap();
             }),
         ),
         (
             "holds 2 notes",
             Box::new(move |c: &Path| {
-                let path = note_path(c, 1);
+                let path = note_path(c, first());
                 let s = read(&path).replace(
                 "<!--- spares: end --->",
                 "<!--- spares: note start --->\nSmuggled {{ new note }}\n<!--- spares: note end --->\n<!--- spares: end --->",
@@ -500,7 +512,7 @@ async fn test_push_rejections(pool: SqlitePool) {
         (
             "holds no note",
             Box::new(move |c: &Path| {
-                std::fs::write(note_path(c, 1), "the LLM removed everything\n").unwrap();
+                std::fs::write(note_path(c, first()), "the LLM removed everything\n").unwrap();
             }),
         ),
     ];
@@ -778,7 +790,7 @@ async fn test_startup_rolls_back_an_interrupted_push(pool: SqlitePool) {
         "new": "0".repeat(40),
         "ids": [ids[0]],
         "event_ids": [response.event_id.unwrap()],
-        "paths": [format!("markdown/{:0>4}.md", ids[0])],
+        "paths": [format!("markdown/{}.md", ids[0])],
         "readme_changed": false,
         "state": "Importing",
     });

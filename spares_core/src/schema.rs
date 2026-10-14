@@ -314,7 +314,7 @@ pub mod note {
             card_count: usize,
         ) -> Self {
             Self {
-                id: note.id.to_owned(),
+                id: note.id,
                 data: note.data.clone(),
                 parser_id: note.parser_id.to_owned(),
                 parser_name,

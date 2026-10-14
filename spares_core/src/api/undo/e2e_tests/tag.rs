@@ -1,6 +1,5 @@
 use chrono::Utc;
 use serde_json::Map;
-use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::api::note::create_notes;
@@ -138,18 +137,7 @@ async fn e2e_undo_create_tag_with_note_tags_fails_with_dependency_error(pool: Sq
     // Create a note and tag it so undoing the CreateTag (which deletes the tag) must fail.
     // The parser creation adds more events, so we pass the tag_event_id explicitly.
     let parser = create_parser_helper(&pool, "markdown").await;
-    let ts = Utc::now().timestamp();
-    let note_id: i64 = sqlx::query_scalar(
-        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind("n1")
-    .bind(ts)
-    .bind(ts)
-    .bind(parser.id)
-    .bind(json!({}).to_string())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let note_id = crate::ids::insert_test_note(&pool, "n1", parser.id).await;
     sqlx::query(r"INSERT INTO note_tag (note_id, tag_id) VALUES (?, ?)")
         .bind(note_id)
         .bind(tag.id)

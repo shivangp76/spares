@@ -817,7 +817,7 @@ fn describe_ids(ids: &[NoteId]) -> String {
 
 fn join_ids(ids: &[NoteId]) -> String {
     ids.iter()
-        .map(ToString::to_string)
+        .map(|id| id.letters())
         .collect::<Vec<_>>()
         .join(", ")
 }

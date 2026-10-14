@@ -58,7 +58,7 @@ pub fn commit_message(verb: &str, ids: &[NoteId]) -> String {
             "spares: {verb} note{} {}",
             if ids.len() == 1 { "" } else { "s" },
             ids.iter()
-                .map(ToString::to_string)
+                .map(|id| id.letters())
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -149,15 +149,25 @@ pub(crate) fn commit_index(repo: &Path, message: &str) -> Result<bool, Error> {
 #[cfg(test)]
 mod tests {
     use super::commit_message;
+    use crate::model::NoteId;
+
+    fn ids(ids: &[&str]) -> Vec<NoteId> {
+        ids.iter().map(|id| id.parse().unwrap()).collect()
+    }
 
     #[test]
     fn test_commit_message() {
         assert_eq!(
-            commit_message("update", &[15, 12]),
-            "spares: update notes 12, 15"
+            commit_message("update", &ids(&["gja", "giza"])),
+            "spares: update notes giza, gja"
         );
-        assert_eq!(commit_message("delete", &[3]), "spares: delete note 3");
-        let many: Vec<i64> = (1..=11).collect();
+        assert_eq!(
+            commit_message("delete", &ids(&["aac"])),
+            "spares: delete note aac"
+        );
+        let many: Vec<NoteId> = (0..11u8)
+            .map(|i| format!("aa{}", char::from(b'a' + i)).parse().unwrap())
+            .collect();
         assert_eq!(commit_message("render", &many), "spares: render 11 notes");
     }
 }

@@ -11,7 +11,7 @@ use sqlx::FromRow;
 
 use crate::parsers::BackType;
 
-pub type NoteId = i64;
+pub use crate::ids::NoteId;
 pub type CardId = i64;
 pub type TagId = i64;
 pub type StateId = u32;
@@ -65,7 +65,7 @@ pub struct NoteKeyword {
 }
 
 // Only the specified fields below are recoverable from the note data.
-#[derive(Clone, Debug, Default, Deserialize, FromRow, Serialize)]
+#[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct Card {
     pub id: CardId,
     pub note_id: NoteId,
@@ -105,15 +105,22 @@ pub struct Card {
 }
 
 impl Card {
+    /// A new card of no note yet ([`NoteId::UNSET`]). Set `note_id` before inserting it.
     pub fn new(created_at: DateTime<Utc>) -> Self {
         Self {
+            id: 0,
+            note_id: NoteId::UNSET,
+            order: 0,
+            back_type: BackType::default(),
             due: created_at,
             created_at,
             updated_at: created_at,
+            stability: 0.0,
+            difficulty: 0.0,
             desired_retention: DEFAULT_DESIRED_RETENTION,
+            special_state: None,
             state: NEW_CARD_STATE,
             custom_data: Value::Object(Map::new()),
-            ..Default::default()
         }
     }
 }

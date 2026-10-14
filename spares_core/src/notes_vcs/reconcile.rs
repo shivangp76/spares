@@ -177,7 +177,8 @@ async fn reconcile_inner(
             });
             if row.is_some() && expected.is_none() {
                 log::warn!(
-                    "Note {id} uses parser `{}`, which is not installed, so its file is left alone",
+                    "Note {} uses parser `{}`, which is not installed, so its file is left alone",
+                    id.letters(),
                     row.map(|r| r.parser_name.as_str()).unwrap_or_default()
                 );
                 continue;

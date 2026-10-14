@@ -158,6 +158,88 @@ pub fn get_env_config(env: Environment) -> EnvironmentConfig {
     }
 }
 
+/// Which replica this instance is, from `SPARES_REPLICA`: `0` is the laptop, `1` the server, and a
+/// later replica takes the next unused number. It decides which form of note id this instance
+/// writes (see [`crate::ids`]). It comes from the environment, never the database, since a full
+/// sync copies the other replica's database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Replica(u8);
+
+impl Replica {
+    pub const MAX: u8 = 15;
+
+    #[cfg(test)]
+    pub(crate) const fn new_unchecked(number: u8) -> Self {
+        Self(number)
+    }
+
+    pub const fn number(self) -> u8 {
+        self.0
+    }
+}
+
+impl std::str::FromStr for Replica {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|n| *n <= Self::MAX)
+            .map(Self)
+            .ok_or_else(|| {
+                format!(
+                    "expected a replica number from 0 to {}, got `{s}`",
+                    Self::MAX
+                )
+            })
+    }
+}
+
+/// Whether this instance answers sync requests or runs the client side, from `SPARES_SYNC_ROLE`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+pub enum SyncRole {
+    Server,
+    Client,
+}
+
+pub const REPLICA_ENV: &str = "SPARES_REPLICA";
+pub const SYNC_ROLE_ENV: &str = "SPARES_SYNC_ROLE";
+
+/// This instance's replica. Required, with no default, except under tests, which are replica `0`.
+pub fn get_replica() -> Result<Replica, Error> {
+    match std::env::var(REPLICA_ENV) {
+        Ok(value) => value
+            .parse()
+            .map_err(|e| invalid_config(format!("{REPLICA_ENV}: {e}"))),
+        Err(_) if is_test_mode() => Ok(Replica(0)),
+        Err(_) => Err(invalid_config(format!(
+            "{REPLICA_ENV} is not set. Set it to 0 on the laptop and 1 on the server."
+        ))),
+    }
+}
+
+/// This instance's sync role. Required, with no default, except under tests, which are clients.
+pub fn get_sync_role() -> Result<SyncRole, Error> {
+    match std::env::var(SYNC_ROLE_ENV) {
+        Ok(value) => value.trim().parse().map_err(|_| {
+            invalid_config(format!(
+                "{SYNC_ROLE_ENV}: expected `server` or `client`, got `{value}`"
+            ))
+        }),
+        Err(_) if is_test_mode() => Ok(SyncRole::Client),
+        Err(_) => Err(invalid_config(format!(
+            "{SYNC_ROLE_ENV} is not set. Set it to `client` on the laptop and `server` on the \
+             server."
+        ))),
+    }
+}
+
+fn invalid_config(message: String) -> Error {
+    Error::Library(LibraryError::InvalidConfig(message))
+}
+
 #[serde_with::serde_as]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]

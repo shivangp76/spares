@@ -16,6 +16,7 @@ use spares_core::api::image_occlusion::get_image_occlusion_editor_config;
 use spares_core::api::image_occlusion::list_note_image_occlusions;
 use spares_core::api::image_occlusion::read_image_occlusion_file;
 use spares_core::api::image_occlusion::update_note_image_occlusion;
+use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
 
@@ -138,7 +139,7 @@ pub(crate) async fn get_image_occlusion_file_handler(
 }
 
 pub(crate) async fn list_note_image_occlusions_handler(
-    Path(id): Path<i64>,
+    Path(id): Path<NoteId>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = list_note_image_occlusions(&data.db, id, &get_all_parsers())
@@ -154,7 +155,7 @@ pub(crate) struct UpdateNoteImageOcclusionRequest {
 
 /// `index` is 0 based, in the order the image occlusions appear in the note.
 pub(crate) async fn update_note_image_occlusion_handler(
-    Path((id, index)): Path<(i64, usize)>,
+    Path((id, index)): Path<(NoteId, usize)>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<UpdateNoteImageOcclusionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

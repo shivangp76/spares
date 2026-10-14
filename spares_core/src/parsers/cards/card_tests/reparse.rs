@@ -83,7 +83,7 @@ fn test_reparse_matches_inherit() {
     // `inh:` is stripped from the rebuilt note data (serialize_ephemeral = false), so the
     // re-parsed `inherit` is `None` while `new_cards` still carries it. Only `data`/`back_type`
     // are consumed by file generation, so equivalence still holds.
-    assert_reparse_matches("{{[o:1] First }}\n{{[inh:1/1] Inherited }}");
+    assert_reparse_matches("{{[o:1] First }}\n{{[inh:aaa/1] Inherited }}");
 }
 
 /// With an external overlapper config, `add_order_to_note_data` produces overlapper-grouped

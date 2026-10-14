@@ -21,6 +21,7 @@ use spares_core::api::note::render_notes;
 use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
 use spares_core::api::note::update_notes;
+use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::FilterOptions;
@@ -53,7 +54,7 @@ pub(crate) async fn create_notes_handler(
 }
 
 pub(crate) async fn get_note_handler(
-    Path(id): Path<i64>,
+    Path(id): Path<NoteId>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let note_res = get_note(&data.db, id).await.map_err(error_to_response)?;
@@ -61,7 +62,7 @@ pub(crate) async fn get_note_handler(
 }
 
 pub(crate) async fn get_note_render_handler(
-    Path(id): Path<i64>,
+    Path(id): Path<NoteId>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let response = get_note_render(&data.db, id, &get_all_parsers())

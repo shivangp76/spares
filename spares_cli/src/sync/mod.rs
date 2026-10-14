@@ -649,11 +649,17 @@ async fn generate_notes(
                     .map_err(|e| format!("ANKI_DB_PATH environment variable is not set: {}", e))?;
                 let db_path = PathBuf::from(anki_db_path);
                 // let start = std::time::Instant::now();
-                let parse_note_requests =
-                    AnkiAdapter::database_to_requests(db_path.as_path(), None)
-                        .await
-                        .map_err(|e| format!("{}", e))?;
-                let grouped_notes = parse_note_requests.into_iter().into_group_map();
+                let anki_notes = AnkiAdapter::database_to_requests(db_path.as_path(), None)
+                    .await
+                    .map_err(|e| format!("{}", e))?;
+                // Notes without a spares id have no spares file to compare with.
+                let grouped_notes = anki_notes
+                    .iter()
+                    .filter_map(|note| {
+                        note.to_generate_request()
+                            .map(|request| (note.parser_name.clone(), request))
+                    })
+                    .into_group_map();
                 for (parser_name, requests) in grouped_notes {
                     let parser =
                         find_parser(&parser_name, &get_all_parsers()).map_err(|e| e.to_string())?;

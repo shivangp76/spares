@@ -92,7 +92,7 @@ pub(crate) async fn handle(
             let url = if let Some(id) = id {
                 format!("{}/api/cards/{}", base_url, id)
             } else if let Some(note_id) = note_id {
-                format!("{}/api/cards/note_id/{}", base_url, note_id)
+                format!("{}/api/cards/note_id/{}", base_url, note_id.packed())
             } else {
                 unreachable!("by clap required_unless_present")
             };

@@ -10,6 +10,7 @@ use serde_json::Map;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::update_notes;
 use spares_core::api::parser::create_parser;
+use spares_core::model::NoteId;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::note::CreateNoteRequest;
 use spares_core::schema::note::CreateNotesRequest;
@@ -21,7 +22,7 @@ use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::SqlitePoolOptions;
 
-fn pool_and_notes(n: usize) -> (SqlitePool, Vec<i64>) {
+fn pool_and_notes(n: usize) -> (SqlitePool, Vec<NoteId>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let pool = SqlitePoolOptions::new()
@@ -76,7 +77,7 @@ fn pool_and_notes(n: usize) -> (SqlitePool, Vec<i64>) {
         .await
         .unwrap();
 
-        let note_ids: Vec<i64> = res.notes.iter().map(|n| n.id).collect();
+        let note_ids: Vec<NoteId> = res.notes.iter().map(|n| n.id).collect();
         (pool, note_ids)
     })
 }

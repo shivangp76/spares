@@ -1085,9 +1085,29 @@ fn evaluate_field_value(
     // Second tree should be the value
     let mut value_context = context.child();
     trees[1].evaluate(&mut value_context)?;
-    let value_type = value_context
+    let mut value_type = value_context
         .value_type
         .ok_or_else(|| miette!("Missing value"))?;
+
+    // Note ids are written as letters and stored packed, which keeps their order, so a letter id
+    // becomes its packed integer and is then compared like any integer. Numbers are rejected, so
+    // that an old query like `id>100` cannot silently change meaning.
+    if matches!(
+        field,
+        Field::Note(NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote)
+    ) && !matches!(op, Op::Tilde)
+    {
+        let value = value_context
+            .params
+            .pop()
+            .ok_or_else(|| miette!("Missing value"))?;
+        if !matches!(value_type, FieldType::String | FieldType::Integer) {
+            return Err(miette!("`{value}` is not a note id"));
+        }
+        let note_id = value.parse::<NoteId>().map_err(|e| miette!("{e}"))?;
+        value_context.params.push(note_id.packed().to_string());
+        value_type = FieldType::Integer;
+    }
 
     // Special-case sorting keys
     if matches!(field, Field::SortAsc(_) | Field::SortDesc(_)) {
@@ -1411,13 +1431,13 @@ mod tests {
             ),
             // linked_to_note
             (
-                "linked_to_note=12",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 12)",
+                "linked_to_note=gir",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148)",
             ),
             // Exclude linked_to_note
             (
-                "-linked_to_note=12",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE NOT (EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 12))",
+                "-linked_to_note=gir",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE NOT (EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148))",
             ),
             // linked_to_keyword
             (
@@ -1426,8 +1446,17 @@ mod tests {
             ),
             // linked_from_note
             (
-                "linked_from_note=5",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id = 5)",
+                "linked_from_note=a",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id = 10460353203)",
+            ),
+            // Note ids, in any case, compared in the order of their letters
+            (
+                "id=GIR",
+                "SELECT DISTINCT n.id FROM note n WHERE n.id = 76967537148",
+            ),
+            (
+                "id>=gir and id<\"gja\"",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.id >= 76967537148 AND n.id < 77111026218)",
             ),
             // Convert types
             (
@@ -1511,8 +1540,15 @@ mod tests {
             // Field type and value type do not match
             "card.scheduler_buried=test",
             // Field type and operator type do not match
-            "data>2",        // Strings do not have an order
-            "id~2",          // Numbers cannot use containment operator
+            "data>2", // Strings do not have an order
+            "id~2",   // Numbers cannot use containment operator
+            // Note ids are letters, so old numeric ids are rejected rather than reinterpreted.
+            "id>100",
+            "id=42",
+            "linked_to_note=12",
+            "linked_from_note=5",
+            "id=gi-r",
+            "id=abcdefghi",
             "c.suspended~2", // Booleans cannot use containment operator
             "c.suspended>2", // Booleans do not have an order
             // String as field is not allowed

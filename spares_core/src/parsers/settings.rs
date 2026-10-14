@@ -18,6 +18,17 @@ use crate::model::NoteId;
 use crate::parsers::DEFAULT_BACK_EMPHASIS;
 use crate::parsers::Parseable;
 
+/// The action named in a note's settings, before its note id is known.
+#[derive(Clone, Copy)]
+enum ActionKind {
+    Add,
+    Update,
+    Delete,
+}
+
+/// What an imported note asks for. Its id is spares' note id, except for adapters other than
+/// spares, whose own note id (e.g. Anki's) is carried unchanged as the packed value (see
+/// [`NoteId::from_packed`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum NoteImportAction {
     #[default]
@@ -233,11 +244,11 @@ pub fn parse_note_settings(
         for settings in settings_to_change {
             if action_key.matches_read(key) {
                 if action_add_key.matches_read(value) {
-                    temp_action = Some(NoteImportAction::Add);
+                    temp_action = Some(ActionKind::Add);
                 } else if action_update_key.matches_read(value) {
-                    temp_action = Some(NoteImportAction::Update(0));
+                    temp_action = Some(ActionKind::Update);
                 } else if action_delete_key.matches_read(value) {
-                    temp_action = Some(NoteImportAction::Delete(0));
+                    temp_action = Some(ActionKind::Delete);
                 } else {
                     settings.errors_and_warnings.push(LibraryError::Note(
                         NoteErrorKind::InvalidSettings {
@@ -374,15 +385,26 @@ pub fn parse_note_settings(
                     ));
                 });
             if let Ok(note_id_str) = note_id_str_res {
-                match note_id_str.parse::<NoteId>() {
+                let parsed = if default_adapter {
+                    note_id_str.parse::<NoteId>().map_err(|e| e.to_string())
+                } else {
+                    note_id_str
+                        .trim()
+                        .parse::<i64>()
+                        .map(NoteId::from_packed)
+                        .map_err(|e| e.to_string())
+                };
+                match parsed {
                     Ok(note_id_parsed) => {
                         if temp_note_id.is_none() {
                             temp_note_id = Some(note_id_parsed);
                         }
                     }
-                    Err(_) => local_settings.errors_and_warnings.push(LibraryError::Note(
+                    Err(e) => local_settings.errors_and_warnings.push(LibraryError::Note(
                         NoteErrorKind::InvalidSettings {
-                            description: format!("The note id `{note_id_str_value}` is not valid."),
+                            description: format!(
+                                "The note id `{note_id_str_value}` is not valid: {e}"
+                            ),
                             advice: None,
                             src: data.to_string(),
                             at: settings_indices.clone().into(),
@@ -412,8 +434,8 @@ pub fn parse_note_settings(
     }
     // Validate settings
     match (temp_action, temp_note_id) {
-        (Some(NoteImportAction::Add) | None, None) => {}
-        (Some(NoteImportAction::Add), Some(_)) => {
+        (Some(ActionKind::Add) | None, None) => {}
+        (Some(ActionKind::Add), Some(_)) => {
             local_settings.errors_and_warnings.push(LibraryError::Note(
                 NoteErrorKind::SettingsWarning {
                     description: "Note id is not needed for adding a note.".to_string(),
@@ -422,7 +444,7 @@ pub fn parse_note_settings(
                 },
             ));
         }
-        (Some(NoteImportAction::Update(_)), None) => {
+        (Some(ActionKind::Update), None) => {
             local_settings.errors_and_warnings.push(LibraryError::Note(
                 NoteErrorKind::InvalidSettings {
                     description: "Note id is needed for editing a note.".to_string(),
@@ -432,7 +454,7 @@ pub fn parse_note_settings(
                 },
             ));
         }
-        (Some(NoteImportAction::Delete(_)), None) => {
+        (Some(ActionKind::Delete), None) => {
             local_settings.errors_and_warnings.push(LibraryError::Note(
                 NoteErrorKind::InvalidSettings {
                     description: "Note id is needed for deleting a note.".to_string(),
@@ -442,10 +464,10 @@ pub fn parse_note_settings(
                 },
             ));
         }
-        (Some(NoteImportAction::Update(_)) | None, Some(note_id)) => {
+        (Some(ActionKind::Update) | None, Some(note_id)) => {
             local_settings.action = NoteImportAction::Update(note_id);
         }
-        (Some(NoteImportAction::Delete(_)), Some(note_id)) => {
+        (Some(ActionKind::Delete), Some(note_id)) => {
             local_settings.action = NoteImportAction::Delete(note_id);
         }
     }

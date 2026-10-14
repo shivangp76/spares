@@ -193,20 +193,8 @@ async fn e2e_undo_create_parser_with_notes_fails_with_dependency_error(pool: Sql
     )
     .await
     .unwrap();
-    let ts = Utc::now().timestamp();
-    let custom_data = json!({}).to_string();
     // Add a note referencing the parser so undoing the CreateParser (which deletes it) must fail.
-    sqlx::query(
-        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind("n1")
-    .bind(ts)
-    .bind(ts)
-    .bind(p.id)
-    .bind(&custom_data)
-    .execute(&pool)
-    .await
-    .unwrap();
+    crate::ids::insert_test_note(&pool, "n1", p.id).await;
 
     let res = undo_event(
         &pool,
@@ -228,19 +216,7 @@ async fn e2e_undo_create_parser_with_notes_fails_with_dependency_error(pool: Sql
 #[sqlx::test]
 async fn e2e_undo_delete_parser_with_notes_fails_with_dependency_error(pool: SqlitePool) {
     let p = create_parser_helper(&pool, "with_notes").await;
-    let ts = Utc::now().timestamp();
-    let custom_data = json!({}).to_string();
-    let note_id: i64 = sqlx::query_scalar(
-        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind("n1")
-    .bind(ts)
-    .bind(ts)
-    .bind(p.id)
-    .bind(&custom_data)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let note_id = crate::ids::insert_test_note(&pool, "n1", p.id).await;
 
     // Insert a DeleteParser event without actually deleting (simulates log entry). Undoing it would
     // create the parser again, but notes still depend on it, so validation must fail.

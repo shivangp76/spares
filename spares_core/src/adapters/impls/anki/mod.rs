@@ -48,6 +48,7 @@ use crate::parsers::get_cards;
 
 mod api;
 mod database;
+pub use database::AnkiNote;
 mod types;
 mod utils;
 
@@ -193,7 +194,7 @@ impl SrsAdapter for AnkiAdapter {
             let spares_and_anki_note_ids = notes_responses
                 .iter()
                 .flat_map(|x| &x.notes)
-                .map(|note_response| -> Result<(i64, i64), String> {
+                .map(|note_response| -> Result<(NoteId, i64), String> {
                     let anki_note_id = get_note_id(note_response).map_err(|e| format!("{}", e))?;
                     Ok((note_response.id, anki_note_id))
                 })
@@ -355,8 +356,9 @@ impl SrsAdapter for AnkiAdapter {
                         requests.push(api_request);
                     }
                 }
+                // For this adapter, the id is Anki's (see `NoteImportAction`).
                 NoteImportAction::Update(note_id) => {
-                    final_note_id = Some(note_id);
+                    final_note_id = Some(note_id.packed());
                     // Workaround for issue that prevents request if note is open in browser
                     // see <https://github.com/FooSoft/anki-connect/issues/82#issuecomment-1221895385>
                     // The workaround causes the request to not go through since focus is lost.
@@ -365,7 +367,7 @@ impl SrsAdapter for AnkiAdapter {
                         note: UpdateNoteApiRequestNoteData {
                             deck_name: "Default".to_owned(),
                             model_name: ModelName::Basic,
-                            id: note_id,
+                            id: note_id.packed(),
                             fields: NoteFields {
                                 front: Some(front),
                                 back: Some(back),
@@ -387,7 +389,7 @@ impl SrsAdapter for AnkiAdapter {
                 }
                 NoteImportAction::Delete(note_id) => {
                     let params = ApiRequestParams::DeleteNote(DeleteNoteApiRequestData {
-                        notes: vec![note_id],
+                        notes: vec![note_id.packed()],
                     });
                     let api_request = ApiRequest {
                         action: note_action_to_anki(local_settings.action),

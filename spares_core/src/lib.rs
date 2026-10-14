@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod api;
 pub mod config;
 pub(crate) mod helpers;
+pub mod ids;
 pub mod model;
 pub mod notes_vcs;
 pub mod parsers;
