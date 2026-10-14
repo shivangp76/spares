@@ -386,6 +386,12 @@ pub struct SparesExternalConfig {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub set_card_due_date_duration: Duration,
     pub remote_host: Option<String>,
+    /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
+    /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
+    pub sync_url: Option<String>,
+    /// With `sync_url`, the local server syncs on startup and then every this many minutes. `0`
+    /// turns automatic syncing off.
+    pub sync_interval_minutes: u64,
     /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
     /// to the remote user's home directory. Must match the server's `SPARES_CACHE_DIR`.
     pub remote_rendered_dir: String,
@@ -415,6 +421,8 @@ impl Default for SparesExternalConfig {
             overlapper: OverlapperConfig::default(),
             set_card_due_date_duration: Duration::weeks(1),
             remote_host: None,
+            sync_url: None,
+            sync_interval_minutes: 0,
             remote_rendered_dir: ".cache/spares".to_string(),
             render_browser_parsers: true,
         }

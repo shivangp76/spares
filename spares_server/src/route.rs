@@ -69,6 +69,14 @@ use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
+use crate::handlers::sync::SYNC_BODY_LIMIT;
+use crate::handlers::sync::sync_full_download_handler;
+use crate::handlers::sync::sync_full_upload_handler;
+use crate::handlers::sync::sync_meta_handler;
+use crate::handlers::sync::sync_pull_handler;
+use crate::handlers::sync::sync_push_handler;
+use crate::handlers::sync::sync_run_handler;
+use crate::handlers::sync::sync_status_handler;
 use crate::handlers::tag::create_tag_handler;
 use crate::handlers::tag::delete_tag_handler;
 use crate::handlers::tag::get_tag_by_name_handler;
@@ -103,6 +111,35 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
             "/api/notes/{id}/image-occlusions/{index}",
             put(update_note_image_occlusion_handler),
         )
+}
+
+/// Notes repository (`spares note init-vcs` and its push hooks)
+fn notes_vcs_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/notes/vcs/status", get(notes_vcs_status_handler))
+        .route("/api/notes/vcs/receive", post(notes_vcs_receive_handler))
+        .route("/api/notes/vcs/finish", post(notes_vcs_finish_handler))
+        .route("/api/notes/vcs/init", post(notes_vcs_init_handler))
+        .route("/api/notes/vcs/check", post(notes_vcs_check_handler))
+}
+
+/// Two-way sync (`spares_core::sync`)
+fn sync_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/sync/meta", get(sync_meta_handler))
+        .route("/api/sync/pull", post(sync_pull_handler))
+        .route(
+            "/api/sync/push",
+            post(sync_push_handler).layer(DefaultBodyLimit::max(SYNC_BODY_LIMIT)),
+        )
+        .route(
+            "/api/sync/full",
+            get(sync_full_download_handler)
+                .put(sync_full_upload_handler)
+                .layer(DefaultBodyLimit::max(SYNC_BODY_LIMIT)),
+        )
+        .route("/api/sync/run", post(sync_run_handler))
+        .route("/api/sync/status", get(sync_status_handler))
 }
 
 /// Offline review on web clients
@@ -201,17 +238,13 @@ pub(crate) fn create_router(
             "/api/render-assets/packages",
             get(list_render_packages_handler),
         )
-        // Notes repository (`spares note init-vcs` and its push hooks)
-        .route("/api/notes/vcs/status", get(notes_vcs_status_handler))
-        .route("/api/notes/vcs/receive", post(notes_vcs_receive_handler))
-        .route("/api/notes/vcs/finish", post(notes_vcs_finish_handler))
-        .route("/api/notes/vcs/init", post(notes_vcs_init_handler))
-        .route("/api/notes/vcs/check", post(notes_vcs_check_handler))
         // Undo
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .merge(image_occlusion_routes())
         .merge(offline_review_routes())
+        .merge(notes_vcs_routes())
+        .merge(sync_routes())
         // Rendered notes and cards
         .nest_service("/files", ServeDir::new(files_dir))
         .route_layer(middleware::from_fn_with_state(
