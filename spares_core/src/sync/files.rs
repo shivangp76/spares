@@ -1,4 +1,4 @@
-//! Files after a sync (section 7 of `docs/sync-plan.md`). The database is the source of truth, so
+//! Files after a sync (see "After a sync" in `docs/src/sync_design.md`). The database is the source of truth, so
 //! the files of every note a sync changed are regenerated from it, and those of deleted notes
 //! removed, on whichever side the change landed.
 //!

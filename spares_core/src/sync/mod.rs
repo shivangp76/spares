@@ -1,4 +1,4 @@
-//! Two-way sync between the laptop and the server. See sections 5–7 of `docs/sync-plan.md`.
+//! Two-way sync between the laptop and the server. See `docs/src/sync_design.md`.
 //!
 //! Change tracking lives in the database (migration `20261014130000_sync`): every synced table
 //! has a `usn` column that is `-1` for rows changed since the last sync, deletes leave a row in
