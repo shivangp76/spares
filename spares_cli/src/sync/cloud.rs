@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::hash::RandomState;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -12,6 +13,7 @@ use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
 use spares_core::config::read_external_config;
 use spares_core::config::server_config;
+use spares_core::ids::NoteId;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
@@ -35,13 +37,14 @@ pub(crate) async fn push_to_remote_host() -> Result<(), String> {
     println!("Syncing database → {}", remote_host);
     sync_database(&remote_host, &get_data_dir()).await?;
 
-    push_files(&remote_host, &config.remote_rendered_dir)
+    push_files(&remote_host, &config.remote_rendered_dir).await
 }
 
 /// Copies everything but the database to `remote_host`: the data files the server does not
 /// generate itself, rendered files, templates and the files the notes read.
-pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(), String> {
+pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(), String> {
     let data_dir = get_data_dir();
+    let note_ids = server_rendered_note_ids(&data_dir.join(DATABASE_FILENAME)).await?;
     let local = data_dir.to_str().unwrap();
 
     // Pass 2: Everything else (cards, image occlusions, render assets). The server reads notes from
@@ -78,7 +81,7 @@ pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result
 
     // Pass 3: Rendered files, so the server does not have to render notes again.
     println!("Syncing rendered files → {}", remote_host);
-    sync_rendered_files(remote_host, remote_rendered_dir)?;
+    sync_rendered_files(remote_host, remote_rendered_dir, &note_ids)?;
 
     // Pass 4: Templates, and config.toml as the server needs it (see `server_config`), so reviews
     // there are scheduled with the same settings.
@@ -93,7 +96,7 @@ pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result
 
     // Pass 5: Files the notes read, so the server can render notes edited there.
     println!("Syncing files read by notes → {}", remote_host);
-    sync_render_dependencies(remote_host)?;
+    sync_render_dependencies(remote_host, &note_ids)?;
 
     println!("Done.");
     Ok(())
@@ -127,14 +130,49 @@ fn server_rendered_parsers() -> impl Iterator<Item = Box<dyn Parseable>> {
 
 fn rendered_dirs() -> BTreeSet<PathBuf> {
     server_rendered_parsers()
-        .flat_map(|parser| {
-            [
-                RenderOutputDirectoryType::Note,
-                RenderOutputDirectoryType::Card,
-            ]
-            .map(|output_type| parser.get_output_rendered_dir(output_type))
-        })
+        .flat_map(|parser| parser_rendered_dirs(parser.as_ref()))
         .collect()
+}
+
+fn parser_rendered_dirs(parser: &dyn Parseable) -> [PathBuf; 2] {
+    [
+        RenderOutputDirectoryType::Note,
+        RenderOutputDirectoryType::Card,
+    ]
+    .map(|output_type| parser.get_output_rendered_dir(output_type))
+}
+
+/// The notes of each parser the server renders, by parser name.
+async fn server_rendered_note_ids(
+    database: &Path,
+) -> Result<HashMap<&'static str, HashSet<NoteId>>, String> {
+    let mut connection = SqliteConnectOptions::new()
+        .filename(database)
+        .read_only(true)
+        .connect()
+        .await
+        .map_err(|e| format!("Failed to open {}: {e}", database.display()))?;
+    let rows: Vec<(NoteId, String)> = sqlx::query_as(
+        "SELECT note.id, parser.name FROM note JOIN parser ON parser.id = note.parser_id",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .map_err(|e| format!("Failed to read notes from {}: {e}", database.display()))?;
+    let mut note_ids: HashMap<&'static str, HashSet<NoteId>> = server_rendered_parsers()
+        .map(|parser| (parser.get_parser_name(), HashSet::new()))
+        .collect();
+    for (note_id, parser_name) in rows {
+        if let Some(ids) = note_ids.get_mut(parser_name.as_str()) {
+            ids.insert(note_id);
+        }
+    }
+    Ok(note_ids)
+}
+
+/// The note a rendered file belongs to. Rendered files are named `<note id>.<ext>` or
+/// `<note id>-<order>-<side>.<ext>`.
+fn rendered_file_note_id(file_name: &str) -> Option<NoteId> {
+    file_name.split(['-', '.']).next()?.parse().ok()
 }
 
 /// `dir` as an rsync source that copies its contents.
@@ -145,24 +183,41 @@ fn dir_source(dir: &Path) -> Result<String, String> {
     Ok(format!("{dir}/"))
 }
 
-/// Copies the rendered files of the parsers the server renders into `remote_rendered_dir`, along
+/// Copies the rendered files of the notes the server renders into `remote_rendered_dir`, along
 /// with rendered image occlusions.
-fn sync_rendered_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(), String> {
+fn sync_rendered_files(
+    remote_host: &str,
+    remote_rendered_dir: &str,
+    note_ids: &HashMap<&'static str, HashSet<NoteId>>,
+) -> Result<(), String> {
     let destination = format!("{remote_host}:{remote_rendered_dir}/");
-    for dir in rendered_dirs() {
-        if !dir.is_dir() {
+    // Rendered files can share a directory with other files (`aux/`, files rendered outside
+    // spares), so only those of existing notes are copied, by name.
+    let mut dirs: BTreeMap<PathBuf, HashSet<NoteId>> = BTreeMap::new();
+    for parser in server_rendered_parsers() {
+        let ids = &note_ids[parser.get_parser_name()];
+        for dir in parser_rendered_dirs(parser.as_ref()) {
+            dirs.entry(dir).or_default().extend(ids);
+        }
+    }
+    for (dir, ids) in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let names: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.path().is_file())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| {
+                !name.ends_with(".synctex.gz")
+                    && !name.contains('\n')
+                    && rendered_file_note_id(name).is_some_and(|id| ids.contains(&id))
+            })
+            .collect();
+        if names.is_empty() {
             continue;
         }
-        // Rendered files are named `<note id>...`, so this skips `aux/` and unrelated files in
-        // shared directories.
-        run_rsync(&[
-            "-avz",
-            "--exclude=*.synctex.gz",
-            "--include=/[0-9]*",
-            "--exclude=*",
-            &dir_source(&dir)?,
-            &destination,
-        ])?;
+        run_rsync_files_from(&names.join("\n"), &["-avz"], &dir_source(&dir)?, &destination)?;
     }
     run_rsync(&[
         "-avz",
@@ -178,9 +233,12 @@ fn sync_rendered_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(
 ///
 /// Only files read by a local render are known, so a file a note starts reading after being edited
 /// on the server is not copied until the note is rendered locally.
-fn sync_render_dependencies(remote_host: &str) -> Result<(), String> {
+fn sync_render_dependencies(
+    remote_host: &str,
+    note_ids: &HashMap<&'static str, HashSet<NoteId>>,
+) -> Result<(), String> {
     let home = std::env::home_dir().ok_or("Failed to find the home directory")?;
-    let plan = plan_dependency_sync(&home, render_dependency_files());
+    let plan = plan_dependency_sync(&home, render_dependency_files(note_ids));
     for path in &plan.skipped {
         eprintln!(
             "Not syncing {}, since it is outside {}",
@@ -191,25 +249,18 @@ fn sync_render_dependencies(remote_host: &str) -> Result<(), String> {
     if plan.files.is_empty() {
         return Ok(());
     }
-    let list = std::env::temp_dir().join(format!("spares-sync-files-{}", std::process::id()));
     let contents = plan
         .files
         .iter()
         .filter_map(|path| path.to_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let result = std::fs::write(&list, contents)
-        .map_err(|e| format!("Failed to write {}: {e}", list.display()))
-        .and_then(|()| {
-            run_rsync(&[
-                "-avzR",
-                &format!("--files-from={}", list.display()),
-                &dir_source(&home)?,
-                &format!("{remote_host}:"),
-            ])
-        });
-    let _ = std::fs::remove_file(&list);
-    result?;
+    run_rsync_files_from(
+        &contents,
+        &["-avzR"],
+        &dir_source(&home)?,
+        &format!("{remote_host}:"),
+    )?;
     if !plan.symlinks.is_empty() {
         run_ssh(remote_host, &symlinks_command(&plan.symlinks))
             .map_err(|e| format!("Creating symlinks failed: {e}"))?;
@@ -218,8 +269,10 @@ fn sync_render_dependencies(remote_host: &str) -> Result<(), String> {
 }
 
 /// Existing files read by rendered notes of parsers the server renders, except those synced by
-/// other passes or written by rendering.
-fn render_dependency_files() -> BTreeSet<PathBuf> {
+/// other passes or written by rendering. Records left by deleted notes are ignored.
+fn render_dependency_files(
+    note_ids: &HashMap<&'static str, HashSet<NoteId>>,
+) -> BTreeSet<PathBuf> {
     let excluded_dirs: Vec<PathBuf> = [
         get_data_dir(),
         get_cache_dir(),
@@ -229,7 +282,9 @@ fn render_dependency_files() -> BTreeSet<PathBuf> {
     .chain(rendered_dirs())
     .collect();
     server_rendered_parsers()
-        .flat_map(|parser| read_render_dependencies::<RandomState>(parser.as_ref(), None).0)
+        .flat_map(|parser| {
+            read_render_dependencies(parser.as_ref(), Some(&note_ids[parser.get_parser_name()])).0
+        })
         .filter(|path| path.is_file() && !excluded_dirs.iter().any(|dir| path.starts_with(dir)))
         .collect()
 }
@@ -419,6 +474,26 @@ fn run_ssh(remote_host: &str, command: &str) -> Result<(), String> {
     }
 }
 
+/// Runs rsync on the files listed in `list` (one path per line, relative to `source`).
+fn run_rsync_files_from(
+    list: &str,
+    args: &[&str],
+    source: &str,
+    destination: &str,
+) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!("spares-sync-files-{}", std::process::id()));
+    let result = std::fs::write(&path, list)
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+        .and_then(|()| {
+            let files_from = format!("--files-from={}", path.display());
+            let mut all = args.to_vec();
+            all.extend([files_from.as_str(), source, destination]);
+            run_rsync(&all)
+        });
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
 fn run_rsync(args: &[&str]) -> Result<(), String> {
     let status = Command::new("rsync")
         .args(args)
@@ -442,8 +517,11 @@ mod tests {
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::sqlite::SqliteJournalMode;
 
+    use spares_core::ids::NoteId;
+
     use super::SymlinkTarget;
     use super::plan_dependency_sync;
+    use super::rendered_file_note_id;
     use super::restore_command;
     use super::snapshot_database;
     use super::symlinks_command;
@@ -469,6 +547,18 @@ mod tests {
             .fetch_all(connection)
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn only_files_named_after_a_note_are_rendered_files() {
+        let note = |letters| NoteId::from_letters(letters).ok();
+        assert_eq!(rendered_file_note_id("aab.pdf"), note("aab"));
+        assert_eq!(rendered_file_note_id("aab-1-front.pdf"), note("aab"));
+        assert_eq!(rendered_file_note_id("aab.deps.json"), note("aab"));
+        // Files rendered outside spares, which `push_files` then checks against the notes
+        assert_eq!(rendered_file_note_id("539_HW1.pdf"), None);
+        assert_eq!(rendered_file_note_id("1780433902-chat.html"), None);
+        assert_eq!(rendered_file_note_id("0001.pdf"), None);
     }
 
     #[tokio::test]
