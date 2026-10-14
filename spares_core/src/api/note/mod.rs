@@ -7,7 +7,7 @@ pub mod export;
 mod keyword_distance;
 mod render;
 mod search;
-mod update;
+pub(crate) mod update;
 pub use basic::*;
 pub use create::*;
 pub use delete::*;

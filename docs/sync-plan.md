@@ -1,6 +1,6 @@
 # Two-way sync for spares: design plan
 
-Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) and section 5 (change tracking) are implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
+Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) section 5 (change tracking) and the sync engine of section 6 are implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
 
 ## 1. Goal and context
 
@@ -315,101 +315,86 @@ Open the web app online beforehand, so the phone sends its offline queue.
 
 The open issues found in the review (child snapshots taken after the change, no way to turn the triggers off, cascades marking every note, `parser` having no `updated_at`) are fixed as described above.
 
-## 6. Sync engine: `spares_core/src/sync/` (pure DB logic)
+## 6. Sync engine: `spares_core/src/sync/` (implemented)
 
-- **`changes_since(usn)`** collects the graves, parsers, tags, notes (with tags, keywords and links), cards (with tags) and review_logs that changed since that usn or are dirty. Both pull and push use it.
+| File | What it does |
+|---|---|
+| `records.rs` | The rows sync carries (`Changes`): parsers, tags, notes (with tag IDs and non-embedded keywords), cards (with tag IDs), review logs, graves. A record has the same JSON shape as its `sync_base` snapshot. |
+| `merge.rs` | Pure three-way merges: values, sets, JSON objects key by key, and note text (`diffy`). |
+| `orders.rs` | Replaces the card orders in a note's text with card IDs for the text merge (see below). |
+| `client.rs` | `merge_pulled`: merges the server's changes into the local DB. |
+| `apply.rs` | Upserts and deletes for records, parents first; the server applies a push with `apply_changes`. |
+| `server.rs` | `meta`, `pull`, `push`, `full_download`, `full_upload`. |
+| `full.rs` | Snapshot (`VACUUM INTO`) and restore. |
+| `run.rs` | `sync`: the client's side, deciding between a normal and a full sync, through a `SyncRemote`. |
 
-### Open issues: what gets synced
-- **`render_asset` and `render_package` stop reaching the server.**
-  - Today they arrive because the whole DB is pushed.
-  - rsync copies the asset files but not these table rows.
-  - So Typst assets added after the first full upload would return 404 on the phone.
+### What gets synced
+- Parsers, tags, notes, cards and review logs, with graves.
+- `note_link` and embedded keywords are derived from the text, so they aren't sent. The receiving side rebuilds them whenever a note's text changes.
+- `render_asset` and `render_package` rows: the client sends all of them on every push, since assets are only added on the laptop. (Their files still go by rsync.)
+- Not synced: `event` (undo history), `offline_action`, `app_state`, `id_counter` (except as below).
 
-### Merge rules (`merge.rs`)
-*Base* means the `sync_base` row, or the local row if the row isn't dirty.
+### Merge rules (`client.rs`)
+*Base* means the `sync_base` row, or the local row if it isn't dirty. A dirty row with no base is one this side already pushed in a sync that didn't finish, so the remote version is taken as the base and the local version wins.
 
 | Situation | Result |
 |---|---|
-| Changed on one side only | That side's version, whatever its timestamp. This alone fixes the "old unsynced laptop edit" case when the two sides touched different things. |
-| Note text changed on both sides | Line-based three-way merge (`diffy` crate). Non-overlapping hunks combine. |
-| Same lines edited on both sides | Keep the local version live. Store the remote version in `sync_conflict` and tag the note `sync-conflict`. Nothing is discarded. No conflict markers go in the note, because they would break parsing and rendering. |
-| Tags, keywords, links | Set merge: additions from either side kept, removals from either side applied |
-| review_log | Union with `INSERT OR IGNORE`. Reviews are never dropped. |
-| Card scheduling fields | From the side with the newer latest review |
-| Other card fields (suspended, buried, due override) | Per-field three-way merge. If both sides changed the same field, the newer one wins. |
-| Deleted on one side, edited on the other | The edit wins: keep the note and tag it `sync-conflict` |
-| Deleted on one side, not edited on the other | Delete it |
-| Parsers, tags (metadata) | Per-field three-way merge. Clashing unique names abort with a clear message. |
+| Changed on one side only | That side's version, whatever its timestamp. |
+| Note text changed on both sides | Line-based three-way merge (`diffy`) of the texts with their card orders replaced by card IDs (below). If that conflicts, the plain texts are tried too. |
+| Same lines edited on both sides, or a merged text that no longer parses | Keep the local text. Store base, local and remote in `sync_conflict` and tag the note `sync-conflict`. |
+| Note tags, non-embedded keywords, card tags | Set merge: additions from either side kept, removals from either side applied. |
+| Note `custom_data`, card `custom_data` | Key by key. A key both sides changed: local for notes, the newer change for cards. |
+| Note `parser_id`, `created_at` | Three-way; local wins a conflict. |
+| review_log | Union. A log keeps its card and tag where either side still has them. |
+| Card scheduling (`due`, `stability`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs (`compute_memory_state`). |
+| Card `special_state`, `desired_retention` | Three-way; the newer change wins a conflict. |
+| Card `order`, `back_type`, `note_id` | Follow the note text. |
+| Note deleted on one side, edited on the other | The edit wins: the note is kept (its cards and reviews are sent back) and tagged `sync-conflict`, with a `sync_conflict` row. A review doesn't count as an edit. |
+| Note deleted on one side, not edited on the other | Delete it. |
+| Card deleted on one side | Delete it, even if the other side reviewed it (its reviews stay, unlinked). A card's existence follows its note's text. |
+| Tag or parser deleted on one side, changed on the other | Keep it, and send back what it is on. A parser still used by notes is kept too. |
+| Tags, parsers (metadata) | Per-field three-way merge; the newer change wins a tag conflict. |
+| Both sides have a tag with the same name (review snapshot tags, `sync-conflict`, or the same new tag) | The local tag is folded into the server's: its notes, cards, review logs and filtered-tag scheduler data move over, and it's deleted. |
+| Both sides have a parser with the same name | Sync stops with a message. |
 
-**Saving merged notes:** a merged note is saved through the normal `update_notes` path **on the client**, which re-parses it into cards. The resulting note and card rows are what get pushed. The server never re-parses on its own, which keeps card IDs the same on both sides.
+**Card IDs when both sides changed a note's text.** A cloze names its cards by position (`o:1,2`), and adding a cloze renumbers every later one, so two edits that each add a cloze would conflict on every cloze line. Before merging, each side's orders are replaced with the IDs of the cards they name on that side (the base's from the cards at the last sync, which the triggers keep in `sync_base` even when deleted). After the merge:
+- `reconcile_cards` gives each cloze the card its merged text names, else the card with its cloze uid, else (when the text names no cards) the card in its place;
+- cards nothing names are deleted (with graves), and clozes without a card get new ones;
+- the text is written back with sequential orders.
 
-#### Open issues
-- **Derived data is synced as if it were user data.**
-  - **Links and embedded keywords.** `note_link` is parsed from the note text (`get_linked_notes`, `api/note/update/links.rs`) and then resolved against keywords. Embedded keywords are also parsed from the text. Merging them as sets, separately from the text merge, can leave them out of step with the text. They should be rebuilt after the merge.
-  - **Review snapshot tags** (`create_review_snapshot_tag`, `api/review.rs`) are a bigger problem.
-    - Each replica creates its own `review-<hash>` tag with the same name and a different ID.
-    - Each replica rebuilds `card_tag` and `card.custom_data` daily.
-    - Under the rules above, sync aborts on the name clash the first time the same query is reviewed on both devices.
-    - Fix: make these tags replica-local, or match tags by name.
-  - **The `sync-conflict` tag** has the same name-clash problem when both sides create it.
-- **How card IDs are kept during a merge isn't specified.**
-  - If both sides added clozes, the client re-parses the merged text knowing only its local cards. It then creates its own card where the server already has one, possibly with reviews.
-  - The result is duplicate cards on the server (with no grave), plus the foreign-key failure described under the protocol's open issues.
-  - The client must apply remote cards first, then remove duplicates by `(note_id, order)` and re-point their review logs.
-  - Handle both sides adding `c3` in different places.
-  - A merged text that no longer parses should become a conflict, not fail the sync.
-- **"Scheduling comes from the side with the newer review" isn't right.**
-  - It ignores scheduling changes made without a review: manual `due`, reposition, reschedule, `desired_retention`.
-  - If both sides reviewed offline, one side's effect on stability is lost. After merging the review logs, replay them with the existing `compute_memory_state` (`schedulers/mod.rs`) instead.
-  - The field names in the table don't match the schema. The real fields are `special_state` (Suspended/UserBuried/SchedulerBuried), `due`, `desired_retention` and `custom_data`, and `due` falls into both of the table's card categories.
-- **Rows missing from the merge table:**
-  - `note.custom_data`;
-  - `parser_id` changes.
-  - It's also unclear whether a review counts as an "edit" for the rule that an edit beats a delete.
+The client does all of this and pushes the result, so the server never re-parses, and card IDs are the same on both sides.
 
-### Protocol (no chunking with two replicas; the client role runs on the laptop's local server)
-1. `GET /api/sync/meta` → `{usn, migration_version, server_time, empty}`.
-   - Refuse if the clocks differ by more than 5 minutes (the merge rules use `updated_at` to break ties) or the migration versions differ.
-   - Decide between no-op, normal and full sync.
-2. `POST /api/sync/pull {since}` → the server's changes since `since`: graves, parsers, tags, notes (with tags, keywords, links), cards (with tags), review_logs.
-   - The client opens a local transaction, merges, and builds its push set: dirty rows, merged results, graves.
-3. `POST /api/sync/push {expected_usn, changes}` → the server, in one transaction:
-   - checks that its `usn` hasn't moved (if it has, return 409 and the client retries from step 2);
-   - applies the changes as given (the client has already merged);
-   - increments `usn` and returns `{new_usn, counts}`.
-4. The client stamps the pushed rows with `new_usn`, clears its graves and the `sync_base` rows it pushed, compares counts, and commits.
-   - If the counts don't match, it rolls back and sets `needs_full_sync`.
+### Protocol (no chunking with two replicas)
+1. `meta` → `{usn, epoch, server_time, schema_version, replica, role, empty, client_last_usn}`. The client refuses to sync if:
+   - the clocks differ by more than 5 minutes;
+   - the schema versions differ;
+   - both sides have the same replica number;
+   - the roles aren't one `client` and one `server`.
 
-#### Open issues
-- **Foreign-key errors will block sync for good.** `INSERT OR IGNORE` does not skip foreign-key failures (tested with `sqlite3`).
-  - A phone review of a card the laptop deleted (cloze removed, or a live block removed) fails on every retry.
-  - So does a `review_log.tag_id` pointing at a filtered tag deleted on the other side.
-  - Fixes:
-    - set `PRAGMA defer_foreign_keys`;
-    - apply upserts from parent to child, and graves from child to parent;
-    - null out dangling `card_id`/`tag_id`.
-  - Never upsert with `INSERT OR REPLACE`: replacing a note cascade-deleted its cards (tested with `sqlite3`). Use `ON CONFLICT DO UPDATE`.
-- **The 409 check doesn't catch phone edits made during a sync.**
-  - The server's `sync_usn` only moves on push. A phone edit between the client's pull and push leaves it unchanged, so the push overwrites that edit without warning.
-  - Nothing says who sets `usn` on the server's own dirty (`-1`) rows after a sync.
-  - A phone review during a sync makes the counts differ, which sets `needs_full_sync`. Every full sync loses data on one side, so a count mismatch should retry instead.
-  - The protocol should state that a re-sync after a crash is safe: identical changes on both sides are not a conflict.
-- **Restoring the laptop from a backup, or a wrong `SPARES_REPLICA`, causes ID collisions between rows with different content.**
-  - `SPARES_REPLICA` and `SPARES_SYNC_ROLE` are already required with no default (section 4).
-  - `meta` should also exchange both sides' replica number and role. Sync is refused when both sides have the same `SPARES_REPLICA`, or when they aren't one `server` and one `client`.
-  - The server should remember the last `usn` each replica synced at, and force a full sync when a client reports an older one.
-- **Live notes:** the unique index on `(live_sync_name, live_block_order)` can fail partway through applying a push when a re-import has swapped block orders.
+   It asks for a full sync (`FullSyncRequired`, with the reason) when any of these hold:
+   - it has never synced;
+   - `needs_full_sync` is set;
+   - the server's epoch changed (it was replaced by a full upload);
+   - its last usn is ahead of the server's (the server was restored from a backup);
+   - its last usn is behind what the server recorded for it in `sync_client` (the client was restored from a backup).
+2. `pull {since}`: the server first stamps everything changed on it since its last stamp (`usn = -1`, phone edits included) with `usn + 1`, then returns rows with `usn > since`, plus every card of each changed note. It also sets its undo guard.
+3. The client opens one local transaction, merges (`merge_pulled`), and pushes everything dirty afterwards.
+4. `push {pull_usn, changes, render assets}`: the server answers 409 (`SyncRetry`) if its usn moved or anything changed on it since the pull (a phone edit while the client merged). The client rolls back and starts over, up to 3 times. Otherwise the server applies the changes as given in one transaction (foreign keys deferred), stamps them with `usn + 1`, records the client in `sync_client`, and returns the new usn and row counts.
+5. The client stamps its dirty rows with the new usn, clears its graves and bases, records `sync_usn`, `last_sync_at` and its undo guard, compares counts, and commits.
+   - If the counts differ, it rolls back and sets `needs_full_sync`. With the 409 check this only happens if the replicas drifted apart some other way.
+   - **Crash safety:** if the client fails after the server committed a push, the next pull returns the client's own changes, which match its still-dirty rows and merge to themselves.
+- **Live notes:** before writing notes, the incoming notes' `live_block_order` is cleared, so two notes swapping block orders in one sync don't trip the unique index.
 
 ### Full sync (escape hatch, and the first sync)
-- `GET /api/sync/full` streams a `VACUUM INTO` snapshot.
-- `PUT /api/sync/full` accepts one: write to a temp file, run `PRAGMA integrity_check`, then restore with the backup API.
-- Afterwards set every `usn = 0` and clear graves and bases.
-- This reuses the snapshot logic from `cloud.rs` (`snapshot_database`) and replaces its `ssh` + `sqlite3` restore.
+- `full.rs` copies the incoming database (a `VACUUM INTO` snapshot) table by table from an `ATTACH`ed file in one transaction, instead of swapping the file, so the server can do it with the database open. It checks `integrity_check` and the schema version first.
+- Afterwards every row has `usn = 0`, and graves, bases and undo history are cleared.
+- `id_counter` rows are merged by taking the larger value, so a replica never lowers its own counter.
+- **Upload:** the client first marks everything synced and sets `needs_full_sync` until the upload succeeds. Edits made during the upload stay dirty, with what was uploaded as their base. The server gets a new epoch, so any other client must do a full sync too.
+- **Download:** the client continues from the `sync_usn` and epoch in the server's snapshot. Rows that were dirty on the server get stamped and sent again on the next pull, where they merge to themselves.
+- A full download reports every note as changed, and every note that's gone as deleted, so the caller can regenerate files (section 7).
 
 #### Open issues
-- **A full download must regenerate every `notes/` and `cards/` file.** Otherwise `spares sync` treats the stale files as edits and reverts the server's changes.
-- **Set `last_sync_event_id` after any full sync.**
-- **Request size.** axum limits request bodies to 2 MB by default. `spares_server/src/route.rs` already raises the limit for image occlusions. Without a higher limit, both `PUT /api/sync/full` and a large push would be rejected.
+- **Request size.** axum limits request bodies to 2 MB by default. `PUT /api/sync/full` and large pushes need a higher limit (section 9).
 - **Before a full sync, show how many changes each side would lose.**
 
 ## 7. After a sync
