@@ -461,7 +461,7 @@ The repo already had `scripts/setup_vps.sh`, an idempotent script that installs 
 - `init <server> [--user <name>] [--domain <domain>] [--no-latex]`, where `<server>` is the IP or the Tailscale name:
   1. backs up the database (`VACUUM INTO`);
   2. builds and uploads the bundle and `setup_vps.sh`, and runs it as root;
-  3. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak`;
+  3. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak` if it changed;
   4. adds `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY` (read from the Keychain, so the key is never in a file) to `spares.zsh` if missing;
   5. waits until the restarted local server reports the client role, the `sync_url` and the key (`sync_api_key_set` in `/api/sync/status`);
   6. runs `spares sync cloud --full-upload` and compares note, card and review counts on both sides;

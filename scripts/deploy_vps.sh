@@ -80,8 +80,17 @@ set_config() {
       { print }' "$CONFIG_FILE"
   } > "$tmp"
   mkdir -p "$CONFIG_DIR"
-  [[ -f "$CONFIG_FILE" ]] && cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    cp -p "$CONFIG_FILE" "$CONFIG_FILE.bak"
+    trap remove_unchanged_backup EXIT
+  fi
   mv "$tmp" "$CONFIG_FILE"
+}
+
+# Removes config.toml.bak on exit if set_config left the file as it was.
+remove_unchanged_backup() {
+  cmp -s "$CONFIG_FILE" "$CONFIG_FILE.bak" && rm -f "$CONFIG_FILE.bak"
+  return 0
 }
 
 # A field of the local server's `GET /api/sync/status`, or nothing if it is not running.
@@ -212,7 +221,9 @@ init() {
   set_config "remote_host = \"$user@$host\"
 sync_url = \"$url\"
 sync_interval_minutes = $interval"
-  echo "Set remote_host, sync_url and sync_interval_minutes in $CONFIG_FILE (the old one is config.toml.bak)."
+  echo "Set remote_host, sync_url and sync_interval_minutes in $CONFIG_FILE."
+  [[ -f "$CONFIG_FILE.bak" ]] && ! cmp -s "$CONFIG_FILE" "$CONFIG_FILE.bak" \
+    && echo "The old one is config.toml.bak."
 
   local missing=()
   grep -qs 'SPARES_REPLICA=' "$SHELL_FILE" || missing+=('export SPARES_REPLICA=0')
