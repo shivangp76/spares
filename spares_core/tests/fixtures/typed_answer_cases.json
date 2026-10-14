@@ -1,0 +1,152 @@
+[
+  {
+    "name": "exact match",
+    "expected": "Paris",
+    "typed": "Paris",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "Paris" }],
+      "expected": [{ "kind": "good", "text": "Paris" }]
+    }
+  },
+  {
+    "name": "wrong case",
+    "expected": "Paris",
+    "typed": "paris",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "bad", "text": "p" }, { "kind": "good", "text": "aris" }],
+      "expected": [{ "kind": "missed", "text": "P" }, { "kind": "good", "text": "aris" }]
+    }
+  },
+  {
+    "name": "ignore case keeps the characters as typed and expected",
+    "expected": "Paris",
+    "typed": "paris",
+    "ignore_case": true,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "paris" }],
+      "expected": [{ "kind": "good", "text": "Paris" }]
+    }
+  },
+  {
+    "name": "ignore case of a Greek letter",
+    "expected": "Σ",
+    "typed": "σ",
+    "ignore_case": true,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "σ" }],
+      "expected": [{ "kind": "good", "text": "Σ" }]
+    }
+  },
+  {
+    "name": "missing accent",
+    "expected": "café",
+    "typed": "cafe",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "caf" }, { "kind": "bad", "text": "e" }],
+      "expected": [{ "kind": "good", "text": "caf" }, { "kind": "missed", "text": "é" }]
+    }
+  },
+  {
+    "name": "ignore combining marks",
+    "expected": "café",
+    "typed": "cafe",
+    "ignore_case": false,
+    "ignore_combining": true,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "cafe" }],
+      "expected": [{ "kind": "good", "text": "café" }]
+    }
+  },
+  {
+    "name": "ignore case and combining marks",
+    "expected": "Ça va",
+    "typed": "ca va",
+    "ignore_case": true,
+    "ignore_combining": true,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "ca va" }],
+      "expected": [{ "kind": "good", "text": "Ça va" }]
+    }
+  },
+  {
+    "name": "a decomposed accent matches a precomposed one",
+    "expected": "café",
+    "typed": "café",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "café" }],
+      "expected": [{ "kind": "good", "text": "café" }]
+    }
+  },
+  {
+    "name": "surrounding whitespace is ignored",
+    "expected": "Paris",
+    "typed": "  Paris ",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "Paris" }],
+      "expected": [{ "kind": "good", "text": "Paris" }]
+    }
+  },
+  {
+    "name": "an answer with a comma",
+    "expected": "Washington, D.C.",
+    "typed": "Washington DC",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "Washington DC" }],
+      "expected": [
+        { "kind": "good", "text": "Washington" },
+        { "kind": "missed", "text": "," },
+        { "kind": "good", "text": " D" },
+        { "kind": "missed", "text": "." },
+        { "kind": "good", "text": "C" },
+        { "kind": "missed", "text": "." }
+      ]
+    }
+  },
+  {
+    "name": "nothing typed",
+    "expected": "Paris",
+    "typed": "",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [],
+      "expected": [{ "kind": "missed", "text": "Paris" }]
+    }
+  },
+  {
+    "name": "an extra character",
+    "expected": "red",
+    "typed": "reed",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "good", "text": "re" }, { "kind": "bad", "text": "e" }, { "kind": "good", "text": "d" }],
+      "expected": [{ "kind": "good", "text": "red" }]
+    }
+  },
+  {
+    "name": "a different word",
+    "expected": "green",
+    "typed": "blue",
+    "ignore_case": false,
+    "ignore_combining": false,
+    "diff": {
+      "typed": [{ "kind": "bad", "text": "blu" }, { "kind": "good", "text": "e" }],
+      "expected": [{ "kind": "missed", "text": "gre" }, { "kind": "good", "text": "e" }, { "kind": "missed", "text": "n" }]
+    }
+  }
+]
