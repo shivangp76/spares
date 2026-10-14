@@ -754,5 +754,78 @@ async fn undo_stops_at_the_last_sync() {
     // A change made after the sync can be undone.
     edit(&replicas.laptop, ids[0], "A {{ one }} after").await;
     undo().await.unwrap().unwrap();
-    assert!(data(&replicas.laptop, ids[0]).await.unwrap().ends_with("before"));
+    assert!(
+        data(&replicas.laptop, ids[0])
+            .await
+            .unwrap()
+            .ends_with("before")
+    );
+}
+
+#[tokio::test]
+async fn conflicts_resolve_with_either_text_and_keep_their_cards() {
+    use super::conflicts::ConflictKind;
+    use super::conflicts::Resolution;
+    use super::conflicts::list_conflicts;
+    use super::conflicts::resolve_conflict;
+
+    let (replicas, ids) = Replicas::synced(&[LINES, "B {{ two }}"]).await;
+    let synced = data(&replicas.laptop, ids[0]).await.unwrap();
+    let card = cards_of(&replicas.laptop, ids[0]).await;
+    edit(
+        &replicas.laptop,
+        ids[0],
+        &synced.replace("Line three", "Line three (laptop)"),
+    )
+    .await;
+    on_server(edit(
+        &replicas.server,
+        ids[0],
+        &synced.replace("Line three", "Line three (phone)"),
+    ))
+    .await;
+    on_server(delete(&replicas.server, ids[1])).await;
+    edit(&replicas.laptop, ids[1], "B {{ two }} kept").await;
+    replicas.sync().await;
+
+    let conflicts = list_conflicts(&replicas.laptop).await.unwrap();
+    assert_eq!(conflicts.len(), 2);
+    let text = conflicts.iter().find(|c| c.note_id == ids[0]).unwrap();
+    assert_eq!(text.kind, ConflictKind::Text);
+    let remote = text.remote.clone().unwrap();
+    assert!(
+        remote.contains("(phone)") && remote.contains("o:c"),
+        "{remote}"
+    );
+    resolve_conflict(
+        &replicas.laptop,
+        text.id,
+        Resolution::Text(remote),
+        &get_all_parsers(),
+    )
+    .await
+    .unwrap();
+    let resolved = data(&replicas.laptop, ids[0]).await.unwrap();
+    assert_eq!(resolved, synced.replace("Line three", "Line three (phone)"));
+    assert_eq!(cards_of(&replicas.laptop, ids[0]).await, card);
+    assert_eq!(
+        tags_of(&replicas.laptop, ids[0]).await,
+        Vec::<String>::new()
+    );
+
+    let deleted = conflicts.iter().find(|c| c.note_id == ids[1]).unwrap();
+    assert_eq!(deleted.kind, ConflictKind::DeletedThere);
+    resolve_conflict(
+        &replicas.laptop,
+        deleted.id,
+        Resolution::Delete,
+        &get_all_parsers(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(list_conflicts(&replicas.laptop).await.unwrap().len(), 0);
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(data(&replicas.server, ids[1]).await, None);
+    assert_eq!(data(&replicas.server, ids[0]).await.unwrap(), resolved);
 }

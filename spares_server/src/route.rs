@@ -70,6 +70,8 @@ use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 use crate::handlers::sync::SYNC_BODY_LIMIT;
+use crate::handlers::sync::list_sync_conflicts_handler;
+use crate::handlers::sync::resolve_sync_conflict_handler;
 use crate::handlers::sync::sync_full_download_handler;
 use crate::handlers::sync::sync_full_upload_handler;
 use crate::handlers::sync::sync_meta_handler;
@@ -140,6 +142,11 @@ fn sync_routes() -> Router<Arc<AppState>> {
         )
         .route("/api/sync/run", post(sync_run_handler))
         .route("/api/sync/status", get(sync_status_handler))
+        .route("/api/sync/conflicts", get(list_sync_conflicts_handler))
+        .route(
+            "/api/sync/conflicts/{id}",
+            post(resolve_sync_conflict_handler),
+        )
 }
 
 /// Offline review on web clients

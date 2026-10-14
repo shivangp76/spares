@@ -103,6 +103,28 @@ pub(crate) fn from_card_ids(
     Ok((text, numbers))
 }
 
+/// Turns card ids written by [`to_card_ids`] into this note's current orders (`cards`: card id to
+/// order). A card that no longer exists gets an order no card has, so editing the note creates a
+/// new card for it. Orders that are numbers are kept.
+pub(crate) fn to_current_orders(
+    parser: &dyn Parseable,
+    text: &str,
+    cards: &HashMap<CardId, u32>,
+) -> Result<String, Error> {
+    let mut next = cards.values().copied().max().unwrap_or(0) + 1;
+    let mut fresh: HashMap<CardId, u32> = HashMap::new();
+    replace_orders(parser, text, |order| {
+        let id: CardId = order.strip_prefix(CARD_TOKEN)?.parse().ok()?;
+        let order = cards.get(&id).copied().unwrap_or_else(|| {
+            *fresh.entry(id).or_insert_with(|| {
+                next += 1;
+                next - 1
+            })
+        });
+        Some(order.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +151,17 @@ mod tests {
         assert_eq!(
             to_card_ids(parser.as_ref(), text, &HashMap::new()).unwrap(),
             text
+        );
+    }
+
+    #[test]
+    fn test_to_current_orders() {
+        let parser = find_parser("markdown", &get_all_parsers()).unwrap();
+        let text = "A {{[o:c40] one }} B {{[o:c99] two }} C {{[o:c99] three }} D {{[o:2] four }}";
+        let current = HashMap::from([(40, 3), (48, 1)]);
+        assert_eq!(
+            to_current_orders(parser.as_ref(), text, &current).unwrap(),
+            "A {{[o:3] one }} B {{[o:4] two }} C {{[o:4] three }} D {{[o:2] four }}"
         );
     }
 

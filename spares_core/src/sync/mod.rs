@@ -12,6 +12,7 @@ use crate::Error;
 
 pub mod apply;
 pub mod client;
+pub mod conflicts;
 pub mod files;
 pub mod full;
 pub mod http;

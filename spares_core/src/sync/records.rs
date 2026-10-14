@@ -50,6 +50,16 @@ pub struct NoteRecord {
     pub keywords: Vec<String>,
 }
 
+/// One side of a conflict, as `sync_conflict` keeps it: the note, and which card each order in
+/// its text named on that side, so a text from that side can be applied here without moving
+/// reviews to the wrong card.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ConflictSide {
+    #[serde(flatten)]
+    pub note: NoteRecord,
+    pub cards: std::collections::BTreeMap<u32, CardId>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CardRecord {
     pub id: CardId,
