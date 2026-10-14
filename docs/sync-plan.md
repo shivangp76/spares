@@ -469,20 +469,20 @@ Updating is re-running the script (it pulls and rebuilds on the server). The pla
 - **pandoc/latexmk:** the script installs them, so markdown and LaTeX notes edited on the phone render on the server. The server builds from source, which needs about 2 GB of memory (the script adds swap).
 
 ## 11. Delivery order (one commit each)
-1. ID newtype, allocator and `spares migrate ids`.
-2. Sync migration and triggers.
-3. Merge engine and tests.
-4. Protocol endpoints and the client.
-5. CLI, including `sync conflicts`.
-6. File regeneration and undo guard.
-7. Frontend.
-8. Auto-sync.
-9. Deploy files.
-
-### Open issues
-- **Usable sync before file regeneration.** Commits 4–5 make sync usable before commit 6 adds file regeneration. Using sync in between gives the stale-file reverts described in the open issues of sections 6 and 7.
+1. ID newtype, allocator and `spares migrate ids`. Done, then `next_ids` for the other tables.
+2. Sync migration and triggers. Done.
+3. Merge engine and tests. Done.
+4. Protocol endpoints and the client. Done, together with file regeneration (part of 6), so sync was never usable without it.
+5. Undo guard (the rest of 6). Done.
+6. CLI, including `sync conflicts`. Done.
+7. Frontend. Done.
+8. Auto-sync. Done.
+9. Deploy files. Done (in `scripts/setup_vps.sh`).
 
 ## 12. Verification (no VPS needed)
+Implemented as tests in `spares_core` (`ids`, `sync::tests`, `sync::tracking_tests`, `sync::merge`, `sync::orders`, `api::undo::e2e_tests::ids`), and run by hand with two local servers (below) on 2026-10-14: a full upload, edits to different lines of one note on both sides, a new note and a review on the server, a conflict resolved with the other side's text, and automatic sync on startup all gave the same database on both sides, with the files regenerated. The phone step was not run.
+
+
 - **ID tests:**
   - the letter form and the packed integer round-trip for 1–8 letters;
   - sorting the strings matches sorting the integers for mixed lengths: laptop slots, server tails (`giy` < `giza` < `gizzaa` < `gja`) and tier boundaries (`szy` < `szza` < `taaa`);
