@@ -1,5 +1,6 @@
 use std::fmt;
 use std::ops::Range;
+use std::str::FromStr;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -65,7 +66,7 @@ impl<'de> Deserialize<'de> for ClozeUid {
 }
 
 /// See [`ClozeGroupingSettings`] for documentation.
-pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool)>;
+pub type ModifyDefaultsFn = Option<(FrontConceal, BackReveal, bool, Option<TypeAnswer>)>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClozeMatch {
@@ -189,6 +190,8 @@ pub struct ClozeGroupingSettings {
     pub back_reveal: BackReveal,
     /// Whether the clozes that should be answered should be emphasized on the back of the card.
     pub back_emphasis: bool,
+    /// Whether the answer is typed before the card is flipped, and how it is compared.
+    pub type_answer: Option<TypeAnswer>,
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
@@ -247,6 +250,67 @@ pub enum BackReveal {
 impl BackReveal {
     pub fn image_occlusion_default() -> Self {
         BackReveal::OnlyAnswered
+    }
+}
+
+/// How a typed answer is compared with the expected answer, set with the cloze key `t` (e.g.
+/// `t`, `t:ci,nc` or `t:m`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TypeAnswer {
+    /// Each typed answer is diffed character by character against its blank's answer.
+    Diff {
+        /// `ci`
+        ignore_case: bool,
+        /// `nc`: ignores accents and other combining marks.
+        ignore_combining: bool,
+    },
+    /// `m`: the typed answer is shown next to the revealed answer, without a diff, for the
+    /// reviewer to compare.
+    Manual,
+}
+
+impl FromStr for TypeAnswer {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.trim() == "m" {
+            return Ok(TypeAnswer::Manual);
+        }
+        let (mut ignore_case, mut ignore_combining) = (false, false);
+        for option in s.split(',').map(str::trim).filter(|x| !x.is_empty()) {
+            match option {
+                "ci" => ignore_case = true,
+                "nc" => ignore_combining = true,
+                _ => {
+                    return Err(format!(
+                        "Unknown option `{option}`. Expected nothing, `ci`, `nc`, `ci,nc` or `m`."
+                    ));
+                }
+            }
+        }
+        Ok(TypeAnswer::Diff {
+            ignore_case,
+            ignore_combining,
+        })
+    }
+}
+
+impl fmt::Display for TypeAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeAnswer::Diff {
+                ignore_case,
+                ignore_combining,
+            } => {
+                let options = [(*ignore_case, "ci"), (*ignore_combining, "nc")]
+                    .into_iter()
+                    .filter_map(|(enabled, option)| enabled.then_some(option))
+                    .collect::<Vec<_>>();
+                f.write_str(&options.join(","))
+            }
+            TypeAnswer::Manual => f.write_str("m"),
+        }
     }
 }
 
@@ -360,12 +424,14 @@ impl ClozeGroupingSettings {
             front_conceal: FrontConceal::default(),
             back_reveal: BackReveal::default(),
             back_emphasis: DEFAULT_BACK_EMPHASIS,
+            type_answer: None,
             skip_serialization: false,
         };
-        if let Some((front_conceal, back_reveal, back_emphasis)) = modify_defaults_fn {
+        if let Some((front_conceal, back_reveal, back_emphasis, type_answer)) = modify_defaults_fn {
             result.front_conceal = front_conceal;
             result.back_reveal = back_reveal;
             result.back_emphasis = back_emphasis;
+            result.type_answer = type_answer;
         }
         result
     }

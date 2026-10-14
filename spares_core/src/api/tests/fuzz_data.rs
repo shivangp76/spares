@@ -258,6 +258,7 @@ fn generate_note(node: &ClozeEntry, parser: &dyn Parseable, rng: &mut ThreadRng)
         front_conceal: FrontConceal::OnlyGrouping,
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
+        type_answer: None,
         skip_serialization: false,
     };
     // NOTE: For simplicity, each cloze is only a part of 1 grouping.

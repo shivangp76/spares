@@ -35,6 +35,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -67,6 +68,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -89,6 +91,7 @@ fn test_get_cards_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -130,6 +133,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -159,6 +163,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -181,6 +186,7 @@ fn test_get_cards_grouping_multiple() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -216,6 +222,7 @@ fn test_get_cards_grouping_all_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -245,6 +252,7 @@ fn test_get_cards_grouping_all_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -290,6 +298,7 @@ fn test_get_cards_grouping_all_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -317,6 +326,7 @@ fn test_get_cards_grouping_all_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -359,6 +369,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -388,6 +399,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -427,6 +439,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -456,6 +469,7 @@ fn test_get_cards_grouping_all_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -503,6 +517,7 @@ fn test_get_cards_grouping_all_4() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -528,6 +543,7 @@ fn test_get_cards_grouping_all_4() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -579,6 +595,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -600,6 +617,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -643,6 +661,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -670,6 +689,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -697,6 +717,7 @@ fn test_get_cards_circular_grouping_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -744,6 +765,7 @@ fn test_get_cards_order_before_grouping() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -784,6 +806,7 @@ fn test_get_cards_grouping_multiple_times() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -816,6 +839,7 @@ fn test_get_cards_grouping_multiple_times() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![

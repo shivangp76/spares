@@ -234,6 +234,7 @@ fn complete_note(
             local_settings.front_conceal,
             local_settings.back_reveal,
             local_settings.back_emphasis,
+            local_settings.type_answer,
         ),
         overlapper,
         true,

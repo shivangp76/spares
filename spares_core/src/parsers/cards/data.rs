@@ -1,6 +1,7 @@
 use super::BackReveal;
 use super::BackType;
 use super::FrontConceal;
+use super::TypeAnswer;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeUid;
 use crate::parsers::NotePart;
@@ -16,6 +17,7 @@ pub struct CardData {
     pub back_reveal: BackReveal,
     pub back_emphasis: bool,
     pub back_type: BackType,
+    pub type_answer: Option<TypeAnswer>,
     pub inherit: Option<ReadableCardIdentifier>,
     pub cloze_uid: Option<ClozeUid>,
     pub data: Vec<NotePart>,

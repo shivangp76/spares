@@ -30,6 +30,7 @@ fn test_get_cards_nested_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -52,6 +53,7 @@ fn test_get_cards_nested_1() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -87,6 +89,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -109,6 +112,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -134,6 +138,7 @@ fn test_get_cards_nested_1_reverse() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -181,6 +186,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -203,6 +209,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -225,6 +232,7 @@ fn test_get_cards_nested_siblings() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
