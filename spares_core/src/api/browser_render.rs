@@ -36,6 +36,7 @@ use crate::api::review::relative_to_files_dir;
 use crate::api::review::web_render_path;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
+use crate::parsers::CardData;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
@@ -59,39 +60,52 @@ pub fn get_render_assets_dir() -> PathBuf {
     dir
 }
 
-/// Fills in [`GetReviewCardResponse::browser_sources`] if the card's parser renders in the browser.
-pub async fn add_browser_render_sources(
+/// The note of `response`'s card, as rendering it needs, and the card parsed from it.
+pub(crate) async fn load_review_card(
     db: &SqlitePool,
-    response: &mut GetReviewCardResponse,
-    all_parsers: &[fn() -> Box<dyn Parseable>],
-) -> Result<(), Error> {
-    let parser = find_parser(&response.parser_name, all_parsers)?;
-    if !parser.renders_in_browser() {
-        return Ok(());
-    }
+    parser: &dyn Parseable,
+    response: &GetReviewCardResponse,
+) -> Result<(GenerateNoteFilesRequest, CardData), Error> {
     let note_id = response.note_id;
     let request = get_generate_files_request(db, note_id).await?;
-
     let card_order = response.card_order as usize;
-    let cards = get_cards(parser.as_ref(), None, &request.note_data, false, false)?;
     let card = card_order
         .checked_sub(1)
-        .and_then(|i| cards.get(i))
+        .and_then(|i| {
+            get_cards(parser, None, &request.note_data, false, false)
+                .map(|mut cards| (i < cards.len()).then(|| cards.swap_remove(i)))
+                .transpose()
+        })
+        .transpose()?
         .ok_or_else(|| {
             not_found(format!(
                 "Note {} has no card {card_order}.",
                 note_id.letters()
             ))
         })?;
+    Ok((request, card))
+}
 
-    let template = |template_type| get_template(parser.as_ref(), template_type);
+/// Fills in [`GetReviewCardResponse::browser_sources`] for `card`, `response`'s card parsed from
+/// `request` (see [`load_review_card`]), if `parser` renders in the browser.
+pub(crate) fn add_browser_render_sources(
+    parser: &dyn Parseable,
+    response: &mut GetReviewCardResponse,
+    request: &GenerateNoteFilesRequest,
+    card: &CardData,
+) -> Result<(), Error> {
+    if !parser.renders_in_browser() {
+        return Ok(());
+    }
+    let card_order = response.card_order as usize;
+    let template = |template_type| get_template(parser, template_type);
     let (card_template, body_placeholder) = template(TemplateType::Card)?;
     let card_side = |side| {
         construct_card_file_contents(
-            parser.as_ref(),
+            parser,
             &card_template,
             &body_placeholder,
-            &request,
+            request,
             card_order,
             card,
             side,
@@ -101,12 +115,7 @@ pub async fn add_browser_render_sources(
         CardBackRenderedPath::CardBack(_) => card_side(CardSide::Back),
         CardBackRenderedPath::Note(_) => {
             let (note_template, body_placeholder) = template(TemplateType::Note)?;
-            construct_note_file_contents(
-                parser.as_ref(),
-                &note_template,
-                &body_placeholder,
-                &request,
-            )
+            construct_note_file_contents(parser, &note_template, &body_placeholder, request)
         }
     };
     response.browser_sources = Some(BrowserRenderSources {
