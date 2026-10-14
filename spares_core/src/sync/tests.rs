@@ -734,3 +734,25 @@ async fn a_schema_mismatch_is_refused() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn undo_stops_at_the_last_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} before").await;
+    replicas.sync().await;
+    let undo = || {
+        crate::api::undo::undo_event(
+            &replicas.laptop,
+            crate::schema::undo::UndoEventRequest {
+                event_id: None,
+                undo_group: false,
+            },
+        )
+    };
+    let err = undo().await.unwrap_err();
+    assert!(err.to_string().contains("before the last sync"), "{err}");
+    // A change made after the sync can be undone.
+    edit(&replicas.laptop, ids[0], "A {{ one }} after").await;
+    undo().await.unwrap().unwrap();
+    assert!(data(&replicas.laptop, ids[0]).await.unwrap().ends_with("before"));
+}
