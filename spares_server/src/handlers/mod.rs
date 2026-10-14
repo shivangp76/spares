@@ -23,6 +23,7 @@ pub(crate) mod parser;
 pub(crate) mod render_asset;
 pub(crate) mod review;
 pub(crate) mod scheduler;
+pub(crate) mod sync;
 pub(crate) mod tag;
 pub(crate) mod undo;
 
@@ -37,6 +38,21 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "message": e.to_string() })),
         );
+    }
+    let sync_status = match &e {
+        // The sync server changed during the sync: the client starts over.
+        Error::SyncRetry => Some(StatusCode::CONFLICT),
+        Error::FullSyncRequired(reason) => {
+            return (
+                StatusCode::PRECONDITION_FAILED,
+                Json(json!({ "message": reason, "full_sync_required": true })),
+            );
+        }
+        Error::Sync(_) => Some(StatusCode::BAD_REQUEST),
+        _ => None,
+    };
+    if let Some(status) = sync_status {
+        return (status, Json(json!({ "message": e.to_string() })));
     }
     (
         StatusCode::INTERNAL_SERVER_ERROR,

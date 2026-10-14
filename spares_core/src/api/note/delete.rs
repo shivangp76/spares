@@ -97,7 +97,17 @@ pub fn delete_note_files(
 
     // Only the number of image occlusions is needed to find their rendered files, so avoid fully parsing them, which requires the original image and clozes files to still exist
     let image_occlusion_count = parser.get_image_occlusions(note_data)?.len();
+    delete_card_files(parser, note_id, card_orders, image_occlusion_count)
+}
 
+/// Deletes the raw and rendered files of a note's cards at `card_orders`, and their rendered image
+/// occlusions (of which the note has `image_occlusion_count`).
+pub fn delete_card_files(
+    parser: &dyn Parseable,
+    note_id: NoteId,
+    card_orders: &[usize],
+    image_occlusion_count: usize,
+) -> Result<(), Error> {
     for current_card_order in card_orders {
         // Card front raw path
         let mut card_front_raw_path = get_output_raw_dir(
