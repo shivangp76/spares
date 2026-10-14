@@ -39,6 +39,8 @@ use strum::IntoEnumIterator;
 use strum_macros::Display;
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
+use typed_answer::ask_typed_answers;
+use typed_answer::format_typed_answers;
 use utils::bury_card;
 use utils::bury_note;
 use utils::bury_until_later_today;
@@ -60,6 +62,7 @@ use utils::tag_note;
 use crate::card_info::print_card_info;
 use crate::import::import_from_files;
 
+mod typed_answer;
 pub(crate) mod utils;
 use spares_core::parsers::cloze_tag_str;
 use spares_core::schema::card::CardResponse;
@@ -634,6 +637,10 @@ pub(crate) async fn review_cards(
     // The undo event to redo, and whether it undid a rating. Cleared by any new action.
     let mut last_undo: Option<(i64, bool)> = None;
     let mut pending_cli_rating: Option<Rating> = None;
+    // What was typed into each blank of the card's typed answer, and whether it was asked for since
+    // the card front was shown
+    let mut typed_answers: Vec<String> = Vec::new();
+    let mut typed_answers_asked = false;
     // The card rated last, for Previous Card Info
     let mut previous_card_id: Option<CardId> = None;
 
@@ -702,6 +709,8 @@ pub(crate) async fn review_cards(
 
             pending_cli_rating = None;
             card_flipped = false;
+            typed_answers.clear();
+            typed_answers_asked = false;
             if review_card_response.cli.is_some() {
                 match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client)
                     .await
@@ -737,6 +746,13 @@ pub(crate) async fn review_cards(
                     }
                 }
             }
+        }
+        if !card_flipped
+            && !typed_answers_asked
+            && let Some(info) = &review_card_response.typed_answer
+        {
+            typed_answers = ask_typed_answers(info, &typed_answers);
+            typed_answers_asked = true;
         }
         // Ask user for action
         let options = build_action_menu(&all_options, card_flipped, pending_cli_rating.clone());
@@ -838,6 +854,9 @@ pub(crate) async fn review_cards(
                     let rd = recall_duration.expect("recall_duration set in Flip guard");
                     session_recall_duration += rd;
                     print_recall_duration(rd);
+                }
+                if let Some(info) = &review_card_response.typed_answer {
+                    println!("{}", format_typed_answers(info, &typed_answers));
                 }
                 let card_back_rendered_path = match &review_card_response.card_back_rendered_path {
                     CardBackRenderedPath::CardBack(path_buf)
@@ -1242,6 +1261,8 @@ pub(crate) async fn review_cards(
                     )?);
 
                     card_flipped = false;
+                    // The typed answers can be changed before flipping again
+                    typed_answers_asked = false;
 
                     // Reset stopwatches: undo the flip by removing the recorded recall duration
                     // and restarting the recall timer from now.
