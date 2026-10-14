@@ -11,6 +11,7 @@ use sqlx::SqlitePool;
 use super::SYNC_EPOCH_KEY;
 use super::SYNC_USN_KEY;
 use super::USN_TABLES;
+use super::bump_notes_version;
 use super::guard_undo;
 use super::schema_version;
 use super::set_applying;
@@ -157,6 +158,7 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
             .await
             .map_err(sqlx_error)?;
     }
+    bump_notes_version(&mut tx).await?;
     for table in ["grave", "sync_base", "event"] {
         sqlx::query(&format!("DELETE FROM main.{table}"))
             .execute(&mut *tx)
