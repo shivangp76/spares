@@ -123,6 +123,29 @@ spares import --parser markdown ./notes.md
 
 Note the usage of `[Pacific](li)` in the first note. This is a linked note. The keyword "Pacific" will be searched for across all other notes and the note with the closest match will be linked in that note document. In this case, the second note has the keyword "Pacific Ocean". Since this is the only other note, this is the closest match. This linking will be done when notes are rendered (see below).
 
+## Typed answers
+
+Add the cloze key `t` to type a card's answer before flipping it, like Anki's `{{type:cloze:Text}}`:
+```md
+The capital of France is {{[t] Paris}}.
+```
+
+| Setting | Comparison |
+|---|---|
+| `t` | A character diff, exact. |
+| `t:ci` | A diff that ignores case. |
+| `t:nc` | A diff that ignores accents and other combining marks. |
+| `t:ci,nc` | Both. |
+| `t:m` | No diff: what you typed is shown next to the revealed answer, for you to judge. Use it when you rephrase, or for math or an image. |
+
+- Like `be`, `t` applies to a grouping, so it can be set on any cloze of a card.
+- `<!--- # type-answer: ci --->` (`#se[type-answer: ci]` in Typst) applies it to all of a note's cards. A cloze's own `t` overrides it.
+- Each answer cloze of a card gets its own input box: `Blank 1`, `Blank 2`, … in reading order, with the cloze's hint as placeholder. Its answer is compared with that box alone, so an answer containing a comma, such as `Washington, D.C.`, is not ambiguous.
+- The expected answer is the cloze's text without its hint and markup. Emphasis, code, links and spans keep their text, and in Typst so does math (`#cl[$2x$][t]` expects `2x`). Nested clozes are part of the outer answer. A cloze without text, such as one holding only an image, gets no box.
+- A reverse card (`r`) expects the rest of the note, so `t:m` suits it better.
+- On the back, "Compare manually" switches between the diff and what you typed. As in Anki, you always pick the rating yourself.
+- In the web app, Tab moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the answer. In `spares card review`, Esc skips the remaining boxes.
+
 # Render notes
 
 You can render notes with the following command. This will create the following files for each note:
