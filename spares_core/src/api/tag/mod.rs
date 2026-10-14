@@ -10,6 +10,9 @@ use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateTagPayload;
+use crate::ids::IdTable;
+use crate::ids::next_id;
+use crate::ids::next_id_in;
 use crate::model::CardId;
 use crate::model::EventType;
 use crate::model::NoteId;
@@ -57,9 +60,11 @@ pub(crate) async fn create_tag_row(
     conn: &mut sqlx::sqlite::SqliteConnection,
     name: &str,
 ) -> Result<Tag, Error> {
+    let id = next_id(&mut *conn, IdTable::Tag).await?;
     sqlx::query_as(
-        r"INSERT INTO tag (name, description, query, auto_delete) VALUES (?, '', NULL, ?) RETURNING *",
+        r"INSERT INTO tag (id, name, description, query, auto_delete) VALUES (?, ?, '', NULL, ?) RETURNING *",
     )
+    .bind(id)
     .bind(name)
     .bind(DEFAULT_TAG_AUTO_DELETE)
     .fetch_one(&mut *conn)
@@ -89,14 +94,18 @@ pub async fn create_tag_event(
         verify_filtered_tag_query(db, query.as_str()).await?;
     }
 
-    // A NULL `id` makes SQLite assign one. Undoing a `DeleteTag` supplies it, along with the
-    // original timestamps, so the tag comes back exactly as it was.
+    // Undoing a `DeleteTag` supplies the id, along with the original timestamps, so the tag comes
+    // back exactly as it was.
+    let id = match payload.id {
+        Some(id) => id,
+        None => next_id_in(db, IdTable::Tag).await?,
+    };
     let tag: Tag = sqlx::query_as(
         r"INSERT INTO tag (id, name, description, query, auto_delete, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         RETURNING *",
     )
-    .bind(payload.id)
+    .bind(id)
     .bind(&payload.name)
     .bind(&payload.description)
     .bind(&payload.query)

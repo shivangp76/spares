@@ -28,7 +28,9 @@ use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
 use crate::helpers::remove_ancestor_tags;
+use crate::ids::IdTable;
 use crate::ids::allocate_note_ids;
+use crate::ids::next_ids;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
@@ -649,16 +651,18 @@ pub(crate) async fn copy_review_logs_on(
     // `effective_review_logs` relies on to break ties within the same second.
     let review_logs = fetch_review_logs_for_replay(&mut *conn, src_card_id).await?;
     for dst_card_id in dst_card_ids {
-        for log in &review_logs {
+        let ids = next_ids(&mut *conn, IdTable::ReviewLog, review_logs.len()).await?;
+        for (log, id) in review_logs.iter().zip(ids) {
             // `kind` is copied along with the rest: dropping forget markers here would give the
             // inheriting card the memory state its source would have had if it had never been
             // forgotten.
             sqlx::query(
-                r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
+                r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
                    scheduled_time, recall_duration, rate_duration, previous_state, tag_id,
                    custom_data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(id)
             .bind(dst_card_id)
             .bind(log.reviewed_at.timestamp())
             .bind(log.kind)
@@ -687,13 +691,18 @@ pub(crate) async fn create_cards_on(
     conn: &mut sqlx::sqlite::SqliteConnection,
     card_entries: &[Card],
 ) -> Result<(), Error> {
-    for chunk in card_entries.chunks(max_rows_for(11)) {
+    let ids = next_ids(&mut *conn, IdTable::Card, card_entries.len()).await?;
+    for (chunk, id_chunk) in card_entries
+        .chunks(max_rows_for(12))
+        .zip(ids.chunks(max_rows_for(12)))
+    {
         let query_str = format!(
-            "INSERT INTO card (note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
-            placeholders_2d(chunk.len(), 11)
+            "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
+            placeholders_2d(chunk.len(), 12)
         );
         let mut query = sqlx::query(query_str.as_str());
-        for card in chunk {
+        for (card, id) in chunk.iter().zip(id_chunk) {
+            query = query.bind(id);
             query = query.bind(card.note_id);
             query = query.bind(card.order);
             query = query.bind(card.back_type);

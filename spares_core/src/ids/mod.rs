@@ -405,6 +405,107 @@ pub(crate) async fn allocate_note_ids_on(
     Ok(ids)
 }
 
+/// The step between the ids one replica hands out for [`IdTable`]s. Each replica takes the ids
+/// congruent to its number modulo this, so replicas never collide. It is fixed rather than the
+/// current number of replicas, so adding a replica never changes the rule for the others.
+pub const ID_STEP: i64 = 8;
+
+/// A table whose ids are handed out by [`next_ids`]. Notes use [`allocate_note_ids`] instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdTable {
+    Card,
+    ReviewLog,
+    Tag,
+    Parser,
+}
+
+impl IdTable {
+    pub const ALL: [Self; 4] = [Self::Card, Self::ReviewLog, Self::Tag, Self::Parser];
+
+    /// The table's name, which is also its `id_counter.tbl` key.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Card => "card",
+            Self::ReviewLog => "review_log",
+            Self::Tag => "tag",
+            Self::Parser => "parser",
+        }
+    }
+}
+
+/// Hands out `n` new ids for `table`, in increasing order: the smallest ids above both the
+/// high-water marks (this replica's, and any other's a full sync brought) and the table's largest
+/// id that are congruent to the replica number modulo [`ID_STEP`]. Rows created before sync keep
+/// their ids, which are all below the new ones.
+///
+/// It is one statement, so it needs no surrounding transaction to be safe against a concurrent
+/// allocation, and it can run inside the caller's.
+pub async fn next_ids(
+    conn: &mut SqliteConnection,
+    table: IdTable,
+    n: usize,
+) -> Result<Vec<i64>, Error> {
+    next_ids_for(conn, get_replica()?, table, n).await
+}
+
+/// [`next_ids`] for one id.
+pub async fn next_id(conn: &mut SqliteConnection, table: IdTable) -> Result<i64, Error> {
+    Ok(next_ids(conn, table, 1).await?[0])
+}
+
+/// [`next_ids`] on a connection taken from `db`.
+pub async fn next_ids_in(db: &SqlitePool, table: IdTable, n: usize) -> Result<Vec<i64>, Error> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    next_ids(&mut conn, table, n).await
+}
+
+/// [`next_id`] on a connection taken from `db`.
+pub async fn next_id_in(db: &SqlitePool, table: IdTable) -> Result<i64, Error> {
+    Ok(next_ids_in(db, table, 1).await?[0])
+}
+
+pub(crate) async fn next_ids_for(
+    conn: &mut SqliteConnection,
+    replica: Replica,
+    table: IdTable,
+    n: usize,
+) -> Result<Vec<i64>, Error> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let replica_number = i64::from(replica.number());
+    let count = i64::try_from(n).expect("n fits in i64");
+    // `base` is the newest id this replica has handed out or seen. `first` is the smallest id
+    // above it in this replica's residue class.
+    let query = format!(
+        r"INSERT INTO id_counter (replica, tbl, last)
+          SELECT ?1, ?2, first + (?3 - 1) * ?4 FROM (
+            SELECT base - base % ?4 + ?1 + CASE WHEN base % ?4 >= ?1 THEN ?4 ELSE 0 END AS first
+            FROM (SELECT MAX(
+              COALESCE((SELECT MAX(last) FROM id_counter WHERE tbl = ?2), 0),
+              COALESCE((SELECT MAX(id) FROM {table}), 0)
+            ) AS base)
+          ) WHERE true
+          ON CONFLICT (replica, tbl) DO UPDATE SET last = excluded.last
+          RETURNING last",
+        table = table.name()
+    );
+    let last: i64 = sqlx::query_scalar(&query)
+        .bind(replica_number)
+        .bind(table.name())
+        .bind(count)
+        .bind(ID_STEP)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok((0..count)
+        .map(|i| last - (count - 1 - i) * ID_STEP)
+        .collect())
+}
+
 /// Whether the database's note ids are letter ids. A database with no notes is marked as migrated
 /// here, since it has nothing to migrate.
 pub async fn ensure_note_ids_migrated(db: &SqlitePool) -> Result<(), Error> {
@@ -777,6 +878,106 @@ mod tests {
             .map(|_| {
                 let pool = pool.clone();
                 tokio::spawn(async move { allocate_note_ids(&pool, 5).await.unwrap() })
+            })
+            .collect();
+        let mut all = BTreeSet::new();
+        for handle in handles {
+            for id in handle.await.unwrap() {
+                assert!(all.insert(id), "{id} handed out twice");
+            }
+        }
+        assert_eq!(all.len(), 40);
+    }
+
+    #[sqlx::test]
+    async fn test_next_ids_are_congruent_and_never_reused(pool: SqlitePool) {
+        let mut conn = pool.acquire().await.unwrap();
+        // Rows from before sync keep their ids, and new ones go above them.
+        sqlx::query("INSERT INTO parser (id, name) VALUES (13, 'markdown')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let laptop = next_ids_for(&mut conn, LAPTOP, IdTable::Parser, 3)
+            .await
+            .unwrap();
+        assert_eq!(laptop, [16, 24, 32]);
+        // Above the laptop's mark too, which a full sync brings to the server.
+        let server = next_ids_for(&mut conn, SERVER, IdTable::Parser, 2)
+            .await
+            .unwrap();
+        assert_eq!(server, [33, 41]);
+        sqlx::query("DELETE FROM parser")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            next_ids_for(&mut conn, LAPTOP, IdTable::Parser, 1)
+                .await
+                .unwrap(),
+            [48]
+        );
+        // Without the other replica's mark, only the rows it has seen count.
+        sqlx::query("DELETE FROM id_counter WHERE replica = 0")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO parser (id, name) VALUES (56, 'typst')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            next_ids_for(&mut conn, SERVER, IdTable::Parser, 1)
+                .await
+                .unwrap(),
+            [57]
+        );
+        // Each table has its own counter.
+        assert_eq!(
+            next_ids_for(&mut conn, SERVER, IdTable::Tag, 1)
+                .await
+                .unwrap(),
+            [1]
+        );
+        assert_eq!(
+            next_ids_for(&mut conn, LAPTOP, IdTable::Card, 0)
+                .await
+                .unwrap(),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_next_ids_from_interleaved_replicas_never_collide(pool: SqlitePool) {
+        let mut rng = rand::rng();
+        let mut seen = BTreeSet::new();
+        let mut conn = pool.acquire().await.unwrap();
+        for _ in 0..300 {
+            let replica = Replica::new_unchecked(rng.random_range(0..3));
+            let n = rng.random_range(1..4);
+            let ids = next_ids_for(&mut conn, replica, IdTable::ReviewLog, n)
+                .await
+                .unwrap();
+            assert_eq!(ids.len(), n);
+            for id in ids {
+                assert_eq!(id % ID_STEP, i64::from(replica.number()));
+                assert!(seen.insert(id), "{id} handed out twice");
+            }
+            // Sometimes the rows are inserted (seen by every replica), sometimes deleted again.
+            if rng.random_bool(0.3) {
+                sqlx::query("DELETE FROM review_log")
+                    .execute(&mut *conn)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    #[sqlx::test]
+    async fn test_concurrent_next_ids_do_not_collide(pool: SqlitePool) {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let pool = pool.clone();
+                tokio::spawn(async move { next_ids_in(&pool, IdTable::Card, 5).await.unwrap() })
             })
             .collect();
         let mut all = BTreeSet::new();

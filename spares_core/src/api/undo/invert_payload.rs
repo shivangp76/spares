@@ -100,14 +100,16 @@ async fn take_review_log(db: &SqlitePool, review_log_id: i64) -> Result<ReviewLo
     Ok(review_log)
 }
 
-/// Reinserts a row removed by [`take_review_log`], returning its new id.
+/// Reinserts a row removed by [`take_review_log`] under its original id, which the high-water mark
+/// in `id_counter` guarantees was not handed out again, and returns that id.
 async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i64, Error> {
     sqlx::query_scalar(
         r"INSERT INTO review_log
-            (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
+            (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
              recall_duration, rate_duration, previous_state, tag_id, custom_data)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
+    .bind(review_log.id)
     .bind(review_log.card_id)
     .bind(review_log.reviewed_at.timestamp())
     .bind(review_log.kind)
