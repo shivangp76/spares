@@ -25,6 +25,7 @@ use crate::LibraryError;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
+use crate::sync::SyncConfig;
 
 const SPARES: &str = "spares";
 
@@ -385,16 +386,7 @@ pub struct SparesExternalConfig {
     pub overlapper: OverlapperConfig,
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub set_card_due_date_duration: Duration,
-    pub remote_host: Option<String>,
-    /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
-    /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
-    pub sync_url: Option<String>,
-    /// With `sync_url`, the local server syncs on startup and then every this many minutes. `0`
-    /// turns automatic syncing off.
-    pub sync_interval_minutes: u64,
-    /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
-    /// to the remote user's home directory. Must match the server's `SPARES_CACHE_DIR`.
-    pub remote_rendered_dir: String,
+    pub sync: SyncConfig,
     /// Compile the notes and cards of parsers that render in the browser, and write their cards'
     /// raw files. Web clients compile these cards themselves from the database, so a remote server
     /// can turn this off to save compute. Keep it on where notes are rendered before
@@ -420,10 +412,7 @@ impl Default for SparesExternalConfig {
             image_occlusion: ImageOcclusionConfig::default(),
             overlapper: OverlapperConfig::default(),
             set_card_due_date_duration: Duration::weeks(1),
-            remote_host: None,
-            sync_url: None,
-            sync_interval_minutes: 0,
-            remote_rendered_dir: ".cache/spares".to_string(),
+            sync: SyncConfig::default(),
             render_browser_parsers: true,
         }
     }
@@ -628,25 +617,15 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     Ok(config)
 }
 
-/// Keys of `config.toml` that only mean something on the machine that syncs, and are left out of
-/// the copy [`server_config`] makes.
-const LOCAL_ONLY_CONFIG_KEYS: [&str; 4] = [
-    "remote_host",
-    "sync_url",
-    "sync_interval_minutes",
-    "remote_rendered_dir",
-];
-
 /// The `config.toml` for the sync server, made from this machine's (`contents`), so reviews and
-/// rendering there use the same settings: the same, without the keys about reaching the server,
-/// and with `render_browser_parsers = false`, since web clients compile those parsers' cards.
+/// rendering there use the same settings: the same, without the `[sync]` table, which only means
+/// something on the machine that syncs, and with `render_browser_parsers = false`, since web
+/// clients compile those parsers' cards.
 pub fn server_config(contents: &str) -> Result<String, Error> {
     let mut doc = contents
         .parse::<DocumentMut>()
         .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
-    for key in LOCAL_ONLY_CONFIG_KEYS {
-        doc.remove(key);
-    }
+    doc.remove("sync");
     doc.insert("render_browser_parsers", toml_edit::value(false));
     Ok(format!(
         "# Copied from the config.toml of the machine that syncs by `spares sync cloud`, which \
@@ -681,17 +660,19 @@ mod tests {
 
     #[test]
     fn server_config_keeps_settings_but_not_how_to_reach_the_server() {
-        let laptop = "maximum_interval = 100 # days, roughly\nremote_host = \"me@vps\"\n\
-                      sync_url = \"https://vps\"\nsync_interval_minutes = 15\n\n\
+        let laptop = "maximum_interval = 100 # days, roughly\n\n\
+                      [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
+                      interval_minutes = 15\n\n\
                       [leech]\nlapses_threshold = 8\n";
         let server = server_config(laptop).unwrap();
         let config = parse(&server);
         assert_eq!(config.maximum_interval, Duration::seconds(100));
         assert_eq!(config.leech.lapses_threshold, 8);
         assert!(!config.render_browser_parsers);
-        assert_eq!(config.remote_host, None);
-        assert_eq!(config.sync_url, None);
-        assert_eq!(config.sync_interval_minutes, 0);
+        assert_eq!(config.sync.remote_host, None);
+        assert_eq!(config.sync.url, None);
+        assert_eq!(config.sync.interval_minutes, 0);
+        assert!(!server.contains("[sync]"), "{server}");
         assert!(server.contains("# days, roughly"), "{server}");
         // A top-level key after a table would belong to the table.
         assert!(

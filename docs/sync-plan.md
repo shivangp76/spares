@@ -19,7 +19,7 @@ Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_id
 - **Note IDs are short (3 letters for the next several years, then 4), typeable, grouped by import batch and in creation order across devices** (see section 4).
 
 ### Open issues
-- **SSH:** port 22 stays open on the public IP until `deploy_vps.sh init` closes it (its last step). Updates and the `remote_host` rsync use Tailscale SSH.
+- **SSH:** port 22 stays open on the public IP until `deploy_vps.sh init` closes it (its last step). Updates and the `sync.remote_host` rsync use Tailscale SSH.
 - **Tailscale SSH as root:** `init` over the tailnet logs in as root. If the tailnet policy's `ssh` section doesn't allow `root`, add it, or create the server with your SSH key and an address the laptop can reach.
 
 ## 2. Current state of the codebase (relevant facts)
@@ -416,18 +416,18 @@ The client does all of this and pushes the result, so the server never re-parses
 - **Note file edits.** With the notes repository, edits to note files reach the database by `jj git push` from `notes/`. Push them before `spares sync cloud` so they're in this sync; otherwise they go in the next one. Nothing is lost either way, since the sync's own file changes are commits that the clone rebases onto.
   - `spares sync` (the Anki adapter's sync) is not involved. Section 2's description of it as files → DB was wrong.
   - Without the notes repository, `spares sync cloud` warns that file edits not imported yet are overwritten if the sync changes those notes.
-- **Optional auto-sync** (`spares_server/src/auto_sync.rs`, implemented): with `sync_url` and `sync_interval_minutes` set, a `client` server syncs on startup and every that many minutes. Failures (the server being unreachable, for one) are logged, not fatal. A required full sync pauses it with one warning until `spares sync cloud` does it. It doesn't run the rsync of rendered files; `spares sync cloud` does.
+- **Optional auto-sync** (`spares_server/src/auto_sync.rs`, implemented): with `sync.url` and `sync.interval_minutes` set, a `client` server syncs on startup and every that many minutes. Failures (the server being unreachable, for one) are logged, not fatal. A required full sync pauses it with one warning until `spares sync cloud` does it. It doesn't run the rsync of rendered files; `spares sync cloud` does.
 - Live notes are read-only on the web.
 
 ## 9. Interfaces
 - **Server** (`spares_server/src/handlers/sync.rs`, implemented), all behind `require_api_key`:
   - `GET /api/sync/meta?replica=N`, `POST /api/sync/pull`, `POST /api/sync/push`, `GET`/`PUT /api/sync/full?replica=N`. These are answered only by `SPARES_SYNC_ROLE=server`. Push and full upload accept up to 1 GiB.
   - Error statuses: 409 when the server changed during the sync (the client starts over), 412 when a full sync is required (with the reason), 400 for other sync errors, 403 for the wrong role.
-  - `POST /api/sync/run {mode: normal | full_upload | full_download}`: makes a `client` sync with `sync_url`, using `SPARES_SYNC_API_KEY`. Returns the report (counts, conflicts, changed and deleted notes).
-  - `GET /api/sync/status`: role, replica, `sync_url`, last sync, `needs_full_sync`, and the number of conflicts.
+  - `POST /api/sync/run {mode: normal | full_upload | full_download}`: makes a `client` sync with `sync.url`, using `SPARES_SYNC_API_KEY`. Returns the report (counts, conflicts, changed and deleted notes).
+  - `GET /api/sync/status`: role, replica, `sync_url` (`sync.url`), last sync, `needs_full_sync`, and the number of conflicts.
   - `GET /api/sync/conflicts` and `POST /api/sync/conflicts/{id}` with `"keep"`, `"delete"` or `{"text": "..."}`.
 - **CLI** (implemented):
-  - `spares sync cloud [--full-upload|--full-download]`. With `sync_url` set, it runs a two-way sync through the local server. If a full sync is needed, it says why and asks which direction. Then, with `remote_host`, it copies rendered files, templates and render dependencies to the server by rsync (the database is not copied). Without `sync_url`, it pushes the database as before.
+  - `spares sync cloud [--full-upload|--full-download]`. With `sync.url` set, it runs a two-way sync through the local server. If a full sync is needed, it says why and asks which direction. Then, with `sync.remote_host`, it copies rendered files, templates and render dependencies to the server by rsync (the database is not copied). Without `sync.url`, it pushes the database as before.
   - `spares sync conflicts` resolves conflicts one at a time. It shows a `git diff` of this side's text against the other's, with card orders shown as card IDs (`o:c40`) so a cloze that only moved reads the same. The choices are:
     - keep this side's text;
     - take the other side's;
@@ -437,11 +437,11 @@ The client does all of this and pushes the result, so the server never re-parses
     The chosen text's card IDs are turned back into this side's orders, so each cloze keeps its card and reviews.
   - `spares migrate ids [--dry-run]` (section 4).
 - **Frontend** (implemented):
-  - a Sync button in the navbar with the last-synced time and conflict count. It is shown only on a `client` with `sync_url` set, i.e. the laptop's own web app; a full sync is left to `spares sync cloud`;
+  - a Sync button in the navbar with the last-synced time and conflict count. It is shown only on a `client` with `sync.url` set, i.e. the laptop's own web app; a full sync is left to `spares sync cloud`;
   - a `sync-conflict` badge on notes in the list and in the note view, pointing to `spares sync conflicts`;
   - live notes read-only (their text; tags and keywords stay editable);
   - IDs shown in letter form.
-- **Config** (`SparesExternalConfig`, `spares_core/src/config.rs`): `sync_url` and `sync_interval_minutes` (0 = off), next to `remote_host`.
+- **Config** (`SyncConfig`, `spares_core/src/sync/mod.rs`): the `[sync]` table of `config.toml`, with `url`, `interval_minutes` (0 = off), `remote_host` and `remote_rendered_dir`.
 - **Env:** `SPARES_REPLICA` (`0`–`7`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY` (the server's `SPARES_API_KEY`, for the client).
 
 ### Open issues
@@ -461,7 +461,7 @@ The repo already had `scripts/setup_vps.sh`, an idempotent script that installs 
 - `init <server> [--user <name>] [--domain <domain>] [--no-latex]`, where `<server>` is the IP or the Tailscale name:
   1. backs up the database (`VACUUM INTO`);
   2. builds and uploads the bundle and `setup_vps.sh`, and runs it as root;
-  3. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak` if it changed;
+  3. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `url` and `interval_minutes` in the `[sync]` table of `config.toml`, keeping a `.bak` if it changed;
   4. adds `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY` (read from the Keychain, so the key is never in a file) to `spares.zsh` if missing;
   5. waits until the restarted local server reports the client role, the `sync_url` and the key (`sync_api_key_set` in `/api/sync/status`);
   6. runs `spares sync cloud --full-upload` and compares note, card and review counts on both sides;
@@ -470,7 +470,7 @@ The repo already had `scripts/setup_vps.sh`, an idempotent script that installs 
 
 **Sizing.** The server process used 15 MB idle and 31 MB serving a full download of the real database (4,117 notes, 20 MB). The data directory is ~200 MB and rendered files ~70 MB. A 512 MB / 10 GB VPS is enough with `--no-latex` (all notes are Typst); `setup_vps.sh` adds 1 GB of swap for apt.
 
-`spares sync cloud` copies the laptop's `config.toml` to the server (`server_config`): the same settings, so reviews on the phone are scheduled alike, without `remote_host`, `sync_url`, `sync_interval_minutes` and `remote_rendered_dir`, and with `render_browser_parsers = false`.
+`spares sync cloud` copies the laptop's `config.toml` to the server (`server_config`): the same settings, so reviews on the phone are scheduled alike, without the `[sync]` table, and with `render_browser_parsers = false`.
 
 **Setting it up:** `docs/src/deploying.md` has every step, including Vultr's. It was deployed on Vultr's 512 MB IPv6-only plan ($2.50/mo) on 2026-10-14. That first run found and fixed:
 - `tailscale serve` waiting, with its output hidden, for HTTPS to be enabled on the tailnet;
@@ -527,7 +527,7 @@ Implemented as tests in `spares_core` (`ids`, `sync::tests`, `sync::tracking_tes
   - a count mismatch sets `needs_full_sync`.
   - Also run the existing undo e2e tests and `cargo test`/`clippy`.
 - **End to end with two local servers:**
-  - Start a second `spares_server` on `:8090` with `SPARES_REPLICA=1` and `SPARES_SYNC_ROLE=server`, its own `SPARES_DATA_DIR`/`SPARES_CACHE_DIR`, and **all `*_OUT_DIR` unset**, or real rendered files get overwritten. Set `sync_url` to it and run `--full-upload`.
+  - Start a second `spares_server` on `:8090` with `SPARES_REPLICA=1` and `SPARES_SYNC_ROLE=server`, its own `SPARES_DATA_DIR`/`SPARES_CACHE_DIR`, and **all `*_OUT_DIR` unset**, or real rendered files get overwritten. Set `sync.url` to it and run `--full-upload`.
   - Then:
     1. edit note A locally (through its `notes/` file) without syncing;
     2. edit a different part of A and all of note B in the `:8090` web UI, and review some cards there;

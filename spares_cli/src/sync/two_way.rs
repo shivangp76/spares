@@ -1,4 +1,4 @@
-//! `spares sync cloud` with two-way sync (`sync_url` set), and `spares sync conflicts`. The local
+//! `spares sync cloud` with two-way sync (`sync.url` set), and `spares sync conflicts`. The local
 //! server does the syncing (`POST /api/sync/run`); see `spares_core::sync`.
 
 use std::path::PathBuf;
@@ -24,17 +24,17 @@ use super::cloud::push_to_remote_host;
 use crate::sync::utils::apply_select_settings;
 
 /// Syncs with the server, asking which way to go if only a full sync is possible, then copies the
-/// files the server cannot generate itself to `remote_host`.
+/// files the server cannot generate itself to `sync.remote_host`.
 pub(crate) async fn sync_cloud(
     base_url: &str,
     client: &Client,
     mode: SyncMode,
 ) -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;
-    if config.sync_url.is_none() {
+    if config.sync.url.is_none() {
         println!(
             "{}",
-            "`sync_url` is not set, so this replaces the server's database (one-way).".yellow()
+            "`sync.url` is not set, so this replaces the server's database (one-way).".yellow()
         );
         return push_to_remote_host().await;
     }
@@ -84,8 +84,8 @@ pub(crate) async fn sync_cloud(
         };
     };
     print_report(&report);
-    if let Some(remote_host) = &config.remote_host {
-        push_files(remote_host, &config.remote_rendered_dir).await?;
+    if let Some(remote_host) = &config.sync.remote_host {
+        push_files(remote_host, &config.sync.remote_rendered_dir).await?;
     }
     Ok(())
 }

@@ -35,15 +35,16 @@ use crate::parsers::get_output_raw_dir;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::RenderNotesRequest;
 
-/// Syncs with `sync_url` from the config, then updates files. For the client.
+/// Syncs with `sync.url` from the config, then updates files. For the client.
 pub async fn sync_now(
     db: &SqlitePool,
     mode: SyncMode,
     temp_dir: &Path,
 ) -> Result<SyncReport, Error> {
     let url = read_external_config()?
-        .sync_url
-        .ok_or_else(|| Error::Sync("`sync_url` is not set in config.toml".to_string()))?;
+        .sync
+        .url
+        .ok_or_else(|| Error::Sync("`sync.url` is not set in config.toml".to_string()))?;
     let remote = HttpRemote::new(&url)?;
     let report = sync(db, &remote, mode, temp_dir).await?;
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;

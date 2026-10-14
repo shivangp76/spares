@@ -17,8 +17,8 @@
 #         1. backs up the database;
 #         2. builds spares for the server and runs setup_vps.sh there as root, which creates the
 #            user, asks for its sudo password and, if needed, prints a link to join your tailnet;
-#         3. stores the server's API key in the Keychain, and sets `remote_host`, `sync_url` and
-#            `sync_interval_minutes` in config.toml;
+#         3. stores the server's API key in the Keychain, and sets `remote_host`, `url` and
+#            `interval_minutes` in the [sync] table of config.toml;
 #         4. has you restart the local server, uploads the database (`spares sync cloud
 #            --full-upload`) and checks that both sides have the same notes;
 #         5. closes the server's public ports, leaving only Tailscale (not with --domain).
@@ -56,29 +56,43 @@ confirm() {
 }
 spares() { (cd "$REPO" && RUSTFLAGS=-Awarnings cargo run --quiet --bin spares -- "$@"); }
 
-# A top-level string key of config.toml, or nothing.
+# Matches the header of the [sync] table of config.toml. Passed to awk through the environment,
+# since `awk -v` would interpret its backslashes.
+SYNC_HEADER='^[[:space:]]*\[sync\][[:space:]]*(#.*)?$'
+
+# A string key of the [sync] table of config.toml, or nothing.
 config_value() {
   [[ -f "$CONFIG_FILE" ]] || return 0
-  awk -v key="$1" '
-    /^[[:space:]]*\[/ { exit }
-    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+  SYNC_HEADER="$SYNC_HEADER" awk -v key="$1" '
+    /^[[:space:]]*\[/ { in_sync = ($0 ~ ENVIRON["SYNC_HEADER"]); next }
+    in_sync && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
       sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); gsub(/^"|"$/, ""); print; exit
     }' "$CONFIG_FILE"
 }
 
-# Sets top-level keys of config.toml, given as `key = value` lines (values in TOML syntax). They go
-# first in the file, since top-level keys after a [table] would belong to it.
+# Sets keys of the [sync] table of config.toml, given as `key = value` lines (values in TOML
+# syntax). They go first in the table, which is added at the end of the file if it is missing.
 set_config() {
   local lines="$1" keys tmp
   keys="$(printf '%s\n' "$lines" | sed -E 's/[[:space:]]*=.*//' | paste -sd '|' -)"
   tmp="$(mktemp)"
-  {
-    printf '%s\n' "$lines"
-    [[ -f "$CONFIG_FILE" ]] && awk -v keys="$keys" '
-      /^[[:space:]]*\[/ { in_table = 1 }
-      !in_table && $0 ~ "^[[:space:]]*(" keys ")[[:space:]]*=" { next }
-      { print }' "$CONFIG_FILE"
-  } > "$tmp"
+  if [[ -f "$CONFIG_FILE" ]] && grep -Eq "$SYNC_HEADER" "$CONFIG_FILE"; then
+    # Through the environment, since `awk -v` would interpret the backslashes
+    SYNC_HEADER="$SYNC_HEADER" SYNC_LINES="$lines" awk -v keys="$keys" '
+      /^[[:space:]]*\[/ {
+        in_sync = ($0 ~ ENVIRON["SYNC_HEADER"])
+        print
+        if (in_sync) print ENVIRON["SYNC_LINES"]
+        next
+      }
+      in_sync && $0 ~ "^[[:space:]]*(" keys ")[[:space:]]*=" { next }
+      { print }' "$CONFIG_FILE" > "$tmp"
+  else
+    {
+      [[ -s "$CONFIG_FILE" ]] && { cat "$CONFIG_FILE"; echo; }
+      printf '[sync]\n%s\n' "$lines"
+    } > "$tmp"
+  fi
   mkdir -p "$CONFIG_DIR"
   if [[ -f "$CONFIG_FILE" ]]; then
     cp -p "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -214,14 +228,14 @@ init() {
   security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$USER" -w "$api_key"
   echo "Stored the server's API key in the Keychain (service \"$KEYCHAIN_SERVICE\")."
   local interval answer
-  interval="$(config_value sync_interval_minutes)"
+  interval="$(config_value interval_minutes)"
   read -r -p "Sync in the background every how many minutes (0 for never)? [${interval:-15}] " answer
   interval="${answer:-${interval:-15}}"
   [[ "$interval" =~ ^[0-9]+$ ]] || die "Not a number: $interval"
   set_config "remote_host = \"$user@$host\"
-sync_url = \"$url\"
-sync_interval_minutes = $interval"
-  echo "Set remote_host, sync_url and sync_interval_minutes in $CONFIG_FILE."
+url = \"$url\"
+interval_minutes = $interval"
+  echo "Set remote_host, url and interval_minutes in the [sync] table of $CONFIG_FILE."
   [[ -f "$CONFIG_FILE.bak" ]] && ! cmp -s "$CONFIG_FILE" "$CONFIG_FILE.bak" \
     && echo "The old one is config.toml.bak."
 
@@ -319,7 +333,7 @@ sync_interval_minutes = $interval"
 On your phone, with Tailscale on, open $url, log in with the API key
 (security find-generic-password -s $KEYCHAIN_SERVICE -w) and add it to the home screen.
 
-  spares sync cloud              sync both ways and copy files (sync_interval_minutes = $interval
+  spares sync cloud              sync both ways and copy files (sync.interval_minutes = $interval
                                  syncs in the background, without copying files)
   spares sync conflicts          resolve notes tagged sync-conflict
   scripts/deploy_vps.sh update   update the server
@@ -345,7 +359,7 @@ EOF
 update() {
   local remote_host
   remote_host="$(config_value remote_host)"
-  [[ -n "$remote_host" ]] || die "remote_host is not set in $CONFIG_FILE. Run \`$0 init\` first."
+  [[ -n "$remote_host" ]] || die "sync.remote_host is not set in $CONFIG_FILE. Run \`$0 init\` first."
   local no_latex bundle
   no_latex="$(remote "$remote_host" "sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf")"
   bundle="$(mktemp -d)/spares-bundle.tar.gz"

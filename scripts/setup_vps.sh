@@ -28,7 +28,7 @@
 # --no-latex    Skip LaTeX, inkscape and pandoc (about 3 GB). Markdown and LaTeX notes edited on the
 #               server are then not rendered there; Typst notes don't need them.
 #
-# The server is the sync server (replica 1) for two-way sync with your laptop (`sync_url`).
+# The server is the sync server (replica 1) for two-way sync with your laptop (`sync.url`).
 #
 set -euo pipefail
 
@@ -111,7 +111,7 @@ fi
 SRC_DIR="$USER_HOME/spares"
 CONFIG_DIR="$USER_HOME/.config/spares"
 # Rendered files. Only this directory is served under `/files`, so the database stays private.
-# `spares sync cloud` copies them to `remote_rendered_dir` (default: ~/.cache/spares).
+# `spares sync cloud` copies them to `sync.remote_rendered_dir` (default: ~/.cache/spares).
 RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
@@ -316,9 +316,10 @@ API key: $API_KEY   (also in $ENV_FILE)
 
 Next, on the machine you sync from (replica 0):
   1. Add to its config.toml:
+       [sync]
        remote_host = "$SPARES_USER@$HOST"
-       sync_url = "$URL"
-       sync_interval_minutes = 15   # optional: sync in the background
+       url = "$URL"
+       interval_minutes = 15   # optional: sync in the background
   2. Start its spares server with SPARES_REPLICA=0, SPARES_SYNC_ROLE=client and
      SPARES_SYNC_API_KEY=$API_KEY
   3. Render your notes there, then run once:  spares sync cloud --full-upload

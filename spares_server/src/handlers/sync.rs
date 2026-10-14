@@ -1,5 +1,5 @@
 //! Two-way sync. A `server` (`SPARES_SYNC_ROLE=server`) answers `meta`, `pull`, `push` and
-//! `full`; a `client` runs a sync against its `sync_url` when asked (`run`). See
+//! `full`; a `client` runs a sync against its `sync.url` when asked (`run`). See
 //! `spares_core::sync`.
 
 use std::path::PathBuf;
@@ -172,7 +172,7 @@ fn normal() -> SyncMode {
     SyncMode::Normal
 }
 
-/// Syncs this (client) server with its `sync_url`.
+/// Syncs this (client) server with its `sync.url`.
 pub(crate) async fn sync_run_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(SyncRunRequest { mode }): Json<SyncRunRequest>,
@@ -204,7 +204,7 @@ pub(crate) async fn sync_status_handler(
     Ok(Json(SyncStatusResponse {
         role: get_sync_role().map_err(error_to_response)?.to_string(),
         replica: get_replica().map_err(error_to_response)?.number(),
-        sync_url: read_external_config().ok().and_then(|c| c.sync_url),
+        sync_url: read_external_config().ok().and_then(|c| c.sync.url),
         sync_api_key_set: std::env::var_os(SYNC_API_KEY_ENV).is_some(),
         state,
     }))
