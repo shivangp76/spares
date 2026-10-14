@@ -765,16 +765,16 @@ export default function ReviewPage() {
       <h2 style={{ marginBottom: 16 }}>Review</h2>
 
       {phase === 'landing' && (
-        <div style={{ marginTop: 48 }}>
+        <div style={{ marginTop: 24 }}>
           {sessionStarted && <div style={{ marginBottom: 24 }}>{summary}</div>}
           {statistics && (
-            <div style={{ display: 'flex', gap: 16, marginBottom: 32, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
               {Object.entries(statistics.due_count_by_state)
                 .filter(([, count]) => count > 0)
                 .map(([stateId, count]) => (
-                  <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '12px 20px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 24, fontWeight: 600 }}>{count}</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
+                  <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 20, fontWeight: 600 }}>{count}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
                   </div>
                 ))}
               {Object.values(statistics.due_count_by_state).every(c => c === 0) && (
