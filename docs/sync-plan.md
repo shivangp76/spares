@@ -398,16 +398,18 @@ The client does all of this and pushes the result, so the server never re-parses
 - **Before a full sync, show how many changes each side would lose.**
 
 ## 7. After a sync
-- **Files:** for each note changed or deleted by the sync, regenerate its `notes/` and `cards/` files with the existing path (`create_note_files_bulk` / `render_notes`, as `regenerate_notes` does), or move its files to the trash, as `api/note/delete.rs` does. This runs on both sides.
-- **Undo:** record `last_sync_event_id`. `/api/undo` refuses events at or below it (Anki also clears undo on sync).
+- **Files** (`sync/files.rs`, implemented): after a sync, on whichever side the changes landed:
+  - the files of every changed note are regenerated with `render_notes` (notes and cards, rendered where the config renders);
+  - the files of deleted notes are removed (`delete_note_files`, `reconcile_after` for the notes repository);
+  - card files left over from cards a sync removed (orders past the note's last card) are deleted.
+
+  The server does this after a push or a full upload; the client after `sync_now` (which `POST /api/sync/run` calls).
+- **Undo:** record `last_sync_event_id`. `/api/undo` refuses events at or below it (Anki also clears undo on sync). The server sets it when it answers a pull or a push, the client when it commits a sync.
 
 ### Open issues
-- **Regenerating files after a sync overwrites `notes/` edits that haven't been imported yet.**
-  - Applying a phone edit regenerates `notes/<parser>/A.*`. Auto-sync can't run the interactive `spares sync` (files → DB) first, so any pending file edit to A is overwritten. That breaks the requirement that unsynced laptop edits are never silently overwritten (section 1).
-  - The reverse happens too: a stale nvim buffer saved over the regenerated file makes the next `spares sync` undo the phone edit.
-  - Even a manual `spares sync cloud` loses any hunks you decline in the `spares sync` confirmation.
-  - Fix: before regenerating a file, check it against the hash index `spares sync` already keeps (`load_hash_index`, `spares_cli/src/sync/utils.rs`). If they differ, skip that note and flag it.
-- **The undo guard must also run on the server.** `review_log` has no graves, so the server must set the guard when it answers a pull. Otherwise the phone can undo a review the laptop has already pulled.
+- **Regenerating files after a sync and edits not imported yet.**
+  - With the notes repository (`notes_vcs`), regenerated files are committed to the server copy (`notes-spares`). Edits not pushed yet live in the user's clone in `notes/`, so they are never overwritten. They meet the sync's commit when the clone is rebased, as with any other server-side change.
+  - Without it, files under `<data_dir>/notes/` are rewritten in place. `spares sync cloud` imports pending file edits (`spares sync`) first (section 8). An edit made during the sync could still be overwritten.
 - **The nvim keyword cache goes stale.** The plugin refreshes keywords when `event latest` changes. Sync writes don't create events, so completion goes stale after a sync.
 
 ## 8. Fewer conflicts to begin with

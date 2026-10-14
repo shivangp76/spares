@@ -12,7 +12,9 @@ use crate::Error;
 
 pub mod apply;
 pub mod client;
+pub mod files;
 pub mod full;
+pub mod http;
 pub mod merge;
 mod orders;
 pub mod protocol;
