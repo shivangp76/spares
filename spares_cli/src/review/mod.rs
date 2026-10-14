@@ -201,7 +201,7 @@ async fn get_review_card(
                     first,
                 )?)
             };
-            println!("Note Id: {}", review_card.note_id);
+            println!("Note Id: {}", review_card.note_id.letters());
             println!("Card Id: {}", review_card.card_id);
             if !is_cli {
                 let file_name = review_card
@@ -904,7 +904,7 @@ pub(crate) async fn review_cards(
                     let options = review_card_response
                         .linked_notes
                         .iter()
-                        .map(|ln| format!("{} ({})", ln.searched_keyword, ln.note_id))
+                        .map(|ln| format!("{} ({})", ln.searched_keyword, ln.note_id.letters()))
                         .collect::<Vec<_>>();
                     let mut multi_select =
                         MultiSelect::new("Select linked notes to open:", options.clone());
@@ -1110,7 +1110,7 @@ pub(crate) async fn review_cards(
                     Ok(Some(new_response)) => {
                         println!(
                             "[Note Id: {}] Current card refreshed after sync (card order may have changed).",
-                            note_id
+                            note_id.letters()
                         );
                         let is_cli = new_response.cli.is_some();
                         if card_flipped {
@@ -1154,7 +1154,7 @@ pub(crate) async fn review_cards(
                     Ok(None) => {
                         println!(
                             "[Note Id: {}] Current card was deleted during sync. Advancing to next card.",
-                            note_id
+                            note_id.letters()
                         );
                         if card_flipped {
                             if let Some(mut child) = card_back_rendered_child.take() {
@@ -1169,7 +1169,8 @@ pub(crate) async fn review_cards(
                     Err(e) => {
                         println!(
                             "[Note Id: {}] Failed to refresh card after sync: {}",
-                            note_id, e
+                            note_id.letters(),
+                            e
                         );
                     }
                 }
@@ -1200,19 +1201,25 @@ pub(crate) async fn review_cards(
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("Unknown error");
                                         eprintln!(
-                                            "[Note Id: {note_id}] Failed to regenerate files: {msg}"
+                                            "[Note Id: {}] Failed to regenerate files: {msg}",
+                                            note_id.letters()
                                         );
                                     }
                                     Err(parse_err) => {
                                         eprintln!(
-                                            "[Note Id: {note_id}] Failed to regenerate files (status={}, parse_error={})",
-                                            status, parse_err
+                                            "[Note Id: {}] Failed to regenerate files (status={}, parse_error={})",
+                                            note_id.letters(),
+                                            status,
+                                            parse_err
                                         );
                                     }
                                 }
                             }
                         }
-                        Err(e) => eprintln!("[Note Id: {note_id}] Failed to regenerate files: {e}"),
+                        Err(e) => eprintln!(
+                            "[Note Id: {}] Failed to regenerate files: {e}",
+                            note_id.letters()
+                        ),
                     }
                 });
             }

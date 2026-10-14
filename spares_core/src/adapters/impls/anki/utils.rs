@@ -102,7 +102,7 @@ impl AnkiAdapter {
                         front: None,
                         back: None,
                         keywords: None,
-                        spares_id: Some(note.id.to_string()),
+                        spares_id: Some(note.id.letters()),
                         spares_parser_name: None,
                     },
                     tags: None,

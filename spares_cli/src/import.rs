@@ -1189,7 +1189,7 @@ mod tests {
                  Block two edited {{{{ gamma }}}} and {{{{ delta }}}} and {{{{ epsilon }}}}\n\
                  <!--- spares: note end --->\n\
                  <!--- spares: end --->\n",
-                block_two.id
+                block_two.id.letters()
             ),
         )
         .unwrap();

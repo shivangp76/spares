@@ -18,6 +18,7 @@ use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
 use crate::model::Card;
 use crate::model::EventAction;
+use crate::model::NoteId;
 use crate::model::ReviewLog;
 use crate::parsers::get_all_parsers;
 use crate::schedulers::get_scheduler_from_string;
@@ -416,7 +417,7 @@ async fn e2e_redo_delete_tag_removes_restored_associations(pool: SqlitePool) {
 #[sqlx::test]
 async fn e2e_redo_delete_notes(pool: SqlitePool) {
     let card_id = create_card_helper(&pool).await;
-    let note_id: i64 = sqlx::query_scalar("SELECT note_id FROM card WHERE id = ?")
+    let note_id: NoteId = sqlx::query_scalar("SELECT note_id FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(&pool)
         .await
@@ -488,4 +489,40 @@ async fn e2e_undo_and_redo_describe_the_original_action(pool: SqlitePool) {
         descriptions(&redo.redone_events),
         ["Rename parser 'a' to 'b'"]
     );
+}
+
+/// Undoing a create deletes the newest note, so its id must not be handed out again.
+///
+/// Redoing the first create afterwards still fails, on `card.id`: card ids are still the largest
+/// plus one (see "Other tables" in docs/sync-plan.md).
+#[sqlx::test]
+async fn e2e_create_undo_create_does_not_reuse_the_note_id(pool: SqlitePool) {
+    let parser = create_parser_helper(&pool, "markdown").await;
+    let create = async |data: &str| -> NoteId {
+        create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: data.to_string(),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap()
+        .notes[0]
+            .id
+    };
+    let first = create("First {{ cloze }}").await;
+    undo_latest(&pool).await.unwrap();
+    let second = create("Second {{ cloze }}").await;
+    assert_eq!(first, "aaa".parse().unwrap());
+    assert_eq!(second, "aab".parse().unwrap());
 }

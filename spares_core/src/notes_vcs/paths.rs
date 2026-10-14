@@ -78,11 +78,11 @@ pub fn parse_note_rel_path(rel_path: &Path) -> Option<(Box<dyn Parseable>, NoteI
         .map(|parser| parser())
         .find(|parser| parser.get_parser_name() == parser_name)?;
     let stem = Path::new(file_name).file_stem()?.to_str()?;
-    if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_digit()) {
+    if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_lowercase()) {
         return None;
     }
     let note_id: NoteId = stem.parse().ok()?;
-    // Only the canonical name counts, so `42.typ` and `0042.TYP` are not note paths.
+    // Only the canonical name counts, so `gir.TYP` is not a note path.
     (note_file_name(parser.as_ref(), note_id) == file_name).then_some((parser, note_id))
 }
 
@@ -92,7 +92,7 @@ pub fn render_hash_path(parser_name: &str, note_id: NoteId) -> PathBuf {
     get_cache_dir()
         .join("note-hashes")
         .join(parser_name)
-        .join(note_id.to_string())
+        .join(note_id.letters())
 }
 
 pub fn read_render_hash(parser_name: &str, note_id: NoteId) -> Option<String> {
@@ -124,20 +124,23 @@ mod tests {
 
     #[test]
     fn test_parse_note_rel_path() {
-        let (parser, id) = parse_note_rel_path(Path::new("typst/0042.typ")).unwrap();
+        let (parser, id) = parse_note_rel_path(Path::new("typst/gir.typ")).unwrap();
         assert_eq!(parser.get_parser_name(), "typst");
-        assert_eq!(id, 42);
-        assert!(parse_note_rel_path(Path::new("typst/12345.typ")).is_some());
+        assert_eq!(id, "gir".parse().unwrap());
+        assert!(parse_note_rel_path(Path::new("typst/gizzaa.typ")).is_some());
         for path in [
+            "typst/0042.typ",
             "typst/42.typ",
-            "typst/0042.TYP",
-            "Typst/0042.typ",
-            "typst/0042.md",
-            "typst/sub/0042.typ",
+            "typst/GIR.typ",
+            "typst/gir.TYP",
+            "Typst/gir.typ",
+            "typst/gir.md",
+            "typst/sub/gir.typ",
             "typst",
-            "unknown/0042.typ",
+            "unknown/gir.typ",
             "README.md",
-            "typst/-042.typ",
+            "typst/gi-r.typ",
+            "typst/abcdefghi.typ",
         ] {
             assert!(parse_note_rel_path(Path::new(path)).is_none(), "{path}");
         }

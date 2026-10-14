@@ -114,17 +114,17 @@ async fn describe(
         }
         EventType::CreateNotes => {
             let p: CreateNotesPayload = serde_json::from_value(payload).unwrap();
-            let ids: Vec<i64> = p.notes.iter().map(|n| n.id).collect();
+            let ids: Vec<String> = p.notes.iter().map(|n| n.id.letters()).collect();
             format!("Create {}", count_ids("note", &ids))
         }
         EventType::UpdateNotes => {
             let p: UpdateNotesPayload = serde_json::from_value(payload).unwrap();
-            let ids: Vec<i64> = p.notes.iter().map(|n| n.id).collect();
+            let ids: Vec<String> = p.notes.iter().map(|n| n.id.letters()).collect();
             format!("Edit {}", count_ids("note", &ids))
         }
         EventType::DeleteNotes => {
             let p: DeleteNotesPayload = serde_json::from_value(payload).unwrap();
-            let ids: Vec<i64> = p.notes.iter().map(|n| n.id).collect();
+            let ids: Vec<String> = p.notes.iter().map(|n| n.id.letters()).collect();
             format!("Delete {}", count_ids("note", &ids))
         }
         EventType::RateCard => {
@@ -181,12 +181,12 @@ fn rating_description(review_log: &ReviewLog) -> Option<String> {
 }
 
 /// "note 3", or "3 notes (1, 2, 3)", listing at most a few ids.
-fn count_ids(noun: &str, ids: &[i64]) -> String {
+fn count_ids<T: std::fmt::Display>(noun: &str, ids: &[T]) -> String {
     const MAX_LISTED: usize = 5;
     if let [id] = ids {
         return format!("{noun} {id}");
     }
-    let mut listed: Vec<String> = ids.iter().take(MAX_LISTED).map(i64::to_string).collect();
+    let mut listed: Vec<String> = ids.iter().take(MAX_LISTED).map(T::to_string).collect();
     if ids.len() > MAX_LISTED {
         listed.push("…".to_string());
     }

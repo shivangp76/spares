@@ -211,7 +211,7 @@ impl Parseable for MarkdownParser {
                     "{}{} {}",
                     note_id_key.get_write(),
                     settings_key_value_delim,
-                    note_id
+                    note_id.letters()
                 );
                 let keywords_string =
                     format!("keywords{} {}", settings_key_value_delim, keywords_str);
@@ -243,7 +243,11 @@ impl Parseable for MarkdownParser {
             ConstructFileDataType::Card(card_order, card_data, side) => {
                 let card_data_str =
                     construct_card_data(self, card_order, card_data, side, *note_id);
-                let mut lines = vec![format!("- note-id{} {}", settings_key_value_delim, note_id)];
+                let mut lines = vec![format!(
+                    "- note-id{} {}",
+                    settings_key_value_delim,
+                    note_id.letters()
+                )];
                 if !keywords_str.is_empty() {
                     lines.push(format!(
                         "- keywords{} {}",
@@ -762,17 +766,17 @@ pub mod tests {
         let linked_notes_opt = Some(vec![
             LinkedNote {
                 searched_keyword: "keyword 1".to_string(),
-                linked_note_id: Some(1),
+                linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
             },
             LinkedNote {
                 searched_keyword: "keyword 1.5".to_string(),
-                linked_note_id: Some(1),
+                linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
-                linked_note_id: Some(2),
+                linked_note_id: Some("aab".parse().unwrap()),
                 matched_keyword: Some("keyword 2".to_string()),
             },
         ]);
@@ -783,7 +787,7 @@ pub mod tests {
         );
         let expected_new_note_data = "Third {{[o:1] Cloze here, linking to [keyword 1][li1], [keyword 1.5][li2], and [keyword 2][li3] }}";
         assert_eq!(new_note_data, expected_new_note_data);
-        let expected_linked_notes_string = "[li1]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/0001.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/0002.md \"keyword 2 -> keyword 2\"";
+        let expected_linked_notes_string = "[li1]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/aab.md \"keyword 2 -> keyword 2\"";
         assert_eq!(linked_notes_string, expected_linked_notes_string);
     }
 

@@ -152,7 +152,9 @@ pub fn parse_note_file(
     match settings.action {
         NoteImportAction::Update(id) if id == expected_id => {}
         NoteImportAction::Update(id) => errors.push(format!(
-            "names note {id}, but the file belongs to note {expected_id}"
+            "names note {}, but the file belongs to note {}",
+            id.letters(),
+            expected_id.letters()
         )),
         NoteImportAction::Add => errors.push(
             "would create a new note; create notes with `spares note add` or `spares import`"
@@ -276,6 +278,7 @@ mod tests {
     use crate::api::note::get_note_links_map;
     use crate::api::note::get_render_note_data;
     use crate::api::parser::create_parser;
+    use crate::model::NoteId;
     use crate::parsers::find_parser;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
@@ -329,7 +332,7 @@ mod tests {
         }
         let rows = get_render_note_data(&pool, None).await.unwrap();
         assert_eq!(rows.len(), 2);
-        let ids: Vec<i64> = rows.iter().map(|r| r.note_id).collect();
+        let ids: Vec<NoteId> = rows.iter().map(|r| r.note_id).collect();
         let links = get_note_links_map(&pool, &ids).await.unwrap();
         for row in &rows {
             let parser = find_parser(&row.parser_name, &get_all_parsers()).unwrap();

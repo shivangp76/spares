@@ -126,7 +126,7 @@ async fn sync_notes_between_files(
                 import_data.action.to_string().blue(),
                 sync_source_from.to_string().black().on_green(),
                 sync_source_to.to_string().black().on_bright_blue(),
-                import_data.note_id.to_string().black().on_yellow()
+                import_data.note_id.letters().black().on_yellow()
             );
             print_import_data(import_data, dry_run)?;
             println!();

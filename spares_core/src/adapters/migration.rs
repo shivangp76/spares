@@ -7,7 +7,8 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
-use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::adapters::impls::anki::AnkiNote;
+use crate::model::NoteId;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::NoteResponse;
@@ -67,25 +68,22 @@ async fn create_parsers(
 pub async fn create_notes(
     client: &Client,
     base_url: &str,
-    parse_note_requests: Vec<(String, GenerateNoteFilesRequest)>,
+    anki_notes: Vec<AnkiNote>,
     dry_run: bool,
 ) -> Result<Vec<NotesResponse>, String> {
     println!("Getting notes...");
     let start = Instant::now();
-    let create_note_requests = parse_note_requests
+    let create_note_requests = anki_notes
         .into_iter()
         .map(
-            |(
-                parser_name,
-                GenerateNoteFilesRequest {
-                    note_data,
-                    keywords,
-                    tags,
-                    custom_data,
-                    note_id: _,
-                    linked_notes: _,
-                },
-            )| {
+            |AnkiNote {
+                 parser_name,
+                 note_data,
+                 keywords,
+                 tags,
+                 custom_data,
+                 spares_id: _,
+             }| {
                 (
                     parser_name,
                     CreateNoteRequest {
@@ -122,7 +120,7 @@ pub async fn create_notes(
                 .into_iter()
                 .enumerate()
                 .map(|(i, request)| NoteResponse {
-                    id: i64::try_from(i).unwrap(),
+                    id: NoteId::from_packed(i64::try_from(i).unwrap()),
                     data: request.data,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),

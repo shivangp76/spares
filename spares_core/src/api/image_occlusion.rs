@@ -264,7 +264,8 @@ pub async fn update_note_image_occlusion(
     let count = image_occlusions.len();
     let (range, old) = image_occlusions.into_iter().nth(index).ok_or_else(|| {
         other_error(format!(
-            "Note {note_id} has {count} image occlusion(s), so there is no image occlusion {}.",
+            "Note {} has {count} image occlusion(s), so there is no image occlusion {}.",
+            note_id.letters(),
             index + 1
         ))
     })?;

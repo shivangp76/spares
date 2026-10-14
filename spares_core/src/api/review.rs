@@ -94,7 +94,7 @@ pub(crate) fn web_render_path(rendered_path: &Path) -> Option<PathBuf> {
         .then(|| web_render_filepath(rendered_path))
 }
 
-#[derive(Clone, Debug, Default, FromRow)]
+#[derive(Clone, Debug, FromRow)]
 pub(crate) struct ReviewCard {
     note_id: NoteId,
     parser_name: String,
@@ -260,7 +260,8 @@ fn build_review_card_response(
             Error::Library(LibraryError::Card(crate::CardErrorKind::InvalidInput(
                 format!(
                     "Note {} card {} is a CLI card (BackType::Cli) but note data was not loaded.",
-                    note_id, card_order
+                    note_id.letters(),
+                    card_order
                 ),
             )))
         })?;
@@ -278,7 +279,8 @@ fn build_review_card_response(
                     format!(
                         "Note {} card {} is a CLI card (BackType::Cli) but no \
                          matching `spares: cli start` block was found in note data.",
-                        note_id, card_order
+                        note_id.letters(),
+                        card_order
                     ),
                 )))
             })?;

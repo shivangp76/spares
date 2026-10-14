@@ -99,7 +99,7 @@ impl SparesAdapter {
 
     pub async fn update_custom_data(
         &self,
-        note_id: i64,
+        note_id: NoteId,
         custom_data: CustomData,
         dry_run: bool,
         at: DateTime<Utc>,
@@ -183,7 +183,7 @@ impl SrsAdapter for SparesAdapter {
         let parser_id = parser_response.id;
 
         let mut create_note_requests: Vec<CreateNoteRequest> = Vec::new();
-        let mut delete_note_ids: Vec<i64> = Vec::new();
+        let mut delete_note_ids: Vec<NoteId> = Vec::new();
         for (local_settings, note_data_res) in notes {
             if note_data_res.is_none() {
                 continue;
@@ -364,7 +364,7 @@ impl SrsAdapter for SparesAdapter {
                 Ok(response.id)
             }
             SparesRequestProcessorInternal::Database { pool } => {
-                let note_id: Option<i64> = sqlx::query_scalar(
+                let note_id: Option<NoteId> = sqlx::query_scalar(
                     r"SELECT id FROM note WHERE json_extract(custom_data, '$.live_sync_name') = ? AND json_extract(custom_data, '$.live_block_order') = ?",
                 )
                 .bind(live_sync_name)
