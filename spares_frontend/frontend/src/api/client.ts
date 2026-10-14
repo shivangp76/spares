@@ -404,6 +404,38 @@ export async function undoEvent(eventId: number | null): Promise<UndoEventRespon
   });
 }
 
+/** This server's two-way sync state (`GET /api/sync/status`). */
+export interface SyncStatus {
+  role: 'client' | 'server';
+  replica: number;
+  sync_url: string | null;
+  usn: number | null;
+  last_sync_at: number | null;
+  needs_full_sync: string | null;
+  conflicts: number;
+}
+
+export interface SyncReport {
+  mode: 'normal' | 'full_upload' | 'full_download' | null;
+  pulled: number;
+  pushed: number;
+  conflicts: number[];
+  notes_changed: number[];
+  notes_deleted: number[];
+}
+
+export async function getSyncStatus(): Promise<SyncStatus> {
+  return apiFetch('Sync status', '/api/sync/status');
+}
+
+/** Syncs this (laptop) server with its `sync_url`. A full sync is left to `spares sync cloud`. */
+export async function runSync(): Promise<SyncReport> {
+  return apiFetch('Sync', '/api/sync/run', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'normal' }),
+  });
+}
+
 /** What an undo or redo reversed, e.g. `Undone: Rate card 3 (Good)`. */
 export function describeReverted(verb: 'Undone' | 'Redone', events: EventSummary[]): string {
   return `${verb}: ${events.map(e => e.description).join('; ')}`;

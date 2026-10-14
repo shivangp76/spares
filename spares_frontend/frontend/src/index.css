@@ -175,6 +175,18 @@ button:disabled {
   color: var(--text);
 }
 
+/* Notes a sync could not merge (`sync-conflict`) */
+.sync-conflict-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--warning);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
 /* Mobile. Most styling is inline, so pieces that change by screen size or input get a class here.
    Narrow screens are phones; a coarse pointer without hover is a touchscreen. */
 
