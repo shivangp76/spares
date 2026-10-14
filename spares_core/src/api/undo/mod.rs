@@ -59,15 +59,22 @@ pub(crate) mod payloads;
 #[cfg(test)]
 mod e2e_tests;
 
+/// A number that grows whenever notes change: the newest note event id, plus an offset that each
+/// sync changing notes moves on (see [`crate::sync::NOTES_VERSION_OFFSET_KEY`]). For noticing
+/// changes, not for passing to undo.
 pub async fn get_latest_note_event_id(db: &SqlitePool) -> Result<i64, Error> {
-    let id: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event WHERE kind IN (?, ?, ?)")
-            .bind(EventType::CreateNotes)
-            .bind(EventType::UpdateNotes)
-            .bind(EventType::DeleteNotes)
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+    let id: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(id), 0)
+             + COALESCE((SELECT CAST(value AS INTEGER) FROM app_state WHERE key = ?), 0)
+         FROM event WHERE kind IN (?, ?, ?)",
+    )
+    .bind(crate::sync::NOTES_VERSION_OFFSET_KEY)
+    .bind(EventType::CreateNotes)
+    .bind(EventType::UpdateNotes)
+    .bind(EventType::DeleteNotes)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
     Ok(id)
 }
 

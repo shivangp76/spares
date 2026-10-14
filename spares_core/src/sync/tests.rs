@@ -829,3 +829,30 @@ async fn conflicts_resolve_with_either_text_and_keep_their_cards() {
     assert_eq!(data(&replicas.server, ids[1]).await, None);
     assert_eq!(data(&replicas.server, ids[0]).await.unwrap(), resolved);
 }
+
+#[tokio::test]
+async fn the_note_change_number_moves_on_after_syncs() {
+    let latest = |pool: SqlitePool| async move {
+        crate::api::undo::get_latest_note_event_id(&pool)
+            .await
+            .unwrap()
+    };
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    create(&replicas.laptop, &["B {{ two }}"], &[]).await;
+    let before = latest(replicas.laptop.clone()).await;
+    assert!(before > 0);
+    // A sync changing notes writes no events, so `after_sync` moves the number on.
+    let mut conn = replicas.laptop.acquire().await.unwrap();
+    super::bump_notes_version(&mut conn).await.unwrap();
+    drop(conn);
+    let after_sync = latest(replicas.laptop.clone()).await;
+    assert!(after_sync > before);
+    // A full download clears the events, and the number still grows.
+    on_server(create(&replicas.server, &["C {{ three }}"], &[])).await;
+    replicas.sync_mode(SyncMode::FullDownload).await.unwrap();
+    let after_full = latest(replicas.laptop.clone()).await;
+    assert!(after_full > after_sync, "{after_full} <= {after_sync}");
+    // New events keep it growing.
+    create(&replicas.laptop, &["D {{ four }}"], &[]).await;
+    assert!(latest(replicas.laptop.clone()).await > after_full);
+}
