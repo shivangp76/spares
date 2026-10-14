@@ -168,7 +168,6 @@ pub struct Replica(u8);
 impl Replica {
     pub const MAX: u8 = 15;
 
-    #[cfg(test)]
     pub(crate) const fn new_unchecked(number: u8) -> Self {
         Self(number)
     }
