@@ -116,6 +116,24 @@ async fn expand_group(
     .map_err(|e| Error::Sqlx { source: e })
 }
 
+/// Errors if any of `events` happened before the last sync: what it did has reached the other
+/// replica, which may have changed the same rows since.
+async fn check_not_synced(db: &SqlitePool, events: &[Event]) -> Result<(), Error> {
+    let guard: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
+        .bind(crate::sync::LAST_SYNC_EVENT_ID_KEY)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let guard: i64 = guard.and_then(|g| g.parse().ok()).unwrap_or(0);
+    if let Some(event) = events.iter().find(|event| event.id <= guard) {
+        return Err(Error::Library(LibraryError::InvalidConfig(format!(
+            "Event {} happened before the last sync, so it can no longer be reverted",
+            event.id
+        ))));
+    }
+    Ok(())
+}
+
 /// Errors unless `event` can be reverted by an undo (`redo == false`), which takes an action or a
 /// redo, or by a redo, which takes an undo. Either way it must not have been reverted already.
 async fn check_revertible(db: &SqlitePool, event: &Event, redo: bool) -> Result<(), Error> {
@@ -210,6 +228,7 @@ pub async fn undo_event(
     };
 
     let events = expand_group(db, event, body.undo_group).await?;
+    check_not_synced(db, &events).await?;
     let undone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
@@ -256,6 +275,7 @@ pub async fn redo_event(
     };
 
     let events = expand_group(db, event, body.redo_group).await?;
+    check_not_synced(db, &events).await?;
     let redone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
