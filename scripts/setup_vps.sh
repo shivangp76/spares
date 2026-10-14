@@ -290,7 +290,8 @@ elif [[ "$TAILSCALE" == true ]]; then
   # so its public SSH port can be closed.
   tailscale status >/dev/null 2>&1 || tailscale up --ssh
   tailscale set --ssh
-  tailscale serve --bg 8080 >/dev/null
+  # The first time on a tailnet, this prints a link to enable HTTPS and waits until you do.
+  tailscale serve --bg 8080
   URL="https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 else
   URL="http://localhost:8080 (after: ssh -L 8080:127.0.0.1:8080 $SPARES_USER@<this server>)"
