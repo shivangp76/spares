@@ -197,7 +197,7 @@ pub(crate) async fn note_id_to_cards(
     base_url: &str,
     client: &Client,
 ) -> Result<Vec<CardResponse>, String> {
-    let url = format!("{}/api/cards/note_id/{}", base_url, note_id);
+    let url = format!("{}/api/cards/note_id/{}", base_url, note_id.packed());
     let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
     let status = response.status();
     if status != StatusCode::OK {

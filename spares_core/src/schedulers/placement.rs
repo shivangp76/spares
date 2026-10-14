@@ -320,10 +320,15 @@ mod tests {
         config
     }
 
-    fn card(id: CardId, note_id: NoteId) -> Card {
+    /// Notes here only group siblings, so any distinct values do.
+    fn note(n: i64) -> NoteId {
+        NoteId::from_packed(n)
+    }
+
+    fn card(id: CardId, note_id: i64) -> Card {
         Card {
             id,
-            note_id,
+            note_id: note(note_id),
             state: REVIEW_STATE,
             ..Card::new(day(0))
         }
@@ -390,10 +395,10 @@ mod tests {
     #[test]
     fn keeps_siblings_apart() {
         let mut context = context();
-        context.insert(2, 1, day(11));
-        context.insert(3, 1, day(13));
+        context.insert(2, note(1), day(11));
+        context.insert(3, note(1), day(13));
         // Not a sibling: a different note.
-        context.insert(4, 2, day(12));
+        context.insert(4, note(2), day(12));
         let candidates = (10..=14).map(day).collect::<Vec<_>>();
         let chosen = histogram(
             &mut context,
@@ -409,7 +414,7 @@ mod tests {
     #[test]
     fn sibling_dispersal_can_be_disabled() {
         let mut context = context();
-        context.insert(2, 1, day(11));
+        context.insert(2, note(1), day(11));
         let candidates = (10..=12).map(day).collect::<Vec<_>>();
         let chosen = histogram(
             &mut context,
@@ -428,7 +433,7 @@ mod tests {
         for (offset, count) in [(10, 30), (11, 0), (12, 30)] {
             for _ in 0..count {
                 id += 1;
-                context.insert(id, id, day(offset));
+                context.insert(id, note(id), day(offset));
             }
         }
         let candidates = (10..=12).map(day).collect::<Vec<_>>();
@@ -451,7 +456,7 @@ mod tests {
     #[test]
     fn placing_a_card_moves_its_own_count() {
         let mut context = context();
-        context.insert(1, 1, day(20));
+        context.insert(1, note(1), day(20));
         let config = config(true, true);
         let placed = context.place(
             &config,
@@ -471,7 +476,7 @@ mod tests {
     #[test]
     fn overdue_cards_count_towards_today() {
         let mut context = context();
-        context.insert(1, 1, day(-30));
+        context.insert(1, note(1), day(-30));
         assert_eq!(context.due_counts.get(&utc_date(day(0))), Some(&1));
     }
 
@@ -480,7 +485,7 @@ mod tests {
         let mut config = config(true, true);
         config.easy_days.specific_dates = (10..=12).map(|d| utc_date(day(d))).collect();
         let mut context = context();
-        context.insert(2, 1, day(11));
+        context.insert(2, note(1), day(11));
         let candidates = (10..=12).map(day).collect::<Vec<_>>();
         let chosen = histogram(&mut context, &config, &card(1, 1), &candidates, 300);
         assert_eq!(
@@ -492,8 +497,8 @@ mod tests {
         // A vacation day outranks a sibling: only the sibling constraint is dropped.
         config.easy_days.specific_dates = [utc_date(day(10))].into();
         let mut context = PlacementContext::new(utc_date, day(0));
-        context.insert(2, 1, day(11));
-        context.insert(3, 1, day(12));
+        context.insert(2, note(1), day(11));
+        context.insert(3, note(1), day(12));
         let chosen = histogram(&mut context, &config, &card(1, 1), &candidates, 300);
         assert!(!chosen.contains_key(&day(10)));
     }
@@ -509,7 +514,11 @@ mod tests {
                 .collect::<HashSet<_>>();
             let mut context = context();
             for id in 2..rng.random_range(2..40) {
-                context.insert(id, rng.random_range(1..4), day(rng.random_range(-5..30)));
+                context.insert(
+                    id,
+                    note(rng.random_range(1..4)),
+                    day(rng.random_range(-5..30)),
+                );
             }
             let start = rng.random_range(1..25);
             let candidates = (start..start + rng.random_range(1..6))

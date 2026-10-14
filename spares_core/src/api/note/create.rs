@@ -28,6 +28,7 @@ use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
 use crate::helpers::remove_ancestor_tags;
+use crate::ids::allocate_note_ids;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
@@ -114,7 +115,9 @@ pub async fn create_notes(
     // (dst_note_id, dst_order, src_note_id, src_order)
     let mut inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
-    for create_note_request in &body.requests {
+    // One run of ids for the whole call, so notes created together sort next to each other.
+    let note_ids = allocate_note_ids(db, body.requests.len()).await?;
+    for (create_note_request, note_id) in body.requests.iter().zip(note_ids) {
         let CreateNoteRequest {
             data,
             keywords: extra_keywords,
@@ -132,14 +135,14 @@ pub async fn create_notes(
             external_config.as_ref().map(|c| &c.overlapper),
         )?;
         // Create note
-        // The RETURNING keyword is used instead of insert_result.last_insert_rowid() to prevent concurrency issues. If another writer writes in between the execution of the insert and the call of last_insert_rowid(), then the wrong id will be returned.
-        let note_id: NoteId = sqlx::query_scalar(r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id")
+        sqlx::query(r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(note_id)
             .bind(&note_data)
             .bind(at.timestamp())
             .bind(at.timestamp())
             .bind(body.parser_id)
             .bind(&custom_data_str)
-            .fetch_one(db)
+            .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -593,7 +596,8 @@ pub(crate) async fn apply_srs_inheritance_on(
 
         let src_card = src_card.ok_or_else(|| {
             Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                "`inh:` source card not found: note_id={src_note_id}, order={src_order}"
+                "`inh:` source card not found: note_id={}, order={src_order}",
+                src_note_id.letters()
             ))))
         })?;
 
@@ -607,7 +611,8 @@ pub(crate) async fn apply_srs_inheritance_on(
 
         let dst_card_id = dst_card_id.ok_or_else(|| {
             Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                "`inh:` destination card not found: note_id={dst_note_id}, order={dst_order}"
+                "`inh:` destination card not found: note_id={}, order={dst_order}",
+                dst_note_id.letters()
             ))))
         })?;
 

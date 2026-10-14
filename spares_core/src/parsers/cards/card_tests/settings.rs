@@ -628,7 +628,7 @@ fn test_get_cards_previous_order_with_reverse() {
 #[test]
 fn test_get_cards_inherit_basic() {
     // `inh:NOTE_ID/ORDER` should be parsed into `CardData.inherit` and stripped from the output.
-    let data = r"{{[inh:123/1]b}}";
+    let data = r"{{[inh:dt/1]b}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_ok());
@@ -643,7 +643,7 @@ fn test_get_cards_inherit_basic() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: Some(ReadableCardIdentifier {
-                note_id: 123,
+                note_id: "dt".parse().unwrap(),
                 order: 1,
             }),
             cloze_uid: None,
@@ -664,7 +664,7 @@ fn test_get_cards_inherit_basic() {
 #[test]
 fn test_get_cards_inherit_with_order() {
     // `inh:` can be combined with other settings; only `inh:` is stripped from the output.
-    let data = r"{{[o:1;inh:456/2]b}}";
+    let data = r"{{[o:1;inh:GIR/2]b}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_ok());
@@ -679,7 +679,7 @@ fn test_get_cards_inherit_with_order() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             inherit: Some(ReadableCardIdentifier {
-                note_id: 456,
+                note_id: "gir".parse().unwrap(),
                 order: 2,
             }),
             cloze_uid: None,
@@ -697,27 +697,19 @@ fn test_get_cards_inherit_with_order() {
 }
 
 #[test]
-fn test_get_cards_inherit_negative_note_id() {
-    // Negative note IDs are valid i64 values and should be accepted.
-    let data = r"{{[inh:-99/3]b}}";
+fn test_get_cards_inherit_numeric_note_id() {
+    // Old numeric note ids are rejected, with a hint to look them up.
+    let data = r"{{[inh:99/3]b}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
-    assert!(cards_res.is_ok());
-    if let Ok(cards) = cards_res {
-        assert_eq!(
-            cards[0].inherit,
-            Some(ReadableCardIdentifier {
-                note_id: -99,
-                order: 3,
-            })
-        );
-    }
+    let err = format!("{:?}", cards_res.unwrap_err());
+    assert!(err.contains("id-map.tsv"), "got: {err}");
 }
 
 #[test]
 fn test_get_cards_inherit_invalid_note_id() {
-    // A non-integer note ID should produce an error.
-    let data = r"{{[inh:abc/1]b}}";
+    // A note id that is not letters should produce an error.
+    let data = r"{{[inh:a-c/1]b}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
     assert!(cards_res.is_err());

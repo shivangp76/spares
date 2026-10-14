@@ -427,7 +427,7 @@ pub async fn update_notes(
         let created_at = DateTime::from_timestamp(created_at, 0).ok_or_else(|| {
             Error::Library(LibraryError::InvalidConfig(format!(
                 "invalid created_at timestamp in database for note {}: {created_at}",
-                parsed.note_id
+                parsed.note_id.letters()
             )))
         })?;
         let updated_note = Note {

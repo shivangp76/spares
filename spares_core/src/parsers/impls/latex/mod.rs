@@ -249,7 +249,7 @@ fn construct_file_data(
         "{}{} {}",
         note_id_key.get_write(),
         settings_key_value_delim,
-        note_id
+        note_id.letters()
     );
     let keywords_string = format!("keywords{} {}", settings_key_value_delim, keywords_str);
     let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
@@ -474,7 +474,7 @@ fn get_aux_dir(parser: &impl Parseable, output_type: RenderOutputType, note_id: 
     };
     let mut aux_dir = parser.get_output_rendered_dir(directory_output_type);
     aux_dir.push("aux");
-    aux_dir.push(format!("{:0>4}", note_id));
+    aux_dir.push(note_id.letters());
     aux_dir
 }
 
@@ -729,7 +729,7 @@ mod tests {
         let adapter = get_adapter_from_string("spares").unwrap();
         let data = indoc! { r"
             \se{action: update}
-            \se{note-id: 10}
+            \se{note-id: aak}
             \se{anki-note-id: 99}
             \begin{note}
             a
@@ -744,7 +744,10 @@ mod tests {
         assert_eq!(notes.len(), 1);
         let (note_settings, _note_data) = &notes[0];
 
-        assert_eq!(note_settings.action, NoteImportAction::Update(10));
+        assert_eq!(
+            note_settings.action,
+            NoteImportAction::Update("aak".parse().unwrap())
+        );
 
         let value = note_settings.custom_data.get("note-id");
         assert_eq!(value, None);

@@ -254,7 +254,7 @@ pub async fn populate_reviews(
                     .map_err(|e| {
                         info!(
                             "[Note {}, Card {}, Anki Card {}] Skipping this card because the review log failed to parse: {}",
-                            card.note_id,
+                            card.note_id.letters(),
                             card.id,
                             anki_card.id,
                             e
@@ -308,11 +308,37 @@ pub async fn populate_reviews(
     Ok(())
 }
 
+/// A note read from Anki's database.
+#[derive(Clone, Debug)]
+pub struct AnkiNote {
+    pub parser_name: String,
+    /// The spares note the Anki note was exported from, if it was
+    pub spares_id: Option<NoteId>,
+    pub note_data: String,
+    pub keywords: Vec<String>,
+    pub custom_data: Map<String, Value>,
+    pub tags: Vec<String>,
+}
+
+impl AnkiNote {
+    /// A request to write the note's file under its spares id, or `None` if it has none.
+    pub fn to_generate_request(&self) -> Option<GenerateNoteFilesRequest> {
+        Some(GenerateNoteFilesRequest {
+            note_id: self.spares_id?,
+            note_data: self.note_data.clone(),
+            keywords: self.keywords.clone(),
+            linked_notes: None,
+            custom_data: self.custom_data.clone(),
+            tags: self.tags.clone(),
+        })
+    }
+}
+
 pub async fn db_row_to_request(
     row: &DbNoteRow,
     pool: &SqlitePool,
     migration_func: Option<MigrationFunc>,
-) -> Result<(String, GenerateNoteFilesRequest), Error> {
+) -> Result<AnkiNote, Error> {
     #[derive(Clone, Debug, Default, Deserialize, FromRow, Serialize)]
     struct DbCardRow {
         queue: i64,
@@ -357,7 +383,8 @@ pub async fn db_row_to_request(
     let spares_id_str = (*flds.get(3).unwrap_or(&"")).to_string();
     let spares_parser_name_string = (*flds.get(4).unwrap_or(&"")).to_string();
 
-    let spares_id = spares_id_str.trim().parse::<i64>().ok();
+    // Notes exported before `spares migrate ids` hold old numeric ids, which no longer parse.
+    let spares_id = spares_id_str.trim().parse::<NoteId>().ok();
     let keywords = parse_list(keywords_str.as_str());
 
     front = format_side(&front);
@@ -384,17 +411,14 @@ pub async fn db_row_to_request(
         info!("Failed to parse spares id.");
     }
 
-    // Create requests
-    let parse_note_request = GenerateNoteFilesRequest {
-        note_id: spares_id.unwrap_or(-1),
-        note_data: note_data.clone(),
-        keywords: keywords.clone(),
-        linked_notes: None,
-        custom_data: custom_data.clone(),
-        tags: tags.clone(),
-    };
-
-    Ok((spares_parser_name_string, parse_note_request))
+    Ok(AnkiNote {
+        parser_name: spares_parser_name_string,
+        spares_id,
+        note_data,
+        keywords,
+        custom_data,
+        tags,
+    })
 }
 
 pub async fn read_database_file(original_db_path: &Path) -> Result<SqlitePool, Error> {
@@ -419,7 +443,7 @@ impl AnkiAdapter {
     pub async fn database_to_requests(
         original_db_path: &Path,
         migration_func: Option<MigrationFunc>,
-    ) -> Result<Vec<(String, GenerateNoteFilesRequest)>, Error> {
+    ) -> Result<Vec<AnkiNote>, Error> {
         let pool = read_database_file(original_db_path).await?;
 
         // Run the query

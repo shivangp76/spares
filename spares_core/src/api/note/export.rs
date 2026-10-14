@@ -51,8 +51,10 @@ pub async fn export_notes(
             .map(|r| (ConstructFileDataType::Note, r))
             .collect();
         let parser = find_parser(parser_name, all_parsers)?;
-        let file_data =
-            parser.construct_full_file_data(&requests_ref, &NoteImportAction::Update(0));
+        let file_data = parser.construct_full_file_data(
+            &requests_ref,
+            &NoteImportAction::Update(requests_ref[0].1.note_id),
+        );
 
         // Get template
         let (export_template_contents, body_placeholder) = parser

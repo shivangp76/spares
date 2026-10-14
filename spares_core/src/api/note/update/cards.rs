@@ -199,14 +199,16 @@ pub(super) async fn update_cards(
             .copied()
             .ok_or_else(|| {
                 Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                    "card order {} not found in move map for note {note_id}",
-                    moved_card.order
+                    "card order {} not found in move map for note {}",
+                    moved_card.order,
+                    note_id.letters()
                 ))))
             })?;
         moved_card.order = to_card_index as u32;
         let new_card = new_cards.get(to_card_index - 1).ok_or_else(|| {
             Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                "new card index {to_card_index} out of bounds for note {note_id}"
+                "new card index {to_card_index} out of bounds for note {}",
+                note_id.letters()
             ))))
         })?;
         // NOTE: Suspending overwrites a buried card
@@ -271,7 +273,8 @@ pub(super) async fn update_cards(
         .map(|i| -> Result<Card, Error> {
             let new_card = new_card_data_ref.get(i - 1).ok_or_else(|| {
                 Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                    "create index {i} out of bounds for note {note_id}"
+                    "create index {i} out of bounds for note {}",
+                    note_id.letters()
                 ))))
             })?;
             let mut card = Card::new(at);
@@ -344,13 +347,12 @@ async fn verify_card_consistency(
         let cards_to_create: Vec<Card> = missing_orders
             .iter()
             .map(|&order| -> Result<Card, Error> {
-                let card_data = new_cards
-                    .get(order as usize - 1)
-                    .ok_or_else(|| {
-                        Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                            "missing order {order} is outside the parser's card range for note {note_id}"
-                        ))))
-                    })?;
+                let card_data = new_cards.get(order as usize - 1).ok_or_else(|| {
+                    Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
+                        "missing order {order} is outside the parser's card range for note {}",
+                        note_id.letters()
+                    ))))
+                })?;
                 let mut card = if let Some(t) = template {
                     let mut c = t.clone();
                     c.special_state = None;
@@ -407,8 +409,9 @@ async fn verify_card_consistency(
                 .map(|c| {
                     card_map.get(&c.order).copied().ok_or_else(|| {
                         Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
-                            "newly created card order {} not found in id map for note {note_id}",
-                            c.order
+                            "newly created card order {} not found in id map for note {}",
+                            c.order,
+                            note_id.letters()
                         ))))
                     })
                 })

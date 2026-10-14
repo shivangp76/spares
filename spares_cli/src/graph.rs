@@ -4,17 +4,18 @@ use petgraph::Graph;
 use petgraph::dot::Config;
 use petgraph::dot::Dot;
 use petgraph::graph::NodeIndex;
+use spares_core::model::NoteId;
 use spares_core::schema::note::LinkedNote;
 use spares_core::schema::note::NoteResponse;
 
 /// Usage: Paste output into <https://dreampuf.github.io/GraphvizOnline/> with engine set to `osage`.
 pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
-    let mut nodes = HashMap::<i64, NodeIndex>::new();
+    let mut nodes = HashMap::<NoteId, NodeIndex>::new();
     let mut graph = Graph::<String, String>::new();
 
     // Add all nodes
     for note_response in &note_responses {
-        let node = graph.add_node(format!("{}", note_response.id));
+        let node = graph.add_node(note_response.id.letters());
         nodes.insert(note_response.id, node);
     }
 
@@ -28,7 +29,7 @@ pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
                 .collect::<Vec<_>>();
             for LinkedNote { linked_note_id, .. } in linked_notes_filtered {
                 if !nodes.contains_key(&linked_note_id.unwrap()) {
-                    let node = graph.add_node(format!("{}", linked_note_id.unwrap()));
+                    let node = graph.add_node(linked_note_id.unwrap().letters());
                     nodes.insert(note_response.id, node);
                 }
                 let from_node = nodes.get(&note_response.id).unwrap();

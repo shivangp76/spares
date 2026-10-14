@@ -162,13 +162,13 @@ pub fn file_in_cache(
                 if current_rendered_hash == current_note_data_hash {
                     info!(
                         "[Note Id: {}] Existing file is up to date. Skipping.",
-                        note_id
+                        note_id.letters()
                     );
                     return Ok(true);
                 }
                 info!(
                     "[Note Id: {}] Hash matches, but current file is not up to date, so generating files.",
-                    note_id
+                    note_id.letters()
                 );
             }
         }
@@ -254,7 +254,7 @@ pub fn construct_note_file_contents(
 ) -> String {
     let note_file_data = parser.construct_full_file_data(
         &[(ConstructFileDataType::Note, request)],
-        &NoteImportAction::Update(0),
+        &NoteImportAction::Update(request.note_id),
     );
     note_template_contents.replace(body_placeholder, &note_file_data)
 }
@@ -271,7 +271,7 @@ pub fn construct_card_file_contents(
 ) -> String {
     let card_file_data = parser.construct_full_file_data(
         &[(ConstructFileDataType::Card(card_order, card, side), request)],
-        &NoteImportAction::Update(0),
+        &NoteImportAction::Update(request.note_id),
     );
     card_template_contents.replace(body_placeholder, &card_file_data)
 }
@@ -434,7 +434,7 @@ fn create_note_files(
     // let done_count = counter.fetch_add(1, Ordering::SeqCst) + 1;
     // info!("Parsed {} out of {} notes", done_count, total_notes);
     let duration = start.elapsed();
-    debug!("[Note Id: {}] Duration: {:?}", note_id, duration);
+    debug!("[Note Id: {}] Duration: {:?}", note_id.letters(), duration);
     result
 }
 
@@ -503,7 +503,7 @@ fn create_raw_and_rendered_file(
     write(&output_text_filepath, file_contents).map_err(|e| Error::Io {
         description: format!(
             "[Note Id: {}] Failed to write to {}",
-            note_id,
+            note_id.letters(),
             output_text_filepath.display()
         ),
         source: e,
@@ -548,7 +548,7 @@ fn create_raw_and_rendered_file(
             return Err(Error::Io {
                 description: format!(
                     "[Note Id: {}] Failed to read {}: {:?}",
-                    note_id,
+                    note_id.letters(),
                     output_rendered_filepath.display(),
                     output
                 ),
@@ -604,13 +604,15 @@ fn create_web_render_file(
         let _ = remove_file(&tmp_filepath);
         if let Some(reason) = reason {
             warn!(
-                "[Note Id: {note_id}] Web uses the rendered file for {}: {reason}",
+                "[Note Id: {}] Web uses the rendered file for {}: {reason}",
+                note_id.letters(),
                 output_rendered_filepath.display()
             );
         }
         if let Err(e) = write(&output_web_filepath, "") {
             warn!(
-                "[Note Id: {note_id}] Failed to write {}: {e}",
+                "[Note Id: {}] Failed to write {}: {e}",
+                note_id.letters(),
                 output_web_filepath.display()
             );
         }
@@ -656,7 +658,7 @@ mod tests {
         let tikz = "\\begin{tikzpicture}\n\\end{tikzpicture}\n";
         let render = |contents: &str, mode| {
             write(&text, contents).unwrap();
-            create_web_render_file(&parser, 1, &text, &rendered, mode);
+            create_web_render_file(&parser, "aaa".parse().unwrap(), &text, &rendered, mode);
         };
 
         render("Text", WebRenderMode::Auto);

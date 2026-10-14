@@ -15,6 +15,7 @@ use crate::CardErrorKind;
 use crate::LibraryError;
 use crate::helpers::GroupByInsertion;
 use crate::helpers::split_inclusive_following;
+use crate::model::NoteId;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::get_settings_pairs;
 
@@ -190,7 +191,7 @@ pub fn construct_cloze_string(
                 "{}{}{}/{}",
                 cloze_settings_keys.inherit,
                 settings_key_value_delim,
-                identifier.note_id,
+                identifier.note_id.letters(),
                 identifier.order,
             ));
         }
@@ -256,7 +257,7 @@ fn parse_card_source(
     let mut parts = value.splitn(2, '/');
     let note_id_str = parts.next().unwrap_or("").trim();
     let order_str = parts.next().unwrap_or("").trim();
-    let note_id = note_id_str.parse::<i64>().map_err(|e| {
+    let note_id = note_id_str.parse::<NoteId>().map_err(|e| {
         LibraryError::Card(CardErrorKind::InvalidSettings {
             description: format!(
                 "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid note id `{}`. Error: {}",

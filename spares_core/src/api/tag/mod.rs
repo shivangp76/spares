@@ -698,19 +698,8 @@ pub(crate) mod tests {
 
     #[sqlx::test]
     async fn test_merge_tag_transfers_note_tags(pool: SqlitePool) {
-        let ts = Utc::now().timestamp();
         let parser = crate::api::parser::tests::create_parser_helper(&pool, "markdown").await;
-        let note_id: i64 = sqlx::query_scalar(
-            r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        )
-        .bind("n1")
-        .bind(ts)
-        .bind(ts)
-        .bind(parser.id)
-        .bind(serde_json::json!({}).to_string())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let note_id = crate::ids::insert_test_note(&pool, "n1", parser.id).await;
 
         let source = create_tag_helper(&pool, "source", "desc").await;
         let target = create_tag_helper(&pool, "target", "desc").await;
@@ -751,19 +740,8 @@ pub(crate) mod tests {
 
     #[sqlx::test]
     async fn test_merge_tag_with_overlapping_note_tags(pool: SqlitePool) {
-        let ts = Utc::now().timestamp();
         let parser = crate::api::parser::tests::create_parser_helper(&pool, "markdown").await;
-        let note_id: i64 = sqlx::query_scalar(
-            r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        )
-        .bind("n1")
-        .bind(ts)
-        .bind(ts)
-        .bind(parser.id)
-        .bind(serde_json::json!({}).to_string())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let note_id = crate::ids::insert_test_note(&pool, "n1", parser.id).await;
 
         let source = create_tag_helper(&pool, "source", "desc").await;
         let target = create_tag_helper(&pool, "target", "desc").await;

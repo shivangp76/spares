@@ -133,7 +133,7 @@ pub struct NoteFilepathData {
 /// Text to pass to the first answerable cloze when viewing the card front so that the pdf viewer
 /// can scroll to it.
 pub fn cloze_tag_str(note_id: NoteId, card_order: impl std::fmt::Display) -> String {
-    format!("card-{note_id}-{card_order}")
+    format!("card-{}-{card_order}", note_id.letters())
 }
 
 pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathData, String> {
@@ -151,7 +151,7 @@ pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathD
         .to_str()
         .ok_or("Failed to convert to string".to_string())?
         .parse::<NoteId>()
-        .map_err(|_| "Failed to parse note id".to_string())?;
+        .map_err(|e| format!("Failed to parse note id: {e}"))?;
     Ok(NoteFilepathData {
         parser_name,
         note_id,

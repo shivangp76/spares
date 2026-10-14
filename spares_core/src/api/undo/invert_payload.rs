@@ -20,6 +20,7 @@ use crate::api::undo::payloads::UpdateParserPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventType;
+use crate::model::NoteId;
 use crate::model::ReviewLog;
 
 /// Appends the event that reverses `event` (an undo, or a redo when `event` is itself an undo) and
@@ -130,11 +131,12 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let payload: CreateParserPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             // To undo CreateParser, we need DeleteParser with the parser and note_ids
-            let note_ids: Vec<i64> = sqlx::query_scalar(r"SELECT id FROM note WHERE parser_id = ?")
-                .bind(payload.id)
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
+            let note_ids: Vec<NoteId> =
+                sqlx::query_scalar(r"SELECT id FROM note WHERE parser_id = ?")
+                    .bind(payload.id)
+                    .fetch_all(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
             let delete_payload = DeleteParserPayload {
                 id: payload.id,
                 name: payload.name,
@@ -166,7 +168,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         EventType::CreateTag => {
             let payload: CreateTagPayload = serde_json::from_value(event.payload.clone()).unwrap();
             // Capture current note/card associations before deleting the tag
-            let note_ids: Vec<i64> = if let Some(id) = payload.id {
+            let note_ids: Vec<NoteId> = if let Some(id) = payload.id {
                 sqlx::query_scalar(r"SELECT note_id FROM note_tag WHERE tag_id = ?")
                     .bind(id)
                     .fetch_all(db)
@@ -347,30 +349,8 @@ mod tests {
     #[sqlx::test]
     async fn create_undo_event_create_parser_collects_note_ids(pool: SqlitePool) {
         let parser = create_parser_helper(&pool, "with_notes").await;
-        let ts = Utc::now().timestamp();
-        let custom_data = json!({}).to_string();
-        let id1: i64 = sqlx::query_scalar(
-        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind("n1")
-    .bind(ts)
-    .bind(ts)
-    .bind(parser.id)
-    .bind(&custom_data)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-        let id2: i64 = sqlx::query_scalar(
-        r"INSERT INTO note (data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind("n2")
-    .bind(ts)
-    .bind(ts)
-    .bind(parser.id)
-    .bind(&custom_data)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+        let id1 = crate::ids::insert_test_note(&pool, "n1", parser.id).await;
+        let id2 = crate::ids::insert_test_note(&pool, "n2", parser.id).await;
 
         let at = Utc::now();
         let payload = json!({"id": parser.id, "name": parser.name});

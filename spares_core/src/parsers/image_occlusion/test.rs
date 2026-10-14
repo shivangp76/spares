@@ -9,6 +9,7 @@ use xmltree::Element;
 use xmltree::EmitterConfig;
 
 use crate::api::note::delete_note_files;
+use crate::model::NoteId;
 use crate::parsers::BackReveal;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
@@ -1090,7 +1091,7 @@ fn test_grouped_shapes_modify_card_hidden() {
 fn test_delete_note_files_with_missing_image_occlusion_files() {
     // A note whose original image and clozes files no longer exist should still have its rendered image occlusion files deleted
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let note_id = 990_001;
+    let note_id: NoteId = "zzzz".parse().unwrap();
     let card_order = 1;
     let image_occlusion_dir = get_image_occlusion_directory();
     let original_image_filepath = image_occlusion_dir.join("test-missing.jpg");

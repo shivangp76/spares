@@ -14,6 +14,7 @@ use spares_core::api::card::list_cards;
 use spares_core::api::card::unbury_cards;
 use spares_core::api::card::update_cards;
 use spares_core::api::forget_card;
+use spares_core::model::NoteId;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::card::GetLeechesRequest;
 use spares_core::schema::card::UnburyRequest;
@@ -43,7 +44,7 @@ pub(crate) async fn get_card_reviews_handler(
 }
 
 pub(crate) async fn get_cards_handler(
-    Path(note_id): Path<i64>,
+    Path(note_id): Path<NoteId>,
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let card_res = get_cards(&data.db, note_id)

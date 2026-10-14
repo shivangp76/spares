@@ -135,7 +135,7 @@ pub(crate) async fn handle(
             println!("Done");
         }
         NoteCommands::Get { id } => {
-            let url = format!("{}/api/notes/{}", base_url, id);
+            let url = format!("{}/api/notes/{}", base_url, id.packed());
             let response = client
                 .get(&url)
                 .send()

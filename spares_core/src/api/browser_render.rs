@@ -77,7 +77,12 @@ pub async fn add_browser_render_sources(
     let card = card_order
         .checked_sub(1)
         .and_then(|i| cards.get(i))
-        .ok_or_else(|| not_found(format!("Note {note_id} has no card {card_order}.")))?;
+        .ok_or_else(|| {
+            not_found(format!(
+                "Note {} has no card {card_order}.",
+                note_id.letters()
+            ))
+        })?;
 
     let template = |template_type| get_template(parser.as_ref(), template_type);
     let (card_template, body_placeholder) = template(TemplateType::Card)?;
@@ -125,7 +130,7 @@ pub async fn get_note_render(
     .fetch_optional(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?
-    .ok_or_else(|| not_found(format!("Note {note_id} not found.")))?;
+    .ok_or_else(|| not_found(format!("Note {} not found.", note_id.letters())))?;
     let parser = find_parser(&parser_name, all_parsers)?;
 
     let mut rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
@@ -169,7 +174,7 @@ async fn get_generate_files_request(
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| not_found(format!("Note {note_id} not found.")))?;
+        .ok_or_else(|| not_found(format!("Note {} not found.", note_id.letters())))?;
     let note_links = get_note_links_map(db, &[note_id]).await?;
     Ok(render_note_data_to_generate_files_request(
         &note_data,

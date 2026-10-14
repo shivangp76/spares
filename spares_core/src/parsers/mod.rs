@@ -416,14 +416,14 @@ pub trait Parseable: Send + Sync {
     fn get_output_filename(&self, output_type: RenderOutputType, note_id: NoteId) -> String {
         match output_type {
             RenderOutputType::Note => {
-                format!("{:0>4}.pdf", note_id)
+                format!("{}.pdf", note_id.letters())
             }
             RenderOutputType::Card(card_order, side) => match side {
                 CardSide::Front => {
-                    format!("{:0>4}-{:0>1}-front.pdf", note_id, card_order)
+                    format!("{}-{}-front.pdf", note_id.letters(), card_order)
                 }
                 CardSide::Back => {
-                    format!("{:0>4}-{:0>1}-back.pdf", note_id, card_order)
+                    format!("{}-{}-back.pdf", note_id.letters(), card_order)
                 }
             },
         }

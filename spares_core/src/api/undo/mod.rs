@@ -274,10 +274,20 @@ async fn affected_note_ids(db: &SqlitePool, events: &[Event]) -> Result<Vec<Note
     for event in events {
         let payload = &event.payload;
         if let Some(notes) = payload.get("notes").and_then(|n| n.as_array()) {
-            ids.extend(notes.iter().filter_map(|n| n.get("id")?.as_i64()));
+            ids.extend(
+                notes
+                    .iter()
+                    .filter_map(|n| n.get("id")?.as_i64())
+                    .map(NoteId::from_packed),
+            );
         }
         if let Some(note_ids) = payload.get("note_ids").and_then(|n| n.as_array()) {
-            ids.extend(note_ids.iter().filter_map(serde_json::Value::as_i64));
+            ids.extend(
+                note_ids
+                    .iter()
+                    .filter_map(serde_json::Value::as_i64)
+                    .map(NoteId::from_packed),
+            );
         }
         let query = match event.kind {
             EventType::UpdateTag => Some(r"SELECT note_id FROM note_tag WHERE tag_id = ?"),

@@ -57,7 +57,7 @@ enum ViewAction {
 fn display_note_info(note: &NoteResponse, parser_name: &str, index: usize, total: usize) {
     println!();
     println!("--- Note {} of {} ---", index + 1, total);
-    println!("Note Id:    {}", note.id);
+    println!("Note Id:    {}", note.id.letters());
     println!("Parser:     {}", parser_name);
     println!("Keywords:   {}", note.keywords.join(", "));
     println!("Card Count: {}", note.card_count);
@@ -83,7 +83,7 @@ fn display_card_info(card: &CardResponse, parser_name: &str, index: usize, total
     println!();
     println!("--- Card {} of {} ---", index + 1, total);
     println!("Card Id:    {}", card.id);
-    println!("Note Id:    {}", card.note_id);
+    println!("Note Id:    {}", card.note_id.letters());
     println!("Parser:     {}", parser_name);
     println!("Order:      {}", card.order);
     println!("State:      {}", card.state);
@@ -266,7 +266,8 @@ async fn view_items<T: ViewItem>(
                             format!(
                                 "{} ({})",
                                 ln.searched_keyword,
-                                ln.linked_note_id.unwrap_or(0)
+                                ln.linked_note_id
+                                    .map_or_else(|| "none".to_string(), |id| id.letters())
                             )
                         })
                         .collect();
@@ -278,7 +279,8 @@ async fn view_items<T: ViewItem>(
                             if let Some(idx) = ln_options.iter().position(|o| o == label)
                                 && let Some(linked_id) = linked_notes[idx].linked_note_id
                             {
-                                let note_url = format!("{}/api/notes/{}", base_url, linked_id);
+                                let note_url =
+                                    format!("{}/api/notes/{}", base_url, linked_id.packed());
                                 if let Ok(resp) = client.get(&note_url).send().await
                                     && resp.status() == StatusCode::OK
                                     && let Ok(linked_note) = resp.json::<NoteResponse>().await
