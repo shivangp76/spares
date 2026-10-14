@@ -207,8 +207,29 @@ pub enum SyncRole {
 pub const REPLICA_ENV: &str = "SPARES_REPLICA";
 pub const SYNC_ROLE_ENV: &str = "SPARES_SYNC_ROLE";
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Lets a test act as another replica (for example the server in a sync test) for the code it
+    /// runs inside [`with_test_replica`], since `SPARES_REPLICA` is shared by every test.
+    static TEST_REPLICA: (Replica, SyncRole);
+}
+
+/// Runs `f` as replica `replica` with sync role `role`. Tests only.
+#[cfg(test)]
+pub(crate) async fn with_test_replica<F: std::future::Future>(
+    replica: Replica,
+    role: SyncRole,
+    f: F,
+) -> F::Output {
+    TEST_REPLICA.scope((replica, role), f).await
+}
+
 /// This instance's replica. Required, with no default, except under tests, which are replica `0`.
 pub fn get_replica() -> Result<Replica, Error> {
+    #[cfg(test)]
+    if let Ok((replica, _)) = TEST_REPLICA.try_with(|test| *test) {
+        return Ok(replica);
+    }
     match std::env::var(REPLICA_ENV) {
         Ok(value) => value
             .parse()
@@ -222,6 +243,10 @@ pub fn get_replica() -> Result<Replica, Error> {
 
 /// This instance's sync role. Required, with no default, except under tests, which are clients.
 pub fn get_sync_role() -> Result<SyncRole, Error> {
+    #[cfg(test)]
+    if let Ok((_, role)) = TEST_REPLICA.try_with(|test| *test) {
+        return Ok(role);
+    }
     match std::env::var(SYNC_ROLE_ENV) {
         Ok(value) => value.trim().parse().map_err(|_| {
             invalid_config(format!(

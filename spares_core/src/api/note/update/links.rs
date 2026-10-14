@@ -8,7 +8,7 @@ use crate::model::NoteId;
 use crate::model::NoteLink;
 use crate::parsers::Parseable;
 
-pub(super) async fn update_note_links(
+pub(crate) async fn update_note_links(
     conn: &mut SqliteConnection,
     note_id: NoteId,
     new_parser: &dyn Parseable,

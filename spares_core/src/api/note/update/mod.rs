@@ -47,7 +47,7 @@ use crate::schema::note::UpdateNotesResponse;
 
 mod cards;
 mod event;
-mod links;
+pub(crate) mod links;
 mod tags;
 
 pub use event::update_notes_event;
