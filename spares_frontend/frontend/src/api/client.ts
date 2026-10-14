@@ -409,6 +409,7 @@ export interface SyncStatus {
   role: 'client' | 'server';
   replica: number;
   sync_url: string | null;
+  sync_api_key_set: boolean;
   usn: number | null;
   last_sync_at: number | null;
   needs_full_sync: string | null;

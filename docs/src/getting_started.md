@@ -25,7 +25,9 @@ spares_server
 
 ### Running on a remote server (optional)
 
-On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints.
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints. Re-running it with no arguments updates the server.
+
+On macOS, `scripts/deploy_vps.sh init <server IP>` does it all from your machine instead: it runs `setup_vps.sh` on a fresh VPS as root, sets up your machine for two-way sync (below), uploads your database and closes the server's public ports, leaving Tailscale. Install Tailscale on your machine and phone first. `scripts/deploy_vps.sh update` updates the server.
 
 #### Two-way sync
 
