@@ -1,3 +1,4 @@
+mod auto_sync;
 mod handlers;
 mod route;
 
@@ -119,6 +120,7 @@ async fn start_server(args: Args) -> Result<(), String> {
         }
     };
     info!("Starting server at {:?}", env_config.socket_address);
+    auto_sync::spawn(pool.clone());
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await
