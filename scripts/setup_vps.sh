@@ -2,7 +2,8 @@
 # Sets up (or updates) a spares server on a Debian/Ubuntu VPS. Safe to re-run: it pulls, rebuilds
 # and restarts, keeping the API key and data.
 #
-#   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>] [--domain <domain>]
+#   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
+#                          [--domain <domain> | --tailscale]
 #
 # --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
 #               the same path on the server), e.g. /Users/you/.local/share/spares.
@@ -10,7 +11,11 @@
 #               symlink to the home directory here, where `spares sync cloud` copies the files your
 #               notes read, so absolute paths to them (e.g. to a preamble) work on the server too.
 # --domain      Serve over HTTPS at this domain with Caddy. Point its DNS at this server first.
-#               Without it, the server only listens on 127.0.0.1:8080 (use an SSH tunnel).
+# --tailscale   Serve over HTTPS on your tailnet only, with `tailscale serve`. No port is opened
+#               to the internet. The first run prints a link to add this server to the tailnet.
+#               Without either, the server only listens on 127.0.0.1:8080 (use an SSH tunnel).
+#
+# The server is the sync server (replica 1) for two-way sync with your laptop (`sync_url`).
 #
 # Runs spares as the user who ran sudo, since `spares sync cloud` logs in as that user.
 set -euo pipefail
@@ -19,11 +24,13 @@ REPO_URL="https://github.com/shivangp76/spares.git"
 DATA_DIR=""
 LOCAL_HOME=""
 DOMAIN=""
+TAILSCALE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --local-home) LOCAL_HOME="${2%/}"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
+    --tailscale) TAILSCALE=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -31,6 +38,7 @@ done
 [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || { echo "Run with sudo as the user that syncs, not as root." >&2; exit 1; }
 [[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
+[[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
 
 SPARES_USER="$SUDO_USER"
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
@@ -57,7 +65,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
-apt-get install -y -q build-essential pkg-config git curl unzip rsync sqlite3 openssl nodejs npm \
+apt-get install -y -q build-essential pkg-config git curl unzip rsync sqlite3 openssl python3 nodejs npm \
   latexmk texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
   texlive-xetex texlive-fonts-extra lmodern inkscape
 
@@ -125,6 +133,9 @@ SPARES_FILES_DIR=$RENDERED_DIR
 SPARES_FRONTEND_DIR=$SRC_DIR/spares_frontend/frontend/dist
 RAYON_NUM_THREADS=1
 RUST_LOG=info
+# Two-way sync: this is the sync server, replica 1 (the laptop is replica 0)
+SPARES_REPLICA=1
+SPARES_SYNC_ROLE=server
 EOF
 
 cat > /etc/systemd/system/spares.service <<EOF
@@ -136,7 +147,8 @@ After=network.target
 User=$SPARES_USER
 EnvironmentFile=$ENV_FILE
 ExecStart=/usr/local/bin/spares_server
-Restart=on-failure
+Restart=always
+RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
@@ -190,6 +202,14 @@ EOF
   systemctl enable caddy >/dev/null
   systemctl reload-or-restart caddy
   URL="https://$DOMAIN"
+elif [[ "$TAILSCALE" == true ]]; then
+  echo "==> Setting up Tailscale"
+  command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
+  # Prints a link to log in on the first run. `--ssh` lets you reach this server over the tailnet,
+  # so its public SSH port can be closed.
+  tailscale status >/dev/null 2>&1 || tailscale up --ssh
+  tailscale serve --bg 8080 >/dev/null
+  URL="https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 else
   URL="http://localhost:8080 (after: ssh -L 8080:127.0.0.1:8080 $SPARES_USER@<this server>)"
 fi
@@ -197,15 +217,22 @@ fi
 sleep 1
 systemctl is-active --quiet spares || { journalctl -u spares -n 30 --no-pager; exit 1; }
 HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
+[[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"
 cat <<EOF
 
 Spares is running.  Web app: $URL
 API key: $API_KEY   (also in $ENV_FILE)
 
-Next, on the machine you sync from:
-  1. Add to its config.toml:   remote_host = "$SPARES_USER@$HOST"
-  2. Render your notes there, then run:  spares sync cloud
-     This copies the rendered files, your templates and the files your notes read.
+Next, on the machine you sync from (replica 0):
+  1. Add to its config.toml:
+       remote_host = "$SPARES_USER@$HOST"
+       sync_url = "$URL"
+       sync_interval_minutes = 15   # optional: sync in the background
+  2. Start its spares server with SPARES_REPLICA=0, SPARES_SYNC_ROLE=client and
+     SPARES_SYNC_API_KEY=$API_KEY
+  3. Render your notes there, then run once:  spares sync cloud --full-upload
+     After that, \`spares sync cloud\` syncs both ways and copies the rendered files, your
+     templates and the files your notes read.
 
 Logs: journalctl -u spares -f      Update: re-run this script.
 EOF
