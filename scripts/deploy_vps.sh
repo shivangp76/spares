@@ -38,6 +38,8 @@ CONFIG_DIR="${SPARES_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/spares}"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 DATA_DIR="${SPARES_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/spares}"
 DB="$DATA_DIR/spares-main.sqlite"
+# Where the local server's own API key is kept, if it has one. Set SPARES_API_KEY to skip the lookup.
+LOCAL_KEYCHAIN_SERVICE="${LOCAL_KEYCHAIN_SERVICE:-spares-api-key}"
 LOCAL_ADDRESS="${SPARES_SOCKET_ADDRESS:-127.0.0.1:8080}"
 LOCAL_ADDRESS="${LOCAL_ADDRESS/0.0.0.0/127.0.0.1}"
 # The Keychain item holding the server's API key
@@ -233,18 +235,32 @@ sync_interval_minutes = $interval"
 
   bold "Restarting the local server"
   echo "Restart spares_serve in a new terminal, so it picks up the new settings."
+  local tried_keychain=false wait=true pasted
   while true; do
-    read -r -p "Press Enter once it is running. " _
+    [[ "$wait" == true ]] && read -r -p "Press Enter once it is running. " _
+    wait=true
     local role sync_url key_set
     role="$(local_status role)"
     sync_url="$(local_status sync_url)"
     key_set="$(local_status sync_api_key_set)"
     if [[ -z "$role" && "$(local_http_code)" == 401 ]]; then
-      warn "The local server wants its API key (its SPARES_API_KEY)."
-      read -r -s -p "Paste it here: " SPARES_API_KEY
-      echo
+      if [[ "$tried_keychain" == false ]] \
+        && SPARES_API_KEY="$(security find-generic-password -a "$USER" -s "$LOCAL_KEYCHAIN_SERVICE" -w 2>/dev/null)"; then
+        tried_keychain=true
+        echo "Using the local server's API key from the Keychain (service \"$LOCAL_KEYCHAIN_SERVICE\")."
+      else
+        tried_keychain=true
+        warn "The local server wants its API key (its SPARES_API_KEY)."
+        read -r -s -p "Paste it here: " pasted
+        echo
+        # Drops what terminals wrap pasted text in, and stray whitespace.
+        pasted="${pasted//$'\e[200~'/}"
+        pasted="${pasted//$'\e[201~'/}"
+        SPARES_API_KEY="$(printf '%s' "$pasted" | tr -d '[:space:]')"
+      fi
       # Exported for the `spares` commands below, which send it too.
       export SPARES_API_KEY
+      wait=false
     elif [[ -z "$role" ]]; then
       warn "No spares server answers at $LOCAL_ADDRESS."
     elif [[ "$role" != client ]]; then
