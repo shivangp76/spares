@@ -19,7 +19,7 @@ Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_id
 - **Note IDs are short (3 letters for the next several years, then 4), typeable, grouped by import batch and in creation order across devices** (see section 4).
 
 ### Open issues
-- **SSH:** "No public port is opened" isn't true while SSH (used by the `remote_host` rsync) listens on the public IP. Firewall it, or use Tailscale SSH.
+- **SSH:** port 22 stays open on the public IP until `deploy_vps.sh init` closes it (its last step). Updates and the `remote_host` rsync use Tailscale SSH.
 - **Hetzner:** the CX22's name and price may have changed. Check when buying.
 
 ## 2. Current state of the codebase (relevant facts)
@@ -448,23 +448,35 @@ The client does all of this and pushes the result, so the server never re-parses
 - **Conflicts only exist on the laptop,** because the merge runs there. The phone would see the `sync-conflict` badge, but its server has no conflict rows to show.
 - **rsync order:** the asset rsync of `cards/` runs after the laptop regenerates its files (`spares sync cloud` copies files after the sync). It can still overwrite cards the server rendered itself for a note edited on the phone since the sync.
 
-## 10. Deployment (`scripts/setup_vps.sh`, implemented)
+## 10. Deployment (`scripts/deploy_vps.sh` and `scripts/setup_vps.sh`, implemented)
 The repo already had `scripts/setup_vps.sh`, an idempotent script that installs the build tools, pandoc and LaTeX, builds spares from source on the server, writes `/etc/spares/spares.env` and a systemd unit, and optionally serves HTTPS with Caddy (`--domain`). It was extended rather than duplicated in a new `deploy/` directory:
 - the env file sets `SPARES_REPLICA=1` and `SPARES_SYNC_ROLE=server` (the server refuses to start without them);
 - the unit restarts always;
 - `--tailscale` installs Tailscale, joins the tailnet with Tailscale SSH (`tailscale up --ssh`), and serves the app privately with `tailscale serve --bg 8080`. No port is opened to the internet;
-- the closing instructions give the laptop's `remote_host`, `sync_url`, env and the first `spares sync cloud --full-upload`.
+- `--user` lets root run it: a missing user is created with sudo and root's SSH keys, and asked for a password, since updates go through sudo;
+- it saves its arguments in `/etc/spares/setup.conf`, so updating is `sudo bash setup_vps.sh` with none, and the URL in `/etc/spares/url`.
 
-Updating is re-running the script (it pulls and rebuilds on the server). The planned `spares_deploy` zsh function, which would cross-build locally with `cargo zigbuild`, lives in `~/.config/spares/spares.zsh` outside the repo and was not written.
+`scripts/deploy_vps.sh` runs on the laptop and does the rest (it replaces the planned `spares_deploy` zsh function):
+- `init <IP> [--user <name>] [--domain <domain>]`:
+  1. checks that GitHub's `main` has the checkout, since the server builds from it;
+  2. backs up the database (`VACUUM INTO`);
+  3. copies `setup_vps.sh` to the server and runs it as root;
+  4. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak`;
+  5. adds `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY` (read from the Keychain, so the key is never in a file) to `spares.zsh` if missing;
+  6. waits until the restarted local server reports the client role, the `sync_url` and the key (`sync_api_key_set` in `/api/sync/status`);
+  7. runs `spares sync cloud --full-upload` and compares note, card and review counts on both sides;
+  8. with Tailscale, closes the public ports with `ufw` (only `tailscale0` and Tailscale's UDP port stay open). This runs only after the laptop has reached the server over Tailscale SSH, and the provider's web console is the way back in.
+- `update`: copies `setup_vps.sh` to the server and runs it with sudo over Tailscale SSH.
+
+`spares sync cloud` copies the laptop's `config.toml` to the server (`server_config`): the same settings, so reviews on the phone are scheduled alike, without `remote_host`, `sync_url`, `sync_interval_minutes` and `remote_rendered_dir`, and with `render_browser_parsers = false`.
 
 **When the VPS arrives:**
-1. Create a Debian 13 VPS and run `sudo bash setup_vps.sh --data-dir <laptop data dir> --local-home <laptop home> --tailscale`.
-2. Install Tailscale on the phone.
-3. On the laptop, set `remote_host`, `sync_url` (and optionally `sync_interval_minutes`) in `config.toml`, and `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client` and `SPARES_SYNC_API_KEY` where the local server starts (`spares_serve`).
-4. Run `spares sync cloud --full-upload` once.
+1. Install Tailscale on the laptop and the phone, logged in to one account.
+2. Push to GitHub's `main`.
+3. Create a Debian 13 VPS with your SSH key, then run `scripts/deploy_vps.sh init <IP>`.
+4. On the phone, open the URL it prints and log in with the API key.
 
 ### Open issues
-- **SSH:** Tailscale SSH replaces the public SSH port for logging in, but the script doesn't close port 22. Do it by hand (e.g. with `ufw`) once Tailscale SSH works, since a mistake there locks you out.
 - **Hetzner:** the CX22's name and price may have changed. Check when buying.
 - **pandoc/latexmk:** the script installs them, so markdown and LaTeX notes edited on the phone render on the server. The server builds from source, which needs about 2 GB of memory (the script adds swap).
 

@@ -27,6 +27,7 @@ use spares_core::parsers::get_all_parsers;
 use spares_core::sync::conflicts;
 use spares_core::sync::conflicts::Resolution;
 use spares_core::sync::files;
+use spares_core::sync::http::SYNC_API_KEY_ENV;
 use spares_core::sync::protocol::PullRequest;
 use spares_core::sync::protocol::PushRequest;
 use spares_core::sync::run::LocalSyncState;
@@ -190,6 +191,8 @@ pub(crate) struct SyncStatusResponse {
     role: String,
     replica: u8,
     sync_url: Option<String>,
+    /// Whether `SPARES_SYNC_API_KEY` is set, which a client needs to reach the server.
+    sync_api_key_set: bool,
     #[serde(flatten)]
     state: LocalSyncState,
 }
@@ -202,6 +205,7 @@ pub(crate) async fn sync_status_handler(
         role: get_sync_role().map_err(error_to_response)?.to_string(),
         replica: get_replica().map_err(error_to_response)?.number(),
         sync_url: read_external_config().ok().and_then(|c| c.sync_url),
+        sync_api_key_set: std::env::var_os(SYNC_API_KEY_ENV).is_some(),
         state,
     }))
 }
