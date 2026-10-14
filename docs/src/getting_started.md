@@ -25,9 +25,22 @@ spares_server
 
 ### Running on a remote server (optional)
 
-On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server, then follow the steps it prints.
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints.
 
-To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides the database, it copies the rendered files to `remote_rendered_dir` on the server (default: `~/.cache/spares`), your templates (but not `config.toml`), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
+#### Two-way sync
+
+Notes can be edited and reviewed both on your machine and on the server (e.g. from your phone), and synced like Anki and AnkiWeb. Each side needs its own replica number and role, which the server requires at startup:
+
+- your machine: `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client`, and `SPARES_SYNC_API_KEY` set to the server's `SPARES_API_KEY`;
+- the server: `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server` (`setup_vps.sh` sets these).
+
+Set `sync_url` in your `config.toml` to the server's address. Then `spares sync cloud` exchanges changes both ways. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync_interval_minutes`, your local server also syncs in the background, and the web app it serves has a Sync button.
+
+A sync merges notes both sides changed: changes to different lines, tags and fields are combined, and reviews from both sides are kept. A note whose same lines were changed on both sides keeps your machine's text and is tagged `sync-conflict`; resolve it with `spares sync conflicts`. A note deleted on one side and edited on the other is kept. Changes made before a sync can no longer be undone. Live notes are read-only in the web app, since their text comes from files on your machine. See `docs/sync-plan.md` for the details.
+
+#### Rendering locally
+
+To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides syncing the database (or, without `sync_url`, replacing the server's with yours), it copies the rendered files to `remote_rendered_dir` on the server (default: `~/.cache/spares`), your templates (but not `config.toml`), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
 
 - Set `render_browser_parsers = false` in its `config.toml`. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
 - Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.
