@@ -9,7 +9,7 @@ Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_id
 **Goal.** Review and edit notes from the phone anywhere, even when the laptop is off.
 
 **Hosting (to be bought later).**
-- A cheap VPS (Hetzner CX22, about €4/mo).
+- A cheap VPS (Vultr's 512 MB IPv6-only plan, $2.50/mo; see section 10).
 - Reached privately over Tailscale (free plan), using `tailscale serve` for HTTPS. No public port is opened.
 - Until then, build everything so that setting up the VPS only means pointing a URL at it.
 
@@ -20,7 +20,7 @@ Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_id
 
 ### Open issues
 - **SSH:** port 22 stays open on the public IP until `deploy_vps.sh init` closes it (its last step). Updates and the `remote_host` rsync use Tailscale SSH.
-- **Hetzner:** the CX22's name and price may have changed. Check when buying.
+- **Tailscale SSH as root:** `init` over the tailnet logs in as root. If the tailnet policy's `ssh` section doesn't allow `root`, add it, or create the server with your SSH key and an address the laptop can reach.
 
 ## 2. Current state of the codebase (relevant facts)
 
@@ -456,29 +456,31 @@ The repo already had `scripts/setup_vps.sh`, an idempotent script that installs 
 - `--user` lets root run it: a missing user is created with sudo and root's SSH keys, and asked for a password, since updates go through sudo;
 - it saves its arguments in `/etc/spares/setup.conf`, so updating is `sudo bash setup_vps.sh` with none, and the URL in `/etc/spares/url`.
 
-`scripts/deploy_vps.sh` runs on the laptop and does the rest (it replaces the planned `spares_deploy` zsh function):
-- `init <IP> [--user <name>] [--domain <domain>]`:
-  1. checks that GitHub's `main` has the checkout, since the server builds from it;
-  2. backs up the database (`VACUUM INTO`);
-  3. copies `setup_vps.sh` to the server and runs it as root;
-  4. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak`;
-  5. adds `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY` (read from the Keychain, so the key is never in a file) to `spares.zsh` if missing;
-  6. waits until the restarted local server reports the client role, the `sync_url` and the key (`sync_api_key_set` in `/api/sync/status`);
-  7. runs `spares sync cloud --full-upload` and compares note, card and review counts on both sides;
-  8. with Tailscale, closes the public ports with `ufw` (only `tailscale0` and Tailscale's UDP port stay open). This runs only after the laptop has reached the server over Tailscale SSH, and the provider's web console is the way back in.
-- `update`: copies `setup_vps.sh` to the server and runs it with sudo over Tailscale SSH.
+`scripts/deploy_vps.sh` runs on the laptop and does the rest (it replaces the planned `spares_deploy` zsh function). It builds spares on the laptop and uploads it, as an archive `setup_vps.sh --bundle` installs: `cargo zigbuild` for the server's architecture and glibc 2.31, the frontend's `dist`, and pandoc's `.deb`. So the server needs neither the ~2 GB of memory and ~10 GB of disk that building takes, nor GitHub, which has no IPv6 address. `setup_vps.sh --no-latex` also skips LaTeX, inkscape and pandoc (~3 GB), which only markdown and LaTeX notes need.
+- `cloud-init [<name>]` prints a script for the provider's cloud-init field that joins the server to the tailnet with an auth key, for when the laptop can't reach the server's address (an IPv6-only server, and no IPv6 at home).
+- `init <server> [--user <name>] [--domain <domain>] [--no-latex]`, where `<server>` is the IP or the Tailscale name:
+  1. backs up the database (`VACUUM INTO`);
+  2. builds and uploads the bundle and `setup_vps.sh`, and runs it as root;
+  3. stores the API key in the Keychain (service `spares-sync`) and sets `remote_host`, `sync_url` and `sync_interval_minutes` in `config.toml`, keeping a `.bak`;
+  4. adds `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY` (read from the Keychain, so the key is never in a file) to `spares.zsh` if missing;
+  5. waits until the restarted local server reports the client role, the `sync_url` and the key (`sync_api_key_set` in `/api/sync/status`);
+  6. runs `spares sync cloud --full-upload` and compares note, card and review counts on both sides;
+  7. with Tailscale, closes the public ports with `ufw` (only `tailscale0` and Tailscale's UDP port stay open). This runs only after the laptop has reached the server over Tailscale SSH, and the provider's web console is the way back in.
+- `update`: builds and uploads the bundle, and runs `setup_vps.sh --bundle` with sudo over Tailscale SSH.
+
+**Sizing.** The server process used 15 MB idle and 31 MB serving a full download of the real database (4,117 notes, 20 MB). The data directory is ~200 MB and rendered files ~70 MB. A 512 MB / 10 GB VPS is enough with `--no-latex` (all notes are Typst); `setup_vps.sh` adds 1 GB of swap for apt.
 
 `spares sync cloud` copies the laptop's `config.toml` to the server (`server_config`): the same settings, so reviews on the phone are scheduled alike, without `remote_host`, `sync_url`, `sync_interval_minutes` and `remote_rendered_dir`, and with `render_browser_parsers = false`.
 
-**When the VPS arrives:**
-1. Install Tailscale on the laptop and the phone, logged in to one account.
-2. Push to GitHub's `main`.
-3. Create a Debian 13 VPS with your SSH key, then run `scripts/deploy_vps.sh init <IP>`.
+**When the VPS arrives** (e.g. Vultr's 512 MB IPv6-only plan, $2.50/mo):
+1. Install Tailscale on the laptop and the phone, logged in to one account. Install zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`).
+2. If the laptop has no IPv6 and the server is IPv6-only: run `scripts/deploy_vps.sh cloud-init`, put a Tailscale auth key in it, and paste it into the provider's cloud-init field when creating the server.
+3. Create a Debian 13 VPS, then run `scripts/deploy_vps.sh init spares --no-latex` (or `init <IP>` with an SSH key).
 4. On the phone, open the URL it prints and log in with the API key.
 
 ### Open issues
-- **Hetzner:** the CX22's name and price may have changed. Check when buying.
-- **pandoc/latexmk:** the script installs them, so markdown and LaTeX notes edited on the phone render on the server. The server builds from source, which needs about 2 GB of memory (the script adds swap).
+- **pandoc/latexmk:** installed unless `--no-latex`, so markdown and LaTeX notes edited on the phone render on the server.
+- **Untested on a real VPS.** The bundle build was checked on the laptop (a glibc ≥ 2.30 x86_64 binary), not run on Linux.
 
 ## 11. Delivery order (one commit each)
 1. ID newtype, allocator and `spares migrate ids`. Done, then `next_ids` for the other tables.

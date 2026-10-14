@@ -2,25 +2,35 @@
 # Deploys spares to a VPS as the two-way sync server, and sets up this machine (the laptop, replica
 # 0) to sync with it. Run it on the laptop, from anywhere in the repository.
 #
-#   scripts/deploy_vps.sh init <server IP> [--user <name>] [--domain <domain>]
+#   scripts/deploy_vps.sh init <server> [--user <name>] [--domain <domain>] [--no-latex]
 #   scripts/deploy_vps.sh update
+#   scripts/deploy_vps.sh cloud-init [<name>]
 #
-# init  First deployment, to a fresh Debian or Ubuntu VPS that `ssh root@<server IP>` reaches with
-#       your key. It can be re-run, and asks before replacing the server's database or closing
-#       its ports:
-#         1. checks that GitHub's main has this checkout, since the server builds from it;
-#         2. backs up the database;
-#         3. runs setup_vps.sh on the server as root, which creates the user, asks for its sudo
-#            password and prints a link to add the server to your tailnet;
-#         4. stores the server's API key in the Keychain, and sets `remote_host`, `sync_url` and
+# spares is built here, from this checkout as it is, and uploaded: the server needs neither the
+# memory and disk to build it nor access to GitHub (which IPv6-only servers lack). Building needs
+# zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`) and bun.
+#
+# init  First deployment, to a fresh Debian or Ubuntu VPS that `ssh root@<server>` reaches: its IP
+#       with your SSH key, or its Tailscale name if it joined your tailnet when created (needed
+#       when this machine cannot reach its address, e.g. an IPv6-only server). It can be re-run,
+#       and asks before replacing the server's database or closing its ports:
+#         1. backs up the database;
+#         2. builds spares for the server and runs setup_vps.sh there as root, which creates the
+#            user, asks for its sudo password and, if needed, prints a link to join your tailnet;
+#         3. stores the server's API key in the Keychain, and sets `remote_host`, `sync_url` and
 #            `sync_interval_minutes` in config.toml;
-#         5. has you restart the local server, uploads the database (`spares sync cloud
+#         4. has you restart the local server, uploads the database (`spares sync cloud
 #            --full-upload`) and checks that both sides have the same notes;
-#         6. closes the server's public ports, leaving only Tailscale (not with --domain).
+#         5. closes the server's public ports, leaving only Tailscale (not with --domain).
 #       The server is reached over Tailscale unless --domain is given, so install Tailscale on
-#       this machine and your phone, logged in to the same account, first.
-# update  Pulls and rebuilds on the server (re-runs setup_vps.sh there with sudo). Update this
-#       machine's spares at the same time: the two refuse to sync across database versions.
+#       this machine and your phone, logged in to the same account, first. --no-latex skips
+#       LaTeX and pandoc on the server, which only markdown and LaTeX notes need.
+# cloud-init  Prints a script for the VPS provider's "cloud-init user data" (or "startup script")
+#       field that joins the new server to your tailnet as <name> (default: spares), so `init`
+#       can reach it as root@<name> over Tailscale SSH. Use it when this machine cannot reach the
+#       server's address, e.g. an IPv6-only server and no IPv6 here.
+# update  Builds this checkout and installs it on the server (with sudo there). Restart the local
+#       server at the same time: the two refuse to sync across database versions.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -80,18 +90,51 @@ local_status() {
     | plutil -extract "$1" raw -o - - 2>/dev/null || true
 }
 
-# Whether GitHub's main has the commit this checkout is at, since the server builds from it.
-check_pushed() {
-  bold "Checking that GitHub's main has this checkout"
-  if ! git -C "$REPO" fetch --quiet origin main; then
-    warn "Could not fetch GitHub's main."
-  elif git -C "$REPO" merge-base --is-ancestor HEAD FETCH_HEAD; then
-    echo "It does."
-    return
-  else
-    warn "GitHub's main does not have this checkout's commit, so the server would build an older spares."
+# One SSH connection per host for the whole run, so Tailscale SSH asks to log in at most once.
+SSH_OPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/spares-deploy-%C" -o ControlPersist=10m)
+# shellcheck disable=SC2029 # commands are built here to run there
+remote() { ssh "${SSH_OPTS[@]}" "$@"; }
+upload() { scp -q "${SSH_OPTS[@]}" "$@"; }
+
+# Builds spares for the server (`$1`, as user@host) into the archive `$2`, which setup_vps.sh
+# installs with --bundle: spares_server, frontend/, and with `$3` = true, pandoc.deb.
+build_bundle() {
+  local server="$1" bundle="$2" with_pandoc="$3" arch target deb_arch dir
+  for command in zig cargo-zigbuild bun rustup; do
+    command -v "$command" >/dev/null \
+      || die "$command is needed to build spares for the server. Install zig and cargo-zigbuild with: brew install zig && cargo install --locked cargo-zigbuild"
+  done
+  arch="$(remote "$server" uname -m)"
+  case "$arch" in
+    x86_64) target=x86_64-unknown-linux-gnu; deb_arch=amd64 ;;
+    aarch64) target=aarch64-unknown-linux-gnu; deb_arch=arm64 ;;
+    *) die "Unsupported server architecture: $arch" ;;
+  esac
+  bold "Building spares for $target"
+  rustup target add "$target" >/dev/null
+  # glibc 2.31 (Debian 11, Ubuntu 20.04) or newer runs it
+  (cd "$REPO" && CARGO_PROFILE_RELEASE_STRIP=debuginfo \
+    cargo zigbuild --release -p spares_server --target "$target.2.31")
+  (cd "$REPO/spares_frontend/frontend" && bun install && bun run build)
+  dir="$(mktemp -d)"
+  cp "$REPO/target/$target/release/spares_server" "$dir/"
+  cp -R "$REPO/spares_frontend/frontend/dist" "$dir/frontend"
+  if [[ "$with_pandoc" == true ]]; then
+    local version cached
+    version="$(sed -n 's/^PANDOC_VERSION="\(.*\)"/\1/p' "$REPO/scripts/setup_vps.sh")"
+    cached="${XDG_CACHE_HOME:-$HOME/.cache}/spares-deploy/pandoc-$version-$deb_arch.deb"
+    if [[ ! -f "$cached" ]]; then
+      mkdir -p "$(dirname "$cached")"
+      curl -fsSL -o "$cached.tmp" \
+        "https://github.com/jgm/pandoc/releases/download/$version/pandoc-$version-1-$deb_arch.deb"
+      mv "$cached.tmp" "$cached"
+    fi
+    cp "$cached" "$dir/pandoc.deb"
   fi
-  confirm "Continue anyway?" || exit 1
+  # Without macOS metadata, which GNU tar on the server warns about
+  COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf "$bundle" -C "$dir" .
+  rm -rf "$dir"
+  echo "Built $(du -h "$bundle" | cut -f1) to upload."
 }
 
 note_counts() {
@@ -100,16 +143,17 @@ note_counts() {
 }
 
 init() {
-  local ip="" user="$USER" domain=""
+  local server="" user="$USER" domain="" no_latex=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --user) user="$2"; shift 2 ;;
       --domain) domain="$2"; shift 2 ;;
+      --no-latex) no_latex=true; shift ;;
       -*) die "Unknown argument: $1" ;;
-      *) ip="$1"; shift ;;
+      *) server="$1"; shift ;;
     esac
   done
-  [[ -n "$ip" ]] || die "Usage: $0 init <server IP> [--user <name>] [--domain <domain>]"
+  [[ -n "$server" ]] || die "Usage: $0 init <server> [--user <name>] [--domain <domain>] [--no-latex]"
   [[ -f "$DB" ]] || die "No database at $DB. Set SPARES_DATA_DIR if it is elsewhere."
   for command in ssh scp rsync sqlite3 curl cargo security plutil; do
     command -v "$command" >/dev/null || die "$command is needed."
@@ -119,27 +163,31 @@ init() {
     confirm "Continue anyway?" || exit 1
   fi
 
-  check_pushed
-
   bold "Backing up the database"
   local backup
   backup="$DATA_DIR/spares-main.before-deploy-$(date +%Y%m%d-%H%M%S).sqlite"
   sqlite3 "$DB" "VACUUM INTO '$backup'"
   echo "Saved $backup"
 
-  bold "Setting up the server (as root@$ip)"
-  echo "This takes a while: it installs LaTeX and builds spares."
-  [[ -n "$domain" ]] && echo "Point $domain's DNS at $ip first."
-  [[ -z "$domain" ]] && echo "Open the Tailscale link it prints to add the server to your tailnet."
-  local mode=(--tailscale)
-  [[ -n "$domain" ]] && mode=(--domain "$domain")
-  scp -q "$REPO/scripts/setup_vps.sh" "root@$ip:/tmp/setup_vps.sh"
-  ssh -t "root@$ip" bash /tmp/setup_vps.sh --user "$user" --data-dir "$DATA_DIR" \
-    --local-home "$HOME" "${mode[@]}"
+  local bundle
+  bundle="$(mktemp -d)/spares-bundle.tar.gz"
+  build_bundle "root@$server" "$bundle" "$([[ "$no_latex" == true ]] && echo false || echo true)"
+
+  bold "Setting up the server (as root@$server)"
+  [[ "$no_latex" == false ]] && echo "Installing LaTeX takes a while."
+  [[ -n "$domain" ]] && echo "Point $domain's DNS at the server first."
+  [[ -z "$domain" ]] && echo "If it prints a Tailscale link, open it to add the server to your tailnet."
+  local args=(--user "$user" --data-dir "$DATA_DIR" --local-home "$HOME" --bundle /tmp/spares-bundle.tar.gz)
+  if [[ -n "$domain" ]]; then args+=(--domain "$domain"); else args+=(--tailscale); fi
+  [[ "$no_latex" == true ]] && args+=(--no-latex)
+  upload "$REPO/scripts/setup_vps.sh" "$bundle" "root@$server:/tmp/"
+  rm -rf "$(dirname "$bundle")"
+  remote -t "root@$server" bash /tmp/setup_vps.sh "${args[@]}" \
+    "; status=\$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit \$status"
 
   local url api_key host
-  url="$(ssh "root@$ip" cat /etc/spares/url)"
-  api_key="$(ssh "root@$ip" "sed -n 's/^SPARES_API_KEY=//p' /etc/spares/spares.env")"
+  url="$(remote "root@$server" cat /etc/spares/url)"
+  api_key="$(remote "root@$server" "sed -n 's/^SPARES_API_KEY=//p' /etc/spares/spares.env")"
   [[ "$url" == https://* && -n "$api_key" ]] || die "Could not read the server's address and API key."
   host="${url#https://}"
   echo "The server is at $url"
@@ -198,7 +246,7 @@ sync_interval_minutes = $interval"
   done
 
   bold "Uploading the database"
-  ssh -o StrictHostKeyChecking=accept-new "$user@$host" true
+  remote -o StrictHostKeyChecking=accept-new "$user@$host" true
   if confirm "This replaces the server's database with this one. Upload?"; then
     spares sync cloud --full-upload
   fi
@@ -206,8 +254,7 @@ sync_interval_minutes = $interval"
   bold "Checking"
   local here there
   here="$(sqlite3 "$DB" "$(note_counts)")"
-  # shellcheck disable=SC2029 # the query is built here on purpose
-  there="$(ssh "$user@$host" sqlite3 "'$DB'" "\"$(note_counts)\"")"
+  there="$(remote "$user@$host" sqlite3 "'$DB'" "\"$(note_counts)\"")"
   echo "Here:   $here"
   echo "Server: $there"
   [[ "$here" == "$there" ]] || warn "They differ. Run \`spares sync cloud\` and compare again."
@@ -215,11 +262,11 @@ sync_interval_minutes = $interval"
 
   if [[ -z "$domain" ]]; then
     bold "Closing the server's public ports"
-    echo "You reached the server over Tailscale above. This allows only Tailscale in, so SSH to"
-    echo "$ip stops working; log in with \`ssh $user@$host\` instead. If Tailscale ever breaks, use"
-    echo "the VPS provider's web console, which can also reset root's password."
+    echo "You reached the server over Tailscale above. This allows only Tailscale in, so SSH to its"
+    echo "public address stops working; log in with \`ssh $user@$host\` instead. If Tailscale ever"
+    echo "breaks, use the VPS provider's web console, which can also reset root's password."
     if confirm "Close them?"; then
-      ssh "root@$ip" 'command -v ufw >/dev/null || apt-get install -y -q ufw >/dev/null
+      remote "root@$server" 'command -v ufw >/dev/null || apt-get install -y -q ufw >/dev/null
         ufw default deny incoming >/dev/null && ufw default allow outgoing >/dev/null
         ufw allow in on tailscale0 >/dev/null
         ufw allow 41641/udp >/dev/null  # direct Tailscale connections
@@ -239,19 +286,42 @@ On your phone, with Tailscale on, open $url, log in with the API key
 EOF
 }
 
+cloud_init() {
+  local name="${1:-spares}"
+  cat >&2 <<EOF
+Create an auth key at https://login.tailscale.com/admin/settings/keys (not reusable, not
+ephemeral), put it in place of the placeholder, and paste this into the VPS's cloud-init user
+data. Once the server is up, run: $0 init $name
+If \`ssh root@$name\` is refused, allow root in the "ssh" section of your tailnet policy file.
+
+EOF
+  cat <<EOF
+#!/bin/sh
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --ssh --hostname=$name --authkey=TSKEY-PLACEHOLDER
+EOF
+}
+
 update() {
   local remote_host
   remote_host="$(config_value remote_host)"
   [[ -n "$remote_host" ]] || die "remote_host is not set in $CONFIG_FILE. Run \`$0 init\` first."
-  check_pushed
+  local no_latex bundle
+  no_latex="$(remote "$remote_host" "sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf")"
+  bundle="$(mktemp -d)/spares-bundle.tar.gz"
+  build_bundle "$remote_host" "$bundle" "$([[ "$no_latex" == true ]] && echo false || echo true)"
   bold "Updating $remote_host"
-  scp -q "$REPO/scripts/setup_vps.sh" "$remote_host:/tmp/setup_vps.sh"
-  ssh -t "$remote_host" 'sudo bash /tmp/setup_vps.sh; status=$?; rm -f /tmp/setup_vps.sh; exit $status'
+  upload "$REPO/scripts/setup_vps.sh" "$bundle" "$remote_host:/tmp/"
+  rm -rf "$(dirname "$bundle")"
+  # shellcheck disable=SC2016 # expanded there
+  remote -t "$remote_host" 'sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz;
+    status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status'
   echo "Restart spares_serve here too, so both sides run the same version."
 }
 
 case "${1:-}" in
   init) shift; init "$@" ;;
   update) shift; update "$@" ;;
+  cloud-init) shift; cloud_init "$@" ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
