@@ -4,9 +4,11 @@
 #
 #   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
 #                          [--domain <domain> | --tailscale] [--user <name>]
+#                          [--bundle <file>] [--no-latex]
 #   sudo bash setup_vps.sh     # update, with the arguments of the last run
 #
-# `scripts/deploy_vps.sh` on your laptop runs this for you, and sets up the laptop's side.
+# Arguments are saved, and later runs start from them. `scripts/deploy_vps.sh` on your laptop runs
+# this for you with --bundle, and sets up the laptop's side.
 #
 # --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
 #               the same path on the server), e.g. /Users/you/.local/share/spares.
@@ -20,6 +22,11 @@
 # --user        The user spares runs as, and that `spares sync cloud` logs in as. Defaults to the
 #               user who ran sudo, so pass it when running as root. A missing user is created,
 #               with sudo and root's SSH keys.
+# --bundle      Install spares from this archive (built elsewhere by `deploy_vps.sh`) instead of
+#               building it here from GitHub. Building needs about 2 GB of memory and 10 GB of disk,
+#               and GitHub cannot be reached from IPv6-only servers. Once used, every update needs one.
+# --no-latex    Skip LaTeX, inkscape and pandoc (about 3 GB). Markdown and LaTeX notes edited on the
+#               server are then not rendered there; Typst notes don't need them.
 #
 # The server is the sync server (replica 1) for two-way sync with your laptop (`sync_url`).
 #
@@ -32,12 +39,15 @@ DATA_DIR=""
 LOCAL_HOME=""
 DOMAIN=""
 TAILSCALE=false
+PREBUILT=false
+NO_LATEX=false
+BUNDLE=""
 SPARES_USER="${SUDO_USER:-}"
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
-if [[ $# -eq 0 && -f "$SETUP_CONF" ]]; then
+if [[ -f "$SETUP_CONF" ]]; then
   # shellcheck source=/dev/null
   source "$SETUP_CONF"
-  echo "==> Using the arguments of the last run ($SETUP_CONF)"
+  echo "==> Starting from the arguments of the last run ($SETUP_CONF)"
 fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,6 +56,8 @@ while [[ $# -gt 0 ]]; do
     --domain) DOMAIN="$2"; shift 2 ;;
     --tailscale) TAILSCALE=true; shift ;;
     --user) SPARES_USER="$2"; shift 2 ;;
+    --bundle) BUNDLE="$2"; PREBUILT=true; shift 2 ;;
+    --no-latex) NO_LATEX=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -53,6 +65,7 @@ done
 [[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
+[[ "$PREBUILT" == false || -f "$BUNDLE" ]] || { echo "This server runs spares built elsewhere. Update it with \`scripts/deploy_vps.sh update\` on your laptop, or pass --bundle." >&2; exit 1; }
 
 if ! id "$SPARES_USER" >/dev/null 2>&1; then
   echo "==> Creating the user $SPARES_USER"
@@ -80,6 +93,8 @@ mkdir -p /etc/spares
   printf 'DOMAIN=%q\n' "$DOMAIN"
   printf 'TAILSCALE=%q\n' "$TAILSCALE"
   printf 'SPARES_USER=%q\n' "$SPARES_USER"
+  printf 'PREBUILT=%q\n' "$PREBUILT"
+  printf 'NO_LATEX=%q\n' "$NO_LATEX"
 } > "$SETUP_CONF"
 
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
@@ -101,53 +116,79 @@ RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
 
+BUNDLE_DIR=""
+if [[ "$PREBUILT" == true ]]; then
+  # spares_server, frontend/ and, without --no-latex, pandoc.deb
+  BUNDLE_DIR="$(mktemp -d)"
+  trap 'rm -rf "$BUNDLE_DIR"' EXIT
+  tar -xzf "$BUNDLE" -C "$BUNDLE_DIR"
+fi
+
 echo "==> Installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
+PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates)
+[[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm)
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
-apt-get install -y -q build-essential pkg-config git curl unzip rsync sqlite3 openssl python3 nodejs npm \
-  latexmk texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
-  texlive-xetex texlive-fonts-extra lmodern inkscape
+[[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra \
+  texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape)
+apt-get install -y -q "${PACKAGES[@]}"
 
 # pandoc from its release instead of apt, whose pandoc is too old for the HTML of markdown notes
 # (`--math-method` needs 3.11, and 3.12.0 breaks `--embed-resources`). Keep it at the version used
-# locally, so notes rendered here get the same output.
+# locally, so notes rendered here get the same output. `deploy_vps.sh` reads this line.
 PANDOC_VERSION="3.12.1"
-if [[ "$(pandoc --version 2>/dev/null | head -n1)" != "pandoc $PANDOC_VERSION" ]]; then
+if [[ "$NO_LATEX" == false && "$(pandoc --version 2>/dev/null | head -n1)" != "pandoc $PANDOC_VERSION" ]]; then
   echo "==> Installing pandoc $PANDOC_VERSION"
   PANDOC_DEB="$(mktemp --suffix=.deb)"
-  curl -fsSL -o "$PANDOC_DEB" \
-    "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-1-$(dpkg --print-architecture).deb"
+  if [[ -f "$BUNDLE_DIR/pandoc.deb" ]]; then
+    cp "$BUNDLE_DIR/pandoc.deb" "$PANDOC_DEB"
+  else
+    curl -fsSL -o "$PANDOC_DEB" \
+      "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-1-$(dpkg --print-architecture).deb"
+  fi
   apt-get install -y -q "$PANDOC_DEB"
   rm -f "$PANDOC_DEB"
 fi
 
-# Building needs ~2 GB of memory, more than small VPSs have
-if [[ $(free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}') -lt 2500 && ! -f /swapfile ]]; then
-  echo "==> Adding 2 GB of swap"
-  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+# Building needs ~2 GB of memory, more than small VPSs have. Without building, 1 GB keeps apt and
+# LaTeX going on a 512 MB server.
+SWAP_GB=2
+[[ "$PREBUILT" == true ]] && SWAP_GB=1
+if [[ $(free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}') -lt $((SWAP_GB * 1024 + 450)) && ! -f /swapfile ]]; then
+  echo "==> Adding $SWAP_GB GB of swap"
+  fallocate -l "${SWAP_GB}G" /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-echo "==> Installing Rust and Bun"
-as_user 'command -v cargo >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal'
-as_user 'rustup update stable'
-as_user 'command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash'
-
-echo "==> Fetching the source"
-# The svgedit submodule is listed with an SSH URL, which needs a GitHub key
-GIT_HTTPS="-c url.https://github.com/.insteadOf=git@github.com:"
-if [[ -d "$SRC_DIR/.git" ]]; then
-  as_user "cd '$SRC_DIR' && git pull --ff-only && git $GIT_HTTPS submodule update --init --recursive"
+if [[ "$PREBUILT" == true ]]; then
+  echo "==> Installing the bundled spares"
+  install -m 755 "$BUNDLE_DIR/spares_server" /usr/local/bin/
+  FRONTEND_DIR=/opt/spares/frontend
+  rm -rf "$FRONTEND_DIR" && mkdir -p "$(dirname "$FRONTEND_DIR")"
+  cp -r "$BUNDLE_DIR/frontend" "$FRONTEND_DIR"
 else
-  as_user "git $GIT_HTTPS clone --recurse-submodules '$REPO_URL' '$SRC_DIR'"
-fi
+  FRONTEND_DIR="$SRC_DIR/spares_frontend/frontend/dist"
+  echo "==> Installing Rust and Bun"
+  as_user 'command -v cargo >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal'
+  as_user 'rustup update stable'
+  as_user 'command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash'
 
-echo "==> Building"
-as_user "cd '$SRC_DIR' && cargo build --release -p spares_server"
-as_user "cd '$SRC_DIR/spares_frontend/frontend' && bun install && bun run build"
-install -m 755 "$SRC_DIR/target/release/spares_server" /usr/local/bin/
+  echo "==> Fetching the source"
+  # The svgedit submodule is listed with an SSH URL, which needs a GitHub key
+  GIT_HTTPS="-c url.https://github.com/.insteadOf=git@github.com:"
+  if [[ -d "$SRC_DIR/.git" ]]; then
+    as_user "cd '$SRC_DIR' && git pull --ff-only && git $GIT_HTTPS submodule update --init --recursive"
+  else
+    as_user "git $GIT_HTTPS clone --recurse-submodules '$REPO_URL' '$SRC_DIR'"
+  fi
+
+  echo "==> Building"
+  as_user "cd '$SRC_DIR' && cargo build --release -p spares_server"
+  as_user "cd '$SRC_DIR/spares_frontend/frontend' && bun install && bun run build"
+  install -m 755 "$SRC_DIR/target/release/spares_server" /usr/local/bin/
+fi
 
 echo "==> Configuring"
 as_user "mkdir -p '$CONFIG_DIR' '$RENDERED_DIR'"
@@ -170,7 +211,7 @@ SPARES_DATA_DIR=$DATA_DIR
 SPARES_CONFIG_DIR=$CONFIG_DIR
 SPARES_CACHE_DIR=$RENDERED_DIR
 SPARES_FILES_DIR=$RENDERED_DIR
-SPARES_FRONTEND_DIR=$SRC_DIR/spares_frontend/frontend/dist
+SPARES_FRONTEND_DIR=$FRONTEND_DIR
 RAYON_NUM_THREADS=1
 RUST_LOG=info
 # Two-way sync: this is the sync server, replica 1 (the laptop is replica 0)
@@ -248,6 +289,7 @@ elif [[ "$TAILSCALE" == true ]]; then
   # Prints a link to log in on the first run. `--ssh` lets you reach this server over the tailnet,
   # so its public SSH port can be closed.
   tailscale status >/dev/null 2>&1 || tailscale up --ssh
+  tailscale set --ssh
   tailscale serve --bg 8080 >/dev/null
   URL="https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 else
