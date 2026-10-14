@@ -90,6 +90,13 @@ local_status() {
     | plutil -extract "$1" raw -o - - 2>/dev/null || true
 }
 
+# The HTTP status of the local server's `GET /api/sync/status` (000 if it is not running).
+local_http_code() {
+  local auth=()
+  [[ -n "${SPARES_API_KEY:-}" ]] && auth=(-H "Authorization: Bearer $SPARES_API_KEY")
+  curl -s -o /dev/null -w '%{http_code}' ${auth[@]+"${auth[@]}"} "http://$LOCAL_ADDRESS/api/sync/status" || true
+}
+
 # One SSH connection per host for the whole run, so Tailscale SSH asks to log in at most once.
 SSH_OPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/spares-deploy-%C" -o ControlPersist=10m)
 # shellcheck disable=SC2029 # commands are built here to run there
@@ -232,7 +239,13 @@ sync_interval_minutes = $interval"
     role="$(local_status role)"
     sync_url="$(local_status sync_url)"
     key_set="$(local_status sync_api_key_set)"
-    if [[ -z "$role" ]]; then
+    if [[ -z "$role" && "$(local_http_code)" == 401 ]]; then
+      warn "The local server wants its API key (its SPARES_API_KEY)."
+      read -r -s -p "Paste it here: " SPARES_API_KEY
+      echo
+      # Exported for the `spares` commands below, which send it too.
+      export SPARES_API_KEY
+    elif [[ -z "$role" ]]; then
       warn "No spares server answers at $LOCAL_ADDRESS."
     elif [[ "$role" != client ]]; then
       warn "It runs as the $role, not the client. Check SPARES_SYNC_ROLE."
