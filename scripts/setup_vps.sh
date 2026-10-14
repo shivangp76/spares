@@ -192,7 +192,13 @@ fi
 
 echo "==> Configuring"
 as_user "mkdir -p '$CONFIG_DIR' '$RENDERED_DIR'"
-mkdir -p "$DATA_DIR" && chown "$SPARES_USER": "$DATA_DIR"
+# Created as the user where it can be (in the home directory, also through --local-home), so the
+# directories on the way to it belong to the user too
+as_user "mkdir -p '$DATA_DIR'" 2>/dev/null || mkdir -p "$DATA_DIR"
+chown "$SPARES_USER": "$DATA_DIR"
+# Earlier versions created those directories as root, which stops `spares sync cloud` from
+# copying files into them
+find "$USER_HOME" -xdev -user root -exec chown -h "$SPARES_USER": {} +
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 if [[ -f "$CONFIG_FILE" ]] && grep -q '^render_browser_parsers' "$CONFIG_FILE"; then
   as_user "sed -i 's/^render_browser_parsers.*/render_browser_parsers = false/' '$CONFIG_FILE'"

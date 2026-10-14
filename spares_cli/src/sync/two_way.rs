@@ -85,7 +85,7 @@ pub(crate) async fn sync_cloud(
     };
     print_report(&report);
     if let Some(remote_host) = &config.remote_host {
-        push_files(remote_host, &config.remote_rendered_dir)?;
+        push_files(remote_host, &config.remote_rendered_dir).await?;
     }
     Ok(())
 }
