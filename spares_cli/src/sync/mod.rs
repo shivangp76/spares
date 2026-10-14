@@ -1,5 +1,6 @@
 mod cloud;
 mod interactive;
+mod two_way;
 mod utils;
 
 use std::collections::HashMap;
@@ -87,13 +88,26 @@ pub(crate) struct SyncArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub(crate) enum SyncSubcommand {
-    /// Push local DB and files to a remote server via rsync.
+    /// Sync with the server both ways.
     ///
-    /// Reads `remote_host` from config.toml (e.g. "user@myserver.com"). Copies the `SQLite` DB
-    /// first, then the other data files, the rendered files, the templates, and the files that
-    /// rendering recorded the notes as reading (preambles, figures, ...), so the server can render
-    /// notes edited there.
-    Cloud,
+    /// With `sync_url` set in config.toml, exchanges changes with the server, merging notes both
+    /// sides changed. If only a full sync is possible (the first sync, for one), it says why and
+    /// asks which way. Then, with `remote_host` set (e.g. "user@myserver.com"), copies the files
+    /// the server cannot generate itself: the rendered files, the templates, and the files that
+    /// rendering recorded the notes as reading (preambles, figures, ...).
+    ///
+    /// Without `sync_url`, pushes the database to `remote_host`, replacing the server's, and then
+    /// the files.
+    Cloud {
+        /// Replace the server's database with this one
+        #[arg(long, conflicts_with = "full_download")]
+        full_upload: bool,
+        /// Replace this database with the server's
+        #[arg(long)]
+        full_download: bool,
+    },
+    /// Resolve the notes a sync could not merge (tagged `sync-conflict`), one at a time
+    Conflicts,
 }
 
 /// Follows the hub-spoke model, where [`SyncSource::default()`] is the hub.
@@ -259,7 +273,20 @@ pub(crate) async fn sync_notes(
     let filter_note_ids = resolve_filter(sync_args.ids.as_ref(), sync_args.files.as_ref())?;
 
     match sync_args.subcommand {
-        Some(SyncSubcommand::Cloud) => cloud::sync_cloud().await,
+        Some(SyncSubcommand::Cloud {
+            full_upload,
+            full_download,
+        }) => {
+            let mode = if full_upload {
+                spares_core::sync::run::SyncMode::FullUpload
+            } else if full_download {
+                spares_core::sync::run::SyncMode::FullDownload
+            } else {
+                spares_core::sync::run::SyncMode::Normal
+            };
+            two_way::sync_cloud(base_url, client, mode).await
+        }
+        Some(SyncSubcommand::Conflicts) => two_way::resolve_conflicts(base_url, client).await,
         None => {
             // Non-interactive: print changed note file paths and exit
             if sync_args.print_files {

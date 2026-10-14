@@ -121,6 +121,12 @@ pub fn merge_text(base: &str, local: &str, remote: &str) -> TextMerge {
     }
 }
 
+/// The three-way merge of `local` and `remote` with conflict markers around the lines both
+/// changed, for editing by hand.
+pub fn merge_text_with_markers(base: &str, local: &str, remote: &str) -> String {
+    diffy::merge(base, local, remote).unwrap_or_else(|marked| marked)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
