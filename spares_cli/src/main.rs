@@ -31,6 +31,9 @@ use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
 use reqwest::Client;
+use reqwest::header::AUTHORIZATION;
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderValue;
 use spares_core::adapters::get_adapter_from_string;
 use spares_core::config::get_env_config;
 use spares_core::parsers::find_parser;
@@ -53,10 +56,27 @@ async fn main() {
     }
 }
 
+/// The client for the local server. It sends `SPARES_API_KEY` when set, as the server then
+/// refuses requests without it.
+fn local_client() -> Result<Client, Error> {
+    let mut headers = HeaderMap::new();
+    if let Ok(key) = std::env::var("SPARES_API_KEY")
+        && !key.is_empty()
+    {
+        let mut value = HeaderValue::from_str(&format!("Bearer {key}")).into_diagnostic()?;
+        value.set_sensitive(true);
+        headers.insert(AUTHORIZATION, value);
+    }
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .into_diagnostic()
+}
+
 async fn process_args(args: Cli) -> Result<(), Error> {
     let env_config = get_env_config(args.environment);
     let base_url = format!("http://{}", env_config.socket_address);
-    let client = Client::new();
+    let client = local_client()?;
 
     match args.command {
         Commands::Parser(parser_args) => parser::handle(parser_args, &base_url, &client).await,
