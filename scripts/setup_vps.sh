@@ -4,7 +4,7 @@
 #
 #   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
 #                          [--domain <domain> | --tailscale] [--user <name>]
-#                          [--bundle <file>] [--no-latex]
+#                          [--bundle <file>] [--no-latex] [--timezone <zone>]
 #   sudo bash setup_vps.sh     # update, with the arguments of the last run
 #
 # Arguments are saved, and later runs start from them. `scripts/deploy_vps.sh` on your laptop runs
@@ -27,6 +27,9 @@
 #               and GitHub cannot be reached from IPv6-only servers. Once used, every update needs one.
 # --no-latex    Skip LaTeX, inkscape and pandoc (about 3 GB). Markdown and LaTeX notes edited on the
 #               server are then not rendered there; Typst notes don't need them.
+# --timezone    The server's time zone, e.g. America/New_York. Make it yours: spares counts days
+#               (what is due today, new card limits, the review heatmap and its streaks) in the
+#               server's time zone, and VPSs default to UTC. `deploy_vps.sh` passes the laptop's.
 #
 # The server is the sync server (replica 1) for two-way sync with your laptop (`sync.url`).
 #
@@ -41,6 +44,7 @@ DOMAIN=""
 TAILSCALE=false
 PREBUILT=false
 NO_LATEX=false
+TIMEZONE=""
 BUNDLE=""
 SPARES_USER="${SUDO_USER:-}"
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
@@ -58,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --user) SPARES_USER="$2"; shift 2 ;;
     --bundle) BUNDLE="$2"; PREBUILT=true; shift 2 ;;
     --no-latex) NO_LATEX=true; shift ;;
+    --timezone) TIMEZONE="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -65,6 +70,7 @@ done
 [[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
+[[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || { echo "Unknown time zone: $TIMEZONE" >&2; exit 1; }
 [[ "$PREBUILT" == false || -f "$BUNDLE" ]] || { echo "This server runs spares built elsewhere. Update it with \`scripts/deploy_vps.sh update\` on your laptop, or pass --bundle." >&2; exit 1; }
 
 if ! id "$SPARES_USER" >/dev/null 2>&1; then
@@ -95,6 +101,7 @@ mkdir -p /etc/spares
   printf 'SPARES_USER=%q\n' "$SPARES_USER"
   printf 'PREBUILT=%q\n' "$PREBUILT"
   printf 'NO_LATEX=%q\n' "$NO_LATEX"
+  printf 'TIMEZONE=%q\n' "$TIMEZONE"
 } > "$SETUP_CONF"
 
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
@@ -122,6 +129,12 @@ if [[ "$PREBUILT" == true ]]; then
   BUNDLE_DIR="$(mktemp -d)"
   trap 'rm -rf "$BUNDLE_DIR"' EXIT
   tar -xzf "$BUNDLE" -C "$BUNDLE_DIR"
+fi
+
+# Before the server (re)starts, as it reads the time zone then
+if [[ -n "$TIMEZONE" && "$(timedatectl show -p Timezone --value)" != "$TIMEZONE" ]]; then
+  echo "==> Setting the time zone to $TIMEZONE"
+  timedatectl set-timezone "$TIMEZONE"
 fi
 
 echo "==> Installing packages"
