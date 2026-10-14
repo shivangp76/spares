@@ -4,7 +4,7 @@ import { createNotes, listParsers, renderNote } from '../api/client';
 import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
-import { insertBlock } from '../utils';
+import { formatNoteId, insertBlock } from '../utils';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -53,7 +53,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         await renderNote(note.id);
       } catch (e) {
         // The note exists, so still hand it over
-        window.alert(`Note ${note.id} created, but ${String(e)}`);
+        window.alert(`Note ${formatNoteId(note.id)} created, but ${String(e)}`);
       }
       onCreated(note);
     } catch (e) {

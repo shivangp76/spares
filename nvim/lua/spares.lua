@@ -129,19 +129,62 @@ local function run(args)
   return trimmed
 end
 
+-- Note ids are letters (`gir`). The API sends them as their letters read as a
+-- base-27 number left-aligned to 8 places (`a` = 1 … `z` = 26, an empty place
+-- = 0). Lua numbers are doubles, which hold these 39-bit values exactly.
+local NOTE_ID_PLACES = 8
+local NOTE_ID_RADIX = 27
+
+-- The letters of a note id from the API, or nil if it is not one.
+function M.note_id_letters(id)
+  if type(id) ~= 'number' or id ~= math.floor(id) then return nil end
+  local places = {}
+  local rest = id
+  for i = NOTE_ID_PLACES, 1, -1 do
+    places[i] = rest % NOTE_ID_RADIX
+    rest = math.floor(rest / NOTE_ID_RADIX)
+  end
+  if rest ~= 0 or places[1] == 0 then return nil end
+  local letters = {}
+  local ended = false
+  for i = 1, NOTE_ID_PLACES do
+    if places[i] == 0 then
+      ended = true
+    elseif ended then
+      return nil
+    else
+      letters[#letters + 1] = string.char(96 + places[i])
+    end
+  end
+  return table.concat(letters)
+end
+
+-- The number the API uses for a note id written as 1 to 8 letters, or nil.
+function M.note_id_number(letters)
+  local s = letters:lower()
+  if not s:match('^%l+$') or #s > NOTE_ID_PLACES then return nil end
+  local id = 0
+  for i = 1, NOTE_ID_PLACES do
+    id = id * NOTE_ID_RADIX + (i <= #s and (s:byte(i) - 96) or 0)
+  end
+  return id
+end
+
 local function resolve_path(note_id)
-  local raw = run({ 'note', 'get', tostring(note_id) })
+  local letters = M.note_id_letters(note_id)
+  if not letters then return nil end
+  local raw = run({ 'note', 'get', letters })
   if not raw then return nil end
   local ok, note = pcall(vim.fn.json_decode, raw)
   if not ok or type(note) ~= 'table' or not note.parser_id then return nil end
 
   local raw2 = run({ 'parser', 'list' })
   if not raw2 then return nil end
-  local ok2, parsers = pcall(vim.fn.json_decode, raw2)
-  if not ok2 or type(parsers) ~= 'table' then return nil end
+  local ok2, parser_rows = pcall(vim.fn.json_decode, raw2)
+  if not ok2 or type(parser_rows) ~= 'table' then return nil end
 
   local pname
-  for _, p in ipairs(parsers) do
+  for _, p in ipairs(parser_rows) do
     if type(p) == 'table' and p.id == note.parser_id then
       pname = p.name
       break
@@ -151,7 +194,7 @@ local function resolve_path(note_id)
 
   local ext = parsers[pname] and parsers[pname].ext or pname
   local notes_dir = find_notes_dir():gsub('/+$', '')
-  return string.format('%s/%s/%04d.%s', notes_dir, pname, note_id, ext)
+  return string.format('%s/%s/%s.%s', notes_dir, pname, letters, ext)
 end
 
 local function find_line(path, keyword)
@@ -201,7 +244,8 @@ function M.open()
   local path = resolve_path(res.note_id)
   if not path then
     vim.notify(
-      'spares: could not resolve file path for note ' .. res.note_id,
+      'spares: could not resolve file path for note '
+        .. (M.note_id_letters(res.note_id) or tostring(res.note_id)),
       vim.log.levels.ERROR
     )
     return

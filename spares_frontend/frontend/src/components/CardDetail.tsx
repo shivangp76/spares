@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
-import { backPath, backWebPath, sectionLabel } from '../utils';
+import { backPath, backWebPath, formatNoteId, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
@@ -133,7 +133,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px 16px', fontSize: 13, marginBottom: 16 }}>
         <div><div style={metaLabel}>Card Id</div>{card.id}</div>
-        <div><div style={metaLabel}>Note Id</div>{card.note_id}</div>
+        <div><div style={metaLabel}>Note Id</div>{formatNoteId(card.note_id)}</div>
         <div><div style={metaLabel}>Parser</div>{reviewCard?.parser_name ?? '…'}</div>
         <div><div style={metaLabel}>Order</div>{card.order}</div>
         <div><div style={metaLabel}>State</div>{STATE_LABELS[card.state] ?? card.state}</div>
@@ -181,7 +181,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
             {reviewCard.linked_notes.map(ln => (
               <button key={`${ln.searched_keyword}-${ln.note_id}`} onClick={() => openNote(ln.note_id)} style={actionButton}>
-                {ln.searched_keyword} ({ln.note_id})
+                {ln.searched_keyword} ({formatNoteId(ln.note_id)})
               </button>
             ))}
           </div>
