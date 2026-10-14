@@ -21,18 +21,26 @@ const DATABASE_FILENAME: &str = "spares-main.sqlite";
 /// The server's config directory, relative to the remote home directory. Matches `setup_vps.sh`.
 const REMOTE_CONFIG_DIR: &str = ".config/spares";
 
-pub(crate) async fn sync_cloud() -> Result<(), String> {
+/// Pushes the database and files to `remote_host`, replacing the server's database. Used when
+/// two-way sync (`sync_url`) is not set up.
+pub(crate) async fn push_to_remote_host() -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;
     let remote_host = config
         .remote_host
         .ok_or("remote_host is not set in config.toml")?;
 
-    let data_dir = get_data_dir();
-    let local = data_dir.to_str().unwrap();
-
     // Pass 1: DB only
     println!("Syncing database → {}", remote_host);
-    sync_database(&remote_host, &data_dir).await?;
+    sync_database(&remote_host, &get_data_dir()).await?;
+
+    push_files(&remote_host, &config.remote_rendered_dir)
+}
+
+/// Copies everything but the database to `remote_host`: the data files the server does not
+/// generate itself, rendered files, templates and the files the notes read.
+pub(crate) fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(), String> {
+    let data_dir = get_data_dir();
+    let local = data_dir.to_str().unwrap();
 
     // Pass 2: Everything else (cards, image occlusions, render assets). The server reads notes from
     // the database, so raw note files are not needed. Neither are the raw cards of parsers that
@@ -68,7 +76,7 @@ pub(crate) async fn sync_cloud() -> Result<(), String> {
 
     // Pass 3: Rendered files, so the server does not have to render notes again.
     println!("Syncing rendered files → {}", remote_host);
-    sync_rendered_files(&remote_host, &config.remote_rendered_dir)?;
+    sync_rendered_files(remote_host, remote_rendered_dir)?;
 
     // Pass 4: Templates. The remote keeps its own config.toml (e.g. with
     // `render_browser_parsers = false`).
@@ -82,7 +90,7 @@ pub(crate) async fn sync_cloud() -> Result<(), String> {
 
     // Pass 5: Files the notes read, so the server can render notes edited there.
     println!("Syncing files read by notes → {}", remote_host);
-    sync_render_dependencies(&remote_host)?;
+    sync_render_dependencies(remote_host)?;
 
     println!("Done.");
     Ok(())

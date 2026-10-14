@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::body::Bytes;
+use axum::extract::Path;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
@@ -22,6 +23,9 @@ use spares_core::config::get_replica;
 use spares_core::config::get_sync_role;
 use spares_core::config::read_external_config;
 use spares_core::notes_vcs::run_exclusive;
+use spares_core::parsers::get_all_parsers;
+use spares_core::sync::conflicts;
+use spares_core::sync::conflicts::Resolution;
 use spares_core::sync::files;
 use spares_core::sync::protocol::PullRequest;
 use spares_core::sync::protocol::PushRequest;
@@ -200,4 +204,27 @@ pub(crate) async fn sync_status_handler(
         sync_url: read_external_config().ok().and_then(|c| c.sync_url),
         state,
     }))
+}
+
+pub(crate) async fn list_sync_conflicts_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let conflicts = conflicts::list_conflicts(&data.db)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(conflicts))
+}
+
+pub(crate) async fn resolve_sync_conflict_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(resolution): Json<Resolution>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let db = data.db.clone();
+    run_exclusive(async move {
+        conflicts::resolve_conflict(&db, id, resolution, &get_all_parsers()).await
+    })
+    .await
+    .map_err(error_to_response)?;
+    Ok(Json(json!({})))
 }

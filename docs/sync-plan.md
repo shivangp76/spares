@@ -413,32 +413,40 @@ The client does all of this and pushes the result, so the server never re-parses
 - **The nvim keyword cache goes stale.** The plugin refreshes keywords when `event latest` changes. Sync writes don't create events, so completion goes stale after a sync.
 
 ## 8. Fewer conflicts to begin with
-- `spares sync cloud` first runs the normal `spares sync` (files → DB), so edits that only exist in `notes/` files become dirty rows before the cloud sync.
-- **Optional auto-sync:** the laptop's local server syncs on startup and every `sync_interval` minutes whenever the remote is reachable. Failures are logged, not fatal.
+- **Note file edits.** With the notes repository, edits to note files reach the database by `jj git push` from `notes/`. Push them before `spares sync cloud` so they're in this sync; otherwise they go in the next one. Nothing is lost either way, since the sync's own file changes are commits that the clone rebases onto.
+  - `spares sync` (the Anki adapter's sync) is not involved. Section 2's description of it as files → DB was wrong.
+  - Without the notes repository, `spares sync cloud` warns that file edits not imported yet are overwritten if the sync changes those notes.
+- **Optional auto-sync:** the laptop's local server syncs on startup and every `sync_interval_minutes` whenever the remote is reachable. Failures are logged, not fatal.
 - Live notes are read-only on the web.
 
 ## 9. Interfaces
-- **Server** (`spares_server/src/route.rs`, new `handlers/sync.rs`):
-  - `/api/sync/{meta,pull,push,full}` behind `require_api_key`;
-  - `POST /api/sync/run`, which makes this server act as the client against `sync_url` using `SPARES_SYNC_API_KEY`;
-  - `GET /api/sync/status`;
-  - `GET`/`POST /api/sync/conflicts`.
-- **CLI:**
-  - `spares sync cloud [--full-upload|--full-download]`. If a full sync is needed, the command explains why and asks which direction.
-  - `spares sync conflicts` resolves conflicts one at a time using the `git diff` flow in `spares_cli/src/sync/interactive.rs`: keep local, keep remote, or edit the merged result.
+- **Server** (`spares_server/src/handlers/sync.rs`, implemented), all behind `require_api_key`:
+  - `GET /api/sync/meta?replica=N`, `POST /api/sync/pull`, `POST /api/sync/push`, `GET`/`PUT /api/sync/full?replica=N`. These are answered only by `SPARES_SYNC_ROLE=server`. Push and full upload accept up to 1 GiB.
+  - Error statuses: 409 when the server changed during the sync (the client starts over), 412 when a full sync is required (with the reason), 400 for other sync errors, 403 for the wrong role.
+  - `POST /api/sync/run {mode: normal | full_upload | full_download}`: makes a `client` sync with `sync_url`, using `SPARES_SYNC_API_KEY`. Returns the report (counts, conflicts, changed and deleted notes).
+  - `GET /api/sync/status`: role, replica, `sync_url`, last sync, `needs_full_sync`, and the number of conflicts.
+  - `GET /api/sync/conflicts` and `POST /api/sync/conflicts/{id}` with `"keep"`, `"delete"` or `{"text": "..."}`.
+- **CLI** (implemented):
+  - `spares sync cloud [--full-upload|--full-download]`. With `sync_url` set, it runs a two-way sync through the local server. If a full sync is needed, it says why and asks which direction. Then, with `remote_host`, it copies rendered files, templates and render dependencies to the server by rsync (the database is not copied). Without `sync_url`, it pushes the database as before.
+  - `spares sync conflicts` resolves conflicts one at a time. It shows a `git diff` of this side's text against the other's, with card orders shown as card IDs (`o:c40`) so a cloze that only moved reads the same. The choices are:
+    - keep this side's text;
+    - take the other side's;
+    - edit a merge with conflict markers in `$EDITOR`;
+    - for a note deleted on one side: keep it or delete it.
+
+    The chosen text's card IDs are turned back into this side's orders, so each cloze keeps its card and reviews.
   - `spares migrate ids [--dry-run]` (section 4).
-  - Asset files (typst render assets, image-occlusion images, which are only created on the laptop) keep the rsync push from pass 2 of `cloud.rs` via `remote_host`.
 - **Frontend:**
   - a Sync button, last-synced time and conflict count (only when `sync_url` is set);
   - a `sync-conflict` badge on notes;
   - live notes read-only;
   - IDs shown in letter form.
-- **Config** (`SparesExternalConfig`, `spares_core/src/config.rs`): `sync_url` and `sync_interval`, next to `remote_host`.
-- **Env:** `SPARES_REPLICA` (`0`–`7`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY`.
+- **Config** (`SparesExternalConfig`, `spares_core/src/config.rs`): `sync_url` and `sync_interval_minutes` (0 = off), next to `remote_host`.
+- **Env:** `SPARES_REPLICA` (`0`–`7`: `0` = laptop, `1` = server), `SPARES_SYNC_ROLE` (`server`/`client`), `SPARES_SYNC_API_KEY` (the server's `SPARES_API_KEY`, for the client).
 
 ### Open issues
 - **Conflicts only exist on the laptop,** because the merge runs there. The phone would see the `sync-conflict` badge, but its server has no conflict rows to show.
-- **rsync order:** the asset rsync of `cards/` must run after the laptop regenerates its files. Otherwise it overwrites newer cards the server rendered.
+- **rsync order:** the asset rsync of `cards/` runs after the laptop regenerates its files (`spares sync cloud` copies files after the sync). It can still overwrite cards the server rendered itself for a note edited on the phone since the sync.
 
 ## 10. Deployment, ready to use when the VPS arrives (`deploy/`)
 - `deploy/spares.service`: a systemd unit with `SPARES_SOCKET_ADDRESS=127.0.0.1:8080`, `SPARES_FRONTEND_DIR`, `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server`, the API key from an `EnvironmentFile`, and `Restart=always`.

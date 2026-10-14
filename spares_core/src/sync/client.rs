@@ -48,6 +48,7 @@ use super::merge::merge3_or;
 use super::orders;
 use super::records::CardRecord;
 use super::records::Changes;
+use super::records::ConflictSide;
 use super::records::Grave;
 use super::records::NoteRecord;
 use super::records::ParserRecord;
@@ -103,6 +104,12 @@ pub struct MergeOutcome {
     pub applied: Applied,
     /// Notes now tagged `sync-conflict`.
     pub conflicts: BTreeSet<NoteId>,
+}
+
+struct CardMaps {
+    base: HashMap<u32, CardId>,
+    local: HashMap<u32, CardId>,
+    remote: HashMap<u32, CardId>,
 }
 
 struct Merger<'a> {
@@ -366,7 +373,8 @@ impl Merger<'_> {
         Ok(id)
     }
 
-    /// Records a conflict on `note_id` and tags it, as a local change.
+    /// Records a conflict on `note_id` and tags it, as a local change. A missing side is one
+    /// that deleted the note.
     async fn record_conflict(
         &mut self,
         note_id: NoteId,
@@ -374,17 +382,23 @@ impl Merger<'_> {
         local: Option<&NoteRecord>,
         remote: Option<&NoteRecord>,
     ) -> Result<(), Error> {
-        let json = |record: Option<&NoteRecord>| {
-            serde_json::to_string(&record).expect("records serialize")
+        let maps = self.card_maps(note_id).await?;
+        let side = |record: Option<&NoteRecord>, cards: &HashMap<u32, CardId>| {
+            record.map(|note| ConflictSide {
+                note: note.clone(),
+                cards: cards.iter().map(|(order, id)| (*order, *id)).collect(),
+            })
         };
+        let json =
+            |side: Option<ConflictSide>| serde_json::to_string(&side).expect("records serialize");
         sqlx::query(
             "INSERT INTO sync_conflict (note_id, base, local, remote, created_at)
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(note_id)
-        .bind(base.map(|b| json(Some(b))))
-        .bind(json(local))
-        .bind(json(remote))
+        .bind(side(base, &maps.base).map(|b| json(Some(b))))
+        .bind(json(side(local, &maps.local)))
+        .bind(json(side(remote, &maps.remote)))
         .bind(self.now.timestamp())
         .execute(&mut *self.conn)
         .await
@@ -400,6 +414,43 @@ impl Merger<'_> {
         self.outcome.conflicts.insert(note_id);
         self.outcome.applied.notes_changed.insert(note_id);
         Ok(())
+    }
+
+    /// Which card each order of a note names: here now, on the server now, and at the last sync
+    /// (the unchanged cards, and the synced version of those changed or deleted since).
+    async fn card_maps(&mut self, note_id: NoteId) -> Result<CardMaps, Error> {
+        let local =
+            sqlx::query_as::<_, (u32, CardId)>(r#"SELECT "order", id FROM card WHERE note_id = ?"#)
+                .bind(note_id)
+                .fetch_all(&mut *self.conn)
+                .await
+                .map_err(sqlx_error)?
+                .into_iter()
+                .collect();
+        let remote = self
+            .pulled
+            .cards
+            .iter()
+            .filter(|card| card.note_id == note_id)
+            .filter_map(|card| Some((u32::try_from(card.order).ok()?, card.id)))
+            .collect();
+        let base = sqlx::query_as::<_, (u32, CardId)>(
+            r#"SELECT "order", id FROM card WHERE note_id = ?1 AND usn != -1
+               UNION ALL
+               SELECT json_extract(snapshot, '$.order'), oid FROM sync_base
+               WHERE kind = 'card' AND json_extract(snapshot, '$.note_id') = ?1"#,
+        )
+        .bind(note_id)
+        .fetch_all(&mut *self.conn)
+        .await
+        .map_err(sqlx_error)?
+        .into_iter()
+        .collect();
+        Ok(CardMaps {
+            base,
+            local,
+            remote,
+        })
     }
 
     async fn apply_note_grave(&mut self, note_id: NoteId) -> Result<(), Error> {
@@ -564,43 +615,15 @@ impl Merger<'_> {
             return Ok(None);
         }
         let parser = parser_of(self.conn, local.parser_id).await?;
-        let local_cards: HashMap<u32, CardId> =
-            sqlx::query_as::<_, (u32, CardId)>(r#"SELECT "order", id FROM card WHERE note_id = ?"#)
-                .bind(note_id)
-                .fetch_all(&mut *self.conn)
-                .await
-                .map_err(sqlx_error)?
-                .into_iter()
-                .collect();
-        let remote_cards: HashMap<u32, CardId> = self
-            .pulled
-            .cards
-            .iter()
-            .filter(|card| card.note_id == note_id)
-            .filter_map(|card| Some((u32::try_from(card.order).ok()?, card.id)))
-            .collect();
-        // The cards at the last sync: the unchanged ones, and the synced version of those
-        // changed or deleted since.
-        let base_cards: HashMap<u32, CardId> = sqlx::query_as::<_, (u32, CardId)>(
-            r#"SELECT "order", id FROM card WHERE note_id = ?1 AND usn != -1
-               UNION ALL
-               SELECT json_extract(snapshot, '$.order'), oid FROM sync_base
-               WHERE kind = 'card' AND json_extract(snapshot, '$.note_id') = ?1"#,
-        )
-        .bind(note_id)
-        .fetch_all(&mut *self.conn)
-        .await
-        .map_err(sqlx_error)?
-        .into_iter()
-        .collect();
+        let maps = self.card_maps(note_id).await?;
         let tokenize = |text: &str, cards: &HashMap<u32, CardId>| {
             orders::to_card_ids(parser.as_ref(), text, cards).ok()
         };
         Ok((|| {
             Some((
-                tokenize(&base.data, &base_cards)?,
-                tokenize(&local.data, &local_cards)?,
-                tokenize(&remote.data, &remote_cards)?,
+                tokenize(&base.data, &maps.base)?,
+                tokenize(&local.data, &maps.local)?,
+                tokenize(&remote.data, &maps.remote)?,
             ))
         })())
     }
