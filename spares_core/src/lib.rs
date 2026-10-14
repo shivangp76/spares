@@ -9,6 +9,7 @@ pub mod parsers;
 pub mod schedulers;
 pub mod schema;
 pub mod search;
+pub mod sync;
 
 use miette::Diagnostic;
 use miette::SourceSpan;
