@@ -60,6 +60,15 @@ spares() { (cd "$REPO" && RUSTFLAGS=-Awarnings cargo run --quiet --bin spares --
 # since `awk -v` would interpret its backslashes.
 SYNC_HEADER='^[[:space:]]*\[sync\][[:space:]]*(#.*)?$'
 
+# This machine's time zone, e.g. America/New_York, which the server is set to so that both count
+# days the same. Nothing if it cannot be told.
+local_timezone() {
+  local zone
+  zone="$(readlink /etc/localtime 2>/dev/null)" || return 0
+  [[ "$zone" == */zoneinfo/* ]] && echo "${zone#*/zoneinfo/}"
+  return 0
+}
+
 # A string key of the [sync] table of config.toml, or nothing.
 config_value() {
   [[ -f "$CONFIG_FILE" ]] || return 0
@@ -175,7 +184,7 @@ note_counts() {
 }
 
 init() {
-  local server="" user="$USER" domain="" no_latex=false
+  local server="" user="$USER" domain="" no_latex=false timezone
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --user) user="$2"; shift 2 ;;
@@ -212,6 +221,8 @@ init() {
   local args=(--user "$user" --data-dir "$DATA_DIR" --local-home "$HOME" --bundle /tmp/spares-bundle.tar.gz)
   if [[ -n "$domain" ]]; then args+=(--domain "$domain"); else args+=(--tailscale); fi
   [[ "$no_latex" == true ]] && args+=(--no-latex)
+  timezone="$(local_timezone)"
+  if [[ -n "$timezone" ]]; then args+=(--timezone "$timezone"); else warn "Could not tell this machine's time zone, so the server keeps its own."; fi
   upload "$REPO/scripts/setup_vps.sh" "$bundle" "root@$server:/tmp/"
   rm -rf "$(dirname "$bundle")"
   remote -t "root@$server" bash /tmp/setup_vps.sh "${args[@]}" \
@@ -360,15 +371,17 @@ update() {
   local remote_host
   remote_host="$(config_value remote_host)"
   [[ -n "$remote_host" ]] || die "sync.remote_host is not set in $CONFIG_FILE. Run \`$0 init\` first."
-  local no_latex bundle
+  local no_latex bundle timezone
   no_latex="$(remote "$remote_host" "sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf")"
   bundle="$(mktemp -d)/spares-bundle.tar.gz"
   build_bundle "$remote_host" "$bundle" "$([[ "$no_latex" == true ]] && echo false || echo true)"
   bold "Updating $remote_host"
   upload "$REPO/scripts/setup_vps.sh" "$bundle" "$remote_host:/tmp/"
   rm -rf "$(dirname "$bundle")"
+  # Kept in step with this machine's, e.g. after moving
+  timezone="$(local_timezone)"
   # shellcheck disable=SC2016 # expanded there
-  remote -t "$remote_host" 'sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz;
+  remote -t "$remote_host" "sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz${timezone:+ --timezone $(printf %q "$timezone")};"'
     status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status'
   echo "Restart spares_serve here too, so both sides run the same version."
 }
