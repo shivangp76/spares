@@ -707,6 +707,21 @@ mod tests {
     }
 
     #[test]
+    fn migrate_parses() {
+        assert!(Cli::try_parse_from(["spares", "migrate", "--adapter", "anki"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "migrate"]).is_err());
+        let cli = Cli::try_parse_from(["spares", "migrate", "ids", "--dry-run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Migrate(MigrateArgs {
+                command: Some(crate::migrate::MigrateCommands::Ids { dry_run: true }),
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["spares", "migrate", "ids"]).is_ok());
+    }
+
+    #[test]
     fn parser_edit_requires_name() {
         assert!(Cli::try_parse_from(["spares", "parser", "edit", "1"]).is_err());
         assert!(Cli::try_parse_from(["spares", "parser", "edit", "1", "--name", "x"]).is_ok());

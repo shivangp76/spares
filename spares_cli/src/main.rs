@@ -8,6 +8,7 @@ mod import;
 mod keyword;
 mod link;
 mod migrate;
+mod migrate_ids;
 mod note;
 mod notes_vcs;
 mod parser;
@@ -72,10 +73,23 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             Ok(())
         }
         Commands::Migrate(migrate::MigrateArgs {
+            command: Some(migrate::MigrateCommands::Ids { dry_run }),
+            ..
+        }) => {
+            migrate_ids::migrate_ids(
+                &env_config.database_url,
+                &env_config.socket_address,
+                dry_run,
+            )
+            .await
+        }
+        Commands::Migrate(migrate::MigrateArgs {
+            command: None,
             adapter: adapter_string,
             initial_migration,
             dry_run,
         }) => {
+            let adapter_string = adapter_string.ok_or_else(|| miette!("--adapter is required"))?;
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
             let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())

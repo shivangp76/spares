@@ -8,6 +8,12 @@ A note contains information about one topic. A card is a note with some informat
 
 See <https://docs.rs/spares/latest/spares/spares/parsers/struct.NoteSettings.html> for a full list of note settings.
 
+### Note ids
+
+Notes are named by short lowercase letter ids, such as `gir`, which also name their files (`typst/gir.typ`). Ids sort in creation order, and notes created together get ids next to each other. Ids are accepted in any case. Notes created on the web server get one more letter, starting with `z` after their block (`giza`). Numeric ids from before `spares migrate ids` are listed in `id-map.tsv` in the data directory.
+
+The server needs `SPARES_REPLICA` (`0` on the laptop, `1` on the server) and `SPARES_SYNC_ROLE` (`client` on the laptop, `server` on the server).
+
 ## Clozes
 
 Clozes are added to parts of a note to create a card. They are used to omit certain parts of a note and the remaining parts will be used as a prompt for recall. Note that multiple clozes can be used in a single card if the information is spread out.

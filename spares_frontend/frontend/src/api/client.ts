@@ -642,3 +642,14 @@ export async function getNoteLinks(scoreThreshold: number): Promise<NoteLink[]> 
     body: JSON.stringify({ score_threshold: scoreThreshold }),
   });
 }
+
+// Offline copies made before note ids became letters (`spares migrate ids`) point at rendered files
+// that were renamed, so they are dropped once. Actions yet to be synced are kept: they refer to
+// cards, whose ids did not change.
+const OFFLINE_FORMAT_KEY = 'spares_offline_format';
+const OFFLINE_FORMAT = 'letter-note-ids';
+if (localStorage.getItem(OFFLINE_FORMAT_KEY) !== OFFLINE_FORMAT) {
+  clearOfflineCopies()
+    .then(() => localStorage.setItem(OFFLINE_FORMAT_KEY, OFFLINE_FORMAT))
+    .catch(console.error);
+}
