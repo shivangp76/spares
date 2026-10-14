@@ -472,15 +472,15 @@ The repo already had `scripts/setup_vps.sh`, an idempotent script that installs 
 
 `spares sync cloud` copies the laptop's `config.toml` to the server (`server_config`): the same settings, so reviews on the phone are scheduled alike, without `remote_host`, `sync_url`, `sync_interval_minutes` and `remote_rendered_dir`, and with `render_browser_parsers = false`.
 
-**When the VPS arrives** (e.g. Vultr's 512 MB IPv6-only plan, $2.50/mo):
-1. Install Tailscale on the laptop and the phone, logged in to one account. Install zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`).
-2. If the laptop has no IPv6 and the server is IPv6-only: run `scripts/deploy_vps.sh cloud-init`, put a Tailscale auth key in it, and paste it into the provider's cloud-init field when creating the server.
-3. Create a Debian 13 VPS, then run `scripts/deploy_vps.sh init spares --no-latex` (or `init <IP>` with an SSH key).
-4. On the phone, open the URL it prints and log in with the API key.
+**Setting it up:** `docs/src/deploying.md` has every step, including Vultr's. It was deployed on Vultr's 512 MB IPv6-only plan ($2.50/mo) on 2026-10-14. That first run found and fixed:
+- `tailscale serve` waiting, with its output hidden, for HTTPS to be enabled on the tailnet;
+- the CLI and `deploy_vps.sh` not sending the local server's own API key;
+- `spares sync cloud` copying files that aren't spares' from shared render directories (picked by a leading digit, which letter note ids no longer have), and the dependencies recorded by deleted notes;
+- `setup_vps.sh` creating `~/.local` as root.
 
 ### Open issues
 - **pandoc/latexmk:** installed unless `--no-latex`, so markdown and LaTeX notes edited on the phone render on the server.
-- **Untested on a real VPS.** The bundle build was checked on the laptop (a glibc ≥ 2.30 x86_64 binary), not run on Linux.
+- `update` has not been run on the real server yet, only `init`.
 
 ## 11. Delivery order (one commit each)
 1. ID newtype, allocator and `spares migrate ids`. Done, then `next_ids` for the other tables.
