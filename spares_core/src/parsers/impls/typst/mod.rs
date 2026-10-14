@@ -15,6 +15,7 @@ use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::config::get_cache_dir;
 use crate::config::is_test_mode;
+use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -99,6 +100,14 @@ impl Parseable for TypstParser {
         let cloze_start = "#cl[".to_string();
         let cloze_end = format!("]{}", cloze_settings_string_with_delim);
         (cloze_start, cloze_end)
+    }
+
+    fn typed_answer_text(&self, text: &str) -> String {
+        // `#link("url")[text]` keeps its text. Then emphasis, raw and math markers are removed.
+        let links_regex =
+            get_or_compile_regex(r#"#link\((?:[^()"]|"[^"]*")*\)\[([^\]]*)\]"#).unwrap();
+        let text = links_regex.replace_all(text, "$1");
+        text.replace(['*', '_', '`', '$'], "")
     }
 
     fn construct_setting(&self, data: &str) -> String {

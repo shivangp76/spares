@@ -117,6 +117,14 @@ impl Parseable for MarkdownParser {
         (cloze_start, cloze_end)
     }
 
+    fn typed_answer_text(&self, text: &str) -> String {
+        // Links and images (`[text](url)`, `![alt](path)`) and spans (`[text]{.class}`) keep their
+        // text. Then emphasis and code markers are removed.
+        let links_regex = get_or_compile_regex(r"!?\[([^\]]*)\](?:\([^)]*\)|\{[^}]*\})").unwrap();
+        let text = links_regex.replace_all(text, "$1");
+        text.replace(['*', '_', '`'], "")
+    }
+
     fn construct_setting(&self, data: &str) -> String {
         format!("<!--- # {data} --->\n")
     }
