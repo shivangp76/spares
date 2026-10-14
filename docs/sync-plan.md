@@ -1,6 +1,6 @@
 # Two-way sync for spares: design plan
 
-Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) is implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
+Status: in progress. Section 4 (ids, including `spares migrate ids` and `next_ids` for the other tables) and section 5 (change tracking) are implemented. Last updated 2026-10-14. Problems found in a review on 2026-10-03 (checked against the code and the real DB, read-only) are listed under **Open issues** at the end of the section they affect.
 
 ## 1. Goal and context
 
@@ -290,34 +290,30 @@ Open the web app online beforehand, so the phone sends its offline queue.
   - no `inh:` references and no tag queries;
   - 45 events.
 
-## 5. Schema changes (migration `2026100xxxxx_sync.up.sql`)
-- **Change tracking:** add `usn INTEGER NOT NULL DEFAULT -1` to `parser`, `tag`, `note`, `card` and `review_log` (`-1` = changed and not yet synced).
-- **`grave(oid INTEGER, kind INTEGER, usn INTEGER, PRIMARY KEY(oid, kind))`:** IDs deleted on this side and not yet synced. Triggers fill it, so app code never touches it.
+## 5. Schema changes (migration `20261014130000_sync`, implemented)
+- **Change tracking:** `usn INTEGER NOT NULL DEFAULT -1` on `parser`, `tag`, `note`, `card` and `review_log` (`-1` = changed and not yet synced). The default makes new rows dirty without a trigger.
+- **`grave(oid, kind TEXT, usn, PRIMARY KEY(oid, kind))`:** IDs deleted on this side and not yet synced. `kind` is the table name. Triggers fill it, so app code never touches it.
   - **Why it's needed:** the sync only exchanges changed rows, and a deleted row no longer exists. Without a grave, "deleted over there" looks the same as "never synced yet", and the deleted row would come back.
   - Alternatives were rejected. Soft deletes would mean `deleted_at IS NULL` in every query. Diffing all IDs still needs the same "was it ever synced" information.
-- **`sync_base(kind, oid, snapshot JSON, PRIMARY KEY(kind, oid))`:** the last synced version of a row. It holds:
-  - for a note: its data, tags, keywords and links;
-  - for a card: its fields and tags.
-- **`sync_conflict(id, note_id, local JSON, remote JSON, created_at)`:** unresolved conflicts.
+  - Inserting a row under an ID that has a grave (undo of a delete, redo of a create) removes the grave.
+- **`sync_base(kind, oid, snapshot JSON, PRIMARY KEY(kind, oid))`:** the last synced version of a row, taken on its first change or delete after a sync. It holds:
+  - for a note: its data, custom data, parser, tag IDs and the keywords not embedded in the text;
+  - for a card: its fields and tag IDs.
+  - The views `sync_note_snapshot` and `sync_card_snapshot` build the same JSON for the current rows.
+- **`sync_conflict(id, note_id, base, local, remote, created_at)`:** unresolved conflicts.
+- **`sync_client(replica, last_usn, last_sync_at)`** (server only): the last sync of each client, to catch a client restored from a backup.
+- **`sync_applying`:** holds one row while sync applies remote changes, inside its own transaction, which turns every trigger off (see `sync::set_applying`). A trigger can't read a TEMP table, so this is a regular table; the row is never committed.
 - **Triggers,** so no write path can be missed:
-  - `AFTER UPDATE` on parser, tag, note and card when `NEW.usn = OLD.usn`. The sync code itself writes an explicit `usn`, which skips the trigger. Two steps:
-    1. If `OLD.usn != -1` (first edit since the sync), snapshot the old row into `sync_base`.
-    2. Set `usn = -1` and `updated_at = now`.
-  - `AFTER INSERT`/`DELETE` on `note_tag`, `note_keyword`, `note_link` and `card_tag`: snapshot the base if needed, then mark the parent dirty.
-  - `AFTER DELETE` on parser, tag, note and card: insert a grave.
+  - `AFTER UPDATE` on parser, tag, note and card, when a synced column changed (not `updated_at` alone) and the row isn't dirty yet: snapshot the old row into `sync_base`, then set `usn = -1`. They don't touch `updated_at`, which review snapshot tags use to decide whether to rebuild.
+  - `BEFORE INSERT`/`DELETE` on `note_tag`, `card_tag` and the non-embedded rows of `note_keyword`: snapshot the parent while it still has the old children, then mark it dirty.
+    - When the parent or the tag is being deleted, the cascade runs after that row is gone (tested with `sqlite3`), so the triggers skip it: deleting a tag doesn't mark every note that had it.
+  - `note_link` and embedded keywords aren't tracked. They are derived from the text and rebuilt where a note is applied.
+  - `BEFORE DELETE` on parser, tag, note and card: snapshot the row (with its tags, which a cascade would remove) if it was synced. `AFTER DELETE`: insert a grave. Keeping the base of deleted rows lets the merge know which card each order in a note's synced text named.
 - **`app_state` keys:**
   - `sync_usn`: on the server, its counter; on the client, the server's counter at the last sync.
   - `last_sync_at`, `last_sync_event_id`, `needs_full_sync`.
 
-### Open issues: the triggers don't work as written
-- **Child-table triggers snapshot the wrong version.** The base snapshot from the child-table triggers (`note_tag`, keywords, links) is taken in `AFTER INSERT/DELETE`, so it records the tags after the change, not the base. These need `BEFORE` triggers.
-- **Sync can't turn the triggers off while it applies remote changes.**
-  - The `NEW.usn = OLD.usn` trick only covers parent rows.
-  - Child tables have no `usn`, so inserting remote tags marks the note dirty again and overwrites its `sync_base`.
-  - Applying remote deletes creates local graves.
-  - Fix: a sync-mode flag, for example a TEMP table checked in each trigger's `WHEN`.
-- **Foreign-key cascades fire child triggers** (tested with `sqlite3`). Deleting one tag marks every note that has it as dirty.
-- **`parser` and `review_log` have no `updated_at` column,** so the trigger as written fails on `parser`.
+The open issues found in the review (child snapshots taken after the change, no way to turn the triggers off, cascades marking every note, `parser` having no `updated_at`) are fixed as described above.
 
 ## 6. Sync engine: `spares_core/src/sync/` (pure DB logic)
 
