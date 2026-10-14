@@ -139,6 +139,7 @@ fn test_get_cards_image_occlusion_1() {
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
+                    type_answer: None,
                     inherit: None,
                     cloze_uid: None,
                     data: vec![
@@ -156,6 +157,7 @@ fn test_get_cards_image_occlusion_1() {
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
+                    type_answer: None,
                     inherit: None,
                     cloze_uid: None,
                     data: vec![
@@ -173,6 +175,7 @@ fn test_get_cards_image_occlusion_1() {
                     back_reveal: BackReveal::FullNote,
                     back_emphasis: false,
                     back_type: BackType::NoteFilePath,
+                    type_answer: None,
                     inherit: None,
                     cloze_uid: None,
                     data: vec![
@@ -298,6 +301,7 @@ fn test_get_cards_image_occlusion_2() {
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
         back_type: BackType::NoteFilePath,
+        type_answer: None,
         inherit: None,
         cloze_uid: None,
         data: vec![
@@ -475,6 +479,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis,
             back_type: BackType::CardFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -509,6 +514,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis,
             back_type: BackType::CardFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -719,6 +725,7 @@ fn test_get_cards_image_occlusion_grouping() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -741,6 +748,7 @@ fn test_get_cards_image_occlusion_grouping() {
             back_reveal: BackReveal::OnlyAnswered,
             back_emphasis: false,
             back_type: BackType::CardFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -833,6 +841,7 @@ fn test_image_occlusion_parallel_performance() {
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
         back_type: BackType::NoteFilePath,
+        type_answer: None,
         inherit: None,
         cloze_uid: None,
         data: image_occlusions

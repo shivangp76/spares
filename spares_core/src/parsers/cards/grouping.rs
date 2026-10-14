@@ -146,6 +146,7 @@ pub(super) fn group_clozes(
 
 /// Boil up settings to first cloze within the grouping.
 /// Note that clozes in the same grouping can have different settings for convenience. Rather than be forced to copy and paste the settings for all clozes, they can be declared on each cloze where subsequent clozes override the previous one.
+#[expect(clippy::too_many_lines)]
 pub(super) fn boil_up_settings(
     cards_raw: &mut Vec<Vec<(ClozeData, ClozeGroupingSettings)>>,
     data: &str,
@@ -159,6 +160,7 @@ pub(super) fn boil_up_settings(
                 d.data.front_conceal,
                 d.data.back_reveal,
                 d.data.back_emphasis,
+                None,
             )
         });
         let mut boiled_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
@@ -168,6 +170,7 @@ pub(super) fn boil_up_settings(
                     d.data.front_conceal,
                     d.data.back_reveal,
                     d.data.back_emphasis,
+                    None,
                 )
             });
             let default_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
@@ -182,6 +185,7 @@ pub(super) fn boil_up_settings(
                 front_conceal,
                 back_reveal,
                 back_emphasis,
+                type_answer,
                 // Individual cloze settings. Don't boil up
                 hidden_no_answer: _,
                 skip_serialization,
@@ -222,6 +226,10 @@ pub(super) fn boil_up_settings(
                 boiled_cloze_settings.back_emphasis = *back_emphasis;
                 grouping_settings.back_emphasis = default_cloze_settings.back_emphasis;
             }
+            if *type_answer != default_cloze_settings.type_answer {
+                boiled_cloze_settings.type_answer = *type_answer;
+                grouping_settings.type_answer = default_cloze_settings.type_answer;
+            }
             if inherit.is_some() {
                 boiled_cloze_settings.inherit = *inherit;
                 grouping_settings.inherit = None;
@@ -239,6 +247,7 @@ pub(super) fn boil_up_settings(
         cloze.1.front_conceal = boiled_cloze_settings.front_conceal;
         cloze.1.back_reveal = boiled_cloze_settings.back_reveal;
         cloze.1.back_emphasis = boiled_cloze_settings.back_emphasis;
+        cloze.1.type_answer = boiled_cloze_settings.type_answer;
         cloze.1.inherit = boiled_cloze_settings.inherit;
 
         // Validate settings
@@ -392,6 +401,7 @@ pub(super) fn modify_card_settings(
                     d.data.front_conceal,
                     d.data.back_reveal,
                     d.data.back_emphasis,
+                    None,
                 )
             });
             let cloze_settings_string = construct_cloze_string(

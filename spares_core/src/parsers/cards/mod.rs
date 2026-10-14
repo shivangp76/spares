@@ -6,6 +6,7 @@ use overlapper::apply_overlapper_groupings;
 use super::BackReveal;
 use super::BackType;
 use super::FrontConceal;
+use super::TypeAnswer;
 use crate::Error;
 use crate::LibraryError;
 use crate::helpers::merge_by_key;
@@ -71,6 +72,7 @@ pub fn get_cards(
             FrontConceal::default(),
             BackReveal::default(),
             DEFAULT_BACK_EMPHASIS,
+            None,
         ),
         None,
         false,
@@ -86,7 +88,7 @@ pub fn get_cards_main(
     data: String,
     add_order: bool,
     move_files: bool,
-    defaults: (FrontConceal, BackReveal, bool),
+    defaults: (FrontConceal, BackReveal, bool, Option<TypeAnswer>),
     overlapper: Option<&OverlapperConfig>,
     // When true, ephemeral settings like `inh:` are serialized; `id:` is always serialized.
     serialize_ephemeral: bool,
@@ -290,6 +292,7 @@ pub fn get_cards_main(
             front_conceal,
             back_reveal,
             back_emphasis,
+            type_answer,
             skip_serialization: _,
         } = &clozes
             .iter()
@@ -443,6 +446,7 @@ pub fn get_cards_main(
                 back_reveal: *back_reveal,
                 back_emphasis: *back_emphasis,
                 back_type: BackType::from_back_reveal(back_reveal, groupings_count, *back_emphasis),
+                type_answer: *type_answer,
                 // WORKAROUND: To reduce complexity, `inherit` only applies to the first (forward) card. For `r:` clozes that produce both a forward and backward card, the backward card starts fresh. If we wanted to implement it for the backwards card as well, we would need modify the syntax of `inh:` and also add a key to `ClozeGroupingSettings` which is already a large struct.
                 inherit: if is_first_direction { *inherit } else { None },
                 cloze_uid: *cloze_uid,
@@ -562,6 +566,7 @@ pub fn add_order_to_note_data(
             FrontConceal::default(),
             BackReveal::default(),
             DEFAULT_BACK_EMPHASIS,
+            None,
         ),
         overlapper,
         false,
@@ -652,6 +657,7 @@ fn build_cli_cards(
                 back_reveal: BackReveal::default(),
                 back_emphasis: DEFAULT_BACK_EMPHASIS,
                 back_type: BackType::Cli,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: cli_data.id,
                 data: note_parts.clone(),

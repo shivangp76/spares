@@ -763,7 +763,7 @@ pub fn get_clozes_from_svg_str(
                 current_grouping_number,
                 &note_settings_keys,
                 &cloze_settings_keys,
-                Some((front_conceal, back_reveal, back_emphasis)),
+                Some((front_conceal, back_reveal, back_emphasis, None)),
             )
         })
         .collect::<Result<Vec<_>, _>>()?

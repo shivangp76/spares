@@ -31,6 +31,7 @@ fn test_get_cards_basic_1_markdown() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -58,6 +59,7 @@ fn test_get_cards_basic_1_markdown() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -92,6 +94,7 @@ fn test_get_cards_add_order_1() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -144,6 +147,7 @@ fn test_get_cards_order() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -177,6 +181,7 @@ fn test_get_cards_hint() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -210,6 +215,7 @@ fn test_get_cards_hidden_1() {
             back_reveal: BackReveal::FullNote,
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
+            type_answer: None,
             inherit: None,
             cloze_uid: None,
             data: vec![
@@ -256,6 +262,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -281,6 +288,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
@@ -306,6 +314,7 @@ fn test_get_cards_hidden_3() {
                 back_reveal: BackReveal::FullNote,
                 back_emphasis: false,
                 back_type: BackType::NoteFilePath,
+                type_answer: None,
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
