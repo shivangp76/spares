@@ -42,6 +42,17 @@ pub enum Error {
     /// A `git push` into spares holds the notes lock, so note changes cannot be made right now.
     #[error("a git push into spares is in progress; retry shortly")]
     NotesVcsBusy,
+    /// Sync failed. Nothing was committed on this side.
+    #[error("Sync failed: {0}")]
+    Sync(String),
+    /// The other replica changed while syncing, so the sync has to start over. Nothing was
+    /// committed on the side that returns it.
+    #[error("The other replica changed during the sync; retry")]
+    SyncRetry,
+    /// The replicas can no longer be merged change by change. One side has to replace the other's
+    /// database (`spares sync cloud --full-upload` or `--full-download`).
+    #[error("A full sync is required: {0}")]
+    FullSyncRequired(String),
     // #[error("{0}")]
     // Other(String),
 }
