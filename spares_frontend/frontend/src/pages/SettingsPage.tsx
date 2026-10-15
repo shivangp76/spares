@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { setShowReviewTimer, setVimKeybindings, useShowReviewTimer, useVimKeybindings } from '../preferences';
-import { setThemePreference, useThemePreference, type ThemePreference } from '../theme';
+import {
+  setThemePreference, setTypstThemePreference, useThemePreference, useTypstThemePreference,
+  type ThemePreference, type TypstThemePreference,
+} from '../theme';
 import { sectionLabel } from '../utils';
 
 const THEMES: { value: ThemePreference; label: string }[] = [
@@ -12,11 +15,18 @@ const THEMES: { value: ThemePreference; label: string }[] = [
   { value: 'system', label: 'System Preference' },
 ];
 
+const TYPST_THEMES: { value: TypstThemePreference; label: string }[] = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'interface', label: 'Same as Interface' },
+];
+
 /** Settings kept in this browser. */
 export default function SettingsPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
   const theme = useThemePreference();
+  const typstTheme = useTypstThemePreference();
   const showReviewTimer = useShowReviewTimer();
   const vimKeybindings = useVimKeybindings();
 
@@ -45,6 +55,27 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>
+        <legend style={{ ...sectionLabel, padding: 0 }}>Typst Cards</legend>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          {TYPST_THEMES.map(({ value, label }) => (
+            <label key={value} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="typst-theme"
+                value={value}
+                checked={typstTheme === value}
+                onChange={() => setTypstThemePreference(value)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Also set by the Dark/Light button on each card. Dark inverts the page&apos;s colours, images included.
+        </p>
       </fieldset>
 
       <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>

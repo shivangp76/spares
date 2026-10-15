@@ -56,13 +56,34 @@ export function useResolvedTheme(): 'light' | 'dark' {
   });
 }
 
-// Typst pages are shown in the interface's theme unless toggled. The toggle is shared by every
-// viewer, so it carries over to the back of the card and the next ones, until the page reloads.
-const TYPST_CHANGE_EVENT = 'spares-typst-theme-change';
-let typstThemeOverride: 'light' | 'dark' | null = null;
+export type TypstThemePreference = 'light' | 'dark' | 'interface';
 
-export function setTypstTheme(theme: 'light' | 'dark'): void {
-  typstThemeOverride = theme;
+// Typst pages are shown in the interface's theme unless the Settings page or a viewer's toggle
+// picks one. Either is remembered, and is shared by every viewer.
+const TYPST_STORAGE_KEY = 'spares_typst_theme';
+const TYPST_CHANGE_EVENT = 'spares-typst-theme-change';
+
+export function getTypstThemePreference(): TypstThemePreference {
+  try {
+    const stored = localStorage.getItem(TYPST_STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') return stored;
+  } catch {
+    // Without storage the preference can't be remembered, so the interface's theme is used
+  }
+  return 'interface';
+}
+
+// Also kept in memory, so the toggle still works for this page load without storage
+let typstPreference = getTypstThemePreference();
+
+export function setTypstThemePreference(preference: TypstThemePreference): void {
+  typstPreference = preference;
+  try {
+    if (preference === 'interface') localStorage.removeItem(TYPST_STORAGE_KEY);
+    else localStorage.setItem(TYPST_STORAGE_KEY, preference);
+  } catch {
+    // The preference still applies for this page load
+  }
   window.dispatchEvent(new Event(TYPST_CHANGE_EVENT));
 }
 
@@ -71,8 +92,13 @@ function subscribeTypst(onChange: () => void): () => void {
   return () => window.removeEventListener(TYPST_CHANGE_EVENT, onChange);
 }
 
+export function useTypstThemePreference(): TypstThemePreference {
+  return useSyncExternalStore(subscribeTypst, () => typstPreference);
+}
+
 /** The theme Typst pages are shown in. */
 export function useTypstTheme(): 'light' | 'dark' {
   const resolved = useResolvedTheme();
-  return useSyncExternalStore(subscribeTypst, () => typstThemeOverride) ?? resolved;
+  const preference = useTypstThemePreference();
+  return preference === 'interface' ? resolved : preference;
 }
