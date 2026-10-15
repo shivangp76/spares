@@ -64,7 +64,8 @@ struct QueueRow {
 ///
 /// Like [`get_review_card`](crate::api::review::get_review_card), cards are those due by the end
 /// of the day, plus those due on the next `days_ahead` days. New and review cards are capped by
-/// what is left of today's limits, since the client cannot know tomorrow's.
+/// what is left of today's limits, since the client cannot know tomorrow's. Learning cards are
+/// included whenever they are due, regardless of the learn ahead limit.
 pub async fn get_review_queue(
     db: &SqlitePool,
     ReviewQueueRequest {
@@ -84,7 +85,8 @@ pub async fn get_review_queue(
         is_filtered_tag,
         card_due_limit,
         caps,
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date).await?
+        ..
+    }) = build_review_filter_query(db, filter.as_ref(), requested_date, false).await?
     else {
         return Ok(ReviewQueueResponse {
             cards: Vec::new(),

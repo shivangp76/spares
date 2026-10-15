@@ -4,6 +4,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use audio::AudioPlayer;
+use chrono::DateTime;
+use chrono::Local;
 use chrono::Utc;
 use clap::Args;
 use inquire::MultiSelect;
@@ -161,7 +163,54 @@ enum ReviewAction {
     Exit,
 }
 
+/// The next card to review, opened. When only learning cards held back by the learn ahead limit
+/// are left, waits until the next can be shown, unless the user ends the session with Ctrl-C.
+/// `None` once there is nothing left to review today.
 async fn get_review_card(
+    filter_args: &FilterArgs,
+    open_command: Option<&str>,
+    base_url: &str,
+    client: &Client,
+    first: bool,
+) -> Result<Option<(GetReviewCardResponse, Option<Child>)>, String> {
+    loop {
+        if let Some(card) =
+            fetch_review_card(filter_args, open_command, base_url, client, first).await?
+        {
+            return Ok(Some(card));
+        }
+        let filter = filter_args_to_filter(filter_args, base_url, client).await?;
+        let response = client
+            .post(format!("{base_url}/api/review/next-available"))
+            .json(&GetReviewCardRequest { filter })
+            .send()
+            .await
+            .map_err(|e| format!("{e}"))?;
+        if response.status() != StatusCode::OK {
+            return Err(format!(
+                "Failed to get when the next card can be reviewed: {}",
+                response.text().await.unwrap_or_default()
+            ));
+        }
+        let available_at: Option<DateTime<Utc>> =
+            response.json().await.map_err(|e| format!("{e}"))?;
+        let Some(available_at) = available_at else {
+            return Ok(None);
+        };
+        let wait = available_at - Utc::now();
+        println!(
+            "Learning cards are due later today. The next can be shown at {} (in {}). Waiting for it, press Ctrl-C to end the session.",
+            available_at.with_timezone(&Local).format("%H:%M:%S"),
+            format_duration(wait.max(chrono::Duration::seconds(1))),
+        );
+        tokio::select! {
+            () = tokio::time::sleep(wait.to_std().unwrap_or_default()) => {}
+            _ = tokio::signal::ctrl_c() => return Ok(None),
+        }
+    }
+}
+
+async fn fetch_review_card(
     filter_args: &FilterArgs,
     open_command: Option<&str>,
     base_url: &str,
