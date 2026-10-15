@@ -49,6 +49,7 @@ See our [Getting Started Guide](https://github.com/shivangp76/spares/blob/main/d
 - [Concepts](https://github.com/shivangp76/spares/blob/main/docs/src/concepts.md)
 - [Workflows](https://github.com/shivangp76/spares/blob/main/docs/src/workflows.md)
 - [Comparison with Anki](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md)
+- API docs, with every setting and how each part works: `cargo doc --workspace --no-deps --document-private-items --open`
 
 ## Contributing
 

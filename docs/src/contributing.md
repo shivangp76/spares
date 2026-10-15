@@ -29,10 +29,20 @@ cargo clippy
 
 ## Documentation
 
-- Keep documentation up to date with your changes
-- Add comments for complex logic
-- Update the relevant documentation files
-- Follow the existing documentation style
+Document things where they are implemented, so the docs change with the code:
+
+- Settings: on their fields in `config.toml`'s structs (`spares_core::config`), and note and cloze settings on `NoteSettings`, `ClozeSettings` and `ClozeGroupingSettings`.
+- Syntax and behavior of a feature, and the reasons for a design: in the module docs of the code that implements it, e.g. `spares_core::sync` and `spares_core::ids`.
+- Command-line options: in the doc comments of the clap structs, which become `spares <command> --help`.
+- Work that is planned but not done: in a plan file in `docs/`, such as `docs/queue_plan.md` and `docs/sync_plan.md`.
+
+The manual in `docs/src` is for guides that walk through several parts at once, and for self-contained pages like the comparison with Anki. It points to the API docs for details, which are built with:
+
+```sh
+cargo doc --workspace --no-deps --document-private-items --open
+```
+
+Many documented modules are private to their crate, so `--document-private-items` is needed to see them. Tag non-Rust code blocks in doc comments (` ```md `, ` ```toml `, ` ```sh `, ` ```text `), or `cargo test` runs them as Rust doctests.
 
 ## Submitting Changes
 
@@ -54,7 +64,6 @@ cargo clippy
 ## Issue Reporting
 
 When reporting issues:
-- Use the issue template
 - Provide detailed steps to reproduce
 - Include relevant logs or error messages
 - Specify your environment (OS, Rust version, etc.)
@@ -66,10 +75,6 @@ For feature requests:
 - Describe your proposed solution
 - Provide use cases or examples
 - Consider potential impacts on existing features
-
-## Code of Conduct
-
-Please review and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Questions?
 
