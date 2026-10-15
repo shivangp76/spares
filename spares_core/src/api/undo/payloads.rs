@@ -11,6 +11,7 @@ use crate::model::NoteId;
 use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::model::StateId;
+use crate::model::Tag;
 use crate::model::TagId;
 use crate::parsers::BackType;
 
@@ -214,6 +215,18 @@ pub struct ForgetCardPayload {
 pub struct RateCardPayload {
     pub review_log_id: i64,
     pub card: UpdateCardPayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_tag: Option<FilteredTagExit>,
+}
+
+/// A card leaving the filtered tag that its review finished, kept so undo can put it back.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FilteredTagExit {
+    pub tag_id: TagId,
+    /// The tag itself, when the card was the last one in an auto-delete tag and the tag was
+    /// deleted with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_tag: Option<Tag>,
 }
 
 /// Payload for `UnrateCard` and `UnforgetCard`, the undos of `RateCard` and `ForgetCard`.
@@ -224,6 +237,9 @@ pub struct RateCardPayload {
 pub struct UnreviewPayload {
     pub review_log: ReviewLog,
     pub card: UpdateCardPayload,
+    /// Carried from `RateCardPayload::left_tag`; always `None` for `UnforgetCard`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_tag: Option<FilteredTagExit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

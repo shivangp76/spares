@@ -24,6 +24,8 @@ use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
+use crate::api::review::leave_filtered_tag;
+use crate::api::review::rejoin_filtered_tag;
 use crate::api::undo::invert_payload::create_undo_event;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateParserPayload;
@@ -483,7 +485,12 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
         // (create_undo_event swapped it). Their `review_log` rows were handled while inverting.
         EventType::RateCard => {
             let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let card_id = payload.card.card_id;
             update_card_event(db, vec![payload.card], false).await?;
+            if let Some(left_tag) = payload.left_tag {
+                leave_filtered_tag(db, card_id, left_tag.tag_id, left_tag.deleted_tag.is_some())
+                    .await?;
+            }
         }
         EventType::ForgetCard => {
             let payload: ForgetCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
@@ -491,7 +498,11 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
         }
         EventType::UnrateCard | EventType::UnforgetCard => {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
+            let card_id = payload.card.card_id;
             update_card_event(db, vec![payload.card], false).await?;
+            if let Some(left_tag) = payload.left_tag {
+                rejoin_filtered_tag(db, card_id, &left_tag).await?;
+            }
         }
         EventType::UpdateCards
         | EventType::AdvanceCards

@@ -8,15 +8,21 @@ use crate::api::card::forget_card;
 use crate::api::card::unbury_cards;
 use crate::api::card::update_cards;
 use crate::api::review::submit_study_action;
+use crate::api::tag::create_tag;
+use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
 use crate::model::Card;
+use crate::model::CardId;
 use crate::model::SpecialState;
+use crate::model::TagId;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::SpecialStateUpdate;
 use crate::schema::card::UpdateCardsRequest;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
+use crate::schema::tag::CreateTagRequest;
+use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::UndoEventRequest;
 
 #[sqlx::test]
@@ -672,4 +678,153 @@ async fn e2e_undo_forget_card_deletes_review_log(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(markers_left, 0);
+}
+
+/// Creates a filtered tag holding every card, then rates `card_id` Easy under it, which finishes
+/// the card's run through the tag and removes it.
+async fn graduate_from_filtered_tag(
+    pool: &SqlitePool,
+    card_id: CardId,
+    auto_delete: bool,
+) -> TagId {
+    let tag = create_tag(
+        pool,
+        CreateTagRequest {
+            name: "filtered".to_string(),
+            description: String::new(),
+            query: Some("Hello".to_string()),
+            auto_delete,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(card_tag_ids(pool, card_id).await, vec![tag.id]);
+
+    submit_study_action(
+        pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 4,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: Some(tag.id),
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        card_tag_ids(pool, card_id).await.is_empty(),
+        "an Easy rating must finish the card's run through the filtered tag"
+    );
+    tag.id
+}
+
+async fn card_tag_ids(pool: &SqlitePool, card_id: CardId) -> Vec<TagId> {
+    sqlx::query_scalar("SELECT tag_id FROM card_tag WHERE card_id = ?")
+        .bind(card_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn tag_exists(pool: &SqlitePool, tag_id: TagId) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tag WHERE id = ?")
+        .bind(tag_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        > 0
+}
+
+#[sqlx::test]
+async fn e2e_undo_rate_card_restores_filtered_tag_membership(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    let tag_id = graduate_from_filtered_tag(&pool, card_id, false).await;
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        card_tag_ids(&pool, card_id).await,
+        vec![tag_id],
+        "undo RateCard must put the card back in the filtered tag it finished"
+    );
+
+    redo_event(
+        &pool,
+        RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        card_tag_ids(&pool, card_id).await.is_empty(),
+        "redo RateCard must remove the card from the filtered tag again"
+    );
+}
+
+#[sqlx::test]
+async fn e2e_undo_rate_card_restores_auto_deleted_filtered_tag(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    let tag_id = graduate_from_filtered_tag(&pool, card_id, true).await;
+    assert!(
+        !tag_exists(&pool, tag_id).await,
+        "an emptied auto-delete tag must be deleted"
+    );
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        tag_exists(&pool, tag_id).await,
+        "undo RateCard must restore the filtered tag it emptied"
+    );
+    assert_eq!(card_tag_ids(&pool, card_id).await, vec![tag_id]);
+
+    redo_event(
+        &pool,
+        RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(card_tag_ids(&pool, card_id).await, Vec::<TagId>::new());
+    assert!(
+        !tag_exists(&pool, tag_id).await,
+        "redo RateCard must delete the emptied tag again"
+    );
+
+    // The restored tag round-trips through another undo.
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(tag_exists(&pool, tag_id).await);
+    assert_eq!(card_tag_ids(&pool, card_id).await, vec![tag_id]);
 }
