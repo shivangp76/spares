@@ -253,8 +253,40 @@ impl BackReveal {
     }
 }
 
-/// How a typed answer is compared with the expected answer, set with the cloze key `t` (e.g.
-/// `t`, `t:ci,nc` or `t:m`).
+/// How a typed answer is compared with the expected answer, set with the cloze key `t`. The
+/// card's answer is then typed before flipping it, like Anki's `{{type:cloze:Text}}`:
+///
+/// ```md
+/// The capital of France is {{[t] Paris}}.
+/// ```
+///
+/// | Setting | Comparison |
+/// |---|---|
+/// | `t` | A character diff, exact. |
+/// | `t:ci` | A diff that ignores case. |
+/// | `t:nc` | A diff that ignores accents and other combining marks. |
+/// | `t:ci,nc` | Both. |
+/// | `t:m` | No diff: what you typed is shown next to the revealed answer, for you to judge. Use it when you rephrase, or for math or an image. |
+///
+/// - Like `be`, `t` applies to a grouping, so it can be set on any cloze of a card.
+/// - `<!--- # type-answer: ci --->` (`#se[type-answer: ci]` in Typst) applies it to all of a
+///   note's cards. A cloze's own `t` overrides it.
+/// - Each answer cloze of a card gets its own input box: `Blank 1`, `Blank 2`, … in reading order,
+///   with the cloze's hint as placeholder. Its answer is compared with that box alone, so an answer
+///   containing a comma, such as `Washington, D.C.`, is not ambiguous.
+/// - The expected answer is the cloze's text without its hint and markup (see
+///   [`crate::parsers::typed_answer`]). Emphasis, code, links and spans keep their text, and in
+///   Typst so does math (`#cl[$2x$][t]` expects `2x`). Nested clozes are part of the outer answer.
+///   A cloze without text, such as one holding only an image, gets no box. Audio links are not part
+///   of the answer, so `{{[t] [🔊](/m/x.mp3)}}` gets no box.
+/// - A reverse card (`r`) expects the rest of the note, so `t:m` suits it better.
+/// - On the back, "Compare manually" switches between the diff and what you typed. As in Anki, you
+///   always pick the rating yourself.
+/// - In the web app, the boxes are pinned to the bottom of the screen with the Check Answer button,
+///   so they stay in view however far the card is scrolled. Enter moves to the next box, and Enter
+///   in the last box (or Ctrl/Cmd+Enter in any) shows the answer. The boxes follow the Vim
+///   keybindings setting: with it on, a box starts in insert mode, Esc leaves for normal mode, and
+///   Enter still moves on in either mode. In `spares card review`, Esc skips the remaining boxes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TypeAnswer {

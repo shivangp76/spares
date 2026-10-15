@@ -1,5 +1,18 @@
 //! Images pasted or dropped into a note in the browser.
 //!
+//! Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown or
+//! `#image("/Users/me/media/cell.png")` in Typst. In the web app, paste or drop an image into a
+//! note's editor to insert it, from your files or from a web page. It is stored in `images` in the
+//! data directory, and inserted where it was pasted or dropped, in the note's syntax:
+//! - Markdown: `![](…)`
+//! - Typst: `#std.image("…", width: 80%)`
+//! - LaTeX: `\includegraphics[…]{…}`, or `\includesvg[…]{…}` for an SVG. Your template must load
+//!   the `graphicx` (or `svg`) package.
+//!
+//! Supported formats are png, jpg, jpeg, gif, webp, bmp and svg. A paste that also has text, such
+//! as cells copied from a spreadsheet, pastes the text. Like image occlusions made in the web app,
+//! uploaded images are stored on the server, not copied to your laptop.
+//!
 //! Notes refer to images by absolute path, so the browser cannot hand the server files of its own.
 //! Instead, it uploads the image, which is stored in the image directory, and inserts the
 //! returned snippet, which refers to the stored file.

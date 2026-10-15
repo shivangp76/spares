@@ -1,5 +1,31 @@
 //! # Image Occlusion
 //!
+//! An image occlusion is a block in a note, here with the "markdown" parser:
+//!
+//! ```md
+//! <!--- spares: start --->
+//!
+//! <!--- spares: note start --->
+//! # Brain
+//!
+//! This is a note about the brain.
+//!
+//! <!--- spares: image occlusion start --->
+//! <!--- original_image_filepath = "/misc/image_occlusions/brain.jpg" --->
+//! <!--- clozes_filepath = "/misc/image_occlusions/brain_clozes.jpg" --->
+//! <!--- spares: image occlusion end --->
+//!
+//! <!--- spares: note end --->
+//!
+//! <!--- spares: end --->
+//! ```
+//!
+//! Its clozes are drawn in the image occlusion editor: in the web app, click "Insert image
+//! occlusion" in a note's editor (see [`crate::api::image_occlusion`]), or, from the command line,
+//! run `spares_frontend image-occlusion` and insert the saved SVG with a snippet. Clozes can carry
+//! cloze settings strings like text clozes. You can examine the generated SVG files to see exactly
+//! how the clozes are parsed.
+//!
 //! NOTE: The quality of the original image determines the quality of the rendered image occlusion.
 //!
 //! ## Unsupported
