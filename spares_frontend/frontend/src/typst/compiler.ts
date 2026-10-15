@@ -127,13 +127,26 @@ async function compileNow(source: string, inputs: Record<string, string>): Promi
   }
 }
 
-/** Loads the compiler and prefetches packages ahead of the first compile, e.g. before a review starts. */
-export function warmUpTypst(): Promise<void> {
-  return init();
-}
-
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
 let queue: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const result = queue.then(task);
+  queue = result.catch(() => undefined);
+  return result;
+}
+
+/**
+ * Loads the compiler with its fonts and the renderer, and prefetches packages, ahead of the first
+ * compile, e.g. before a review starts. Otherwise the first compile loads them.
+ */
+export function warmUpTypst(): Promise<void> {
+  // Queued, since `$typst` creates a second compiler if one is asked for while the first loads
+  return enqueue(async () => {
+    await init();
+    await Promise.all([$typst.getCompiler(), $typst.getRenderer()]);
+  });
+}
 
 /**
  * Compiles `source` to an SVG string. Rejects with the compiler's diagnostics, a string.
@@ -142,7 +155,5 @@ let queue: Promise<unknown> = Promise.resolve();
  * compiler otherwise reuses the inputs of the previous compile.
  */
 export function compileTypst(source: string, inputs: Record<string, string> = {}): Promise<string> {
-  const result = queue.then(() => compileNow(source, inputs));
-  queue = result.catch(() => undefined);
-  return result;
+  return enqueue(() => compileNow(source, inputs));
 }

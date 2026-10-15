@@ -666,7 +666,8 @@ export default function ReviewPage() {
     if (panelNoteId !== undefined) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [panelNoteId]);
 
-  // Load the Typst compiler while the filter is picked, so the first Typst card isn't delayed by it.
+  // Load the Typst compiler, its fonts and the renderer while the filter is picked, so the first
+  // Typst card isn't delayed by them.
   // Also download today's cards, so a review can start, or continue, without a connection.
   const onLanding = phase === 'landing';
   useEffect(() => {
