@@ -138,6 +138,32 @@ impl Ssh {
         output(self.command().args([host, remote_command]))
     }
 
+    /// Whether `remote_command`, a shell command given `input` as its standard input, succeeds on
+    /// `host`. Fails if SSH cannot connect.
+    pub(super) fn succeeds_with_input(
+        &self,
+        host: &str,
+        remote_command: &str,
+        input: &str,
+    ) -> Result<bool, Error> {
+        let mut child = self
+            .command()
+            .args([host, remote_command])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(|e| miette!("Could not run `ssh`: {e}"))?;
+        let mut stdin = child.stdin.take().expect("piped");
+        stdin.write_all(input.as_bytes()).into_diagnostic()?;
+        drop(stdin);
+        let status = child.wait().into_diagnostic()?;
+        // What ssh exits with when it cannot connect
+        if status.code() == Some(255) {
+            return Err(miette!("`ssh` failed ({status})."));
+        }
+        Ok(status.success())
+    }
+
     /// Makes the directory `destination` (`host:path`, the path relative to the home directory)
     /// a copy of the directory `source` with rsync, which sends only what differs. Returns how
     /// many bytes it sent.

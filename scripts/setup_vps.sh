@@ -82,14 +82,14 @@ if ! id "$SPARES_USER" >/dev/null 2>&1; then
     install -m 600 -o "$SPARES_USER" -g "$SPARES_USER" /root/.ssh/authorized_keys "/home/$SPARES_USER/.ssh/"
   fi
 fi
-# sudo needs a password to update later, as root may not be able to log in then
-if [[ "$(passwd -S "$SPARES_USER" | awk '{print $2}')" != P ]]; then
-  if [[ -t 0 ]]; then
-    echo "==> Set a password for $SPARES_USER (for sudo)"
-    until passwd "$SPARES_USER"; do :; done
-  else
-    echo "Note: $SPARES_USER has no password, so it cannot use sudo. Set one with: passwd $SPARES_USER" >&2
-  fi
+# sudo without a password on this server, so `spares deploy update` runs unattended (root may not
+# be able to log in then). The file is named without a dot, as sudo skips those.
+SUDOERS=/etc/sudoers.d/spares
+if [[ "$(cat "$SUDOERS" 2>/dev/null)" != "$SPARES_USER ALL=(ALL) NOPASSWD: ALL" ]]; then
+  echo "==> Letting $SPARES_USER use sudo without a password"
+  echo "$SPARES_USER ALL=(ALL) NOPASSWD: ALL" > "$SUDOERS.new"
+  chmod 440 "$SUDOERS.new"
+  visudo -cqf "$SUDOERS.new" && mv "$SUDOERS.new" "$SUDOERS"
 fi
 
 mkdir -p /etc/spares
