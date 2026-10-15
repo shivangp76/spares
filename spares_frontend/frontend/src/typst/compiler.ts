@@ -16,7 +16,7 @@ import herosRegularUrl from './fonts/texgyreheros-regular.otf?url';
 import herosBoldUrl from './fonts/texgyreheros-bold.otf?url';
 import herosItalicUrl from './fonts/texgyreheros-italic.otf?url';
 import herosBoldItalicUrl from './fonts/texgyreheros-bolditalic.otf?url';
-import { fetchRenderAsset, listRenderPackages } from '../api/client';
+import { fetchRenderAsset, listRenderPackages, listRenderSources } from '../api/client';
 
 const MAIN_FILE_PATH = '/main.typ';
 // Each round can only discover the files read before the first missing one, e.g. a preamble and
@@ -97,15 +97,34 @@ function prefetchPackages(): Promise<void> {
   return packagesPrefetched;
 }
 
+let sourcesLoaded: Promise<void> | null = null;
+
+/**
+ * Gives the compiler the Typst files most sources read, e.g. preambles, so that compiles do not
+ * each have to fail first to discover them.
+ */
+function loadSources(): Promise<void> {
+  sourcesLoaded ??= (async () => {
+    const paths = (await listRenderSources()).filter(path => !requestedFiles.has(path));
+    const files = await Promise.all(paths.map(async path => [path, await fetchRenderAsset(path)] as const));
+    // One at a time, since the first creates the compiler
+    for (const [path, data] of files) {
+      requestedFiles.add(path);
+      if (data) await $typst.mapShadow(path, data);
+    }
+  })();
+  // Allow retrying after e.g. a network error.
+  sourcesLoaded.catch(() => { sourcesLoaded = null; });
+  return sourcesLoaded;
+}
+
 async function init(): Promise<void> {
   configure();
-  try {
-    await prefetchPackages();
-  } catch (e) {
-    // Sources that import no packages still compile, and a package missing here is fetched when
-    // the compiler asks for it. The prefetch is retried on the next compile.
-    console.error('Prefetching Typst packages', e);
-  }
+  const [packages, sources] = await Promise.allSettled([prefetchPackages(), loadSources()]);
+  // Sources that import no packages still compile, and a package missing here is fetched when
+  // the compiler asks for it. Likewise a file missing here. Both are retried on the next compile.
+  if (packages.status === 'rejected') console.error('Prefetching Typst packages', packages.reason);
+  if (sources.status === 'rejected') console.error('Loading Typst sources', sources.reason);
 }
 
 async function compileNow(source: string, inputs: Record<string, string>): Promise<string> {

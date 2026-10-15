@@ -55,6 +55,7 @@ use crate::handlers::parser::list_parsers_handler;
 use crate::handlers::parser::update_parser_handler;
 use crate::handlers::render_asset::get_render_asset_handler;
 use crate::handlers::render_asset::list_render_packages_handler;
+use crate::handlers::render_asset::list_render_sources_handler;
 use crate::handlers::require_api_key;
 use crate::handlers::review::create_review_snapshot_handler;
 use crate::handlers::review::get_review_card_by_id_handler;
@@ -149,6 +150,20 @@ fn sync_routes() -> Router<Arc<AppState>> {
         )
 }
 
+/// Files read by sources that clients compile themselves
+fn render_asset_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/render-assets", get(get_render_asset_handler))
+        .route(
+            "/api/render-assets/packages",
+            get(list_render_packages_handler),
+        )
+        .route(
+            "/api/render-assets/sources",
+            get(list_render_sources_handler),
+        )
+}
+
 /// Offline review on web clients
 fn offline_review_routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -239,16 +254,11 @@ pub(crate) fn create_router(
             "/api/scheduler/{name}/reschedule",
             post(reschedule_scheduler_handler),
         )
-        // Files read by sources that clients compile themselves
-        .route("/api/render-assets", get(get_render_asset_handler))
-        .route(
-            "/api/render-assets/packages",
-            get(list_render_packages_handler),
-        )
         // Undo
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .merge(image_occlusion_routes())
+        .merge(render_asset_routes())
         .merge(offline_review_routes())
         .merge(notes_vcs_routes())
         .merge(sync_routes())
