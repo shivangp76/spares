@@ -29,15 +29,19 @@ use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::note::update_notes;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::queue_order_by;
 use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
+use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::FilteredTagExit;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
+use crate::config::LeechAction;
+use crate::config::LeechConfig;
 use crate::config::QueueConfig;
 use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
@@ -69,6 +73,7 @@ use crate::parsers::cli::parse_cli_data;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
+use crate::parsers::get_all_parsers;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::has_web_render_file;
 use crate::parsers::typed_answer::typed_answer_info;
@@ -79,6 +84,9 @@ use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::learning_states;
 use crate::schedulers::placement::place_due;
 use crate::schedulers::review_state;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateTags;
 use crate::schema::review::CardBackRenderedPath;
 use crate::schema::review::CliReviewInfo;
 use crate::schema::review::GetReviewCardFilterRequest;
@@ -1112,17 +1120,23 @@ pub(crate) async fn rate_card_with_config(
     };
 
     // Add entry to review_log
+    let lapses_before = scheduler.lapses(db, card_id).await?;
     let review_log_id = insert_review(db, &new_review_log, tag_id).await?;
+    let lapses = scheduler.lapses(db, card_id).await?;
+    let leech = lapses > lapses_before && config.leech.acts_on(lapses);
 
     // Update card with all new properties from updated_card
-    // special_state is explicitly set to None to clear any burial state (e.g. BuriedUntilLaterToday)
+    // special_state is set to None to clear any burial state (e.g. BuriedUntilLaterToday), unless
+    // the card became a leech to suspend.
+    let special_state =
+        (leech && config.leech.action == LeechAction::Suspend).then_some(SpecialState::Suspended);
     let _update_card_result = sqlx::query(
         r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ?, custom_data = ? WHERE id = ?",
     )
     .bind(updated_card.due.timestamp())
     .bind(updated_card.stability)
     .bind(updated_card.difficulty)
-    .bind(Option::<SpecialState>::None)
+    .bind(special_state)
     .bind(updated_card.state)
     .bind(updated_card.updated_at.timestamp())
     .bind(updated_card.custom_data.clone())
@@ -1175,9 +1189,9 @@ pub(crate) async fn rate_card_with_config(
                     after: updated_card.difficulty,
                 }),
                 desired_retention: None,
-                special_state: before_card.special_state.map(|state| Transition {
-                    before: Some(state),
-                    after: None,
+                special_state: (before_card.special_state != special_state).then_some(Transition {
+                    before: before_card.special_state,
+                    after: special_state,
                 }),
                 state: Some(Transition {
                     before: before_card.state,
@@ -1200,10 +1214,66 @@ pub(crate) async fn rate_card_with_config(
             None,
         )
         .await?;
-        return Ok(Some(*event_ids.first().unwrap()));
+        let event_id = *event_ids.first().unwrap();
+        if leech {
+            // Boxed, since updating a note makes a large future for every caller to carry
+            Box::pin(tag_leech(
+                db,
+                &config.leech,
+                before_card.note_id,
+                reviewed_at,
+                Some(event_id),
+            ))
+            .await?;
+        }
+        return Ok(Some(event_id));
+    }
+    if leech {
+        Box::pin(tag_leech(
+            db,
+            &config.leech,
+            before_card.note_id,
+            reviewed_at,
+            None,
+        ))
+        .await?;
     }
 
     Ok(None)
+}
+
+/// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech. With
+/// `rating_event`, the rating that made it one, the tag's events join that rating's group, so
+/// undoing the rating untags the note too.
+async fn tag_leech(
+    db: &SqlitePool,
+    leech: &LeechConfig,
+    note_id: NoteId,
+    at: DateTime<Utc>,
+    rating_event: Option<i64>,
+) -> Result<(), Error> {
+    let response = update_notes(
+        db,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+            parser_id: None,
+            data: None,
+            keywords: None,
+            tags: UpdateTags::ModifyTags {
+                tags_to_remove: None,
+                tags_to_add: Some(vec![leech.tag_name.clone()]),
+            },
+            custom_data: None,
+        },
+        at,
+        &get_all_parsers(),
+        rating_event.is_some(),
+    )
+    .await?;
+    if let (Some(rating_event), Some(tag_event)) = (rating_event, response.event_id) {
+        join_event_group(db, rating_event, tag_event).await?;
+    }
+    Ok(())
 }
 
 /// Buries the siblings of `card` (the other cards of its note) that

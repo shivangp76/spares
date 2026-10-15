@@ -50,6 +50,7 @@ use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
+use crate::model::CardId;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
@@ -137,6 +138,21 @@ impl SrsScheduler for Fsrs {
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
         Ok(cards)
+    }
+
+    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error> {
+        // Counted like `get_leeches`
+        sqlx::query_scalar(
+            r"SELECT COUNT(*) FROM review_log
+              WHERE card_id = ? AND kind = ? AND rating = ? AND previous_state = ?",
+        )
+        .bind(card_id)
+        .bind(ReviewLogKind::Review)
+        .bind(rating_to_number(FsrsRating::Again))
+        .bind(state_to_number(State::Review))
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
     }
 
     // Note that this can be optimized to account for the correlation between retention amongst siblings. The ratings can also be chosen better to better reflect human tendencies.

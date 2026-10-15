@@ -15,6 +15,7 @@ use crate::SchedulerErrorKind;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::config::SparesExternalConfig;
 use crate::model::Card;
+use crate::model::CardId;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
@@ -78,6 +79,10 @@ pub trait SrsScheduler: Send + Sync {
     }
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error>;
+
+    /// How many times `card_id` lapsed: was forgotten after it had graduated from its learning
+    /// steps. [`crate::config::LeechConfig`] acts on this.
+    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error>;
 
     /// Returns a rating and when it was reviewed at
     fn generate_review_history(

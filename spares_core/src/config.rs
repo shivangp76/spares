@@ -492,22 +492,69 @@ pub enum NewReviewMix {
     ReviewsFirst,
 }
 
+/// The `[leech]` table of `config.toml`: cards you keep forgetting.
+///
+/// A card lapses when it is rated Again after it graduated from its learning steps (Again during
+/// learning or relearning steps does not count). A card that has lapsed
+/// [`Self::lapses_threshold`] times is a leech: reviewing it again and again costs more time than
+/// it is worth, and the note is usually better rewritten, split up, or dropped. `spares card
+/// leeches` lists them.
+///
+/// ```toml
+/// [leech]
+/// lapses_threshold = 8
+/// action = "suspend"
+/// tag_name = "leech"
+/// ```
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LeechConfig {
-    // pub auto_tag: bool,
-    // pub tag_name: String,
-    /// The number of lapses at which a card becomes a leech.
+    /// The number of lapses at which a card becomes a leech. Defaults to 8.
     pub lapses_threshold: u32,
+    /// What to do with a card once it becomes a leech. Defaults to [`LeechAction::Tag`].
+    ///
+    /// It is done on the lapse that reaches [`Self::lapses_threshold`], and again every half of
+    /// it after (every 4 lapses with the default of 8), in case the card was let back in without
+    /// being fixed. Undoing the rating undoes it too.
+    pub action: LeechAction,
+    /// The tag [`LeechAction::Tag`] and [`LeechAction::Suspend`] add to a leech's note, so you can
+    /// find the notes to fix with `tag=leech`. Tags belong to notes, so the note's other cards
+    /// get it too. Defaults to `"leech"`.
+    pub tag_name: String,
+}
+
+/// What to do with a card once it becomes a leech. See [`LeechConfig::action`].
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeechAction {
+    /// `"tag"`: add [`LeechConfig::tag_name`] to the card's note, and keep reviewing it.
+    #[default]
+    Tag,
+    /// `"suspend"`: add [`LeechConfig::tag_name`] to the card's note, and suspend the card, so it
+    /// is not reviewed again until you unsuspend it, presumably after fixing it.
+    Suspend,
+    /// `"none"`: nothing. Leeches are still listed by `spares card leeches`.
+    None,
 }
 
 impl Default for LeechConfig {
     fn default() -> Self {
         Self {
-            // auto_tag: true,
-            // tag_name: "leech".to_string(),
             lapses_threshold: 8,
+            action: LeechAction::default(),
+            tag_name: "leech".to_string(),
         }
+    }
+}
+
+impl LeechConfig {
+    /// Whether a card that now has `lapses` lapses, the last of them just now, should get
+    /// [`Self::action`].
+    pub(crate) fn acts_on(&self, lapses: u32) -> bool {
+        let interval = (self.lapses_threshold / 2).max(1);
+        self.action != LeechAction::None
+            && lapses >= self.lapses_threshold
+            && (lapses - self.lapses_threshold).is_multiple_of(interval)
     }
 }
 
@@ -1039,6 +1086,40 @@ mod tests {
         // Setting them again replaces them rather than adding a second key.
         let rewritten = set_fsrs_parameters(&written, &parameters[..19]).unwrap();
         assert_eq!(parse(&rewritten).fsrs_parameters, parameters[..19]);
+    }
+
+    #[test]
+    fn leech_action_repeats_every_half_threshold() {
+        let leech = LeechConfig::default();
+        let acted_on = (1..=20)
+            .filter(|&lapses| leech.acts_on(lapses))
+            .collect::<Vec<_>>();
+        assert_eq!(acted_on, [8, 12, 16, 20]);
+
+        let every_lapse = LeechConfig {
+            lapses_threshold: 1,
+            ..LeechConfig::default()
+        };
+        assert!((1..=3).all(|lapses| every_lapse.acts_on(lapses)));
+
+        let none = LeechConfig {
+            action: LeechAction::None,
+            ..LeechConfig::default()
+        };
+        assert!(!none.acts_on(8));
+    }
+
+    /// The example on [`LeechConfig`].
+    #[test]
+    fn documented_leech_example_parses() {
+        let config = parse(indoc::indoc! {r#"
+            [leech]
+            lapses_threshold = 8
+            action = "suspend"
+            tag_name = "leech"
+        "#});
+        assert_eq!(config.leech.action, LeechAction::Suspend);
+        assert_eq!(config.leech.tag_name, "leech");
     }
 
     /// The example on [`QueueConfig`].
