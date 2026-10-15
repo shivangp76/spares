@@ -90,8 +90,18 @@ fn render(keys: &[Key]) -> String {
 
 /// The `ORDER BY` expressions (without the keyword) that put the cards matching a review's
 /// `WHERE` clause in the order [`QueueConfig`] describes, as of `now`. The query must select
-/// `FROM card c JOIN note n`.
-pub(crate) fn queue_order_by(config: &QueueConfig, now: DateTime<Utc>, caps: QueueCaps) -> String {
+/// `FROM card c JOIN note n JOIN parser p`.
+///
+/// `query_sort` is the sort the review's query asks for (see
+/// [`Evaluator::card_order_by`](crate::search::evaluator::Evaluator::card_order_by)). Unless it is
+/// empty, it orders new and review cards together in place of [`QueueConfig::new_order`],
+/// [`QueueConfig::review_order`] and [`QueueConfig::new_review_mix`].
+pub(crate) fn queue_order_by(
+    config: &QueueConfig,
+    now: DateTime<Utc>,
+    caps: QueueCaps,
+    query_sort: &[String],
+) -> String {
     let now_ts = now.timestamp();
     let [learning, relearning] = learning_states();
     // The groups listed on `QueueConfig`, numbered from 0
@@ -118,7 +128,17 @@ pub(crate) fn queue_order_by(config: &QueueConfig, now: DateTime<Utc>, caps: Que
     ));
     within_kind.push(asc("c.id"));
 
+    let query_keys = query_sort
+        .iter()
+        .map(|term| match term.rsplit_once(' ') {
+            Some((expr, "DESC")) => desc(expr),
+            Some((expr, "ASC")) => asc(expr),
+            _ => asc(term.as_str()),
+        })
+        .chain([asc("c.id")])
+        .collect::<Vec<_>>();
     let mix_keys = match config.new_review_mix {
+        _ if !query_sort.is_empty() => query_keys,
         NewReviewMix::NewFirst => {
             let mut keys = vec![asc(format!("NOT ({is_new})"))];
             keys.extend(within_kind);
@@ -274,14 +294,81 @@ pub(crate) mod tests {
         now: DateTime<Utc>,
         caps: QueueCaps,
     ) -> Vec<CardId> {
+        ordered_by(pool, config, now, caps, &[]).await
+    }
+
+    /// Every unsuspended card, in queue order with `query_sort`.
+    async fn ordered_by(
+        pool: &SqlitePool,
+        config: &QueueConfig,
+        now: DateTime<Utc>,
+        caps: QueueCaps,
+        query_sort: &[String],
+    ) -> Vec<CardId> {
         let query = format!(
-            "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id
+            "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN parser p ON n.parser_id = p.id
             WHERE c.special_state IS NULL OR c.special_state = {}
             ORDER BY {}",
             SpecialState::BuriedUntilLaterToday as u8,
-            queue_order_by(config, now, caps)
+            queue_order_by(config, now, caps, query_sort)
         );
         sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
+    }
+
+    #[sqlx::test]
+    async fn query_sort_replaces_new_and_review_order(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = create_cards(&pool, 4, now - Duration::days(30)).await;
+        let [new, easy_review, hard_review, learning] = ids[..] else {
+            unreachable!()
+        };
+        sqlx::query(r"UPDATE card SET difficulty = 5.0 WHERE id = ?")
+            .bind(new)
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_card(
+            &pool,
+            easy_review,
+            REVIEW,
+            now - Duration::days(3),
+            5.0,
+            2.0,
+        )
+        .await;
+        set_card(
+            &pool,
+            hard_review,
+            REVIEW,
+            now - Duration::days(1),
+            5.0,
+            9.0,
+        )
+        .await;
+        set_card(
+            &pool,
+            learning,
+            LEARNING,
+            now - Duration::minutes(1),
+            1.0,
+            1.0,
+        )
+        .await;
+        let sort = ["c.difficulty DESC".to_string()];
+        let order = ordered_by(
+            &pool,
+            &config(
+                ReviewOrder::Due,
+                NewCardOrder::Created,
+                NewReviewMix::ReviewsFirst,
+            ),
+            now,
+            QueueCaps::default(),
+            &sort,
+        )
+        .await;
+        // The learning card whose step is over still comes first
+        assert_eq!(order, vec![learning, hard_review, new, easy_review]);
     }
 
     fn config(
@@ -633,6 +720,7 @@ mod learn_ahead_tests {
     use sqlx::SqlitePool;
 
     use super::tests::LEARNING;
+    use super::tests::REVIEW;
     use super::tests::create_cards;
     use super::tests::set_card;
     use super::*;
@@ -640,6 +728,7 @@ mod learn_ahead_tests {
     use crate::api::review::get_review_card;
     use crate::api::review::next_review_card_available_at;
     use crate::parsers::get_all_parsers;
+    use crate::schema::review::GetReviewCardFilterRequest;
     use crate::schema::review::GetReviewCardRequest;
     use crate::schema::review::ReviewQueueRequest;
 
@@ -662,6 +751,30 @@ mod learn_ahead_tests {
         next_review_card_available_at(pool, GetReviewCardRequest { filter: None }, now)
             .await
             .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn review_query_sort_sets_the_order(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = create_cards(&pool, 2, now - Duration::days(30)).await;
+        set_card(&pool, ids[0], REVIEW, now - Duration::days(3), 5.0, 2.0).await;
+        set_card(&pool, ids[1], REVIEW, now - Duration::days(1), 5.0, 9.0).await;
+        let first = async |query: &str| {
+            get_review_card(
+                &pool,
+                GetReviewCardRequest {
+                    filter: Some(GetReviewCardFilterRequest::Query(query.to_string())),
+                },
+                now,
+                &get_all_parsers(),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .card_id
+        };
+        assert_eq!(first("c.id>0").await, ids[0]);
+        assert_eq!(first("c.id>0 sort_by_desc=c.difficulty").await, ids[1]);
     }
 
     #[sqlx::test]

@@ -552,6 +552,8 @@ pub(crate) struct ReviewFilterQuery {
     /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit), as a
     /// SQL condition with nothing to bind. `None` for filtered tags, which hold nothing back.
     pub(crate) held_back_clause: Option<String>,
+    /// The sort the query (or the filtered tag's query) asks for, for [`queue_order_by`].
+    pub(crate) query_sort: Vec<String>,
 }
 
 /// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
@@ -573,7 +575,9 @@ pub(crate) async fn build_review_filter_query(
     let config = read_external_config()?;
     let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
     let not_new_card_str = daily_limits_clause(limits_left);
+    let mut query_sort = Vec::new();
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
+        query_sort = Evaluator::new(query).card_order_by()?;
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
         format!("\nAND c.id IN ({})", card_ids_str)
@@ -594,15 +598,14 @@ pub(crate) async fn build_review_filter_query(
         if tag_query_opt.is_none() {
             return Ok(None);
         }
-        if let Some((tag_query,)) = tag_query_opt
-            && tag_query.is_none()
-        {
+        let Some((Some(tag_query),)) = tag_query_opt else {
             return Err(Error::Library(LibraryError::Tag(
                 TagErrorKind::InvalidInput(
                     "Cannot study a tag that does not have a query.".to_string(),
                 ),
             )));
-        }
+        };
+        query_sort = Evaluator::new(&tag_query).card_order_by()?;
         format!(
             "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
         )
@@ -638,6 +641,7 @@ pub(crate) async fn build_review_filter_query(
         card_due_limit,
         caps,
         held_back_clause,
+        query_sort,
     }))
 }
 
@@ -758,6 +762,7 @@ pub async fn get_review_card(
         is_filtered_tag,
         card_due_limit,
         caps,
+        query_sort,
         ..
     }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
     else {
@@ -765,7 +770,7 @@ pub async fn get_review_card(
     };
 
     let config = read_external_config()?;
-    let order_by = queue_order_by(&config.queue, requested_date, caps);
+    let order_by = queue_order_by(&config.queue, requested_date, caps, &query_sort);
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}
         FROM card c
