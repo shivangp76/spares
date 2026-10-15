@@ -217,6 +217,17 @@ To create an image occlusion:
 
 The editor allows you to create multiple instances simultaneously, making it easy to work on different image occlusions at once. You can examine the generated SVG files to see exactly how the clozes are parsed. A more intuitive interface with `svg-edit` will be available in future updates.
 
+## Images
+
+Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown or `#image("/Users/me/media/cell.png")` in Typst.
+
+In the web app, paste or drop an image into a note's editor to insert it. The image is uploaded to the server, stored in `images` in the data directory, and inserted where it was pasted or dropped, in the note's syntax:
+- Markdown: `![](…)`
+- Typst: `#std.image("…", width: 80%)`
+- LaTeX: `\includegraphics[…]{…}`, or `\includesvg[…]{…}` for an SVG. Your template must load the `graphicx` (or `svg`) package.
+
+Supported formats are png, jpg, jpeg, gif, webp, bmp and svg. Images are named by their contents, so pasting the same image again reuses its file. A paste that also has text, such as cells copied from a spreadsheet, pastes the text. Like image occlusions made in the web app, uploaded images are stored on the server, not copied to your laptop.
+
 ## Audio
 
 A link to an audio file is an audio clip. The card shows the link's text, and clients play the clip:
