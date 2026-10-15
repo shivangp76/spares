@@ -15,6 +15,7 @@ use spares_core::Error;
 
 use crate::AppState;
 
+pub(crate) mod audio;
 pub(crate) mod card;
 pub(crate) mod image;
 pub(crate) mod image_occlusion;

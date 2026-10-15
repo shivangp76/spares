@@ -6,9 +6,10 @@ import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, formatNoteId, insertBlock, isLiveNote } from '../utils';
+import { SYNC_CONFLICT_TAG, formatNoteId, insertBlock, insertInline, isLiveNote } from '../utils';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
+import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -153,10 +154,16 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
           {!live && (
-            <InsertImageOcclusionButton
-              parserId={note.parser_id}
-              onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
-            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <InsertAudioButton
+                parserId={note.parser_id}
+                onInsert={snippet => setDataContent(insertInline(dataEditorRef.current?.view, dataContent, snippet))}
+              />
+              <InsertImageOcclusionButton
+                parserId={note.parser_id}
+                onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
+              />
+            </div>
           )}
         </div>
         <CodeMirror

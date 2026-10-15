@@ -13,6 +13,8 @@ use tower_http::services::ServeDir;
 use tower_http::services::ServeFile;
 
 use crate::AppState;
+use crate::handlers::audio::AUDIO_BODY_LIMIT;
+use crate::handlers::audio::create_audio_handler;
 use crate::handlers::card::forget_card_handler;
 use crate::handlers::card::get_card_handler;
 use crate::handlers::card::get_card_reviews_handler;
@@ -102,6 +104,11 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
             post(create_image_handler).layer(DefaultBodyLimit::max(IMAGE_BODY_LIMIT)),
         )
         .route("/api/images/url", post(create_image_from_url_handler))
+        // Audio clips recorded into a note
+        .route(
+            "/api/audio",
+            post(create_audio_handler).layer(DefaultBodyLimit::max(AUDIO_BODY_LIMIT)),
+        )
         .route(
             "/api/image-occlusions/editor-config",
             get(get_image_occlusion_editor_config_handler),
