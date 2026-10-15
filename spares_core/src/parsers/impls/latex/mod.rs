@@ -1,3 +1,40 @@
+//! The "latex-note" parser.
+//!
+//! # Compiling notes while editing them
+//!
+//! Tools:
+//! - Neovim with [Vimtex](https://github.com/lervag/vimtex)
+//! - `latexmk`
+//!
+//! `.latexmkrc`:
+//! ```perl
+//! # $out_dir can be a directory with a large number of files. However, $aux_dir must be a directory with a relatively small number of files. Otherwise, latexmk will take significantly longer to compile (sometimes 5x the time).
+//! # NOTE: $XDG_CACHE_HOME needs to be fully expanded and replace here
+//! $out_dir = '$XDG_CACHE_HOME/vimtex';
+//! # $aux_dir is not specified here since this value would override the one supplied in `nvim/init.lua` for `vimtex`. We want each note file to create its own directory, so we can control the number of files in the `$aux_dir`.
+//!
+//! # Enable shell escape for packages listed here: <https://tex.stackexchange.com/questions/598818/how-can-i-enable-shell-escape>
+//! $pdflatex = 'pdflatex --shell-escape %O %S';
+//! ```
+//!
+//! Config for `vimtex`:
+//! ```vim
+//! vim.g.vimtex_compiler_latexmk = { aux_dir = function()
+//!   return os.getenv("LATEX_OUT_DIR") .. "/aux/" .. vim.fn.expand("%:t:r")
+//! end }
+//! ```
+//! where `$LATEX_OUT_DIR` is set in your shell to the appropriate directory.
+//!
+//! With notes in a git or jj repository (see "Notes as a git or jj repository" in the manual's
+//! Workflows page):
+//! - spares compiles notes from its own copy (`notes-spares/`), while vimtex compiles the file in
+//!   your clone. Both write the same PDF in `$LATEX_OUT_DIR`, so after compiling an unpushed change
+//!   (for example on an LLM's branch), reviews show that version until spares renders the note
+//!   again (`spares note generate`).
+//! - Inverse search from a PDF spares compiled opens the file in `notes-spares/`. Edit the note in
+//!   your clone instead: spares overwrites edits made in `notes-spares/`, saving them to
+//!   `notes-spares/.git/spares-quarantine/`.
+
 mod data_parser;
 
 use std::collections::HashSet;
