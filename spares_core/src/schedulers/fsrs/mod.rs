@@ -53,6 +53,7 @@ use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
+use crate::model::StateId;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
@@ -60,6 +61,14 @@ use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 use crate::search::evaluator::Evaluator;
+
+/// The states of cards in their learning or relearning steps, which come back the same day.
+pub(crate) fn learning_states() -> [StateId; 2] {
+    [
+        state_to_number(State::Learning),
+        state_to_number(State::Relearning),
+    ]
+}
 
 /// The interval, in days, after which a card with `stability` is expected to fall to
 /// `desired_retention`. Not rounded, clamped or fuzzed.

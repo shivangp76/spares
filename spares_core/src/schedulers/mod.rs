@@ -26,6 +26,7 @@ use crate::schema::review::RatingSubmission;
 mod fsrs;
 pub mod placement;
 
+pub(crate) use fsrs::learning_states;
 #[cfg(test)]
 pub(crate) use fsrs::optimal_interval_days;
 
