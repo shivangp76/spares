@@ -1,5 +1,5 @@
 // Lets the app open without a network connection. Built into `dist/sw.js` by the `service-worker`
-// plugin in vite.config.ts, which fills in the build hash and the files to precache.
+// plugin in vite.config.ts, which fills in the build hash and the files to precache and keep.
 //
 // Only the app itself is cached here. Data from the server (`/api`, `/files`) is cached by the app
 // (see src/offline), which knows what to keep for offline review and when it is stale.
@@ -7,6 +7,9 @@
 const BUILD = __BUILD__;
 // The page and the scripts, styles and fonts it loads, relative to this file
 const PRECACHE = __PRECACHE__;
+// Files of this build cached when first loaded, e.g. the Typst compiler, which are kept across
+// builds that have them since their names are hashed
+const KEEP = __KEEP__;
 
 // Build files have hashed names, so they never change and are kept across builds until the build
 // that drops them takes over. The page itself is replaced on every build.
@@ -21,6 +24,7 @@ const FONTS_URL = 'https://cdn.jsdelivr.net/gh/typst/typst-assets@';
 
 const PAGE_URL = new URL('index.html', self.registration.scope).href;
 const precacheUrls = PRECACHE.map(path => new URL(path, self.registration.scope).href);
+const keepUrls = KEEP.map(path => new URL(path, self.registration.scope).href);
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -40,10 +44,10 @@ self.addEventListener('activate', event => {
       if (name.startsWith('spares-page-') && name !== PAGE_CACHE) await caches.delete(name);
     }
     const assets = await caches.open(ASSETS_CACHE);
-    const current = new Set(precacheUrls);
+    const current = new Set([...precacheUrls, ...keepUrls]);
     for (const request of await assets.keys()) {
-      // Files cached when first loaded (e.g. the Typst compiler, or files without a hash in their
-      // name) are dropped too, and fetched again the next time they are needed.
+      // Other files cached when first loaded (e.g. files without a hash in their name) are dropped
+      // too, and fetched again the next time they are needed.
       if (!current.has(request.url)) await assets.delete(request);
     }
     await self.clients.claim();
