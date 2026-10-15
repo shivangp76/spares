@@ -166,12 +166,24 @@ async function compileNow(source: string, inputs: Record<string, string>): Promi
 }
 
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
-let queue: Promise<unknown> = Promise.resolve();
+// Those in the background, e.g. of cards downloaded for offline review, wait for the others.
+const tasks: (() => Promise<void>)[] = [];
+const backgroundTasks: (() => Promise<void>)[] = [];
+let running = false;
 
-function enqueue<T>(task: () => Promise<T>): Promise<T> {
-  const result = queue.then(task);
-  queue = result.catch(() => undefined);
-  return result;
+function enqueue<T>(task: () => Promise<T>, background = false): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    (background ? backgroundTasks : tasks).push(() => Promise.resolve().then(task).then(resolve, reject));
+    void runTasks();
+  });
+}
+
+async function runTasks(): Promise<void> {
+  if (running) return;
+  running = true;
+  let task;
+  while ((task = tasks.shift() ?? backgroundTasks.shift())) await task();
+  running = false;
 }
 
 /**
@@ -209,6 +221,11 @@ export function precompileTypst(source: string, inputs: Record<string, string> =
     precompiled.delete(old);
   }
   return result;
+}
+
+/** Compiles `source` after the compiles of sources being shown, e.g. to fetch the files it reads. */
+export function compileTypstInBackground(source: string): Promise<string> {
+  return enqueue(() => compileNow(source, {}), true);
 }
 
 /**
