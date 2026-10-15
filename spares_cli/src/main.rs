@@ -1,6 +1,7 @@
 mod args;
 mod card;
 mod card_info;
+mod deploy;
 mod event;
 mod graph;
 mod history;
@@ -59,8 +60,13 @@ async fn main() {
 
 /// The client for the local server, sending its API key (see [`local_api_key`]).
 fn local_client() -> Result<Client, Error> {
+    client_with_key(local_api_key().as_deref())
+}
+
+/// A client sending this API key, if any.
+fn client_with_key(key: Option<&str>) -> Result<Client, Error> {
     let mut headers = HeaderMap::new();
-    if let Some(key) = local_api_key() {
+    if let Some(key) = key {
         let mut value = HeaderValue::from_str(&format!("Bearer {key}")).into_diagnostic()?;
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
@@ -84,6 +90,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Link(link_args) => link::handle(link_args, &base_url, &client).await,
         Commands::Keyword(keyword_args) => keyword::handle(keyword_args, &base_url, &client).await,
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
+        Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &env_config).await,
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)
                 .await
