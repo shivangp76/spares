@@ -84,6 +84,10 @@ This replays each card's review history to recompute its memory state, then plac
 
 It always reschedules every card; there is no `--query`. Cards are placed one at a time, each seeing the due dates already given to the others, so rescheduling only some of them would leave the load spread across days unbalanced.
 
+### Review order
+
+The `[queue]` table of `config.toml` sets the order cards are shown in: review cards by due date, retrievability, relative overdueness, difficulty, note age or at random; new cards by note age or at random; and whether new cards are spread among reviews or shown before or after them. Each setting is documented on `QueueConfig` in the `spares_core::config` API docs (`cargo doc -p spares_core --open`).
+
 ### Optimizing FSRS parameters
 
 FSRS starts with default parameters fitted to many people's reviews. Once you have a few hundred reviews, parameters fitted to your own history usually predict your memory better:

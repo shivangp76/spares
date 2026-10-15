@@ -19,6 +19,7 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::queue::queue_order_by;
 use crate::api::review::REVIEW_CARD_COLUMNS;
 use crate::api::review::ReviewCard;
 use crate::api::review::ReviewFilterQuery;
@@ -80,6 +81,7 @@ pub async fn get_review_queue(
         where_clause,
         is_filtered_tag,
         card_due_limit,
+        caps,
     }) = build_review_filter_query(db, filter.as_ref(), requested_date).await?
     else {
         return Ok(ReviewQueueResponse {
@@ -90,6 +92,7 @@ pub async fn get_review_queue(
 
     // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
     // skipped below.
+    let order_by = queue_order_by(&read_external_config()?.queue, requested_date, caps);
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}, c.due as due
         FROM card c
@@ -97,9 +100,7 @@ pub async fn get_review_queue(
         JOIN parser p ON n.parser_id = p.id
         WHERE {where_clause}
         ORDER BY
-            CASE WHEN c.special_state IS NULL THEN 0 ELSE 1 END ASC,
-            c.due ASC,
-            n.created_at ASC"
+            {order_by}"
     };
     let mut query = sqlx::query_as(&query_str);
     if !is_filtered_tag {
