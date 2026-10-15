@@ -2,9 +2,9 @@
 
 This sets up a small VPS that your phone (or any browser) reviews on, kept in two-way sync with your laptop. It was first done on Vultr's cheapest plan (512 MB, 10 GB, IPv6 only, $2.50/month) on 2026-10-14, from a Mac. The server is only reachable over [Tailscale](https://tailscale.com); nothing is open to the internet.
 
-Two scripts do the work:
-- `scripts/deploy_vps.sh` runs on the laptop. It builds spares for Linux here, uploads it, and sets up both sides.
-- `scripts/setup_vps.sh` runs on the server (`deploy_vps.sh` uploads and runs it). It installs spares, a systemd service, swap and Tailscale's HTTPS.
+Two parts do the work:
+- `spares deploy` runs on the laptop, in the repo. It builds spares for Linux from that checkout, uploads it, and sets up both sides.
+- `scripts/setup_vps.sh` runs on the server (`spares deploy` uploads and runs it). It installs spares, a systemd service, swap and Tailscale's HTTPS.
 
 The server never builds anything or downloads from GitHub, so it needs neither the memory to compile spares nor IPv4.
 
@@ -12,7 +12,7 @@ The server never builds anything or downloads from GitHub, so it needs neither t
 
 On the laptop:
 1. **Tailscale**, logged in: `brew install tailscale && sudo brew services start tailscale && sudo tailscale up`, then open the link it prints.
-2. **The cross-compiling tools:** `brew install zig && cargo install --locked cargo-zigbuild`. `deploy_vps.sh` adds the Rust target itself.
+2. **The cross-compiling tools:** `brew install zig && cargo install --locked cargo-zigbuild`. `spares deploy` adds the Rust target itself.
 3. **bun**, which builds the web app (already needed for development).
 
 On the phone: the Tailscale app, logged in to the same account.
@@ -26,7 +26,7 @@ Your laptop may not be able to reach the server's own address (an IPv6-only serv
 1. Create an auth key at <https://login.tailscale.com/admin/settings/keys> → **Generate auth key**. Leave **Reusable** and **Ephemeral** off, then copy the key (`tskey-auth-...`).
 2. Run:
    ```sh
-   scripts/deploy_vps.sh cloud-init
+   spares deploy cloud-init
    ```
    It prints a short script. Copy it and replace `TSKEY-PLACEHOLDER` with your key.
 
@@ -69,7 +69,7 @@ If ssh says root isn't allowed, open <https://login.tailscale.com/admin/acls>, a
 
 Start your local server (`spares_server` or `spares_serve`), then run, from the repo:
 ```sh
-scripts/deploy_vps.sh init spares --no-latex
+spares deploy init spares --no-latex
 ```
 It takes 10–15 minutes. What it does, and what it asks:
 
@@ -103,7 +103,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 - **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `scripts/deploy_vps.sh update`, then restart the local server, so both run the same version. It also sets the server's time zone to the laptop's again, e.g. after you move.
+- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It also sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server
@@ -122,6 +122,6 @@ Spares uses about 15 MB of memory idle and 30 MB while sending the whole databas
 ## Troubleshooting
 
 - **"No spares server answers at 127.0.0.1:8080"**: the local server isn't running yet (it compiles first), or listens elsewhere (`SPARES_SOCKET_ADDRESS`).
-- **The phone shows other streaks, or reviews on the wrong day of the heatmap, than the laptop**: the server is in another time zone (VPSs start in UTC), and spares counts days in the server's. Run `scripts/deploy_vps.sh update` to set it to the laptop's; `timedatectl` on the server shows it.
+- **The phone shows other streaks, or reviews on the wrong day of the heatmap, than the laptop**: the server is in another time zone (VPSs start in UTC), and spares counts days in the server's. Run `spares deploy update` to set it to the laptop's; `timedatectl` on the server shows it.
 - **The local server can't reach the VPS**: check that `tailscale status` on the laptop lists `spares`, and that Tailscale is running (`sudo brew services start tailscale`).
 - **`spares sync cloud` is refused (401) by your local server**: it was started with an API key (`spares_serve`); the `spares` CLI sends `SPARES_API_KEY`, so set it (the `spares` function in `spares.zsh` does).

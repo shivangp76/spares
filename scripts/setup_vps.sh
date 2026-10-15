@@ -7,7 +7,7 @@
 #                          [--bundle <file>] [--no-latex] [--timezone <zone>]
 #   sudo bash setup_vps.sh     # update, with the arguments of the last run
 #
-# Arguments are saved, and later runs start from them. `scripts/deploy_vps.sh` on your laptop runs
+# Arguments are saved, and later runs start from them. `spares deploy` on your laptop runs
 # this for you with --bundle, and sets up the laptop's side.
 #
 # --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
@@ -22,14 +22,14 @@
 # --user        The user spares runs as, and that `spares sync cloud` logs in as. Defaults to the
 #               user who ran sudo, so pass it when running as root. A missing user is created,
 #               with sudo and root's SSH keys.
-# --bundle      Install spares from this archive (built elsewhere by `deploy_vps.sh`) instead of
+# --bundle      Install spares from this archive (built elsewhere by `spares deploy`) instead of
 #               building it here from GitHub. Building needs about 2 GB of memory and 10 GB of disk,
 #               and GitHub cannot be reached from IPv6-only servers. Once used, every update needs one.
 # --no-latex    Skip LaTeX, inkscape and pandoc (about 3 GB). Markdown and LaTeX notes edited on the
 #               server are then not rendered there; Typst notes don't need them.
 # --timezone    The server's time zone, e.g. America/New_York. Make it yours: spares counts days
 #               (what is due today, new card limits, the review heatmap and its streaks) in the
-#               server's time zone, and VPSs default to UTC. `deploy_vps.sh` passes the laptop's.
+#               server's time zone, and VPSs default to UTC. `spares deploy` passes the laptop's.
 #
 # The server is the sync server (replica 1) for two-way sync with your laptop (`sync.url`).
 #
@@ -71,7 +71,7 @@ done
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
 [[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || { echo "Unknown time zone: $TIMEZONE" >&2; exit 1; }
-[[ "$PREBUILT" == false || -f "$BUNDLE" ]] || { echo "This server runs spares built elsewhere. Update it with \`scripts/deploy_vps.sh update\` on your laptop, or pass --bundle." >&2; exit 1; }
+[[ "$PREBUILT" == false || -f "$BUNDLE" ]] || { echo "This server runs spares built elsewhere. Update it with \`spares deploy update\` on your laptop, or pass --bundle." >&2; exit 1; }
 
 if ! id "$SPARES_USER" >/dev/null 2>&1; then
   echo "==> Creating the user $SPARES_USER"
@@ -150,7 +150,7 @@ apt-get install -y -q "${PACKAGES[@]}"
 
 # pandoc from its release instead of apt, whose pandoc is too old for the HTML of markdown notes
 # (`--math-method` needs 3.11, and 3.12.0 breaks `--embed-resources`). Keep it at the version used
-# locally, so notes rendered here get the same output. `deploy_vps.sh` reads this line.
+# locally, so notes rendered here get the same output. `spares deploy` reads this line.
 PANDOC_VERSION="3.12.1"
 if [[ "$NO_LATEX" == false && "$(pandoc --version 2>/dev/null | head -n1)" != "pandoc $PANDOC_VERSION" ]]; then
   echo "==> Installing pandoc $PANDOC_VERSION"
@@ -318,7 +318,7 @@ fi
 
 sleep 1
 systemctl is-active --quiet spares || { journalctl -u spares -n 30 --no-pager; exit 1; }
-# For `deploy_vps.sh`, which reads where the server is from here
+# For `spares deploy`, which reads where the server is from here
 echo "$URL" > /etc/spares/url
 HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
 [[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"

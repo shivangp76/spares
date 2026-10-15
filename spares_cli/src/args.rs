@@ -16,6 +16,7 @@ use spares_core::model::Score;
 use spares_core::parsers::get_note_info_from_filepath;
 use spares_core::schema::note::NotesSelector;
 
+use crate::deploy::DeployArgs;
 use crate::import::ImportArgs;
 use crate::migrate::MigrateArgs;
 use crate::review::ReviewArgs;
@@ -68,6 +69,15 @@ pub(crate) enum Commands {
     Keyword(KeywordArgs),
     #[command(arg_required_else_help = true)]
     Event(EventArgs),
+    /// Deploy spares to a VPS as the sync server, and set up this machine to sync with it
+    ///
+    /// spares is built here, from the checkout of the spares repository this runs in (or else the
+    /// one this binary was built from), as it is, and uploaded: the server needs neither the
+    /// memory and disk to build it nor access to GitHub (which IPv6-only servers lack). Building
+    /// needs zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`)
+    /// and bun.
+    #[command(arg_required_else_help = true)]
+    Deploy(DeployArgs),
 }
 
 #[derive(Args, Debug)]
