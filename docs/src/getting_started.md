@@ -8,6 +8,14 @@ cargo build --release
 export PATH="$PATH:~/spares/target/release"
 ```
 
+## Reference documentation
+
+This manual covers how to set spares up and use it. Settings, note and cloze syntax, and how each part works are documented on the code, as API docs. Open them with:
+```sh
+cargo doc --workspace --no-deps --document-private-items --open
+```
+When this manual names an item such as `spares_core::parsers::NoteSettings`, search for it there. Every command's options are in `spares <command> --help`.
+
 ## Creating a parser (optional)
 
 Spares ships with 3 main parsers: "markdown", "typst", and "latex-note".
