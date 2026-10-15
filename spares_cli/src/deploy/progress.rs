@@ -66,6 +66,15 @@ struct Part {
     name: String,
     started: Instant,
     took: Option<Duration>,
+    /// Whether it runs alongside the other parts (see [`Progress::background`]) instead of until
+    /// the next one starts
+    background: bool,
+}
+
+/// A part running alongside others, which ends when this is dropped
+pub(super) struct BackgroundPart {
+    step: usize,
+    part: usize,
 }
 
 /// The handle to the progress of a run. Dropping it before [`Progress::finish`] reports the
@@ -159,14 +168,35 @@ impl Progress {
         let Some(step) = state.current.map(|i| &mut state.steps[i]) else {
             return;
         };
-        end_part(step);
+        end_parts(step, false);
         step.parts.push(Part {
             name: name.to_string(),
             started: Instant::now(),
             took: None,
+            background: false,
         });
         println!("  {} {name}", "›".cyan().bold());
         state.redraw();
+    }
+
+    /// Starts a part of the step running alongside the others, e.g. on another thread, which ends
+    /// when the returned handle is dropped, or with the step. Unlike [`Progress::part`], it does
+    /// not end the part before, and it prints the time it took when it ends.
+    pub(super) fn background(&self, name: &str) -> BackgroundPart {
+        let mut guard = state();
+        let state = guard.as_mut().expect("started");
+        let step = state.current.expect("in a step");
+        let parts = &mut state.steps[step].parts;
+        parts.push(Part {
+            name: name.to_string(),
+            started: Instant::now(),
+            took: None,
+            background: true,
+        });
+        let part = parts.len() - 1;
+        println!("  {} {name}", "›".cyan().bold());
+        state.redraw();
+        BackgroundPart { step, part }
     }
 
     /// Ends the step running, printing the time it took.
@@ -271,6 +301,26 @@ impl Progress {
     }
 }
 
+impl Drop for BackgroundPart {
+    fn drop(&mut self) {
+        let mut guard = state();
+        let Some(state) = guard.as_mut() else {
+            return;
+        };
+        let part = &mut state.steps[self.step].parts[self.part];
+        if part.took.is_none() {
+            let took = part.started.elapsed();
+            part.took = Some(took);
+            println!(
+                "  {} {}",
+                "✓".green(),
+                format!("{} took {}", part.name, human(took)).dimmed()
+            );
+            state.redraw();
+        }
+    }
+}
+
 impl Drop for Progress {
     fn drop(&mut self) {
         if self.finished {
@@ -317,7 +367,7 @@ impl State {
             return;
         };
         let step = &mut self.steps[i];
-        end_part(step);
+        end_parts(step, true);
         let took = step
             .started
             .map(|started| started.elapsed())
@@ -383,8 +433,16 @@ impl State {
                 s.dimmed()
             }));
             left.push(segment(step.name.to_string(), |s| s.bold()));
-            if let Some(part) = step.parts.last().filter(|part| part.took.is_none()) {
-                left.push(segment(format!(" › {}", part.name), |s| s.normal()));
+            let running: Vec<&str> = step
+                .parts
+                .iter()
+                .filter(|part| part.took.is_none())
+                .map(|part| part.name.as_str())
+                .collect();
+            if !running.is_empty() {
+                left.push(segment(format!(" › {}", running.join(" · ")), |s| {
+                    s.normal()
+                }));
             }
             if let Some(started) = step.started {
                 left.push(segment(format!("  {}", clock(started.elapsed())), |s| {
@@ -441,11 +499,12 @@ fn render((left, right): &(Vec<Segment>, Vec<Segment>), width: usize) -> String 
     line
 }
 
-fn end_part(step: &mut Step) {
-    if let Some(part) = step.parts.last_mut()
-        && part.took.is_none()
-    {
-        part.took = Some(part.started.elapsed());
+/// Ends the parts of `step` running, but those in the background only if `background`.
+fn end_parts(step: &mut Step, background: bool) {
+    for part in &mut step.parts {
+        if part.took.is_none() && (background || !part.background) {
+            part.took = Some(part.started.elapsed());
+        }
     }
 }
 

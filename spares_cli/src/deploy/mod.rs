@@ -20,6 +20,7 @@ use spares_core::config::read_external_config;
 
 use bundle::Bundle;
 use bundle::REMOTE_DIR;
+use bundle::Server;
 use bundle::Target;
 use progress::Progress;
 use shell::Ssh;
@@ -117,17 +118,19 @@ async fn update() -> Result<(), Error> {
         miette!("sync.remote_host is not set in config.toml. Run `spares deploy init` first.")
     })?;
     let ssh = Ssh::new();
-    let progress = Progress::start(
-        "update",
-        &["Connecting", "Building", "Uploading", "Installing"],
-    );
-    progress.step("Connecting", &format!("to {remote_host}"));
-    let no_latex = ssh.output(
-        &remote_host,
-        "sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf",
-    )?;
-    let target = Target::of(&ssh, &remote_host)?;
-    let bundle = Bundle::build(&progress, &repo, target, no_latex != "true").await?;
+    let progress = Progress::start("update", &["Building", "Uploading", "Installing"]);
+    let bundle = Bundle::build(&progress, &repo, &remote_host, || {
+        let output = ssh.output(
+            &remote_host,
+            "uname -m; sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf",
+        )?;
+        let mut lines = output.lines();
+        Ok(Server {
+            target: Target::of_arch(lines.next().unwrap_or_default())?,
+            with_pandoc: lines.next() != Some("true"),
+        })
+    })
+    .await?;
     progress.step("Uploading", &format!("to {remote_host}"));
     upload(&ssh, &bundle, &remote_host)?;
     drop(bundle);

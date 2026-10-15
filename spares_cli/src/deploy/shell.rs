@@ -68,6 +68,21 @@ pub(super) fn run(command: &mut Command) -> Result<(), Error> {
     }
 }
 
+/// Runs `command` without showing its output unless it fails, e.g. alongside another command
+/// that shows its own.
+pub(super) fn run_quietly(command: &mut Command) -> Result<(), Error> {
+    let output = command
+        .output()
+        .map_err(|e| miette!("Could not run {}: {e}", program(command)))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let mut stderr = std::io::stderr().lock();
+    let _ = stderr.write_all(&output.stdout);
+    let _ = stderr.write_all(&output.stderr);
+    Err(miette!("{} failed ({}).", program(command), output.status))
+}
+
 /// The output of `command`, trimmed, failing if it does. Its errors go to the terminal.
 pub(super) fn output(command: &mut Command) -> Result<String, Error> {
     let output = command
