@@ -3,6 +3,13 @@
 //! As for [images](crate::api::image), notes refer to clips by absolute path, so the browser
 //! uploads the recording, which is stored in the audio directory, and inserts the returned
 //! snippet, which links to the stored file. Files are named by their contents.
+//!
+//! To record a clip in the web app, click **Record audio** above a note's editor, record, and
+//! click Insert. The recording is stored in `audio` in the data directory, and a link to it is
+//! inserted at the cursor, e.g. `[listen](…)` in Markdown or `#link("…")[listen]` in Typst.
+//! Browsers that can record AAC (such as Safari) upload an m4a file; others upload WAV, since the
+//! formats they record are not ones clips can use. Recording needs the web app to be served over
+//! HTTPS or from localhost, as browsers only allow the microphone there.
 
 use std::fs::create_dir_all;
 use std::fs::rename;
