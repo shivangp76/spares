@@ -414,7 +414,9 @@ pub struct QueueConfig {
     /// learning card due today as soon as nothing else is left, as spares did before this
     /// setting.
     ///
-    /// Filtered tags are not affected: they show every card in them, whenever it is due.
+    /// Filtered tags are not affected: they show every card in them, whenever it is due. Nor is
+    /// offline review (see [`crate::api::offline_review`]), which shows learning cards due today
+    /// as soon as nothing else is left.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
@@ -541,7 +543,8 @@ pub struct LeechConfig {
     ///
     /// It is done on the lapse that reaches [`Self::lapses_threshold`], and again every half of
     /// it after (every 4 lapses with the default of 8), in case the card was let back in without
-    /// being fixed. Undoing the rating undoes it too.
+    /// being fixed. Undoing the rating undoes it too. It is not done for an offline rating that
+    /// is placed before a later review of the card (see [`crate::api::offline_review`]).
     pub action: LeechAction,
     /// The tag [`LeechAction::Tag`] and [`LeechAction::Suspend`] add to a leech's note, so you can
     /// find the notes to fix with `tag=leech`. Tags belong to notes, so the note's other cards
