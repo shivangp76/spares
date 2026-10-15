@@ -5,16 +5,36 @@
 //! pull's usn, and every row the server has to receive (local changes, merge results) with
 //! `usn = -1`, so the push is simply everything dirty afterwards.
 //!
-//! The rules ("Merge rules" in `docs/src/sync_design.md`):
-//! - A row changed on one side only takes that side's version, whatever its timestamps.
-//! - Changed on both sides: a three-way merge against the last synced version ([`super::merge`]).
-//!   Note text that both sides changed in the same lines keeps the local text, stores the other
-//!   in `sync_conflict` and tags the note `sync-conflict`. Nothing is discarded.
-//! - A note edited on one side and deleted on the other is kept, and tagged `sync-conflict`. A
-//!   review does not count as an edit, and a card's existence follows its note's text, so card
-//!   deletes win.
-//! - The server never re-parses notes for sync, so the client decides which cards a note whose
-//!   text both sides changed ends up with ([`reconcile_cards`]).
+//! The client merges and pushes the result, so the server never re-parses notes and card ids are
+//! the same on both sides. *Base* means the `sync_base` row, or the local row if it isn't dirty. A
+//! dirty row with no base was already pushed in a sync that didn't finish, so the remote version
+//! is the base and the local version wins.
+//!
+//! # Merge rules
+//!
+//! Nothing is decided by timestamps when only one side changed something, and nothing is
+//! discarded: a conflict keeps the local text, stores the other in `sync_conflict` and tags the
+//! note `sync-conflict` (see [`super::conflicts`]).
+//!
+//! | Situation | Result |
+//! |---|---|
+//! | Changed on one side only | That side's version, whatever its timestamp. |
+//! | Note text changed on both sides | Line-based three-way merge (`diffy`) with card orders replaced by card ids (see `super::orders`). If that conflicts, the plain texts are tried too. |
+//! | Same lines edited on both sides, or a merged text that no longer parses | Keep the local text. Store base, local and remote in `sync_conflict` and tag the note `sync-conflict`. |
+//! | Note tags, non-embedded keywords, card tags | Set merge: additions and removals from either side applied. |
+//! | Note and card `custom_data` | Key by key. A key both sides changed: local for notes, the newer change for cards. |
+//! | Note `parser_id`, `created_at` | Three-way; local wins a conflict. |
+//! | review_log | Union. A log keeps its card and tag where either side still has them. |
+//! | Card scheduling (`due`, `stability`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs. |
+//! | Card `special_state`, `desired_retention` | Three-way; the newer change wins a conflict. |
+//! | Card `order`, `back_type`, `note_id` | Follow the note text ([`reconcile_cards`]). |
+//! | Note deleted on one side, edited on the other | The edit wins: the note is kept (its cards and reviews are sent back), tagged `sync-conflict`, with a `sync_conflict` row. A review doesn't count as an edit. |
+//! | Note deleted on one side, not edited on the other | Deleted. |
+//! | Card deleted on one side | Deleted, even if the other side reviewed it (its reviews stay, unlinked). A card's existence follows its note's text. |
+//! | Tag or parser deleted on one side, changed on the other | Kept, and sent back. A parser still used by notes is kept too. |
+//! | Tag and parser fields | Three-way per field; the newer change wins a tag conflict. |
+//! | Both sides have a tag with the same name | The local tag is folded into the server's (notes, cards, review logs, filtered-tag scheduler data) and deleted. |
+//! | Both sides have a parser with the same name | Sync stops with a message. |
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

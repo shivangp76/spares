@@ -1,10 +1,94 @@
-//! Two-way sync between the laptop and the server. See `docs/src/sync_design.md`.
+//! Two-way sync between the laptop and the server. How to set it up and use it is in the manual's
+//! Getting Started and Deploying pages; what is still to do is in `docs/sync_plan.md`.
 //!
-//! Change tracking lives in the database (migration `20261014130000_sync`): every synced table
-//! has a `usn` column that is `-1` for rows changed since the last sync, deletes leave a row in
-//! `grave`, and the first change after a sync saves the row's synced version in `sync_base` for
-//! the three-way merge. Triggers maintain all of this, so no write path can be missed. Sync turns
-//! them off with [`set_applying`] while it writes the other replica's changes.
+//! # Goal
+//!
+//! Review and edit notes from the phone anywhere, even when the laptop is off. The laptop and a
+//! small server (reached over Tailscale) both hold the whole database and sync like Anki and
+//! `AnkiWeb`. Notes can be edited on the laptop (CLI, note files, live notes) or on the web.
+//!
+//! **Unsynced laptop edits must never be silently overwritten by later phone edits.** Laptop edits
+//! often sit unsynced for a while.
+//!
+//! # Decisions
+//!
+//! 1. **Stay on SQLite.**
+//!    - A central Postgres would need the network for everything.
+//!    - Two-way Postgres replication (pgEdge Spock) uses last-writer-wins and long snowflake ids,
+//!      and it would mean porting all the SQLite-specific SQL (`strftime`, `VACUUM INTO`, JSON,
+//!      sqlx types).
+//!    - Turso's offline sync is last-push-wins per row by default.
+//!    - Merging note text is application logic whatever the database.
+//! 2. **What we take from Anki:** a per-row `usn` with the server's counter as the "since" cursor,
+//!    tombstones (graves), review-log union, clock, schema and count checks, and a full upload or
+//!    download as the escape hatch.
+//! 3. **What we don't take from Anki: last-writer-wins.** Rows changed on both sides get a
+//!    three-way merge against the last synced version ([`merge`], [`client`]). A real conflict is
+//!    stored and flagged, never discarded.
+//! 4. **An edit beats a delete**, the opposite of Anki.
+//! 5. **Live notes are read-only on the web**, because their source file is on the laptop. Their
+//!    tags and keywords stay editable.
+//! 6. **A replica's identity comes from the environment, never the database.** A full download
+//!    replaces the database, and the laptop must not take on the server's identity. There are two
+//!    settings, both required with no default (tests default to replica `0`, role `client`):
+//!    - `SPARES_REPLICA`, `0`–`7` ([`crate::config::Replica`]): which id form the replica writes
+//!      and its residue for the other tables (see [`crate::ids`]). `0` is the laptop, `1` the
+//!      server.
+//!    - `SPARES_SYNC_ROLE`, `server` or `client` ([`crate::config::SyncRole`]): whether this
+//!      instance answers `/api/sync/*` or runs the client side, including the merge.
+//!
+//!    Keeping them apart means a new replica only takes a new number, and code never infers the
+//!    role from the number.
+//!
+//! # Change tracking
+//!
+//! Migration `20261014130000_sync` adds:
+//!
+//! - **`usn`** on `parser`, `tag`, `note`, `card` and `review_log`, defaulting to `-1` (changed and
+//!   not yet synced), so new rows are dirty without a trigger.
+//! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
+//!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
+//!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
+//!   of a delete) removes the grave.
+//! - **`sync_base(kind, oid, snapshot)`**: a row's last synced version, saved on its first change
+//!   or delete after a sync, for the three-way merge. For a note: its data, custom data, parser,
+//!   tag ids and non-embedded keywords; for a card: its fields and tag ids. The views
+//!   `sync_note_snapshot` and `sync_card_snapshot` build the same JSON for current rows.
+//! - **`sync_conflict`**: unresolved conflicts ([`conflicts`]). **`sync_client`** (server only):
+//!   each client's last sync, to catch a client restored from a backup.
+//! - **Triggers maintain all of this**, so no write path can be missed:
+//!   - after an update that changed a synced column (not `updated_at` alone, which review snapshot
+//!     tags rely on), snapshot the old row if it isn't dirty yet and set `usn = -1`;
+//!   - before inserts and deletes on `note_tag`, `card_tag` and non-embedded `note_keyword` rows,
+//!     snapshot and dirty the parent. When the parent or the tag is being deleted, the cascade runs
+//!     after that row is gone, so the triggers skip it: deleting a tag doesn't mark every note that
+//!     had it;
+//!   - before a delete, snapshot the row with its tags; after it, insert a grave. Keeping the base
+//!     of deleted cards lets the merge know which card each order in a note's synced text named.
+//! - **`sync_applying`** holds one row while sync writes the other side's changes, which turns
+//!   every trigger off ([`set_applying`]). A trigger can't read a TEMP table, so it is a regular
+//!   table whose row is never committed.
+//!
+//! `note_link` and embedded keywords are derived from the text, so they aren't tracked or sent;
+//! they are rebuilt wherever a note is applied. `event`, `offline_action` and `app_state` aren't
+//! synced. `render_asset` and `render_package` rows are sent in full on every push, since assets
+//! are only added on the laptop.
+//!
+//! # The rest
+//!
+//! - Note and other ids that are unique across replicas: [`crate::ids`].
+//! - Merge rules: [`client`] and [`merge`]; card orders in merged text: `orders`.
+//! - The protocol: [`protocol`]; the server's side: [`server`]; a full sync: [`full`].
+//! - Files after a sync: [`files`]; undo and the change number after a sync:
+//!   [`LAST_SYNC_EVENT_ID_KEY`] and [`NOTES_VERSION_OFFSET_KEY`].
+//!
+//! # Sources
+//!
+//! - Anki's sync: <https://github.com/ankitects/anki/tree/main/rslib/src/sync> (`normal.rs`,
+//!   `chunks.rs`, `graves.rs`, `meta.rs`); <https://docs.ankiweb.net/syncing.html>,
+//!   <https://docs.ankiweb.net/sync-server.html>
+//! - pgEdge Spock: <https://github.com/pgEdge/spock>
+//! - Turso offline writes: <https://turso.tech/blog/introducing-offline-writes-for-turso>
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -66,14 +150,17 @@ pub const SYNC_USN_KEY: &str = "sync_usn";
 /// sync.
 pub const SYNC_EPOCH_KEY: &str = "sync_epoch";
 pub const LAST_SYNC_AT_KEY: &str = "last_sync_at";
-/// The newest event at the last sync. Undo refuses events at or below it, since what they did
-/// has reached the other replica.
+/// The newest event at the last sync. `/api/undo` refuses events at or below it, since what they
+/// did has reached the other replica, as Anki clears undo on sync. The server sets it when it
+/// answers a pull or push, the client when it commits.
 pub const LAST_SYNC_EVENT_ID_KEY: &str = "last_sync_event_id";
 /// Set (to the reason) when only a full sync can bring the replicas back in step.
 pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
 /// Added to the newest note event id by [`crate::api::undo::get_latest_note_event_id`], so the
 /// number readers use to notice note changes (the nvim plugin's keyword cache) also changes when
-/// a sync changes notes, which writes no events. See [`bump_notes_version`].
+/// a sync changes notes, which writes no events. Every sync that changes notes moves it on (see
+/// [`bump_notes_version`]). A full sync, which clears `event`, adds more than the newest event id,
+/// so the number never repeats.
 pub const NOTES_VERSION_OFFSET_KEY: &str = "notes_version_offset";
 
 /// The tables with a `usn` column.

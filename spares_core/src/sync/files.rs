@@ -1,6 +1,6 @@
-//! Files after a sync (see "After a sync" in `docs/src/sync_design.md`). The database is the source of truth, so
-//! the files of every note a sync changed are regenerated from it, and those of deleted notes
-//! removed, on whichever side the change landed.
+//! Files after a sync. The database is the source of truth, so the files of every note a sync
+//! changed are regenerated from it, those of deleted notes removed, and card files past a note's
+//! last card deleted, on whichever side the change landed.
 //!
 //! With the notes repository ([`notes_vcs`]), regenerated note files are committed to the server
 //! copy, and edits not pushed yet live in the user's clone, so a sync never overwrites them: they
