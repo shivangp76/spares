@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { audioLinkPath } from '../audio';
 
-interface Props { source: string; onReady?: () => void }
+interface Props {
+  source: string;
+  onReady?: () => void;
+  /** Plays an audio clip linked from the card. Without it, the link is followed. */
+  onPlayAudio?: (path: string) => void;
+}
+
+const XLINK = 'http://www.w3.org/1999/xlink';
 
 type State =
   | { source: string; width: number; svg: string; error?: undefined }
@@ -34,7 +42,7 @@ function useStepWidth() {
   return [ref, width] as const;
 }
 
-export default function TypstViewer({ source, onReady }: Props) {
+export default function TypstViewer({ source, onReady, onPlayAudio }: Props) {
   const [ref, width] = useStepWidth();
   const [result, setResult] = useState<State | null>(null);
   // Expanding compiles the source without the width input, so the template lays it out at its
@@ -98,8 +106,18 @@ export default function TypstViewer({ source, onReady }: Props) {
     canExpand = true;
     content = <div className="typst-viewer" dangerouslySetInnerHTML={{ __html: result.svg }} />;
   }
+  // Links are `<a xlink:href>` over the linked text in the SVG
+  function onClick(e: React.MouseEvent) {
+    if (!onPlayAudio) return;
+    const link = e.target instanceof Element ? e.target.closest('a') : null;
+    const path = audioLinkPath(link && (link.getAttribute('href') ?? link.getAttributeNS(XLINK, 'href')));
+    if (path === null) return;
+    e.preventDefault();
+    onPlayAudio(path);
+  }
+
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative' }} onClick={onClick}>
       {content}
       {canExpand && (
         <button

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFile } from '../api/client';
+import { audioLinkPath } from '../audio';
 import { useResolvedTheme } from '../theme';
 import { parseNoteId } from '../utils';
 
@@ -9,6 +10,8 @@ interface Props {
   /** Opens a linked note in the app. Without it, note links do nothing. */
   onOpenNote?: (noteId: number) => void;
   onReady?: () => void;
+  /** Plays an audio clip linked from the card. Without it, the link opens in a new tab. */
+  onPlayAudio?: (path: string) => void;
 }
 
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
@@ -20,7 +23,7 @@ const STYLE_ID = 'spares-theme';
  * can run. `allow-same-origin` lets the app size and theme it, and must never be combined with
  * `allow-scripts`, which would remove the sandbox.
  */
-export default function HtmlViewer({ path, version, onOpenNote, onReady }: Props) {
+export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio }: Props) {
   const key = `${path}?v=${version}`;
   const [loaded, setLoaded] = useState<{ key: string; html?: string; error?: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -28,10 +31,12 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady }: Props
   const theme = useResolvedTheme();
   const themeRef = useRef(theme);
   const onOpenNoteRef = useRef(onOpenNote);
+  const onPlayAudioRef = useRef(onPlayAudio);
   useEffect(() => {
     themeRef.current = theme;
     onOpenNoteRef.current = onOpenNote;
-  }, [theme, onOpenNote]);
+    onPlayAudioRef.current = onPlayAudio;
+  }, [theme, onOpenNote, onPlayAudio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +62,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady }: Props
       const doc = iframe.contentDocument;
       if (!doc) return;
       applyTheme(doc, themeRef.current);
-      doc.addEventListener('click', e => onClick(e, onOpenNoteRef.current));
+      doc.addEventListener('click', e => onClick(e, onOpenNoteRef.current, onPlayAudioRef.current));
       observer = new ResizeObserver(() => setHeight(doc.documentElement.scrollHeight));
       observer.observe(doc.documentElement);
       setHeight(doc.documentElement.scrollHeight);
@@ -115,12 +120,24 @@ function applyTheme(doc: Document, theme: 'light' | 'dark') {
   style.textContent = css;
 }
 
-function onClick(e: MouseEvent, onOpenNote: ((noteId: number) => void) | undefined) {
+function onClick(
+  e: MouseEvent,
+  onOpenNote: ((noteId: number) => void) | undefined,
+  onPlayAudio: ((path: string) => void) | undefined,
+) {
   const link = (e.target as Element | null)?.closest?.('a[href]');
   if (!link) return;
   const href = link.getAttribute('href') ?? '';
   if (href.startsWith('#')) return;
   e.preventDefault();
+  const audioPath = audioLinkPath(href);
+  if (audioPath !== null && onPlayAudio) {
+    onPlayAudio(audioPath);
+    // Back to the app, whose hotkeys the iframe would otherwise keep
+    (document.activeElement as HTMLElement | null)?.blur();
+    window.focus();
+    return;
+  }
   const noteLink = NOTE_LINK.exec(href);
   const noteId = noteLink ? parseNoteId(noteLink[1]) : null;
   if (noteId !== null) onOpenNote?.(noteId);
