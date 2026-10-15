@@ -465,13 +465,43 @@ pub struct ParserConfig {
 #[serde_with::serde_as]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent setting of config.toml"
+)]
 pub struct SparesExternalConfig {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub maximum_interval: Duration,
     /// Cards due in less than this duration will not be rescheduled to respect their desired retention.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub minimum_interval: Duration,
+    /// The most new cards to study each day. A card counts once it is first rated, whether or not
+    /// it graduates that day. Defaults to 20.
+    ///
+    /// Unless [`Self::new_cards_ignore_review_limit`] is set, new cards are also held back by
+    /// [`Self::reviews_daily_limit`].
     pub new_cards_daily_limit: u32,
+    /// The most review cards to study each day. A card counts once it is rated while in review,
+    /// that is, after it graduated from its learning steps. Cards in learning or relearning steps
+    /// are never held back, so a card forgotten today can still be relearned once the limit is
+    /// reached. Defaults to 9999, which in practice means no limit.
+    ///
+    /// When the limit is reached, review cards still due wait until the next day, when they are
+    /// shown in [`QueueConfig::review_order`]. Ordering by
+    /// [`ReviewOrder::Retrievability`] then makes sure the cards held back are the ones most
+    /// likely to still be remembered.
+    ///
+    /// Like the new card limit, this applies to `spares card review` with or without `--query`,
+    /// and not to filtered tags, which show every card in them. A query with `limit` (a review
+    /// snapshot) leaves out review cards once the limit is reached, but is otherwise limited by
+    /// its own `limit`s.
+    pub reviews_daily_limit: u32,
+    /// Whether new cards may be studied regardless of [`Self::reviews_daily_limit`]. Defaults to
+    /// `false`, as in Anki: new cards then count toward the review limit too, and are only shown
+    /// while the reviews due today still leave room under it. With a limit of 200 and 190 reviews
+    /// due, at most 10 new cards are shown, however high [`Self::new_cards_daily_limit`] is, so
+    /// a backlog of reviews stops new cards from adding to it.
+    pub new_cards_ignore_review_limit: bool,
     pub flagged_tag_name: String,
     /// Delays between the same-day reviews of a new card before it graduates to review, in
     /// seconds. Each must be shorter than a day, in increasing order. Empty to graduate on the
@@ -517,6 +547,8 @@ impl Default for SparesExternalConfig {
             maximum_interval: Duration::days(180),
             minimum_interval: Duration::days(2),
             new_cards_daily_limit: 20,
+            reviews_daily_limit: 9999,
+            new_cards_ignore_review_limit: false,
             flagged_tag_name: "flagged".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -75,6 +76,7 @@ use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::placement::place_due;
+use crate::schedulers::review_state;
 use crate::schema::review::CardBackRenderedPath;
 use crate::schema::review::CliReviewInfo;
 use crate::schema::review::GetReviewCardFilterRequest;
@@ -344,38 +346,76 @@ fn build_review_card_response(
 
 const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
-/// The new cards that can still be studied on `requested_date`'s local day.
-pub(crate) async fn new_cards_left(
+/// What is left of today's limits on `requested_date`'s local day. See
+/// [`SparesExternalConfig::new_cards_daily_limit`] and
+/// [`SparesExternalConfig::reviews_daily_limit`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DailyLimitsLeft {
+    pub(crate) new: u32,
+    pub(crate) reviews: u32,
+}
+
+pub(crate) async fn daily_limits_left(
     db: &SqlitePool,
     requested_date: DateTime<Utc>,
-) -> Result<u32, Error> {
+) -> Result<DailyLimitsLeft, Error> {
+    daily_limits_left_with(db, &read_external_config()?, requested_date).await
+}
+
+pub(crate) async fn daily_limits_left_with(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+    requested_date: DateTime<Utc>,
+) -> Result<DailyLimitsLeft, Error> {
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let new_cards_studied_on_requested_date: u32 = sqlx::query_scalar(
-        r"SELECT COUNT(DISTINCT card_id) FROM review_log
-      WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
+    let studied_from = async |state: StateId| -> Result<u32, Error> {
+        sqlx::query_scalar(
+            r"SELECT COUNT(DISTINCT card_id) FROM review_log
+            WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
+        )
+        .bind(lower_limit.timestamp())
+        .bind(upper_limit.timestamp())
+        // Forgetting a card must not use up one of today's cards.
+        .bind(ReviewLogKind::Review)
+        .bind(state)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+    };
+    let new_studied = studied_from(NEW_CARD_STATE).await?;
+    let reviews_studied = studied_from(review_state()).await?;
+
+    let mut new = config.new_cards_daily_limit.saturating_sub(new_studied);
+    if config.new_cards_ignore_review_limit {
+        let reviews = config.reviews_daily_limit.saturating_sub(reviews_studied);
+        return Ok(DailyLimitsLeft { new, reviews });
+    }
+    let reviews = config
+        .reviews_daily_limit
+        .saturating_sub(reviews_studied + new_studied);
+    // New cards only fill the room the reviews due today leave under the review limit
+    let reviews_due: u32 = sqlx::query_scalar(
+        r"SELECT COUNT(*) FROM card WHERE state = ? AND special_state IS NULL AND due <= ?",
     )
-    .bind(lower_limit.timestamp())
+    .bind(review_state())
     .bind(upper_limit.timestamp())
-    // Forgetting a new card must not consume one of today's new-card slots.
-    .bind(ReviewLogKind::Review)
-    .bind(NEW_CARD_STATE)
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let config = read_external_config()?;
-    Ok(config
-        .new_cards_daily_limit
-        .saturating_sub(new_cards_studied_on_requested_date))
+    new = new.min(reviews.saturating_sub(reviews_due));
+    Ok(DailyLimitsLeft { new, reviews })
 }
 
-/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up (`new_left` is 0),
-/// otherwise an empty string.
-fn not_new_card_clause(new_left: u32) -> String {
-    if new_left == 0 {
-        format!("\nAND c.state != {}", NEW_CARD_STATE)
-    } else {
-        String::new()
-    }
+/// The conditions that leave out new cards once today's new card limit is used up, and review
+/// cards once the review limit is, each starting with `"\nAND "`. Empty while there is room.
+fn daily_limits_clause(left: DailyLimitsLeft) -> String {
+    [(left.new, NEW_CARD_STATE), (left.reviews, review_state())]
+        .into_iter()
+        .filter(|(left, _)| *left == 0)
+        .fold(String::new(), |mut clause, (_, state)| {
+            let _ = write!(clause, "\nAND c.state != {state}");
+            clause
+        })
 }
 
 /// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
@@ -385,7 +425,7 @@ async fn review_eligibility_clause(
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let not_new_card_str = not_new_card_clause(new_cards_left(db, requested_date).await?);
+    let not_new_card_str = daily_limits_clause(daily_limits_left(db, requested_date).await?);
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     Ok(format!(
         "(c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})",
@@ -511,8 +551,8 @@ pub(crate) async fn build_review_filter_query(
     requested_date: DateTime<Utc>,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let new_left = new_cards_left(db, requested_date).await?;
-    let not_new_card_str = not_new_card_clause(new_left);
+    let limits_left = daily_limits_left(db, requested_date).await?;
+    let not_new_card_str = daily_limits_clause(limits_left);
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
@@ -556,7 +596,8 @@ pub(crate) async fn build_review_filter_query(
         QueueCaps::default()
     } else {
         QueueCaps {
-            new: Some(new_left),
+            new: Some(limits_left.new),
+            reviews: Some(limits_left.reviews),
         }
     };
     Ok(Some(ReviewFilterQuery {
