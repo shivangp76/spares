@@ -293,6 +293,7 @@ pub(crate) mod tests {
             review_order,
             new_order,
             new_review_mix,
+            ..QueueConfig::default()
         }
     }
 
@@ -623,5 +624,88 @@ mod daily_limit_tests {
                 .unwrap(),
             DailyLimitsLeft { new: 5, reviews: 5 }
         );
+    }
+}
+
+#[cfg(test)]
+mod learn_ahead_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::LEARNING;
+    use super::tests::create_cards;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::offline_review::get_review_queue;
+    use crate::api::review::get_review_card;
+    use crate::api::review::next_review_card_available_at;
+    use crate::parsers::get_all_parsers;
+    use crate::schema::review::GetReviewCardRequest;
+    use crate::schema::review::ReviewQueueRequest;
+
+    /// The default learn ahead limit
+    const LIMIT: Duration = Duration::minutes(20);
+
+    async fn next_card(pool: &SqlitePool, now: DateTime<Utc>) -> Option<i64> {
+        get_review_card(
+            pool,
+            GetReviewCardRequest { filter: None },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap()
+        .map(|card| card.card_id)
+    }
+
+    async fn available_at(pool: &SqlitePool, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        next_review_card_available_at(pool, GetReviewCardRequest { filter: None }, now)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn learning_cards_wait_for_the_learn_ahead_limit(pool: SqlitePool) {
+        // Midday, so that an hour later is still today
+        let now = Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .to_utc();
+        let ids = create_cards(&pool, 1, now - Duration::days(1)).await;
+        let card = ids[0];
+
+        // Due within the limit: shown now
+        set_card(&pool, card, LEARNING, now + Duration::minutes(5), 1.0, 5.0).await;
+        assert_eq!(next_card(&pool, now).await, Some(card));
+
+        // Due later: held back until it comes within the limit
+        let due = now + Duration::hours(1);
+        set_card(&pool, card, LEARNING, due, 1.0, 5.0).await;
+        assert_eq!(next_card(&pool, now).await, None);
+        assert_eq!(available_at(&pool, now).await, Some(due - LIMIT));
+        assert_eq!(next_card(&pool, due - LIMIT).await, Some(card));
+
+        // The offline queue has it anyway, since its client picks when to show it
+        let queue = get_review_queue(
+            &pool,
+            ReviewQueueRequest {
+                filter: None,
+                limit: 10,
+                days_ahead: 0,
+            },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(queue.cards.len(), 1);
+
+        // Due tomorrow: done for today
+        set_card(&pool, card, LEARNING, now + Duration::days(1), 1.0, 5.0).await;
+        assert_eq!(next_card(&pool, now).await, None);
+        assert_eq!(available_at(&pool, now).await, None);
     }
 }

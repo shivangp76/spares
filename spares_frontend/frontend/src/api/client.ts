@@ -373,6 +373,18 @@ export async function postReview(filter?: ReviewFilter): Promise<GetReviewCardRe
   });
 }
 
+/**
+ * When a review with `filter` that has nothing to show now can show its next card: a learning card
+ * due later today, once it comes within the learn ahead limit. `null` when the review is done for
+ * the day.
+ */
+export async function nextReviewAvailableAt(filter?: ReviewFilter): Promise<string | null> {
+  return apiFetch('Next review time fetch', '/api/review/next-available', {
+    method: 'POST',
+    body: JSON.stringify(filter ? { filter } : {}),
+  });
+}
+
 /** Fetches a specific card in review form, e.g. to refresh it after its note was edited. `null` if it no longer exists. */
 export async function getReviewCardById(cardId: number, filter?: ReviewFilter): Promise<GetReviewCardResponse | null> {
   return apiFetch('Review card fetch', `/api/review/card/${cardId}`, {

@@ -9,6 +9,7 @@ use spares_core::api::offline_review::sync_offline_actions;
 use spares_core::api::review::create_review_snapshot_tag;
 use spares_core::api::review::get_review_card;
 use spares_core::api::review::get_review_card_by_id;
+use spares_core::api::review::next_review_card_available_at;
 use spares_core::api::review::submit_study_action;
 use spares_core::api::statistics::get_review_history;
 use spares_core::api::statistics::get_statistics;
@@ -34,6 +35,16 @@ pub(crate) async fn get_review_card_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(review_card_response))
+}
+
+pub(crate) async fn next_review_card_available_at_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<GetReviewCardRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let available_at = next_review_card_available_at(&data.db, body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(available_at))
 }
 
 pub(crate) async fn create_review_snapshot_handler(
