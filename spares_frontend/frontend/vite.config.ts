@@ -84,7 +84,8 @@ function listFiles(dir: string): string[] {
 
 /** Writes `dist/sw.js` from service-worker.js, with the files to cache for offline use. These are
     the page and everything it may load except the image occlusion editor and WebAssembly modules,
-    which are large and only cached once used. */
+    which are large and only cached once used. The modules, having hashed names, are kept across
+    builds that still have them. */
 function serviceWorker(): Plugin {
   return {
     name: 'service-worker',
@@ -101,9 +102,11 @@ function serviceWorker(): Plugin {
         const hash = createHash('sha256').update(template)
         for (const path of files) hash.update(path).update(readFileSync(join(DIST_DIR, path)))
         const precache = files.filter(path => !path.startsWith('svgedit/') && !path.endsWith('.wasm'))
+        const keep = files.filter(path => path.startsWith('assets/') && path.endsWith('.wasm'))
         const source = template
           .replace('__BUILD__', JSON.stringify(hash.digest('hex').slice(0, 16)))
           .replace('__PRECACHE__', JSON.stringify(precache, null, 2))
+          .replace('__KEEP__', JSON.stringify(keep, null, 2))
         writeFileSync(join(DIST_DIR, 'sw.js'), source)
       },
     },
