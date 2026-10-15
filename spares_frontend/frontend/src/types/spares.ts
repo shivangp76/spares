@@ -169,6 +169,8 @@ export interface TagResponse {
   // Present iff the tag is a filtered tag, whose membership is defined by the query
   query: string | null;
   auto_delete: boolean;
+  // For a filtered tag: whether rating a card while studying it reschedules the card
+  reschedule: boolean;
   created_at: number; // unix seconds
   updated_at: number; // unix seconds
 }
@@ -180,6 +182,7 @@ export interface CreateTagRequest {
   description: string;
   query: string | null;
   auto_delete: boolean;
+  reschedule?: boolean;
 }
 
 export interface UpdateTagRequest {
@@ -189,6 +192,7 @@ export interface UpdateTagRequest {
   // Omit to leave unchanged, `null` to clear
   query?: string | null;
   auto_delete?: boolean;
+  reschedule?: boolean;
 }
 
 export interface ParserResponse {

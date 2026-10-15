@@ -32,8 +32,15 @@ pub struct TagRecord {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: i64,
+    /// Absent from snapshots taken before tags had it, which all rescheduled.
+    #[serde(default = "reschedule_default")]
+    pub reschedule: i64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn reschedule_default() -> i64 {
+    1
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -177,7 +184,7 @@ pub(crate) async fn read_tags(
     selection: Selection,
 ) -> Result<Vec<TagRecord>, Error> {
     sqlx::query_as(&format!(
-        "SELECT id, name, description, query, auto_delete, created_at, updated_at FROM tag
+        "SELECT id, name, description, query, auto_delete, reschedule, created_at, updated_at FROM tag
          WHERE {} ORDER BY id",
         selection.condition()
     ))
@@ -343,7 +350,7 @@ pub(crate) async fn read_tag(
     id: TagId,
 ) -> Result<Option<TagRecord>, Error> {
     sqlx::query_as(
-        "SELECT id, name, description, query, auto_delete, created_at, updated_at FROM tag
+        "SELECT id, name, description, query, auto_delete, reschedule, created_at, updated_at FROM tag
          WHERE id = ?",
     )
     .bind(id)

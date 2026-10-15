@@ -131,6 +131,10 @@ pub(crate) enum TagCommands {
         query: Option<String>,
         #[arg(short, long, default_value_t = DEFAULT_TAG_AUTO_DELETE)]
         auto_delete: bool,
+        /// For a filtered tag, whether rating its cards while studying it reschedules them. Pass
+        /// `--reschedule false` to cram without changing when cards are next due.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        reschedule: bool,
     },
     /// Edit a tag
     Edit {
@@ -152,6 +156,9 @@ pub(crate) enum TagCommands {
         query: Option<Option<String>>,
         #[arg(short, long)]
         auto_delete: Option<bool>,
+        /// For a filtered tag, whether rating its cards while studying it reschedules them
+        #[arg(long)]
+        reschedule: Option<bool>,
         /// Rebuild the tag's dynamic membership instead of patching it
         #[arg(long, default_value_t = false)]
         rebuild: bool,

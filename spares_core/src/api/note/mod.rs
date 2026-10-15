@@ -45,6 +45,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -97,6 +98,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -146,6 +148,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -175,6 +178,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: None,
             auto_delete: true,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -365,6 +369,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: None,
             auto_delete: true,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());

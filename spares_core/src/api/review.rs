@@ -485,6 +485,7 @@ pub async fn create_review_snapshot_tag(
                     description: format!("Review snapshot for `{query}`"),
                     query: Some(query.clone()),
                     auto_delete: false,
+                    reschedule: true,
                 },
                 true,
             )
@@ -1072,6 +1073,21 @@ pub(crate) async fn rate_card_with_config(
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+    if let Some(filtered_tag) = &filtered_tag_opt
+        && !filtered_tag.reschedule
+    {
+        return rate_card_without_rescheduling(
+            db,
+            scheduler,
+            filtered_tag,
+            before_card,
+            rating,
+            recall_duration,
+            reviewed_at,
+            log,
+        )
+        .await;
+    }
     let card = before_card.clone();
 
     // Get review logs for this card
@@ -1176,7 +1192,7 @@ pub(crate) async fn rate_card_with_config(
 
     if log {
         let payload = RateCardPayload {
-            review_log_id,
+            review_log_id: Some(review_log_id),
             card: UpdateCardPayload {
                 card_id,
                 order: None,
@@ -1245,6 +1261,100 @@ pub(crate) async fn rate_card_with_config(
     }
 
     Ok(None)
+}
+
+/// Rates `before_card` while studying `filtered_tag`, a tag that does not reschedule
+/// ([`Tag::reschedule`]): only the card's progress through the tag changes, and nothing is written
+/// to the review log.
+///
+/// The rating is left out of the review log, rather than logged as its own kind of row, because
+/// everything that replays a card's history (rating, `spares card reschedule`, the optimizer, sync)
+/// treats a row with a rating as a review that changed the card's memory state, and
+/// `review_log`'s `CHECK ((kind = 0) = (rating IS NOT NULL))` only allows a rating on such rows.
+/// Logging crams would mean rebuilding the table and teaching every replay to skip them. The cost
+/// is that crams are missing from statistics and the review heatmap. The undo event still records
+/// the rating, with no `review_log_id` (see [`RateCardPayload::review_log_id`]).
+#[expect(clippy::too_many_arguments)]
+async fn rate_card_without_rescheduling(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    filtered_tag: &Tag,
+    before_card: Card,
+    rating: RatingId,
+    recall_duration: Duration,
+    reviewed_at: DateTime<Utc>,
+    log: bool,
+) -> Result<Option<i64>, Error> {
+    let mut updated_card = before_card.clone();
+    let finished = update_filtered_tag_scheduler_data(
+        scheduler,
+        filtered_tag,
+        &mut updated_card,
+        rating,
+        recall_duration,
+        reviewed_at,
+    )?;
+    // Clears any burial, as rating a card always does
+    sqlx::query(
+        r"UPDATE card SET special_state = NULL, updated_at = ?, custom_data = ? WHERE id = ?",
+    )
+    .bind(reviewed_at.timestamp())
+    .bind(updated_card.custom_data.clone())
+    .bind(before_card.id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let left_tag = if finished {
+        let deleted = leave_filtered_tag(
+            db,
+            before_card.id,
+            filtered_tag.id,
+            filtered_tag.auto_delete,
+        )
+        .await?;
+        Some(FilteredTagExit {
+            tag_id: filtered_tag.id,
+            deleted_tag: deleted.then(|| filtered_tag.clone()),
+        })
+    } else {
+        None
+    };
+    if !log {
+        return Ok(None);
+    }
+    let payload = RateCardPayload {
+        review_log_id: None,
+        card: UpdateCardPayload {
+            card_id: before_card.id,
+            order: None,
+            back_type: None,
+            due: None,
+            stability: None,
+            difficulty: None,
+            desired_retention: None,
+            special_state: before_card.special_state.map(|state| Transition {
+                before: Some(state),
+                after: None,
+            }),
+            state: None,
+            custom_data: (updated_card.custom_data != before_card.custom_data).then_some(
+                Transition {
+                    before: before_card.custom_data,
+                    after: updated_card.custom_data,
+                },
+            ),
+        },
+        left_tag,
+        buried_siblings: Vec::new(),
+    };
+    let event_ids = insert_events(
+        db,
+        &[(EventType::RateCard, to_value(&payload).unwrap())],
+        reviewed_at,
+        None,
+    )
+    .await?;
+    Ok(Some(*event_ids.first().unwrap()))
 }
 
 /// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech. With
@@ -1365,14 +1475,15 @@ pub(crate) async fn rejoin_filtered_tag(
         // The tag is restored as it was, without rerunning its query, which today could match
         // cards that were never in it.
         sqlx::query(
-            r"INSERT OR IGNORE INTO tag (id, name, description, query, auto_delete, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)",
+            r"INSERT OR IGNORE INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(tag.id)
         .bind(&tag.name)
         .bind(&tag.description)
         .bind(&tag.query)
         .bind(tag.auto_delete)
+        .bind(tag.reschedule)
         .bind(tag.created_at.timestamp())
         .bind(tag.updated_at.timestamp())
         .execute(db)
@@ -2184,6 +2295,7 @@ mod tests {
             description: String::new(),
             query: Some(r#"tag="tag 1""#.to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag = create_tag(&pool, tag_request, false).await.unwrap();
 
@@ -2271,6 +2383,7 @@ mod tests {
                 description: String::new(),
                 query: Some(format!("c.id={}", card.id)),
                 auto_delete: true,
+                reschedule: true,
             },
             false,
         )

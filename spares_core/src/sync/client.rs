@@ -253,6 +253,12 @@ impl Merger<'_> {
                         &remote.auto_delete,
                         prefer,
                     ),
+                    reschedule: merge3_or(
+                        &base.reschedule,
+                        &local.reschedule,
+                        &remote.reschedule,
+                        prefer,
+                    ),
                     created_at: local.created_at.min(remote.created_at),
                     updated_at: local.updated_at.max(remote.updated_at),
                 }
@@ -364,6 +370,7 @@ impl Merger<'_> {
                     .to_string(),
                 query: None,
                 auto_delete: i64::from(DEFAULT_TAG_AUTO_DELETE),
+                reschedule: 1,
                 created_at: now,
                 updated_at: now,
             },

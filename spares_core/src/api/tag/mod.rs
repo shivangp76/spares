@@ -44,6 +44,7 @@ pub async fn create_tag(
         description: body.description,
         query: body.query,
         auto_delete: body.auto_delete,
+        reschedule: body.reschedule,
         created_at: now,
         updated_at: now,
         note_ids: vec![],
@@ -101,8 +102,8 @@ pub async fn create_tag_event(
         None => next_id_in(db, IdTable::Tag).await?,
     };
     let tag: Tag = sqlx::query_as(
-        r"INSERT INTO tag (id, name, description, query, auto_delete, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *",
     )
     .bind(id)
@@ -110,6 +111,7 @@ pub async fn create_tag_event(
     .bind(&payload.description)
     .bind(&payload.query)
     .bind(payload.auto_delete)
+    .bind(payload.reschedule)
     .bind(payload.created_at.timestamp())
     .bind(payload.updated_at.timestamp())
     .fetch_one(db)
@@ -153,6 +155,7 @@ pub async fn create_tag_event(
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            reschedule: tag.reschedule,
             created_at: tag.created_at,
             updated_at: tag.updated_at,
             note_ids: payload.note_ids.clone(),
@@ -214,6 +217,7 @@ pub async fn update_tag_event(
         description: payload.description.map(|t| t.after),
         query: payload.query.map(|t| t.after),
         auto_delete: payload.auto_delete.map(|t| t.after),
+        reschedule: payload.reschedule.map(|t| t.after),
     };
     update_tag(db, body, log).await
 }
@@ -263,6 +267,7 @@ async fn merge_tag_into(
         description: source_tag.description.clone(),
         query: source_tag.query.clone(),
         auto_delete: source_tag.auto_delete,
+        reschedule: source_tag.reschedule,
         created_at: source_tag.created_at,
         updated_at: source_tag.updated_at,
         note_ids,
@@ -324,6 +329,7 @@ async fn update_tag_inner(
         .clone()
         .unwrap_or_else(|| existing_tag.query.clone());
     let new_auto_delete = body.auto_delete.unwrap_or(existing_tag.auto_delete);
+    let new_reschedule = body.reschedule.unwrap_or(existing_tag.reschedule);
     if let Some(ref name) = body.name {
         let tag_with_name: Option<i64> = sqlx::query_scalar(r"SELECT id FROM tag WHERE name = ?")
             .bind(name)
@@ -352,12 +358,13 @@ async fn update_tag_inner(
     }
 
     let updated_tag: Tag = sqlx::query_as(
-        r"UPDATE tag SET name = ?, description = ?, query = ?, auto_delete = ?, updated_at = strftime('%s', 'now') WHERE id = ? RETURNING *",
+        r"UPDATE tag SET name = ?, description = ?, query = ?, auto_delete = ?, reschedule = ?, updated_at = strftime('%s', 'now') WHERE id = ? RETURNING *",
     )
     .bind(&new_name)
     .bind(&new_description)
     .bind(&new_query)
     .bind(new_auto_delete)
+    .bind(new_reschedule)
     .bind(id)
     .fetch_one(db)
     .await
@@ -383,6 +390,10 @@ async fn update_tag_inner(
             auto_delete: body.auto_delete.map(|_| Transition {
                 before: existing_tag.auto_delete,
                 after: updated_tag.auto_delete,
+            }),
+            reschedule: body.reschedule.map(|_| Transition {
+                before: existing_tag.reschedule,
+                after: updated_tag.reschedule,
             }),
         };
         let _event_id = insert_events(
@@ -430,6 +441,7 @@ async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<(), Err
         description: tag.description,
         query: tag.query,
         auto_delete: tag.auto_delete,
+        reschedule: tag.reschedule,
         created_at: tag.created_at,
         updated_at: tag.updated_at,
         note_ids,
@@ -497,6 +509,7 @@ pub(crate) mod tests {
             description: description.to_string(),
             query: None,
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -535,6 +548,7 @@ pub(crate) mod tests {
             description: String::new(),
             query: None,
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_err());
@@ -573,6 +587,7 @@ pub(crate) mod tests {
             description: None,
             query: None,
             auto_delete: None,
+            reschedule: None,
         };
         let tag_res = update_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -599,6 +614,7 @@ pub(crate) mod tests {
             description: None,
             query: None,
             auto_delete: None,
+            reschedule: None,
         };
         let tag_res = update_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -674,6 +690,7 @@ pub(crate) mod tests {
                 description: None,
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             true,
         )
@@ -695,6 +712,7 @@ pub(crate) mod tests {
                 description: None,
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             false,
         )
@@ -728,6 +746,7 @@ pub(crate) mod tests {
                 description: None,
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             false,
         )
@@ -776,6 +795,7 @@ pub(crate) mod tests {
                 description: None,
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             false,
         )
@@ -809,6 +829,7 @@ pub(crate) mod tests {
                 description: String::new(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             true,
         )
@@ -827,6 +848,7 @@ pub(crate) mod tests {
                 description: String::new(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             false,
         )
@@ -847,6 +869,7 @@ pub(crate) mod tests {
                 description: None,
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             true,
         )
@@ -874,6 +897,7 @@ pub(crate) mod tests {
                 description: String::new(),
                 query: Some("dog".to_string()),
                 auto_delete: false,
+                reschedule: true,
             },
             false,
         )
@@ -896,6 +920,7 @@ pub(crate) mod tests {
                 description: Some("new".to_string()),
                 query: None,
                 auto_delete: None,
+                reschedule: None,
             },
             false,
         )
@@ -938,6 +963,7 @@ pub(crate) mod tests {
                 description: String::new(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             true,
         )
@@ -979,6 +1005,7 @@ pub(crate) mod tests {
             description: tag.description.clone(),
             query: tag.query.clone(),
             auto_delete: tag.auto_delete,
+            reschedule: tag.reschedule,
             created_at: tag.created_at,
             updated_at: tag.updated_at,
             note_ids: vec![],

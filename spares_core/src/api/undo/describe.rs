@@ -34,11 +34,13 @@ pub(crate) async fn summarize(db: &SqlitePool, event: &Event) -> Result<EventSum
     // An undo's payload is the inverse of the action, so describe the event it reverted instead.
     // Undoing a rating deleted its `review_log` row, but the undo kept it.
     let (action, review_log) = if event_action(db, event.id).await? == EventAction::Undo {
-        let review_log = (event.kind == EventType::UnrateCard).then(|| {
-            serde_json::from_value::<UnreviewPayload>(event.payload.clone())
-                .unwrap()
-                .review_log
-        });
+        let review_log = (event.kind == EventType::UnrateCard)
+            .then(|| {
+                serde_json::from_value::<UnreviewPayload>(event.payload.clone())
+                    .unwrap()
+                    .review_log
+            })
+            .flatten();
         (fetch_reverted(db, event).await?, review_log)
     } else {
         (event.clone(), None)
@@ -130,6 +132,7 @@ async fn describe(
         EventType::RateCard => {
             let p: RateCardPayload = serde_json::from_value(payload).unwrap();
             let card = format!("Rate card {}", p.card.card_id);
+            // A rating that wrote no review binds NULL, which matches nothing
             let review_log = match review_log {
                 Some(review_log) => Some(review_log),
                 None => sqlx::query_as(r"SELECT * FROM review_log WHERE id = ?")

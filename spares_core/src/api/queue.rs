@@ -1113,3 +1113,122 @@ mod leech_tests {
         assert_eq!(note_tags(&pool, card).await, ["leech"]);
     }
 }
+
+#[cfg(test)]
+mod reschedule_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::REVIEW;
+    use super::tests::create_cards;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::review::rate_card;
+    use crate::api::tag::create_tag;
+    use crate::api::undo::undo_event;
+    use crate::model::Card;
+    use crate::model::CardId;
+    use crate::model::TagId;
+    use crate::schedulers::get_scheduler_from_string;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::tag::CreateTagRequest;
+    use crate::schema::undo::UndoEventRequest;
+
+    const GOOD: u32 = 3;
+    const EASY: u32 = 4;
+
+    async fn card(pool: &SqlitePool, card_id: CardId) -> Card {
+        sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn in_tag(pool: &SqlitePool, card_id: CardId, tag_id: TagId) -> bool {
+        sqlx::query_scalar(r"SELECT COUNT(*) > 0 FROM card_tag WHERE card_id = ? AND tag_id = ?")
+            .bind(card_id)
+            .bind(tag_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn rate(pool: &SqlitePool, card_id: CardId, tag_id: TagId, rating: u32) -> i64 {
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        rate_card(
+            pool,
+            scheduler.as_ref(),
+            RatingSubmission {
+                card_id,
+                rating,
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(1),
+                tag_id: Some(tag_id),
+            },
+            Utc::now(),
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn cramming_leaves_the_schedule_alone(pool: SqlitePool) {
+        let now = Utc::now();
+        let card_id = create_cards(&pool, 1, now - Duration::days(30)).await[0];
+        set_card(&pool, card_id, REVIEW, now + Duration::days(10), 20.0, 4.0).await;
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "cram".to_string(),
+                description: String::new(),
+                query: Some("c.id>0".to_string()),
+                auto_delete: false,
+                reschedule: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(!tag.reschedule);
+        let before = card(&pool, card_id).await;
+
+        rate(&pool, card_id, tag.id, GOOD).await;
+        let after = card(&pool, card_id).await;
+        assert_eq!(
+            (after.due, after.stability, after.difficulty, after.state),
+            (
+                before.due,
+                before.stability,
+                before.difficulty,
+                before.state
+            )
+        );
+        assert!(
+            in_tag(&pool, card_id, tag.id).await,
+            "one Good is not enough to leave"
+        );
+        let reviews: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM review_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(reviews, 0);
+
+        // Easy finishes the card's run through the tag, and undo puts it back
+        let event = rate(&pool, card_id, tag.id, EASY).await;
+        assert!(!in_tag(&pool, card_id, tag.id).await);
+        undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: Some(event),
+                undo_group: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(in_tag(&pool, card_id, tag.id).await);
+        assert_eq!(card(&pool, card_id).await.custom_data, after.custom_data);
+    }
+}
