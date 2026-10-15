@@ -43,6 +43,8 @@ use strum_macros::EnumString;
 use utils::GroupByInsertion as _;
 use utils::hub_spoke_error;
 
+pub(crate) use two_way::sync_cloud;
+
 use crate::import::import_from_files;
 use crate::sync::utils::blake3_hex;
 use crate::sync::utils::build_file_map;
