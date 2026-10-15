@@ -4,7 +4,7 @@
 #
 #   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
 #                          [--domain <domain> | --tailscale] [--user <name>]
-#                          [--bundle <file>] [--no-latex] [--timezone <zone>]
+#                          [--bundle <dir>] [--no-latex] [--timezone <zone>]
 #   sudo bash setup_vps.sh     # update, with the arguments of the last run
 #
 # Arguments are saved, and later runs start from them. `spares deploy` on your laptop runs
@@ -22,8 +22,8 @@
 # --user        The user spares runs as, and that `spares sync cloud` logs in as. Defaults to the
 #               user who ran sudo, so pass it when running as root. A missing user is created,
 #               with sudo and root's SSH keys.
-# --bundle      Install spares from this archive (built elsewhere by `spares deploy`) instead of
-#               building it here from GitHub. Building needs about 2 GB of memory and 10 GB of disk,
+# --bundle      Install spares from this directory (built elsewhere by `spares deploy`, which keeps
+#               it in ~/.cache/spares-bundle) instead of building it here from GitHub. Building needs about 2 GB of memory and 10 GB of disk,
 #               and GitHub cannot be reached from IPv6-only servers. Once used, every update needs one.
 # --no-latex    Skip LaTeX, inkscape and pandoc (about 3 GB). Markdown and LaTeX notes edited on the
 #               server are then not rendered there; Typst notes don't need them.
@@ -71,7 +71,7 @@ done
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
 [[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || { echo "Unknown time zone: $TIMEZONE" >&2; exit 1; }
-[[ "$PREBUILT" == false || -f "$BUNDLE" ]] || { echo "This server runs spares built elsewhere. Update it with \`spares deploy update\` on your laptop, or pass --bundle." >&2; exit 1; }
+[[ "$PREBUILT" == false || -f "$BUNDLE/spares_server" ]] || { echo "This server runs spares built elsewhere. Update it with \`spares deploy update\` on your laptop, or pass --bundle." >&2; exit 1; }
 
 if ! id "$SPARES_USER" >/dev/null 2>&1; then
   echo "==> Creating the user $SPARES_USER"
@@ -123,14 +123,6 @@ RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
 
-BUNDLE_DIR=""
-if [[ "$PREBUILT" == true ]]; then
-  # spares_server, frontend/ and, without --no-latex, pandoc.deb
-  BUNDLE_DIR="$(mktemp -d)"
-  trap 'rm -rf "$BUNDLE_DIR"' EXIT
-  tar -xzf "$BUNDLE" -C "$BUNDLE_DIR"
-fi
-
 # Before the server (re)starts, as it reads the time zone then
 if [[ -n "$TIMEZONE" && "$(timedatectl show -p Timezone --value)" != "$TIMEZONE" ]]; then
   echo "==> Setting the time zone to $TIMEZONE"
@@ -155,8 +147,8 @@ PANDOC_VERSION="3.12.1"
 if [[ "$NO_LATEX" == false && "$(pandoc --version 2>/dev/null | head -n1)" != "pandoc $PANDOC_VERSION" ]]; then
   echo "==> Installing pandoc $PANDOC_VERSION"
   PANDOC_DEB="$(mktemp --suffix=.deb)"
-  if [[ -f "$BUNDLE_DIR/pandoc.deb" ]]; then
-    cp "$BUNDLE_DIR/pandoc.deb" "$PANDOC_DEB"
+  if [[ "$PREBUILT" == true && -f "$BUNDLE/pandoc.deb" ]]; then
+    cp "$BUNDLE/pandoc.deb" "$PANDOC_DEB"
   else
     curl -fsSL -o "$PANDOC_DEB" \
       "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-1-$(dpkg --print-architecture).deb"
@@ -177,10 +169,17 @@ fi
 
 if [[ "$PREBUILT" == true ]]; then
   echo "==> Installing the bundled spares"
-  install -m 755 "$BUNDLE_DIR/spares_server" /usr/local/bin/
+  install -m 755 "$BUNDLE/spares_server" /usr/local/bin/
   FRONTEND_DIR=/opt/spares/frontend
   rm -rf "$FRONTEND_DIR" && mkdir -p "$(dirname "$FRONTEND_DIR")"
-  cp -r "$BUNDLE_DIR/frontend" "$FRONTEND_DIR"
+  cp -r "$BUNDLE/frontend" "$FRONTEND_DIR"
+  # Where `spares deploy update` uploads the next bundle, as the user, sending only what differs
+  # from this one. The first deploy uploads it as root, into root's home.
+  USER_BUNDLE="$USER_HOME/.cache/spares-bundle"
+  if [[ "$(realpath "$BUNDLE")" != "$(realpath -m "$USER_BUNDLE")" ]]; then
+    as_user "mkdir -p '$USER_BUNDLE'"
+    rsync -a --delete --chown="$SPARES_USER:$SPARES_USER" "$BUNDLE/" "$USER_BUNDLE/"
+  fi
 else
   FRONTEND_DIR="$SRC_DIR/spares_frontend/frontend/dist"
   echo "==> Installing Rust and Bun"

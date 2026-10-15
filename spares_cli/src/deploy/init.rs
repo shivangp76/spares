@@ -28,6 +28,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePool;
 
 use super::bundle::Bundle;
+use super::bundle::REMOTE_DIR;
 use super::bundle::Target;
 use super::local_timezone;
 use super::progress::Progress;
@@ -41,6 +42,7 @@ use super::shell::pause;
 use super::shell::quote;
 use super::shell::run;
 use super::shell::warn;
+use super::upload;
 use crate::sync::sync_cloud;
 
 /// Where the local server's own API key is kept, if it has one and `SPARES_API_KEY` is not set
@@ -131,14 +133,17 @@ pub(super) async fn init(
     println!("Saved {}", backup.display());
 
     progress.step("Connecting", &format!("to {root}"));
+    // For uploading the bundle, before setup_vps.sh installs it. Fresh Debian images lack it.
+    ssh.output(
+        &root,
+        "command -v rsync >/dev/null || \
+         { apt-get update -qq && apt-get install -y -qq rsync; } >&2",
+    )?;
     let target = Target::of(&ssh, &root)?;
     let bundle = Bundle::build(&progress, &repo, target, !no_latex).await?;
 
-    progress.step("Uploading", &bundle.size());
-    ssh.upload(
-        &[&repo.join("scripts/setup_vps.sh"), &bundle.path()],
-        &format!("{root}:/tmp/"),
-    )?;
+    progress.step("Uploading", &format!("to {root}"));
+    upload(&ssh, &bundle, &root)?;
     drop(bundle);
 
     progress.step("Setting up the server", &format!("as {root}"));
@@ -158,8 +163,6 @@ pub(super) async fn init(
         data_dir.to_string_lossy().into_owned(),
         "--local-home".to_string(),
         home.clone(),
-        "--bundle".to_string(),
-        "/tmp/spares-bundle.tar.gz".to_string(),
     ];
     match &domain {
         Some(domain) => args.extend(["--domain".to_string(), domain.clone()]),
@@ -181,10 +184,7 @@ pub(super) async fn init(
     command.args([
         "-t",
         &root,
-        &format!(
-            "bash /tmp/setup_vps.sh {args}; status=$?; \
-             rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status"
-        ),
+        &format!("bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\" {args}"),
     ]);
     progress.run(command)?;
 
