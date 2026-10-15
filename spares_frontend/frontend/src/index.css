@@ -247,7 +247,26 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 
 /* Room to scroll the end of the page out from under the pinned bar */
 .page:has(.review-answer-bar) {
-  padding-bottom: calc(120px + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--answer-bar-height, 96px) + 24px);
+}
+
+/* The typed answer boxes, side by side when there's room, scrolling if there are many */
+.typed-answer-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 35dvh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.typed-answer-input .cm-editor.cm-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.typed-answer-input .cm-content {
+  padding: 6px 4px;
 }
 
 /* Secondary review actions are collapsed behind this summary on phones only */
@@ -300,7 +319,7 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   }
 
   .page:has(.review-answer-bar) {
-    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--answer-bar-height, 72px) + 24px);
   }
 
   .review-more-actions > summary {

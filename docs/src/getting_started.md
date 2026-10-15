@@ -144,7 +144,7 @@ The capital of France is {{[t] Paris}}.
 - The expected answer is the cloze's text without its hint and markup. Emphasis, code, links and spans keep their text, and in Typst so does math (`#cl[$2x$][t]` expects `2x`). Nested clozes are part of the outer answer. A cloze without text, such as one holding only an image, gets no box.
 - A reverse card (`r`) expects the rest of the note, so `t:m` suits it better.
 - On the back, "Compare manually" switches between the diff and what you typed. As in Anki, you always pick the rating yourself.
-- In the web app, Tab moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the answer. In `spares card review`, Esc skips the remaining boxes.
+- In the web app, the boxes are pinned to the bottom of the screen with the Check Answer button, so they stay in view however far the card is scrolled. Enter moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the answer. The boxes follow the Vim keybindings setting: with it on, a box starts in insert mode, Esc leaves for normal mode, and Enter still moves on in either mode. In `spares card review`, Esc skips the remaining boxes.
 
 # Render notes
 
