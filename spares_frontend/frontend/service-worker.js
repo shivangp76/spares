@@ -15,6 +15,9 @@ const PAGE_CACHE = `spares-page-${BUILD}`;
 // Typst packages are versioned, so they never change either
 const PACKAGES_CACHE = 'spares-typst-packages';
 const PACKAGES_ORIGIN = 'https://packages.typst.org';
+// Likewise Typst's fonts, which the compiler loads from a versioned URL (see src/typst/compiler.ts)
+const FONTS_CACHE = 'spares-typst-fonts';
+const FONTS_URL = 'https://cdn.jsdelivr.net/gh/typst/typst-assets@';
 
 const PAGE_URL = new URL('index.html', self.registration.scope).href;
 const precacheUrls = PRECACHE.map(path => new URL(path, self.registration.scope).href);
@@ -58,6 +61,10 @@ self.addEventListener('fetch', event => {
 
   if (url.origin === PACKAGES_ORIGIN) {
     event.respondWith(cacheFirst(PACKAGES_CACHE, request));
+    return;
+  }
+  if (request.url.startsWith(FONTS_URL)) {
+    event.respondWith(cacheFirst(FONTS_CACHE, request));
     return;
   }
   if (url.origin !== self.location.origin) return;

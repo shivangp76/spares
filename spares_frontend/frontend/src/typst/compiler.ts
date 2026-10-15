@@ -18,6 +18,24 @@ import herosItalicUrl from './fonts/texgyreheros-italic.otf?url';
 import herosBoldItalicUrl from './fonts/texgyreheros-bolditalic.otf?url';
 import { fetchRenderAsset, listRenderPackages, listRenderSources } from '../api/client';
 
+// Typst's own fonts, which the service worker keeps (see service-worker.js): New Computer Modern,
+// for text and math, and DejaVu Sans Mono, for code. Not its default text font, Libertinus Serif,
+// since templates set their own and it is 1.4 MB of the 8.7 MB they would otherwise add up to.
+const TYPST_FONTS_URL = 'https://cdn.jsdelivr.net/gh/typst/typst-assets@v0.13.1/files/fonts/';
+const TYPST_FONT_URLS = [
+  'NewCM10-Regular.otf',
+  'NewCM10-Bold.otf',
+  'NewCM10-Italic.otf',
+  'NewCM10-BoldItalic.otf',
+  'NewCMMath-Regular.otf',
+  'NewCMMath-Book.otf',
+  'NewCMMath-Bold.otf',
+  'DejaVuSansMono.ttf',
+  'DejaVuSansMono-Bold.ttf',
+  'DejaVuSansMono-Oblique.ttf',
+  'DejaVuSansMono-BoldOblique.ttf',
+].map(file => TYPST_FONTS_URL + file);
+
 const MAIN_FILE_PATH = '/main.typ';
 // Each round can only discover the files read before the first missing one, e.g. a preamble and
 // then the figures it includes.
@@ -80,8 +98,9 @@ function configure(): void {
     TypstSnippet.fetchPackageBy(accessModel, (_spec, url) =>
       packageTarballs.get(url) ?? fetchPackageSync(url)),
     // The browser has no system fonts, so fonts that sources set are bundled.
-    TypstSnippet.preloadFonts([herosRegularUrl, herosBoldUrl, herosItalicUrl, herosBoldItalicUrl]),
-    TypstSnippet.preloadFontAssets({ assets: ['text'] }),
+    TypstSnippet.preloadFonts([herosRegularUrl, herosBoldUrl, herosItalicUrl, herosBoldItalicUrl, ...TYPST_FONT_URLS]),
+    // Otherwise the compiler adds all of Typst's text fonts
+    TypstSnippet.disableDefaultFontAssets(),
   );
 }
 
