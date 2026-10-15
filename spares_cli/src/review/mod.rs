@@ -3,6 +3,7 @@ use std::process::Child;
 use std::time::Duration;
 use std::time::Instant;
 
+use audio::AudioPlayer;
 use chrono::Utc;
 use clap::Args;
 use inquire::MultiSelect;
@@ -62,6 +63,7 @@ use utils::tag_note;
 use crate::card_info::print_card_info;
 use crate::import::import_from_files;
 
+mod audio;
 mod typed_answer;
 pub(crate) mod utils;
 use spares_core::parsers::cloze_tag_str;
@@ -113,6 +115,8 @@ enum ReviewAction {
     #[strum(serialize = "-")]
     Loop,
     Flip,
+    #[strum(serialize = "Replay Audio")]
+    ReplayAudio,
     #[strum(to_string = "Rate: {description} ({id})")]
     Rate {
         id: RatingId,
@@ -490,12 +494,15 @@ fn build_action_menu(
     all_options: &[ReviewAction],
     card_flipped: bool,
     cli_rating: Option<Rating>,
+    has_audio: bool,
 ) -> Vec<ReviewAction> {
     let is_cli = cli_rating.is_some();
     let mut options: Vec<ReviewAction> = all_options
         .iter()
         .filter(|x| {
-            if is_cli {
+            if matches!(**x, ReviewAction::ReplayAudio) {
+                has_audio
+            } else if is_cli {
                 !matches!(
                     **x,
                     ReviewAction::Flip | ReviewAction::Rate { .. } | ReviewAction::Loop
@@ -643,6 +650,9 @@ pub(crate) async fn review_cards(
     let mut typed_answers_asked = false;
     // The card rated last, for Previous Card Info
     let mut previous_card_id: Option<CardId> = None;
+    let mut audio_player = AudioPlayer::new(&config.audio_player);
+    // The card and side whose audio clips were played last, so each is autoplayed once when shown
+    let mut audio_played_for: Option<(CardId, bool)> = None;
 
     if review_card_response.cli.is_some() {
         match setup_cli_card_state(&review_card_response, scheduler_name, base_url, client).await {
@@ -747,6 +757,10 @@ pub(crate) async fn review_cards(
                 }
             }
         }
+        if audio_played_for != Some((review_card_response.card_id, card_flipped)) {
+            audio_player.autoplay(review_card_response.audio.as_ref(), card_flipped);
+            audio_played_for = Some((review_card_response.card_id, card_flipped));
+        }
         if !card_flipped
             && !typed_answers_asked
             && let Some(info) = &review_card_response.typed_answer
@@ -755,7 +769,12 @@ pub(crate) async fn review_cards(
             typed_answers_asked = true;
         }
         // Ask user for action
-        let options = build_action_menu(&all_options, card_flipped, pending_cli_rating.clone());
+        let options = build_action_menu(
+            &all_options,
+            card_flipped,
+            pending_cli_rating.clone(),
+            review_card_response.audio.is_some(),
+        );
         let mut select = Select::new("Action:", options);
         select.vim_mode = true;
         select.page_size = 10;
@@ -777,6 +796,7 @@ pub(crate) async fn review_cards(
             chosen_action,
             ReviewAction::Loop
                 | ReviewAction::Flip
+                | ReviewAction::ReplayAudio
                 | ReviewAction::OpenNote
                 | ReviewAction::BrowseKeywords
                 | ReviewAction::OpenLinkedNotes
@@ -790,6 +810,9 @@ pub(crate) async fn review_cards(
         }
         match &chosen_action {
             ReviewAction::Loop => {}
+            ReviewAction::ReplayAudio => {
+                audio_player.replay(review_card_response.audio.as_ref(), card_flipped);
+            }
             ReviewAction::Rate {
                 description: _,
                 id: rating_id,
