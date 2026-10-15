@@ -276,6 +276,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 review_log,
                 card: payload.card.swap(),
                 left_tag: payload.left_tag,
+                buried_siblings: payload
+                    .buried_siblings
+                    .into_iter()
+                    .map(UpdateCardPayload::swap)
+                    .collect(),
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -286,6 +291,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 review_log,
                 card: payload.card.swap(),
                 left_tag: None,
+                buried_siblings: Vec::new(),
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -296,6 +302,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 review_log_id,
                 card: payload.card.swap(),
                 left_tag: payload.left_tag,
+                buried_siblings: payload
+                    .buried_siblings
+                    .into_iter()
+                    .map(UpdateCardPayload::swap)
+                    .collect(),
             };
             Ok(serde_json::to_value(redo_payload).unwrap())
         }
