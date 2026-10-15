@@ -123,14 +123,42 @@ impl Ssh {
         output(self.command().args([host, remote_command]))
     }
 
-    /// Copies `files` to `destination` (`host:path`).
-    pub(super) fn upload(&self, files: &[&Path], destination: &str) -> Result<(), Error> {
-        run(Command::new("scp")
-            .arg("-q")
-            .args(&self.options)
-            .args(files)
-            .arg(destination))
+    /// Makes the directory `destination` (`host:path`, the path relative to the home directory)
+    /// a copy of the directory `source` with rsync, which sends only what differs. Returns how
+    /// many bytes it sent.
+    pub(super) fn sync(&self, source: &Path, destination: &str) -> Result<u64, Error> {
+        let mut source = source.as_os_str().to_owned();
+        // Its contents, not the directory itself
+        source.push("/");
+        let stats = output(
+            Command::new("rsync")
+                .args(["-rlptz", "--checksum", "--delete", "--stats", "-e"])
+                .arg(format!("ssh {}", self.options.join(" ")))
+                .arg("--rsync-path=mkdir -p .cache && rsync")
+                .arg(source)
+                .arg(destination),
+        )?;
+        Ok(bytes_sent(&stats))
     }
+}
+
+/// The bytes sent, from rsync's `--stats`: "Total sent: 1234 B" from macOS's openrsync, or "Total
+/// bytes sent: 1,234" from rsync 3. 0 if neither is there.
+fn bytes_sent(stats: &str) -> u64 {
+    stats
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Total sent:")
+                .or_else(|| line.strip_prefix("Total bytes sent:"))
+        })
+        .and_then(|rest| {
+            rest.chars()
+                .filter(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -148,5 +176,18 @@ mod tests {
         assert_eq!(quote("it's"), r"'it'\''s'");
         assert_eq!(quote(""), "''");
         assert_eq!(quote("$HOME"), "'$HOME'");
+    }
+
+    #[test]
+    fn bytes_sent_from_either_rsync() {
+        assert_eq!(
+            bytes_sent("Matched data: 0 B\nTotal sent: 88500 B\nTotal received: 26 B"),
+            88500
+        );
+        assert_eq!(
+            bytes_sent("Total bytes sent: 1,234,567\nTotal bytes received: 35"),
+            1_234_567
+        );
+        assert_eq!(bytes_sent(""), 0);
     }
 }
