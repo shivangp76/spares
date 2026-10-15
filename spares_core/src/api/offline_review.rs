@@ -85,6 +85,7 @@ pub async fn get_review_queue(
         is_filtered_tag,
         card_due_limit,
         caps,
+        query_sort,
         ..
     }) = build_review_filter_query(db, filter.as_ref(), requested_date, false).await?
     else {
@@ -96,7 +97,12 @@ pub async fn get_review_queue(
 
     // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
     // skipped below.
-    let order_by = queue_order_by(&read_external_config()?.queue, requested_date, caps);
+    let order_by = queue_order_by(
+        &read_external_config()?.queue,
+        requested_date,
+        caps,
+        &query_sort,
+    );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}, c.due as due
         FROM card c

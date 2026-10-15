@@ -136,6 +136,11 @@
 //!   - Descending: `sort_by_desc=c.stability`
 //! - Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to_note`, `linked_from_note`, `linked_to_keyword`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
 //! - Multiple sorts are allowed; later keys are appended to the ORDER BY list.
+//! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
+//!   limited branch sets the order new and review cards are shown in, together, in place of the
+//!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see
+//!   `QueueConfig` in `spares_core::config`). Learning cards whose step is over still come first.
+//!   - Example: `tag=chess sort_by_desc=c.difficulty` reviews the hardest chess cards first.
 //!
 //! ### Limit
 //!
@@ -158,8 +163,8 @@
 //!   `2` (review), and `3` (relearning).
 //!   - Example: `(tag=a c.state=0 limit=10) or (tag=a c.state=2 limit=10) or (tag=b c.state=0 limit=20)`
 //! - A sort inside a branch decides which results its limit keeps. Without one, a branch keeps the
-//!   cards review would show first (`c.due`, then the note's `created_at`), or, when searching
-//!   notes, the lowest note ids.
+//!   cards due the longest (`c.due`, then the note's `created_at`), or, when searching notes, the
+//!   lowest note ids. A sort inside a branch does not change the order cards are reviewed in.
 //!   - Example: `(tag=chess sort_by_desc=c.difficulty limit=5) or (tag=math limit=5)`
 //! - A limit outside the parentheses still caps the combined result:
 //!   `((tag=a limit=5) or (tag=b limit=5)) limit=8`.
