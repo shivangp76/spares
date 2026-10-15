@@ -392,6 +392,8 @@ pub struct SparesExternalConfig {
     /// can turn this off to save compute. Keep it on where notes are rendered before
     /// `spares sync cloud`, since rendering is what records the files their sources read.
     pub render_browser_parsers: bool,
+    /// The command `spares card review` plays audio clips with, followed by each clip's path.
+    pub audio_player: String,
 }
 
 impl Default for SparesExternalConfig {
@@ -414,6 +416,12 @@ impl Default for SparesExternalConfig {
             set_card_due_date_duration: Duration::weeks(1),
             sync: SyncConfig::default(),
             render_browser_parsers: true,
+            audio_player: if cfg!(target_os = "macos") {
+                "afplay"
+            } else {
+                "mpv --no-video"
+            }
+            .to_string(),
         }
     }
 }
