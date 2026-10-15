@@ -29,6 +29,9 @@ export default function NotesPage() {
   const [searchResults, setSearchResults] = useState<NoteResponse[] | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
+  // The new note form stays mounted, hidden, while other notes are viewed, so its unsaved
+  // contents are still there when New note is clicked again
+  const [hasDraft, setHasDraft] = useState(false);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -144,7 +147,7 @@ export default function NotesPage() {
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
-            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); }} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
+            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); setHasDraft(true); }} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
           </div>
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
@@ -216,15 +219,19 @@ export default function NotesPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to notes</button>}
           {paneStatus && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{paneStatus}</div>}
-          {creating ? (
-            <NewNoteForm
-              onCreated={note => {
-                selectNote(note);
-                setPaneStatus(`Note ${formatNoteId(note.id)} created.`);
-              }}
-              onCancel={detail.back}
-            />
-          ) : selectedNote ? (
+          {hasDraft && (
+            <div style={{ display: creating ? undefined : 'none' }}>
+              <NewNoteForm
+                onCreated={note => {
+                  setHasDraft(false);
+                  selectNote(note);
+                  setPaneStatus(`Note ${formatNoteId(note.id)} created.`);
+                }}
+                onCancel={() => { setHasDraft(false); detail.back(); }}
+              />
+            </div>
+          )}
+          {creating ? null : selectedNote ? (
             <>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 13 }}>
                 {selectedIndex >= 0 && (
