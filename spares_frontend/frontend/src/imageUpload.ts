@@ -1,6 +1,6 @@
 import { Decoration, type DecorationSet, EditorView, type Extension, StateEffect, StateField, ViewPlugin, WidgetType } from '@uiw/react-codemirror';
-import { uploadImage } from './api/client';
-import { imageUploadName } from './utils';
+import { uploadImage, uploadImageUrl } from './api/client';
+import { draggedImageUrl, imageUploadName } from './utils';
 
 class UploadingWidget extends WidgetType {
   constructor(readonly count: number) { super(); }
@@ -47,20 +47,37 @@ function uploadPos(view: EditorView, id: number): number | null {
   return pos;
 }
 
+/** Stores an image and returns the snippet showing it. */
+type ImageUpload = () => Promise<string>;
+
+function fileUpload(parserId: number, file: File): ImageUpload {
+  return async () => {
+    const name = imageUploadName(file);
+    if (name === null) throw new Error(`${file.name || 'The image'} is not a supported image format`);
+    // Upload under the name with a supported extension
+    const { snippet } = await uploadImage(parserId, name === file.name ? file : new File([file], name, { type: file.type }));
+    return snippet;
+  };
+}
+
+/** An image dragged from a web page, by its URL. */
+function urlUpload(parserId: number, url: string): ImageUpload {
+  return async () => {
+    if (!url.startsWith('data:')) return (await uploadImageUrl(parserId, url)).snippet;
+    const blob = await (await fetch(url)).blob();
+    return fileUpload(parserId, new File([blob], '', { type: blob.type }))();
+  };
+}
+
 let nextUploadId = 0;
 
-/** Uploads `files` and inserts the snippets showing them at `pos`. Files whose upload failed are
+/** Stores images and inserts the snippets showing them at `pos`. Images that failed to store are
     reported, and the rest are still inserted. */
-async function insertImages(view: EditorView, parserId: number, files: File[], pos: number) {
+async function insertImages(view: EditorView, images: ImageUpload[], pos: number) {
   const id = nextUploadId++;
-  view.dispatch({ effects: addUpload.of({ id, pos, count: files.length }) });
-  const results = await Promise.allSettled(files.map(file => {
-    const name = imageUploadName(file);
-    if (name === null) return Promise.reject(new Error(`${file.name || 'The image'} is not a supported image format`));
-    // Upload under the name with a supported extension
-    return uploadImage(parserId, name === file.name ? file : new File([file], name, { type: file.type }));
-  }));
-  const snippets = results.flatMap(r => (r.status === 'fulfilled' ? [r.value.snippet] : []));
+  view.dispatch({ effects: addUpload.of({ id, pos, count: images.length }) });
+  const results = await Promise.allSettled(images.map(upload => upload()));
+  const snippets = results.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
   const errors = results.flatMap(r => (r.status === 'rejected' ? [String(r.reason)] : []));
 
   // The editor may have been closed while uploading
@@ -79,10 +96,24 @@ function imageFiles(data: DataTransfer | null): File[] {
   return Array.from(data?.files ?? []).filter(file => file.type.startsWith('image/'));
 }
 
-/** Whether a drag carries image files. Only the files' types are known until they are dropped,
-    and some browsers hide those too, so a drag of files of unknown types might be images. */
+/** The images in dropped or pasted data: its image files, or else an image dragged from a web
+    page, which Firefox hands over as HTML, not as a file. */
+function imageUploads(parserId: number, data: DataTransfer | null): ImageUpload[] {
+  const files = imageFiles(data);
+  if (files.length > 0) return files.map(file => fileUpload(parserId, file));
+  const url = draggedImageUrl(data?.getData('text/html') ?? '');
+  return url === null ? [] : [urlUpload(parserId, url)];
+}
+
+/** Types Firefox gives a drag of an image from a web page, which has no files. */
+const FIREFOX_IMAGE_DRAG_TYPES = ['application/x-moz-nativeimage', 'application/x-moz-file-promise-url'];
+
+/** Whether a drag carries images. Only the files' types are known until they are dropped, and
+    some browsers hide those too, so a drag of files of unknown types might be images. */
 function dragsImages(data: DataTransfer | null): boolean {
-  if (!data?.types.includes('Files')) return false;
+  if (!data) return false;
+  if (data.types.some(type => FIREFOX_IMAGE_DRAG_TYPES.includes(type))) return true;
+  if (!data.types.includes('Files')) return false;
   const files = Array.from(data.items).filter(item => item.kind === 'file');
   return files.length === 0 || files.some(item => item.type === '' || item.type.startsWith('image/'));
 }
@@ -119,14 +150,14 @@ const imageDrop = (parserId: number) => ViewPlugin.define(view => {
     // Over the editor, `onEditorDragOver` shows the banner
     if (!view.dom.contains(event.target as Node)) show(false);
   };
-  // Captured so they run before CodeMirror's handlers on the text, which would insert a dropped
-  // file's contents as text. CodeMirror skips its handlers for events already handled.
   // Leaving the window, or cancelling the drag, which some browsers report at (0, 0). Not
   // `relatedTarget`, which Safari leaves out between elements too.
   const onWindowDragLeave = (event: DragEvent) => {
     const { clientX: x, clientY: y } = event;
     if (x <= 0 || y <= 0 || x >= window.innerWidth || y >= window.innerHeight) hide();
   };
+  // Captured so they run before CodeMirror's handlers on the text, which would insert a dropped
+  // file's contents as text. CodeMirror skips its handlers for events already handled.
   const onEditorDragOver = (event: DragEvent) => {
     if (!dragsImages(event.dataTransfer)) return;
     // Allow the drop anywhere on the editor
@@ -136,13 +167,13 @@ const imageDrop = (parserId: number) => ViewPlugin.define(view => {
   };
   const onEditorDrop = (event: DragEvent) => {
     hide();
-    const files = imageFiles(event.dataTransfer);
-    if (files.length === 0) return;
+    const images = imageUploads(parserId, event.dataTransfer);
+    if (images.length === 0) return;
     event.preventDefault();
     // Not precise, so a drop beside or below the text goes to its nearest place
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
     view.focus();
-    void insertImages(view, parserId, files, pos);
+    void insertImages(view, images, pos);
   };
 
   window.addEventListener('dragenter', onWindowDrag);
@@ -205,10 +236,10 @@ export function imageUpload(parserId: number): Extension {
       paste(event, view) {
         // Spreadsheets also put a picture of copied cells on the clipboard, but the text is wanted
         if (event.clipboardData?.getData('text/plain')) return false;
-        const files = imageFiles(event.clipboardData);
-        if (files.length === 0) return false;
+        const images = imageFiles(event.clipboardData).map(file => fileUpload(parserId, file));
+        if (images.length === 0) return false;
         event.preventDefault();
-        void insertImages(view, parserId, files, view.state.selection.main.head);
+        void insertImages(view, images, view.state.selection.main.head);
         return true;
       },
     }),
