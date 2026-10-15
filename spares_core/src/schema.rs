@@ -649,7 +649,10 @@ pub mod review {
         /// clients fetch from the render assets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub audio: Option<CardAudio>,
-        pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
+        /// The number of cards left in each state for the relevant query. Every due card is
+        /// counted, not just those today's limits leave room for: new or review cards drop to 0
+        /// once their limit is used up, but are not capped at what is left of it.
+        pub cards_left_by_state: HashMap<StateId, u32>,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
         pub linked_notes: Vec<ReviewLinkedNote>,
