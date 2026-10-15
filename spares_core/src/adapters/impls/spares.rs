@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use log::warn;
 use reqwest::Client;
+use reqwest::RequestBuilder;
 use reqwest::Response;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -22,6 +23,7 @@ use crate::api::parser::list_parsers;
 use crate::config::Environment;
 use crate::config::get_env_config;
 use crate::config::is_test_mode;
+use crate::config::local_api_key;
 use crate::model::CustomData;
 use crate::model::NoteId;
 use crate::parsers::NoteImportAction;
@@ -55,10 +57,24 @@ pub enum SparesRequestProcessor {
     },
 }
 
+/// Sends the local server's API key, which it requires when it has one.
+fn authed(request: RequestBuilder, api_key: Option<&str>) -> RequestBuilder {
+    match api_key {
+        Some(key) => request.bearer_auth(key),
+        None => request,
+    }
+}
+
 #[derive(Debug)]
 enum SparesRequestProcessorInternal {
-    Server { base_url: String, client: Client },
-    Database { pool: SqlitePool },
+    Server {
+        base_url: String,
+        client: Client,
+        api_key: Option<String>,
+    },
+    Database {
+        pool: SqlitePool,
+    },
 }
 
 impl SparesAdapter {
@@ -70,6 +86,7 @@ impl SparesAdapter {
                 SparesRequestProcessorInternal::Server {
                     base_url,
                     client: Client::new(),
+                    api_key: local_api_key(),
                 }
             }
             SparesRequestProcessor::Database { pool } => {
@@ -114,10 +131,13 @@ impl SparesAdapter {
         };
         if !dry_run {
             match &self.request_processor {
-                SparesRequestProcessorInternal::Server { base_url, client } => {
+                SparesRequestProcessorInternal::Server {
+                    base_url,
+                    client,
+                    api_key,
+                } => {
                     let url = format!("{}/api/notes", base_url);
-                    let response = client
-                        .patch(url)
+                    let response = authed(client.patch(url), api_key.as_deref())
                         .json(&update_note_request)
                         .send()
                         .await
@@ -164,9 +184,16 @@ impl SrsAdapter for SparesAdapter {
     ) -> Result<(), Error> {
         // Get parser id
         let parser_responses: Vec<ParserResponse> = match &self.request_processor {
-            SparesRequestProcessorInternal::Server { base_url, client } => {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
                 let url = format!("{}/api/parsers", base_url);
-                let mut response = client.get(url).send().await.map_err(Error::ApiRequest)?;
+                let mut response = authed(client.get(url), api_key.as_deref())
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
                 response = self.handle_response(response).await?;
                 response.json().await.map_err(Error::ApiRequest)?
             }
@@ -211,10 +238,13 @@ impl SrsAdapter for SparesAdapter {
                     };
                     if !dry_run {
                         match &self.request_processor {
-                            SparesRequestProcessorInternal::Server { base_url, client } => {
+                            SparesRequestProcessorInternal::Server {
+                                base_url,
+                                client,
+                                api_key,
+                            } => {
                                 let url = format!("{}/api/notes", base_url);
-                                let response = client
-                                    .patch(url)
+                                let response = authed(client.patch(url), api_key.as_deref())
                                     .json(&update_note_request)
                                     .send()
                                     .await
@@ -246,10 +276,13 @@ impl SrsAdapter for SparesAdapter {
                 selector: NotesSelector::Ids(delete_note_ids),
             };
             match &self.request_processor {
-                SparesRequestProcessorInternal::Server { base_url, client } => {
+                SparesRequestProcessorInternal::Server {
+                    base_url,
+                    client,
+                    api_key,
+                } => {
                     let url = format!("{}/api/notes", base_url);
-                    let response = client
-                        .delete(url)
+                    let response = authed(client.delete(url), api_key.as_deref())
                         .json(&request)
                         .send()
                         .await
@@ -270,10 +303,13 @@ impl SrsAdapter for SparesAdapter {
         // We cannot render non-live updated notes since that might overwrite unsaved changes.
         if !dry_run {
             let created_note_ids = match &self.request_processor {
-                SparesRequestProcessorInternal::Server { base_url, client } => {
+                SparesRequestProcessorInternal::Server {
+                    base_url,
+                    client,
+                    api_key,
+                } => {
                     let url = format!("{}/api/notes", base_url);
-                    let response = client
-                        .post(url)
+                    let response = authed(client.post(url), api_key.as_deref())
                         .json(&create_notes_request)
                         .send()
                         .await
@@ -315,10 +351,13 @@ impl SrsAdapter for SparesAdapter {
                         force_generate_rendered: false,
                     };
                     match &self.request_processor {
-                        SparesRequestProcessorInternal::Server { base_url, client } => {
+                        SparesRequestProcessorInternal::Server {
+                            base_url,
+                            client,
+                            api_key,
+                        } => {
                             let url = format!("{}/api/notes/generate_files", base_url);
-                            let response = client
-                                .post(url)
+                            let response = authed(client.post(url), api_key.as_deref())
                                 .json(&request)
                                 .send()
                                 .await
@@ -342,14 +381,17 @@ impl SrsAdapter for SparesAdapter {
         block_order: i64,
     ) -> Result<Option<NoteId>, Error> {
         match &self.request_processor {
-            SparesRequestProcessorInternal::Server { base_url, client } => {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
                 let url = format!("{}/api/notes/live", base_url);
                 let body = FindLiveNoteRequest {
                     live_sync_name: live_sync_name.to_string(),
                     block_order,
                 };
-                let response = client
-                    .post(url)
+                let response = authed(client.post(url), api_key.as_deref())
                     .json(&body)
                     .send()
                     .await

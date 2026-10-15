@@ -36,6 +36,7 @@ use reqwest::header::HeaderMap;
 use reqwest::header::HeaderValue;
 use spares_core::adapters::get_adapter_from_string;
 use spares_core::config::get_env_config;
+use spares_core::config::local_api_key;
 use spares_core::parsers::find_parser;
 use spares_core::parsers::get_all_parsers;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -56,13 +57,10 @@ async fn main() {
     }
 }
 
-/// The client for the local server. It sends `SPARES_API_KEY` when set, as the server then
-/// refuses requests without it.
+/// The client for the local server, sending its API key (see [`local_api_key`]).
 fn local_client() -> Result<Client, Error> {
     let mut headers = HeaderMap::new();
-    if let Ok(key) = std::env::var("SPARES_API_KEY")
-        && !key.is_empty()
-    {
+    if let Some(key) = local_api_key() {
         let mut value = HeaderValue::from_str(&format!("Bearer {key}")).into_diagnostic()?;
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
