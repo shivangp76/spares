@@ -221,7 +221,7 @@ The editor allows you to create multiple instances simultaneously, making it eas
 
 Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown or `#image("/Users/me/media/cell.png")` in Typst.
 
-In the web app, paste or drop an image into a note's editor to insert it. The image is uploaded to the server, stored in `images` in the data directory, and inserted where it was pasted or dropped, in the note's syntax:
+In the web app, paste or drop an image into a note's editor to insert it, from your files or from a web page. The image is uploaded to the server (an image dragged from a web page is downloaded by the server, since some browsers only hand over its URL), stored in `images` in the data directory, and inserted where it was pasted or dropped, in the note's syntax:
 - Markdown: `![](…)`
 - Typst: `#std.image("…", width: 80%)`
 - LaTeX: `\includegraphics[…]{…}`, or `\includesvg[…]{…}` for an SVG. Your template must load the `graphicx` (or `svg`) package.
