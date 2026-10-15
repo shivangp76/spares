@@ -129,16 +129,24 @@ if [[ -n "$TIMEZONE" && "$(timedatectl show -p Timezone --value)" != "$TIMEZONE"
   timedatectl set-timezone "$TIMEZONE"
 fi
 
-echo "==> Installing packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
 PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates)
 [[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm)
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
 [[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra \
   texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape)
-apt-get install -y -q "${PACKAGES[@]}"
+# Only the missing ones, so updates skip apt. Installed ones get upgraded with the rest of the
+# system, e.g. by unattended-upgrades.
+MISSING=()
+for package in "${PACKAGES[@]}"; do
+  [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" == *"ok installed" ]] || MISSING+=("$package")
+done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo "==> Installing packages"
+  apt-get update -q
+  apt-get install -y -q "${MISSING[@]}"
+fi
 
 # pandoc from its release instead of apt, whose pandoc is too old for the HTML of markdown notes
 # (`--math-method` needs 3.11, and 3.12.0 breaks `--embed-resources`). Keep it at the version used
@@ -278,6 +286,7 @@ systemctl restart spares
 if [[ -n "$DOMAIN" ]]; then
   echo "==> Setting up HTTPS for $DOMAIN"
   if ! command -v caddy >/dev/null; then
+    apt-get update -q
     apt-get install -y -q debian-keyring debian-archive-keyring apt-transport-https gnupg
     curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
