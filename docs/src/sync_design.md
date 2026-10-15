@@ -192,7 +192,7 @@ The escape hatch, and the first sync. The incoming database (a `VACUUM INTO` sna
 - **Conflicts can only be resolved on the laptop**, where the merge runs. The phone shows the `sync-conflict` tag, but its server has no conflict rows.
 - **A full sync doesn't say how many changes each side would lose** before asking which direction.
 - **No test checks that every synced row gets its id from `allocate_note_ids` or `next_ids`.**
-- **Untested:** `spares deploy update` on a real server (only `init` has run), and the end-to-end steps from a phone browser. The rest was run with two local servers (a second `spares_server` on `:8090` with `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server`, its own data and cache directories, and every `*_OUT_DIR` unset, or real rendered files get overwritten).
+- **Untested:** the end-to-end steps from a phone browser. The rest was run with two local servers (a second `spares_server` on `:8090` with `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server`, its own data and cache directories, and every `*_OUT_DIR` unset, or real rendered files get overwritten).
 
 ## Sources
 
