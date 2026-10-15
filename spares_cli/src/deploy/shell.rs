@@ -12,9 +12,7 @@ use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
 
-pub(super) fn bold(title: &str) {
-    println!("\n{}", format!("==> {title}").bold());
-}
+use super::progress::without_footer;
 
 pub(super) fn warn(message: &str) {
     eprintln!("{}", message.yellow());
@@ -22,7 +20,7 @@ pub(super) fn warn(message: &str) {
 
 /// Asks a yes or no question, yes by default. Escape answers no.
 pub(super) fn confirm(question: &str) -> Result<bool, Error> {
-    match Confirm::new(question).with_default(true).prompt() {
+    match without_footer(|| Confirm::new(question).with_default(true).prompt()) {
         Ok(answer) => Ok(answer),
         Err(inquire::InquireError::OperationCanceled) => Ok(false),
         Err(e) => Err(miette!("{e}")),
@@ -31,12 +29,14 @@ pub(super) fn confirm(question: &str) -> Result<bool, Error> {
 
 /// Waits for Enter.
 pub(super) fn pause(message: &str) -> Result<(), Error> {
-    print!("{message}");
-    std::io::stdout().flush().into_diagnostic()?;
-    std::io::stdin()
-        .read_line(&mut String::new())
-        .into_diagnostic()?;
-    Ok(())
+    without_footer(|| {
+        print!("{message}");
+        std::io::stdout().flush().into_diagnostic()?;
+        std::io::stdin()
+            .read_line(&mut String::new())
+            .into_diagnostic()?;
+        Ok(())
+    })
 }
 
 pub(super) fn command_exists(name: &str) -> bool {
@@ -121,11 +121,6 @@ impl Ssh {
     /// The output of `remote_command`, a shell command, run on `host`.
     pub(super) fn output(&self, host: &str, remote_command: &str) -> Result<String, Error> {
         output(self.command().args([host, remote_command]))
-    }
-
-    /// Runs `remote_command` on `host` in a terminal, so it can ask for input.
-    pub(super) fn run_tty(&self, host: &str, remote_command: &str) -> Result<(), Error> {
-        run(self.command().args(["-t", host, remote_command]))
     }
 
     /// Copies `files` to `destination` (`host:path`).
