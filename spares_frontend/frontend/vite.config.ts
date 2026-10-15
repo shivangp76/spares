@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { cpSync, createReadStream, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import wasm from 'vite-plugin-wasm'
@@ -96,7 +99,7 @@ function serviceWorker(): Plugin {
       handler() {
         const files = listFiles(DIST_DIR)
           .map(path => relative(DIST_DIR, path).split(sep).join('/'))
-          .filter(path => path !== 'sw.js')
+          .filter(path => path !== 'sw.js' && !COMPRESSED.test(path))
           .sort()
         const template = readFileSync(SERVICE_WORKER_TEMPLATE, 'utf8')
         const hash = createHash('sha256').update(template)
@@ -108,6 +111,42 @@ function serviceWorker(): Plugin {
           .replace('__PRECACHE__', JSON.stringify(precache, null, 2))
           .replace('__KEEP__', JSON.stringify(keep, null, 2))
         writeFileSync(join(DIST_DIR, 'sw.js'), source)
+      },
+    },
+  }
+}
+
+// Compressed copies written by `precompress`
+const COMPRESSED = /\.(br|gz)$/
+// Formats that are not compressed already, unlike images
+const COMPRESSIBLE = /\.(html|js|css|svg|json|webmanifest|wasm|otf|ttf)$/
+// Brotli's best compression takes about a minute for the Typst compiler, for 10% less than this
+const LARGE_FILE_BYTES = 1024 * 1024
+const LARGE_FILE_BROTLI_QUALITY = 9
+
+/** Writes brotli and gzip copies of the build's files (`foo.js.br`, `foo.js.gz`), which the server
+    sends to browsers that accept them (see `create_router` in spares_server). */
+function precompress(): Plugin {
+  const brotli = promisify(brotliCompress)
+  const gzipAsync = promisify(gzip)
+  return {
+    name: 'precompress',
+    apply: 'build',
+    // After `serviceWorker`, which lists the files to cache without these, so `sw.js` is compressed too
+    closeBundle: {
+      order: 'post',
+      async handler() {
+        await Promise.all(listFiles(DIST_DIR).filter(path => COMPRESSIBLE.test(path)).map(async path => {
+          const data = readFileSync(path)
+          if (data.length < 1024) return
+          const quality = data.length > LARGE_FILE_BYTES ? LARGE_FILE_BROTLI_QUALITY : zlibConstants.BROTLI_MAX_QUALITY
+          const [br, gz] = await Promise.all([
+            brotli(data, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: quality, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: data.length } }),
+            gzipAsync(data, { level: 9 }),
+          ])
+          if (br.length < data.length) await writeFile(`${path}.br`, br)
+          if (gz.length < data.length) await writeFile(`${path}.gz`, gz)
+        }))
       },
     },
   }
@@ -136,7 +175,7 @@ export default defineConfig({
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [react(), wasm(), copySvgeditAssets(), serviceWorker(), imageOcclusionEditorConfig(), {
+  plugins: [react(), wasm(), copySvgeditAssets(), serviceWorker(), precompress(), imageOcclusionEditorConfig(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files

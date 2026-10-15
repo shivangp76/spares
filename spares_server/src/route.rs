@@ -277,8 +277,17 @@ pub(crate) fn create_router(
     if let Some(dir) = frontend_dir {
         // Serve the SPA: known static files are served directly, all other paths
         // fall back to index.html so React Router handles client-side navigation.
-        router = router
-            .fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html"))));
+        // The build writes brotli and gzip copies of the files, which are sent instead to
+        // browsers that accept them.
+        let index = ServeFile::new(dir.join("index.html"))
+            .precompressed_br()
+            .precompressed_gzip();
+        router = router.fallback_service(
+            ServeDir::new(&dir)
+                .precompressed_br()
+                .precompressed_gzip()
+                .fallback(index),
+        );
     }
 
     router
