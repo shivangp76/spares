@@ -1,6 +1,46 @@
 //! Audio clips: links to audio files in a note (e.g. `[🔊](/path/clip.mp3)` in Markdown or
 //! `#link("/path/clip.mp3")[🔊]` in Typst). The rendered card shows the link's text, and clients
 //! play the clips visible on each side of a card (see [`card_audio`]).
+//!
+//! ```md
+//! How is "bonjour" pronounced? {{ [listen](/Users/me/media/bonjour.mp3) }}
+//! ```
+//! ```typst
+//! #link("/Users/me/media/q.mp3")[🔊] Translate: #cl[#link("/Users/me/media/a.mp3")[🔊] good morning]
+//! ```
+//!
+//! - Audio files are recognised by their extension: mp3, m4a, aac, ogg, oga, opus, wav and flac.
+//!   Other links, including linked notes and images, are not audio.
+//! - Paths must be absolute, as for images. A relative path gives an import warning, since neither
+//!   a PDF viewer nor the server can find the file.
+//! - In Markdown, leave a space between `{{` and a link at the start of a cloze, since `{{[` starts
+//!   the cloze's settings.
+//! - The link's text is typeset like any other text, so the PDF engine must support it. pdflatex,
+//!   pandoc's default, fails on an emoji such as 🔊, and a font without it leaves the link blank.
+//!   Use words such as `[listen](…)`, or an engine and font with the symbol.
+//! - The LaTeX parser has no audio clips.
+//! - In a rendered PDF, the link points at the clip's file, so clicking it depends on the PDF
+//!   viewer. Some viewers, such as sioyek 2.0, do not open links to local files.
+//!
+//! # Which clips play
+//!
+//! - **The front** plays the clips it shows: those in the surrounding text, and in clozes of other
+//!   cards that are not concealed (see `f:`).
+//! - **The back** plays the clips it reveals: those in the card's answer clozes, and in other
+//!   clozes if the back is the whole note (see `b:`). Clips already on the front are not played
+//!   again.
+//! - A clip inside a hidden cloze never plays on the front.
+//! - **Replay** plays the front's clips, and then the back's if the card is flipped. In the web
+//!   app, press `r` or click Replay in the audio bar above the card. In `spares card review`, pick
+//!   Replay Audio.
+//! - With `t`, audio links are not part of the expected answer.
+//!
+//! In the web app, clicking an audio link inside the card also plays it. If the browser blocks
+//! autoplay before the page has been used, a Play button appears instead. Clips are fetched from
+//! the server's render assets: rendering a note records its clips, and `spares sync cloud` sends
+//! them, like the other files notes read. Clips are downloaded with the cards for offline review.
+//! `spares card review` plays clips with
+//! [`audio_player`](crate::config::SparesExternalConfig::audio_player).
 
 use std::ops::Range;
 use std::path::Path;

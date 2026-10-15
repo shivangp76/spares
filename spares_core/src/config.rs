@@ -1,3 +1,27 @@
+//! Settings from `config.toml` ([`SparesExternalConfig`]), the environment, and where spares keeps
+//! its files.
+//!
+//! # Directories
+//!
+//! Rendered files are written to a per-parser directory, chosen by the first of these that
+//! applies:
+//!
+//! 1. The parser's own environment variable, if it points to an existing directory:
+//!    `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, or `TYPST_OUT_DIR`.
+//! 2. `SPARES_CACHE_DIR`, if set ([`get_cache_dir`]).
+//! 3. The default cache directory, `$XDG_CACHE_HOME/spares` (`~/.cache/spares` if
+//!    `XDG_CACHE_HOME` is unset).
+//!
+//! The more specific variable wins, so `SPARES_CACHE_DIR` does **not** override a parser's
+//! `*_OUT_DIR`. If you run a separate instance of spares (e.g. for testing) next to your main one,
+//! unset the `*_OUT_DIR` variables for it too, or its rendered files will overwrite your main
+//! instance's. `spares_server` logs the directory each parser renders to when it starts (run it
+//! with `RUST_LOG=info` to see this).
+//!
+//! The other directories can be overridden with `SPARES_CONFIG_DIR` (config file and parser
+//! templates, [`get_config_dir`]), `SPARES_DATA_DIR` (database, and note and card text files,
+//! [`get_data_dir`]), and `DATABASE_URL` (the database alone, [`get_env_config`]).
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::create_dir_all;
@@ -642,6 +666,7 @@ pub struct SparesExternalConfig {
     /// `spares sync cloud`, since rendering is what records the files their sources read.
     pub render_browser_parsers: bool,
     /// The command `spares card review` plays audio clips with, followed by each clip's path.
+    /// Defaults to `afplay` on macOS and `mpv --no-video` elsewhere.
     pub audio_player: String,
 }
 

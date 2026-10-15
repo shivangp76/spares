@@ -1,3 +1,24 @@
+//! The "markdown" parser, which renders notes with pandoc.
+//!
+//! # On the web
+//!
+//! Rendering a Markdown note also writes an HTML file next to its PDF, which the web app shows
+//! instead of the PDF. This needs pandoc 3.12.1 or later, on your machine and on the server
+//! (`setup_vps.sh` installs it). If the HTML would lose content that only the PDF can show, such
+//! as raw LaTeX like a `TikZ` picture or math pandoc cannot convert to `MathML`, the web app shows the
+//! PDF instead, and rendering logs why (with `RUST_LOG=warn`).
+//!
+//! - Set `"render": "pdf"` in a note's custom data to always show its PDF, or `"render": "html"`
+//!   to show its HTML even if content is lost.
+//! - Raw LaTeX meant only for the PDF, written as a ```` ```{=latex} ```` block, is left out of the
+//!   HTML without falling back to the PDF.
+//! - Style the HTML with a pandoc defaults file at `markdown/web-defaults.yaml` in the config
+//!   directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is
+//!   not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so
+//!   notes using them show their PDF; define macros in the note itself to have them apply to both.
+//! - Notes rendered before upgrading show their PDF until they are rendered again, e.g. with
+//!   `spares note generate --render --force-render`.
+
 use std::fs::read_to_string;
 use std::fs::remove_file;
 use std::ops::Range;

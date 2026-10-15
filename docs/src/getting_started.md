@@ -18,11 +18,7 @@ When this manual names an item such as `spares_core::parsers::NoteSettings`, sea
 
 ## Creating a parser (optional)
 
-Spares ships with 3 main parsers: "markdown", "typst", and "latex-note".
-
-The "markdown" parser serves as a guide for a basic parser, while the "latex-note" parser is more advanced. The "typst" parser is a middle ground. If you are creating your own parser, it is probably best to copy one of these as your starting template. The full specifications of these parsers can be found in the code documentation.
-
-Note that creating or modifying the parsers will require recompiling the package.
+Spares ships with 3 main parsers: "markdown", "typst", and "latex-note". To create your own, see `spares_core::parsers::impls`.
 
 ## Starting the server
 
@@ -62,22 +58,11 @@ To keep a remote server's compute low, render notes on your own machine and push
 
 #### Markdown notes on the web
 
-Rendering a Markdown note also writes an HTML file next to its PDF, which the web app shows instead of the PDF. This needs pandoc 3.12.1 or later, on your machine and on the server (`setup_vps.sh` installs it). If the HTML would lose content that only the PDF can show, such as raw LaTeX like a TikZ picture or math pandoc cannot convert to MathML, the web app shows the PDF instead, and rendering logs why (with `RUST_LOG=warn`).
-
-- Set `"render": "pdf"` in a note's custom data to always show its PDF, or `"render": "html"` to show its HTML even if content is lost.
-- Raw LaTeX meant only for the PDF, written as a ```` ```{=latex} ```` block, is left out of the HTML without falling back to the PDF.
-- Style the HTML with a pandoc defaults file at `markdown/web-defaults.yaml` in the config directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so notes using them show their PDF; define macros in the note itself to have them apply to both.
-- Notes rendered before upgrading show their PDF until they are rendered again, e.g. with `spares note generate --render --force-render`.
+Rendering a Markdown note also writes an HTML file, which the web app shows instead of the PDF. It needs pandoc 3.12.1 or later; see `spares_core::parsers::impls::markdown` for when the PDF is shown instead and how to style the HTML.
 
 #### Reviewing offline
 
-The web app can be installed as an app (e.g. "Add to Home Screen" on a phone) and opened without a connection. This needs the server to be reached over HTTPS, or at `localhost`.
-
-- While the Review page is open and online, it downloads the next 200 cards due today and tomorrow for the default review, and for each filter a session is started with, along with what they display. New cards are included up to what is left of today's limit.
-- When the server cannot be reached, a review shows those cards instead, and the navbar shows "Offline". Ratings and buries are saved on the device and sent once the server can be reached again, and the navbar shows how many are waiting. Other actions, such as editing a note or suspending a card, need the server.
-- A card rated Again offline is not shown again until the rating has been sent, since the device does not schedule cards itself.
-- A rating sent after a later review of the same card, e.g. from another device that synced first, is placed at its time in the card's history, which is then replayed. Such a rating cannot be undone from the review page.
-- Undo takes back a rating or bury that has not been sent yet. Logging out keeps unsent actions, which are sent the next time you log in to the same server.
+The web app can be installed as an app (e.g. "Add to Home Screen" on a phone) and used to review without a connection, if the server is reached over HTTPS or at `localhost`. What works offline is described on `spares_core::api::offline_review`.
 
 ### Migration (optional)
 
@@ -137,22 +122,7 @@ Add the cloze key `t` to type a card's answer before flipping it, like Anki's `{
 ```md
 The capital of France is {{[t] Paris}}.
 ```
-
-| Setting | Comparison |
-|---|---|
-| `t` | A character diff, exact. |
-| `t:ci` | A diff that ignores case. |
-| `t:nc` | A diff that ignores accents and other combining marks. |
-| `t:ci,nc` | Both. |
-| `t:m` | No diff: what you typed is shown next to the revealed answer, for you to judge. Use it when you rephrase, or for math or an image. |
-
-- Like `be`, `t` applies to a grouping, so it can be set on any cloze of a card.
-- `<!--- # type-answer: ci --->` (`#se[type-answer: ci]` in Typst) applies it to all of a note's cards. A cloze's own `t` overrides it.
-- Each answer cloze of a card gets its own input box: `Blank 1`, `Blank 2`, … in reading order, with the cloze's hint as placeholder. Its answer is compared with that box alone, so an answer containing a comma, such as `Washington, D.C.`, is not ambiguous.
-- The expected answer is the cloze's text without its hint and markup. Emphasis, code, links and spans keep their text, and in Typst so does math (`#cl[$2x$][t]` expects `2x`). Nested clozes are part of the outer answer. A cloze without text, such as one holding only an image, gets no box.
-- A reverse card (`r`) expects the rest of the note, so `t:m` suits it better.
-- On the back, "Compare manually" switches between the diff and what you typed. As in Anki, you always pick the rating yourself.
-- In the web app, the boxes are pinned to the bottom of the screen with the Check Answer button, so they stay in view however far the card is scrolled. Enter moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the answer. The boxes follow the Vim keybindings setting: with it on, a box starts in insert mode, Esc leaves for normal mode, and Enter still moves on in either mode. In `spares card review`, Esc skips the remaining boxes.
+The comparison options (`t:ci`, `t:nc`, `t:m`) and the rest are on `spares_core::parsers::TypeAnswer`.
 
 # Render notes
 
@@ -172,15 +142,7 @@ The note's text file will also contain the linked notes. The exact syntax of the
 
 ### Where files are written
 
-Rendered files are written to a per-parser directory, chosen by the first of these that applies:
-
-1. The parser's own environment variable, if it points to an existing directory: `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, or `TYPST_OUT_DIR`.
-2. `SPARES_CACHE_DIR`, if set.
-3. The default cache directory, `$XDG_CACHE_HOME/spares` (`~/.cache/spares` if `XDG_CACHE_HOME` is unset).
-
-The more specific variable wins, so `SPARES_CACHE_DIR` does **not** override a parser's `*_OUT_DIR`. If you run a separate instance of spares (e.g. for testing) next to your main one, unset the `*_OUT_DIR` variables for it too, or its rendered files will overwrite your main instance's. `spares_server` logs the directory each parser renders to when it starts (run it with `RUST_LOG=info` to see this).
-
-The other directories can be overridden with `SPARES_CONFIG_DIR` (config file and parser templates), `SPARES_DATA_DIR` (database, and note and card text files), and `DATABASE_URL` (the database alone).
+Rendered files go to `~/.cache/spares` by default. Environment variables such as `SPARES_CACHE_DIR` and the parsers' `*_OUT_DIR` change this; see "Directories" on `spares_core::config`. If you run a separate instance of spares next to your main one, unset the `*_OUT_DIR` variables for it, or its rendered files will overwrite your main instance's.
 
 ## Editing notes
 
@@ -196,45 +158,11 @@ spares card review
 
 ## Image Occlusions
 
-Here is an example of an note using the "markdown" parser with an image occlusion:
-```md
-<!--- spares: start --->
-
-<!--- spares: note start --->
-# Brain
-
-This is a note about the brain.
-
-<!--- spares: image occlusion start --->
-<!--- original_image_filepath = "/misc/image_occlusions/brain.jpg" --->
-<!--- clozes_filepath = "/misc/image_occlusions/brain_clozes.jpg" --->
-<!--- spares: image occlusion end --->
-
-<!--- spares: note end --->
-
-<!--- spares: end --->
-```
-
-To create an image occlusion:
-
-1. Run `spares_frontend image-occlusion`. This will automatically open the image occlusion editor in your web browser.
-2. Click "SVG-Edit" -> "Change Background Image" and select the image you want to create clozes for.
-3. Add markup and clozes to the appropriate layer. You can add cloze settings strings to clozes as needed.
-4. Click "SVG-Edit" -> "Save SVG" to save your work.
-5. In your note document, use the image occlusion snippet to insert the saved SVG.
-
-The editor allows you to create multiple instances simultaneously, making it easy to work on different image occlusions at once. You can examine the generated SVG files to see exactly how the clozes are parsed. A more intuitive interface with `svg-edit` will be available in future updates.
+Image occlusions are clozes drawn on an image. In the web app, click "Insert image occlusion" in a note's editor. Without the web app, run `spares_frontend image-occlusion`, which opens the editor in your browser, and insert the saved SVG into your note. The syntax is on `spares_core::parsers::image_occlusion`.
 
 ## Images
 
-Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown or `#image("/Users/me/media/cell.png")` in Typst.
-
-In the web app, paste or drop an image into a note's editor to insert it, from your files or from a web page. The image is uploaded to the server (an image dragged from a web page is downloaded by the server, since some browsers only hand over its URL), stored in `images` in the data directory, and inserted where it was pasted or dropped, in the note's syntax:
-- Markdown: `![](…)`
-- Typst: `#std.image("…", width: 80%)`
-- LaTeX: `\includegraphics[…]{…}`, or `\includesvg[…]{…}` for an SVG. Your template must load the `graphicx` (or `svg`) package.
-
-Supported formats are png, jpg, jpeg, gif, webp, bmp and svg. Images are named by their contents, so pasting the same image again reuses its file. A paste that also has text, such as cells copied from a spreadsheet, pastes the text. Like image occlusions made in the web app, uploaded images are stored on the server, not copied to your laptop.
+Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown. In the web app, paste or drop an image into a note's editor to upload and insert it (see `spares_core::api::image`).
 
 ## Audio
 
@@ -242,28 +170,4 @@ A link to an audio file is an audio clip. The card shows the link's text, and cl
 ```md
 How is "bonjour" pronounced? {{ [listen](/Users/me/media/bonjour.mp3) }}
 ```
-```typst
-#link("/Users/me/media/q.mp3")[🔊] Translate: #cl[#link("/Users/me/media/a.mp3")[🔊] good morning]
-```
-
-- Audio files are recognised by their extension: mp3, m4a, aac, ogg, oga, opus, wav and flac. Other links, including linked notes and images, are not audio.
-- Paths must be absolute, as for images. A relative path gives an import warning, since neither a PDF viewer nor the server can find the file.
-- In Markdown, leave a space between `{{` and a link at the start of a cloze, since `{{[` starts the cloze's settings.
-- The link's text is typeset like any other text, so the PDF engine must support it. pdflatex, pandoc's default, fails on an emoji such as 🔊, and a font without it leaves the link blank. Use words such as `[listen](…)`, or an engine and font with the symbol.
-- The LaTeX parser has no audio clips.
-
-Which clips play:
-
-- **The front** plays the clips it shows: those in the surrounding text, and in clozes of other cards that are not concealed (see `f:`).
-- **The back** plays the clips it reveals: those in the card's answer clozes, and in other clozes if the back is the whole note (see `b:`). Clips already on the front are not played again.
-- A clip inside a hidden cloze never plays on the front.
-- **Replay** plays the front's clips, and then the back's if the card is flipped. In the web app, press `r` or click Replay in the audio bar above the card. In `spares card review`, pick Replay Audio.
-- With `t`, audio links are not part of the expected answer, so `{{[t] [🔊](/m/x.mp3)}}` gets no input box.
-
-To record a clip in the web app, click **Record audio** above a note's editor, record, and click Insert. The recording is uploaded to the server, stored in `audio` in the data directory, and a link to it is inserted at the cursor, e.g. `[listen](…)` in Markdown or `#link("…")[listen]` in Typst. Browsers that can record AAC (such as Safari) upload an m4a file; others upload WAV, since the formats they record are not ones clips can use. Recording needs the web app to be served over HTTPS or from localhost, as browsers only allow the microphone there.
-
-In the web app, clicking an audio link inside the card also plays it. If the browser blocks autoplay before the page has been used, a Play button appears instead. Clips are fetched from the server's render assets: rendering a note records its clips, and `spares sync cloud` sends them, like the other files notes read. Clips are downloaded with the cards for offline review.
-
-`spares card review` plays clips with the `audio_player` setting in `config.toml`, followed by the clip's path. It defaults to `afplay` on macOS and `mpv --no-video` elsewhere.
-
-In a rendered PDF, the link points at the clip's file, so clicking it depends on the PDF viewer. Some viewers, such as sioyek 2.0, do not open links to local files.
+Which clips play on each side, and the other rules, are on `spares_core::parsers::audio`. To record a clip in the web app, click **Record audio** above a note's editor (see `spares_core::api::audio`).
