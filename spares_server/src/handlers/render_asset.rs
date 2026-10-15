@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 use spares_core::api::browser_render::get_render_asset;
 use spares_core::api::browser_render::list_render_packages;
+use spares_core::api::browser_render::list_render_sources;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -60,4 +61,13 @@ pub(crate) async fn list_render_packages_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(packages))
+}
+
+pub(crate) async fn list_render_sources_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let paths = list_render_sources(&data.db)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(paths))
 }

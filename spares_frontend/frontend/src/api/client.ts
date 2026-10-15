@@ -256,6 +256,15 @@ export async function listRenderPackages(): Promise<string[]> {
   return res.json();
 }
 
+/** Typst files that browser-rendered sources read, e.g. preambles, by the absolute paths the sources use. */
+export async function listRenderSources(): Promise<string[]> {
+  const { serverUrl } = getCredentials();
+  const url = `${serverUrl}/api/render-assets/sources`;
+  const res = await sendKeepingCopy('Render sources fetch', url, RENDER_ASSETS_CACHE);
+  if (!res.ok) throw new Error(`Render sources fetch failed: ${res.status}`);
+  return res.json();
+}
+
 /** A file a browser-rendered source reads, by the absolute path the source uses. `null` if the server does not have it. */
 export async function fetchRenderAsset(path: string): Promise<Uint8Array | null> {
   const { serverUrl } = getCredentials();
