@@ -15,6 +15,7 @@ import {
   getTagByName,
   getTodayStatistics,
   isNetworkError,
+  nextReviewAvailableAt,
   postReview,
   redoEvent,
   searchNotes,
@@ -62,7 +63,14 @@ import {
 } from '../types/spares';
 import { backPath, backWebPath, formatDuration, formatNoteId, sectionLabel } from '../utils';
 
-type Phase = 'landing' | 'loading' | 'front' | 'back' | 'done' | 'summary' | 'error';
+/** A wait of `ms` milliseconds, like "4m 05s". */
+function formatWait(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`;
+}
+
+type Phase = 'landing' | 'loading' | 'front' | 'back' | 'waiting' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
 
 const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] = [
@@ -220,6 +228,9 @@ export default function ReviewPage() {
   const [sessionRateMs, setSessionRateMs] = useState(0);
   const [sessionStart, setSessionStart] = useState<number | null>(null);
   const [sessionEnd, setSessionEnd] = useState<number | null>(null);
+  // When the next learning card can be shown, while waiting for it with nothing else to review
+  const [waitingUntil, setWaitingUntil] = useState<number | null>(null);
+  const [, setWaitTick] = useState(0);
 
   // Stopwatches. A duration is `null` until it is recorded, as in the CLI.
   const recallStart = useRef(0);
@@ -276,6 +287,15 @@ export default function ReviewPage() {
         }
         next = await postReview(filter);
         setOffline(false);
+        if (!next) {
+          const availableAt = await nextReviewAvailableAt(filter);
+          if (availableAt) {
+            setCard(null);
+            setWaitingUntil(Date.parse(availableAt));
+            setPhase('waiting');
+            return;
+          }
+        }
       } catch (e) {
         if (!isNetworkError(e)) throw e;
         const key = sessionKey.current;
@@ -326,6 +346,14 @@ export default function ReviewPage() {
     getReviewConfig().then(setConfig).catch(console.error);
     refreshStatistics();
   }, [credentials, navigate, refreshStatistics]);
+
+  // While waiting for a learning card, count down to it and then show it
+  useEffect(() => {
+    if (phase !== 'waiting' || waitingUntil === null) return;
+    const tick = setInterval(() => setWaitTick(t => t + 1), 1000);
+    const show = setTimeout(() => loadCard(activeFilter), Math.max(0, waitingUntil - Date.now()));
+    return () => { clearInterval(tick); clearTimeout(show); };
+  }, [phase, waitingUntil, loadCard, activeFilter]);
 
   // Refresh the day's statistics whenever the session ends
   useEffect(() => {
@@ -912,6 +940,19 @@ export default function ReviewPage() {
       )}
 
       {phase === 'loading' && <div>Loading…</div>}
+
+      {phase === 'waiting' && waitingUntil !== null && (
+        <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>
+          <p>
+            Learning cards are due later today. The next can be shown at{' '}
+            {new Date(waitingUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {' '}(in {formatWait(waitingUntil - Date.now())}), and will be once it can.
+          </p>
+          <p style={{ marginTop: 24, display: 'flex', gap: 16, justifyContent: 'center' }}>
+            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }}>End session</button>
+          </p>
+        </div>
+      )}
 
       {(phase === 'done' || phase === 'summary') && (
         <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>

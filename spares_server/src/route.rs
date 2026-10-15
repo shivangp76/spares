@@ -69,6 +69,7 @@ use crate::handlers::review::get_review_config_handler;
 use crate::handlers::review::get_review_history_handler;
 use crate::handlers::review::get_review_queue_handler;
 use crate::handlers::review::get_statistics_handler;
+use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::submit_study_action_handler;
 use crate::handlers::review::sync_offline_actions_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
@@ -180,6 +181,22 @@ fn render_asset_routes() -> Router<Arc<AppState>> {
         )
 }
 
+/// Review
+fn review_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/review", post(get_review_card_handler))
+        .route(
+            "/api/review/next-available",
+            post(next_review_card_available_at_handler),
+        )
+        .route("/api/review/card/{id}", post(get_review_card_by_id_handler))
+        .route("/api/review/submit", post(submit_study_action_handler))
+        .route("/api/review/snapshot", post(create_review_snapshot_handler))
+        .route("/api/review/statistics", post(get_statistics_handler))
+        .route("/api/review/history", get(get_review_history_handler))
+        .route("/api/review/config", get(get_review_config_handler))
+}
+
 /// Offline review on web clients
 fn offline_review_routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -245,14 +262,7 @@ pub(crate) fn create_router(
         .route("/api/cards/{id}/forget", post(forget_card_handler))
         .route("/api/cards/{id}/reviews", get(get_card_reviews_handler))
         .route("/api/cards/unbury", post(unbury_cards_handler))
-        // Review
-        .route("/api/review", post(get_review_card_handler))
-        .route("/api/review/card/{id}", post(get_review_card_by_id_handler))
-        .route("/api/review/submit", post(submit_study_action_handler))
-        .route("/api/review/snapshot", post(create_review_snapshot_handler))
-        .route("/api/review/statistics", post(get_statistics_handler))
-        .route("/api/review/history", get(get_review_history_handler))
-        .route("/api/review/config", get(get_review_config_handler))
+        .merge(review_routes())
         // Scheduler
         .route(
             "/api/scheduler/{name}/ratings",

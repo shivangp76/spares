@@ -75,6 +75,7 @@ use crate::parsers::web_render_filepath;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::learning_states;
 use crate::schedulers::placement::place_due;
 use crate::schedulers::review_state;
 use crate::schema::review::CardBackRenderedPath;
@@ -538,9 +539,17 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) card_due_limit: DateTime<Utc>,
     /// What is left of today's limits, for [`queue_order_by`]. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
+    /// The learning and relearning cards due later today that match the filter but are held back
+    /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit), as a
+    /// SQL condition with nothing to bind. `None` for filtered tags, which hold nothing back.
+    pub(crate) held_back_clause: Option<String>,
 }
 
 /// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
+///
+/// With `learn_ahead`, learning and relearning cards are only included once their step ends
+/// within the learn ahead limit, as review shows them. Without it, they are included whenever
+/// they are due, for clients that pick the time to show them themselves.
 ///
 /// Returns `Ok(None)` when a `FilteredTag` filter references a tag that does not exist.
 /// Returns `Err` when a `FilteredTag` filter references a tag that has no query.
@@ -549,9 +558,11 @@ pub(crate) async fn build_review_filter_query(
     db: &SqlitePool,
     filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
+    learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let limits_left = daily_limits_left(db, requested_date).await?;
+    let config = read_external_config()?;
+    let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
     let not_new_card_str = daily_limits_clause(limits_left);
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         let evaluator = Evaluator::new(query);
@@ -562,36 +573,48 @@ pub(crate) async fn build_review_filter_query(
     };
     let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
-    let where_clause = match filter {
-        Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) => {
-            let tag_query_opt: Option<(Option<String>,)> =
-                sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
-                    .bind(tag_id)
-                    .fetch_optional(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-            if tag_query_opt.is_none() {
-                return Ok(None);
-            }
-            if let Some((tag_query,)) = tag_query_opt
-                && tag_query.is_none()
-            {
-                return Err(Error::Library(LibraryError::Tag(
-                    TagErrorKind::InvalidInput(
-                        "Cannot study a tag that does not have a query.".to_string(),
-                    ),
-                )));
-            }
-            format!(
-                "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
-            )
+    let learning_states = learning_states().iter().join(", ");
+    let learn_ahead_until = (requested_date + config.queue.learn_ahead_limit).timestamp();
+    let where_clause = if let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) = filter {
+        let tag_query_opt: Option<(Option<String>,)> =
+            sqlx::query_as(r"SELECT query FROM tag WHERE id = ?")
+                .bind(tag_id)
+                .fetch_optional(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        if tag_query_opt.is_none() {
+            return Ok(None);
         }
-        _ => {
-            format!(
-                "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}"
-            )
+        if let Some((tag_query,)) = tag_query_opt
+            && tag_query.is_none()
+        {
+            return Err(Error::Library(LibraryError::Tag(
+                TagErrorKind::InvalidInput(
+                    "Cannot study a tag that does not have a query.".to_string(),
+                ),
+            )));
         }
+        format!(
+            "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
+        )
+    } else {
+        let learn_ahead_str = if learn_ahead {
+            format!(
+                "\n    AND (c.state NOT IN ({learning_states}) OR c.due <= {learn_ahead_until})"
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}{learn_ahead_str}"
+        )
     };
+    let held_back_clause = (!is_filtered_tag).then(|| {
+        format!(
+            "c.special_state IS NULL AND c.state IN ({learning_states})\n    AND c.due > {learn_ahead_until} AND c.due <= {}{card_id_query_str}",
+            card_due_limit.timestamp()
+        )
+    });
     let caps = if is_filtered_tag {
         QueueCaps::default()
     } else {
@@ -605,6 +628,7 @@ pub(crate) async fn build_review_filter_query(
         is_filtered_tag,
         card_due_limit,
         caps,
+        held_back_clause,
     }))
 }
 
@@ -725,7 +749,8 @@ pub async fn get_review_card(
         is_filtered_tag,
         card_due_limit,
         caps,
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date).await?
+        ..
+    }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
     else {
         return Ok(None);
     };
@@ -772,6 +797,34 @@ pub async fn get_review_card(
         return Ok(Some(response));
     }
     Ok(None)
+}
+
+/// When review with `filter` can next show a card, once [`get_review_card`] has nothing to show
+/// now: the time the earliest learning or relearning card held back by
+/// [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit) comes within
+/// it. `None` if no such card is due later today, so the review is done for the day.
+pub async fn next_review_card_available_at(
+    db: &SqlitePool,
+    GetReviewCardRequest { filter }: GetReviewCardRequest,
+    requested_date: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, Error> {
+    let Some(ReviewFilterQuery {
+        held_back_clause: Some(held_back_clause),
+        ..
+    }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+    else {
+        return Ok(None);
+    };
+    let due: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT MIN(c.due) FROM card c WHERE {held_back_clause}"
+    ))
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let learn_ahead_limit = read_external_config()?.queue.learn_ahead_limit;
+    Ok(due
+        .and_then(|due| DateTime::from_timestamp(due, 0))
+        .map(|due| (due - learn_ahead_limit).max(requested_date)))
 }
 
 /// Everything a client needs to show `review_card`.
@@ -864,7 +917,7 @@ pub async fn get_review_card_by_id(
         Some(review_card) => {
             // Compute cards_left_by_state and time_estimate using the same filter as the review session
             let (cards_left_by_state, time_estimate) =
-                match build_review_filter_query(db, filter, requested_date).await? {
+                match build_review_filter_query(db, filter, requested_date, true).await? {
                     Some(ReviewFilterQuery {
                         where_clause,
                         is_filtered_tag,

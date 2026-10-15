@@ -345,8 +345,13 @@ impl Default for EasyDaysConfig {
 ///    around them.
 /// 2. New cards and review cards, each in their own order ([`Self::new_order`] and
 ///    [`Self::review_order`]), combined as [`Self::new_review_mix`] says.
-/// 3. Learning and relearning cards whose current step ends later today, the earliest first.
+/// 3. Learning and relearning cards whose current step ends within [`Self::learn_ahead_limit`],
+///    the earliest first.
 /// 4. Cards buried until later today, in the order they were buried.
+///
+/// Learning and relearning cards whose step ends later than that are not shown until it is
+/// within the limit. When they are all that is left, `spares card review` and the web app wait
+/// for the next one, showing when it will be.
 ///
 /// For example, to review the cards you are most likely to have forgotten first, and to learn new
 /// cards a whole note at a time, in a random order of notes:
@@ -356,8 +361,10 @@ impl Default for EasyDaysConfig {
 /// review_order = "retrievability"
 /// new_order = "random_note"
 /// new_review_mix = "interleaved"
+/// learn_ahead_limit = 1200
 /// ```
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde_with::serde_as]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
@@ -367,6 +374,34 @@ pub struct QueueConfig {
     pub new_order: NewCardOrder,
     /// How new cards and review cards are combined. Defaults to [`NewReviewMix::Interleaved`].
     pub new_review_mix: NewReviewMix,
+    /// How early a learning or relearning card may be shown when nothing else is left, in
+    /// seconds. Defaults to 1200 (20 minutes), as in Anki.
+    ///
+    /// While other cards are left, a learning card waits until its step is over. Once nothing
+    /// else is left, a card whose step ends within this limit is shown early, so a session does
+    /// not end with waiting out a short step. A card whose step ends later than that is not shown
+    /// until it is within the limit, and the review waits for it.
+    ///
+    /// With the default and steps of 1 and 10 minutes, cards on those steps come back as soon as
+    /// nothing else is left, while a card on a 1 hour step waits until 20 minutes of it are left.
+    /// Set it to 0 to never show a card before its step is over, or to 86400 (a day) to show any
+    /// learning card due today as soon as nothing else is left, as spares did before this
+    /// setting.
+    ///
+    /// Filtered tags are not affected: they show every card in them, whenever it is due.
+    #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+    pub learn_ahead_limit: Duration,
+}
+
+impl Default for QueueConfig {
+    fn default() -> Self {
+        Self {
+            review_order: ReviewOrder::default(),
+            new_order: NewCardOrder::default(),
+            new_review_mix: NewReviewMix::default(),
+            learn_ahead_limit: Duration::minutes(20),
+        }
+    }
 }
 
 /// The order of review cards. See [`QueueConfig::review_order`].
@@ -592,6 +627,9 @@ impl SparesExternalConfig {
             if !steps.is_sorted_by(|a, b| a < b) {
                 return Err(format!("`{name}` must be in increasing order."));
             }
+        }
+        if self.queue.learn_ahead_limit < Duration::zero() {
+            return Err("`queue.learn_ahead_limit` must not be negative.".to_string());
         }
         if fsrs_rs::check_and_fill_parameters(&self.fsrs_parameters).is_err() {
             return Err(format!(
@@ -991,10 +1029,12 @@ mod tests {
             review_order = "retrievability"
             new_order = "random_note"
             new_review_mix = "interleaved"
+            learn_ahead_limit = 1200
         "#});
         assert_eq!(config.queue.review_order, ReviewOrder::Retrievability);
         assert_eq!(config.queue.new_order, NewCardOrder::RandomNote);
         assert_eq!(config.queue.new_review_mix, NewReviewMix::Interleaved);
+        assert_eq!(config.queue.learn_ahead_limit, Duration::minutes(20));
     }
 
     /// The example in `docs/src/concepts.md`.
