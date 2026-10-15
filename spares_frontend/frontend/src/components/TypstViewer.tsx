@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { audioLinkPath } from '../audio';
-import { setTypstTheme, useTypstTheme } from '../theme';
+import { setTypstThemePreference, useTypstTheme } from '../theme';
 import { widthInputs } from '../typst/width';
 
 interface Props {
@@ -130,7 +130,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
         <div className="typst-tools">
           <button
             className="touch-target-small"
-            onClick={() => setTypstTheme(theme === 'dark' ? 'light' : 'dark')}
+            onClick={() => setTypstThemePreference(theme === 'dark' ? 'light' : 'dark')}
             title={theme === 'dark' ? 'Show Typst pages in light mode' : 'Show Typst pages in dark mode'}
           >
             {theme === 'dark' ? 'Light' : 'Dark'}
