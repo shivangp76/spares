@@ -234,9 +234,9 @@ async function downloadCardContent(card: GetReviewCardResponse): Promise<void> {
     if (card.audio) await Promise.all([...card.audio.front, ...card.audio.back].map(fetchRenderAsset));
     if (card.browser_sources) {
       // Compiling fetches, and keeps, the compiler and the files the sources read
-      const { compileTypst } = await import('../typst/compiler');
-      await compileTypst(card.browser_sources.card_front);
-      await compileTypst(card.browser_sources.card_back);
+      const { compileTypstInBackground } = await import('../typst/compiler');
+      await compileTypstInBackground(card.browser_sources.card_front);
+      await compileTypstInBackground(card.browser_sources.card_back);
       // Leave the page responsive between compiles
       await new Promise(resolve => setTimeout(resolve, 0));
     }
