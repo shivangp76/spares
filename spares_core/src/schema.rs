@@ -67,6 +67,13 @@ pub mod tag {
         pub description: String,
         pub query: Option<String>,
         pub auto_delete: bool,
+        /// See [`Tag::reschedule`]. `true` when left out.
+        #[serde(default = "reschedule_default")]
+        pub reschedule: bool,
+    }
+
+    fn reschedule_default() -> bool {
+        true
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -86,6 +93,8 @@ pub mod tag {
         pub query: Option<Option<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub auto_delete: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub reschedule: Option<bool>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -95,6 +104,7 @@ pub mod tag {
         pub description: String,
         pub query: Option<String>,
         pub auto_delete: bool,
+        pub reschedule: bool,
         #[serde(with = "ts_seconds")]
         pub created_at: DateTime<Utc>,
         #[serde(with = "ts_seconds")]
@@ -109,6 +119,7 @@ pub mod tag {
                 description: tag.description.clone(),
                 query: tag.query.clone(),
                 auto_delete: tag.auto_delete,
+                reschedule: tag.reschedule,
                 created_at: tag.created_at,
                 updated_at: tag.updated_at,
             }

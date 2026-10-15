@@ -303,6 +303,24 @@ async fn rate_offline(
     let is_latest = review_logs
         .last()
         .is_none_or(|review_log| review_log.reviewed_at <= performed_at);
+    // A rating in a filtered tag that does not reschedule writes no review, so it has no place in
+    // the history to be inserted at.
+    let reschedules = match submission.tag_id {
+        Some(tag_id) => sqlx::query_scalar(r"SELECT reschedule FROM tag WHERE id = ?")
+            .bind(tag_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?
+            .unwrap_or(true),
+        None => true,
+    };
+    if !reschedules {
+        // Nothing to record for a card suspended since the queue was fetched
+        if card.special_state == Some(SpecialState::Suspended) {
+            return Ok(None);
+        }
+        return rate_card(db, scheduler, submission.clone(), performed_at, true).await;
+    }
     if is_latest && card.special_state != Some(SpecialState::Suspended) {
         return rate_card(db, scheduler, submission.clone(), performed_at, true).await;
     }

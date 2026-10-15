@@ -140,6 +140,7 @@ mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -169,6 +170,7 @@ mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -179,6 +181,7 @@ mod tests {
             description: String::new(),
             query: Some("ball tag=\"test filtered tag\"".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_err());
@@ -228,6 +231,7 @@ mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -255,6 +259,7 @@ mod tests {
             description: None,
             query: Some(Some("-tag=math".to_string())),
             auto_delete: None,
+            reschedule: None,
         };
         let tag_res = update_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());
@@ -312,6 +317,7 @@ mod tests {
             description: String::new(),
             query: Some("tag=math".to_string()),
             auto_delete: false,
+            reschedule: true,
         };
         let tag_res = create_tag(&pool, request, false).await;
         assert!(tag_res.is_ok());

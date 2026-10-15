@@ -77,18 +77,21 @@ pub(crate) async fn upsert_tag(
     usn: i64,
 ) -> Result<(), Error> {
     sqlx::query(
-        "INSERT INTO tag (id, name, description, query, auto_delete, created_at, updated_at, usn)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at,
+             updated_at, usn)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET name = excluded.name,
              description = excluded.description, query = excluded.query,
-             auto_delete = excluded.auto_delete, created_at = excluded.created_at,
-             updated_at = excluded.updated_at, usn = excluded.usn",
+             auto_delete = excluded.auto_delete, reschedule = excluded.reschedule,
+             created_at = excluded.created_at, updated_at = excluded.updated_at,
+             usn = excluded.usn",
     )
     .bind(record.id)
     .bind(&record.name)
     .bind(&record.description)
     .bind(&record.query)
     .bind(record.auto_delete)
+    .bind(record.reschedule)
     .bind(record.created_at)
     .bind(record.updated_at)
     .bind(usn)

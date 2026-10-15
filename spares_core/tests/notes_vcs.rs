@@ -613,6 +613,7 @@ async fn test_failed_import_rolls_back(pool: SqlitePool) {
             description: String::new(),
             query: Some(r#"tag="tag 2""#.to_string()),
             auto_delete: false,
+            reschedule: true,
         },
         true,
     )
@@ -747,6 +748,7 @@ async fn test_undo_and_tag_rename_commit(pool: SqlitePool) {
             description: None,
             query: None,
             auto_delete: None,
+            reschedule: None,
         },
         true,
     )

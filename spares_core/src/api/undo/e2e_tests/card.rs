@@ -694,6 +694,7 @@ async fn graduate_from_filtered_tag(
             description: String::new(),
             query: Some("Hello".to_string()),
             auto_delete,
+            reschedule: true,
         },
         false,
     )

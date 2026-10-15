@@ -116,6 +116,7 @@ async fn e2e_synced_tables_only_get_helper_ids(pool: SqlitePool) {
             description: String::new(),
             query: Some("c.new".to_string()),
             auto_delete: false,
+            reschedule: true,
         },
         true,
     )

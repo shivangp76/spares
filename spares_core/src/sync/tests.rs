@@ -488,6 +488,30 @@ async fn tags_merge_as_sets() {
 }
 
 #[tokio::test]
+async fn tag_reschedule_merges_with_other_changes() {
+    let (replicas, _) = Replicas::synced(&[]).await;
+    create(&replicas.laptop, &["A {{ one }}"], &["cram"]).await;
+    replicas.sync().await;
+    sqlx::query("UPDATE tag SET description = 'from the laptop' WHERE name = 'cram'")
+        .execute(&replicas.laptop)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tag SET reschedule = 0 WHERE name = 'cram'")
+        .execute(&replicas.server)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    let (description, reschedule): (String, bool) =
+        sqlx::query_as("SELECT description, reschedule FROM tag WHERE name = 'cram'")
+            .fetch_one(&replicas.laptop)
+            .await
+            .unwrap();
+    assert_eq!(description, "from the laptop");
+    assert!(!reschedule);
+}
+
+#[tokio::test]
 async fn both_sides_creating_a_tag_with_one_name_gives_one_tag() {
     let (replicas, _) = Replicas::synced(&[]).await;
     let laptop_note = create(&replicas.laptop, &["A {{ one }}"], &["shared"]).await;

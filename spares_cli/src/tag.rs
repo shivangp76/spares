@@ -25,12 +25,14 @@ pub(crate) async fn handle(
             description,
             query,
             auto_delete,
+            reschedule,
         } => {
             let request = CreateTagRequest {
                 name,
                 description,
                 query,
                 auto_delete,
+                reschedule,
             };
             let url = format!("{}/api/tags", base_url);
             let response = client
@@ -50,6 +52,7 @@ pub(crate) async fn handle(
             description,
             query,
             auto_delete,
+            reschedule,
             rebuild,
         } => {
             if rebuild {
@@ -87,6 +90,7 @@ pub(crate) async fn handle(
                     description,
                     query,
                     auto_delete,
+                    reschedule,
                 };
                 let url = format!("{}/api/tags", base_url);
                 let response = client
