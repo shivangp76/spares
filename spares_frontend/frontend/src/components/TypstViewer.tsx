@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { audioLinkPath } from '../audio';
+import { setTypstTheme, useTypstTheme } from '../theme';
 import { widthInputs } from '../typst/width';
 
 interface Props {
@@ -52,6 +53,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
   const expanded = expandedSource === source;
   const [natural, setNatural] = useState<{ source: string; svg?: string; error?: string } | null>(null);
+  const theme = useTypstTheme();
 
   useEffect(() => {
     if (width !== null) onWidth?.(width);
@@ -98,7 +100,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
     canExpand = true;
     content = natural?.error !== undefined ? errorView(natural.error) : (
       <div style={{ overflowX: 'auto' }}>
-        <div className="typst-viewer typst-viewer-natural" dangerouslySetInnerHTML={{ __html: natural?.svg ?? '' }} />
+        <div className={`typst-viewer typst-viewer-natural typst-viewer-${theme}`} dangerouslySetInnerHTML={{ __html: natural?.svg ?? '' }} />
       </div>
     );
   // Ignore the result of a previous source while the current one compiles. A result for a previous
@@ -109,7 +111,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
     content = errorView(result.error);
   } else {
     canExpand = true;
-    content = <div className="typst-viewer" dangerouslySetInnerHTML={{ __html: result.svg }} />;
+    content = <div className={`typst-viewer typst-viewer-${theme}`} dangerouslySetInnerHTML={{ __html: result.svg }} />;
   }
   // Links are `<a xlink:href>` over the linked text in the SVG
   function onClick(e: React.MouseEvent) {
@@ -125,13 +127,22 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
     <div ref={ref} style={{ position: 'relative' }} onClick={onClick}>
       {content}
       {canExpand && (
-        <button
-          className="typst-expand touch-target-small"
-          onClick={() => setExpandedSource(expanded ? null : source)}
-          title={expanded ? 'Fit to screen' : 'Show at original size'}
-        >
-          {!expanded ? 'Expand' : naturalSource === source ? 'Fit' : 'Expanding…'}
-        </button>
+        <div className="typst-tools">
+          <button
+            className="touch-target-small"
+            onClick={() => setTypstTheme(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Show Typst pages in light mode' : 'Show Typst pages in dark mode'}
+          >
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+          <button
+            className="touch-target-small"
+            onClick={() => setExpandedSource(expanded ? null : source)}
+            title={expanded ? 'Fit to screen' : 'Show at original size'}
+          >
+            {!expanded ? 'Expand' : naturalSource === source ? 'Fit' : 'Expanding…'}
+          </button>
+        </div>
       )}
     </div>
   );
