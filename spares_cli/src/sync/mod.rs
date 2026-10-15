@@ -40,10 +40,9 @@ use spares_core::schema::note::RenderNotesRequest;
 use strum::EnumIter;
 use strum_macros::Display;
 use strum_macros::EnumString;
+pub(crate) use two_way::sync_cloud;
 use utils::GroupByInsertion as _;
 use utils::hub_spoke_error;
-
-pub(crate) use two_way::sync_cloud;
 
 use crate::import::import_from_files;
 use crate::sync::utils::blake3_hex;

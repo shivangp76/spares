@@ -10,21 +10,20 @@ mod shell;
 use std::path::Path;
 use std::path::PathBuf;
 
+use bundle::Bundle;
+use bundle::REMOTE_DIR;
+use bundle::Server;
+use bundle::Target;
 use clap::Args;
 use clap::Subcommand;
 use colored::Colorize;
 use miette::Error;
 use miette::miette;
-use spares_core::config::EnvironmentConfig;
-use spares_core::config::read_external_config;
-
-use bundle::Bundle;
-use bundle::REMOTE_DIR;
-use bundle::Server;
-use bundle::Target;
 use progress::Progress;
 use shell::Ssh;
 use shell::quote;
+use spares_core::config::EnvironmentConfig;
+use spares_core::config::read_external_config;
 
 #[derive(Args, Debug)]
 pub(crate) struct DeployArgs {

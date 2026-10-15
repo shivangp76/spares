@@ -332,6 +332,111 @@ impl Default for EasyDaysConfig {
     }
 }
 
+/// The `[queue]` table of `config.toml`: the order review shows the cards it can show today.
+///
+/// `spares card review`, the web app, and the queue the web app downloads for offline review all
+/// use this order. Which cards can be shown at all (what is due, and the daily limits) is set
+/// elsewhere, such as [`SparesExternalConfig::new_cards_daily_limit`].
+///
+/// Cards come in these groups, one group after another:
+///
+/// 1. Learning and relearning cards whose current step is over, the earliest first. They go first
+///    so their steps (see [`SparesExternalConfig::learning_steps`]) are not stretched by the cards
+///    around them.
+/// 2. New cards and review cards, each in their own order ([`Self::new_order`] and
+///    [`Self::review_order`]), combined as [`Self::new_review_mix`] says.
+/// 3. Learning and relearning cards whose current step ends later today, the earliest first.
+/// 4. Cards buried until later today, in the order they were buried.
+///
+/// For example, to review the cards you are most likely to have forgotten first, and to learn new
+/// cards a whole note at a time, in a random order of notes:
+///
+/// ```toml
+/// [queue]
+/// review_order = "retrievability"
+/// new_order = "random_note"
+/// new_review_mix = "interleaved"
+/// ```
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct QueueConfig {
+    /// The order of review cards (cards that graduated from their learning steps). Defaults to
+    /// [`ReviewOrder::Due`].
+    pub review_order: ReviewOrder,
+    /// The order of new cards. Defaults to [`NewCardOrder::Created`].
+    pub new_order: NewCardOrder,
+    /// How new cards and review cards are combined. Defaults to [`NewReviewMix::Interleaved`].
+    pub new_review_mix: NewReviewMix,
+}
+
+/// The order of review cards. See [`QueueConfig::review_order`].
+///
+/// Cards that tie are shown in the order of their ids, so the order is the same every time it is
+/// computed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewOrder {
+    /// `"due"`: the card that has been due the longest first, then cards of older notes first.
+    /// Older notes come first since newer notes may build on them.
+    #[default]
+    Due,
+    /// `"retrievability"`: the card you are least likely to remember first, as FSRS predicts from
+    /// its stability and the time since its last review. When you are behind, this saves the
+    /// cards that are slipping before the ones that would keep, at the cost of cards with short
+    /// intervals waiting longer than their due date.
+    Retrievability,
+    /// `"relative_overdueness"`: the card that is the most overdue compared to its interval
+    /// first. A card 3 days late on a 3 day interval (100% overdue) comes before one 10 days late
+    /// on a 100 day interval (10% overdue). Similar to [`Self::Retrievability`], from the due date
+    /// rather than the memory model.
+    RelativeOverdueness,
+    /// `"difficulty_descending"`: the hardest card first, by its FSRS difficulty.
+    DifficultyDescending,
+    /// `"difficulty_ascending"`: the easiest card first, by its FSRS difficulty.
+    DifficultyAscending,
+    /// `"random"`: a random order. It is the same all day, so a session picked up again later in
+    /// the day continues where it left off, and changes the next day.
+    Random,
+    /// `"note_created"`: cards of older notes first, regardless of when they are due. Useful when
+    /// notes build on earlier ones, like the notes of a course.
+    NoteCreated,
+}
+
+/// The order of new cards. See [`QueueConfig::new_order`].
+///
+/// Cards that tie are shown in the order of their ids.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewCardOrder {
+    /// `"created"`: cards of the oldest notes first, and a note's cards in the order they appear
+    /// in it. Since newer notes may build on older ones, this learns them in that order.
+    #[default]
+    Created,
+    /// `"newest_first"`: cards of the newest notes first, and a note's cards in the order they
+    /// appear in it. Useful to learn what you just wrote down while it is still fresh.
+    NewestFirst,
+    /// `"random"`: a random order of cards. It is the same all day and changes the next day.
+    Random,
+    /// `"random_note"`: a random order of notes, with each note's cards together, in the order
+    /// they appear in it. It is the same all day and changes the next day.
+    RandomNote,
+}
+
+/// How new cards and review cards are combined. See [`QueueConfig::new_review_mix`].
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewReviewMix {
+    /// `"interleaved"`: new cards are spread evenly among review cards. With 100 reviews and 20
+    /// new cards left, every sixth card is new. Only new cards that today's limit still allows are
+    /// counted, so they are spread over the whole session rather than shown at its start.
+    #[default]
+    Interleaved,
+    /// `"new_first"`: all new cards, then all review cards.
+    NewFirst,
+    /// `"reviews_first"`: all review cards, then all new cards.
+    ReviewsFirst,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LeechConfig {
@@ -388,6 +493,8 @@ pub struct SparesExternalConfig {
     /// does not give away the answer to another.
     pub disperse_siblings: bool,
     pub easy_days: EasyDaysConfig,
+    /// The order review shows cards in. See [`QueueConfig`].
+    pub queue: QueueConfig,
     pub leech: LeechConfig,
     pub parser: ParserConfig,
     pub image_occlusion: ImageOcclusionConfig,
@@ -417,6 +524,7 @@ impl Default for SparesExternalConfig {
             load_balance: true,
             disperse_siblings: true,
             easy_days: EasyDaysConfig::default(),
+            queue: QueueConfig::default(),
             leech: LeechConfig::default(),
             parser: ParserConfig::default(),
             image_occlusion: ImageOcclusionConfig::default(),
@@ -841,6 +949,20 @@ mod tests {
         // Setting them again replaces them rather than adding a second key.
         let rewritten = set_fsrs_parameters(&written, &parameters[..19]).unwrap();
         assert_eq!(parse(&rewritten).fsrs_parameters, parameters[..19]);
+    }
+
+    /// The example on [`QueueConfig`].
+    #[test]
+    fn documented_queue_example_parses() {
+        let config = parse(indoc::indoc! {r#"
+            [queue]
+            review_order = "retrievability"
+            new_order = "random_note"
+            new_review_mix = "interleaved"
+        "#});
+        assert_eq!(config.queue.review_order, ReviewOrder::Retrievability);
+        assert_eq!(config.queue.new_order, NewCardOrder::RandomNote);
+        assert_eq!(config.queue.new_review_mix, NewReviewMix::Interleaved);
     }
 
     /// The example in `docs/src/concepts.md`.

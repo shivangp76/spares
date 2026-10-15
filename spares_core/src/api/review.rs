@@ -7,6 +7,7 @@ use chrono::Duration;
 use chrono::Local;
 use chrono::NaiveDate;
 use chrono::Utc;
+use indoc::formatdoc;
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
@@ -27,6 +28,8 @@ use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::queue::QueueCaps;
+use crate::api::queue::queue_order_by;
 use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::FilteredTagExit;
@@ -365,17 +368,14 @@ pub(crate) async fn new_cards_left(
         .saturating_sub(new_cards_studied_on_requested_date))
 }
 
-/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up, otherwise an empty
-/// string.
-async fn not_new_card_clause(
-    db: &SqlitePool,
-    requested_date: DateTime<Utc>,
-) -> Result<String, Error> {
-    Ok(if new_cards_left(db, requested_date).await? == 0 {
+/// Returns `"\nAND c.state != <new>"` once today's new-card limit is used up (`new_left` is 0),
+/// otherwise an empty string.
+fn not_new_card_clause(new_left: u32) -> String {
+    if new_left == 0 {
         format!("\nAND c.state != {}", NEW_CARD_STATE)
     } else {
         String::new()
-    })
+    }
 }
 
 /// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
@@ -385,7 +385,7 @@ async fn review_eligibility_clause(
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let not_new_card_str = not_new_card_clause(db, requested_date).await?;
+    let not_new_card_str = not_new_card_clause(new_cards_left(db, requested_date).await?);
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     Ok(format!(
         "(c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})",
@@ -496,6 +496,8 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) where_clause: String,
     pub(crate) is_filtered_tag: bool,
     pub(crate) card_due_limit: DateTime<Utc>,
+    /// What is left of today's limits, for [`queue_order_by`]. Filtered tags have no limits.
+    pub(crate) caps: QueueCaps,
 }
 
 /// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
@@ -509,7 +511,8 @@ pub(crate) async fn build_review_filter_query(
     requested_date: DateTime<Utc>,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let not_new_card_str = not_new_card_clause(db, requested_date).await?;
+    let new_left = new_cards_left(db, requested_date).await?;
+    let not_new_card_str = not_new_card_clause(new_left);
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         let evaluator = Evaluator::new(query);
         let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
@@ -549,10 +552,18 @@ pub(crate) async fn build_review_filter_query(
             )
         }
     };
+    let caps = if is_filtered_tag {
+        QueueCaps::default()
+    } else {
+        QueueCaps {
+            new: Some(new_left),
+        }
+    };
     Ok(Some(ReviewFilterQuery {
         where_clause,
         is_filtered_tag,
         card_due_limit,
+        caps,
     }))
 }
 
@@ -672,34 +683,24 @@ pub async fn get_review_card(
         where_clause,
         is_filtered_tag,
         card_due_limit,
+        caps,
     }) = build_review_filter_query(db, filter.as_ref(), requested_date).await?
     else {
         return Ok(None);
     };
 
-    // Sort by `n.created_at` after `c.due` so cards from older notes are shown first. This ensures that notes that depend on previous knowledge are shown in the right order.
-    // BuriedUntilLaterToday cards are shown after normal cards, ordered by their burial timestamp (FIFO).
-    let query_str = format!(
-        indoc! {
-        "SELECT
-            n.id as note_id,
-            p.name as parser_name,
-            c.\"order\" as card_order,
-            c.back_type as card_back_type,
-            c.id as card_id,
-            c.state as card_state
+    let config = read_external_config()?;
+    let order_by = queue_order_by(&config.queue, requested_date, caps);
+    let query_str = formatdoc! {"
+        SELECT {REVIEW_CARD_COLUMNS}
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
-        WHERE {}
+        WHERE {where_clause}
         ORDER BY
-            CASE WHEN c.special_state IS NULL THEN 0 ELSE 1 END ASC,
-            c.due ASC,
-            n.created_at ASC
+            {order_by}
         LIMIT 1"
-        },
-        where_clause
-    );
+    };
     info!("{}", query_str);
     let mut query = sqlx::query_as(&query_str);
     if !is_filtered_tag {
@@ -827,6 +828,7 @@ pub async fn get_review_card_by_id(
                         where_clause,
                         is_filtered_tag,
                         card_due_limit,
+                        ..
                     }) => {
                         get_cards_left_by_state_and_time_estimate(
                             db,
