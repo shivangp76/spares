@@ -23,9 +23,15 @@
 //!   suspending a card, need the server.
 //! - A card rated Again offline is not shown again until the rating has been sent, since the
 //!   device does not schedule cards itself.
+//! - Learning and relearning cards due today are shown as soon as nothing else is left, however
+//!   far off their step ends, since the device does not apply
+//!   [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit).
 //! - A rating sent after a later review of the same card, e.g. from another device that synced
 //!   first, is placed at its time in the card's history, which is then replayed. Such a rating
-//!   cannot be undone from the review page.
+//!   cannot be undone from the review page, and does not trigger the
+//!   [leech action](crate::config::LeechConfig::action).
+//! - A rating from an earlier day does not bury the card's siblings, since they would stay buried
+//!   a day too long.
 //! - Undo takes back a rating or bury that has not been sent yet. Logging out keeps unsent
 //!   actions, which are sent the next time you log in to the same server.
 
