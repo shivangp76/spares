@@ -649,6 +649,30 @@ pub fn server_config(contents: &str) -> Result<String, Error> {
     ))
 }
 
+/// `contents` (a `config.toml`) with these keys of its `[sync]` table set, leaving the rest of the
+/// file, comments included, as it is. The table is added if it is missing.
+pub fn set_sync_values(
+    contents: &str,
+    values: impl IntoIterator<Item = (&'static str, toml_edit::Value)>,
+) -> Result<String, Error> {
+    let mut doc = contents
+        .parse::<DocumentMut>()
+        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+    let sync = doc
+        .entry("sync")
+        .or_insert_with(toml_edit::table)
+        .as_table_like_mut()
+        .ok_or_else(|| {
+            Error::Library(LibraryError::InvalidConfig(
+                "`sync` is not a table".to_string(),
+            ))
+        })?;
+    for (key, value) in values {
+        sync.insert(key, toml_edit::Item::Value(value));
+    }
+    Ok(doc.to_string())
+}
+
 pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
@@ -699,6 +723,41 @@ mod tests {
         let server = server_config("render_browser_parsers = true\n").unwrap();
         assert!(!parse(&server).render_browser_parsers);
         assert_eq!(server.matches("render_browser_parsers").count(), 1);
+    }
+
+    #[test]
+    fn set_sync_values_keeps_the_rest_of_the_file() {
+        let values = || {
+            [
+                ("remote_host", "me@vps".into()),
+                ("url", "https://vps".into()),
+                ("interval_minutes", 15.into()),
+            ]
+        };
+        let original = "maximum_interval = 100 # days, roughly\n\n\
+                        [sync] # how to reach the server\nurl = \"https://old\" # replaced\n\
+                        remote_rendered_dir = \"rendered\"\n\n[leech]\nlapses_threshold = 8\n";
+        let written = set_sync_values(original, values()).unwrap();
+        let config = parse(&written);
+        assert_eq!(config.sync.remote_host.as_deref(), Some("me@vps"));
+        assert_eq!(config.sync.url.as_deref(), Some("https://vps"));
+        assert_eq!(config.sync.interval_minutes, 15);
+        assert_eq!(config.sync.remote_rendered_dir, "rendered");
+        assert_eq!(config.leech.lapses_threshold, 8);
+        assert!(written.contains("# days, roughly"), "{written}");
+        assert!(written.contains("# how to reach the server"), "{written}");
+        assert_eq!(written.matches("url =").count(), 1, "{written}");
+        assert!(
+            written.find("interval_minutes") < written.find("[leech]"),
+            "{written}"
+        );
+
+        // Without a [sync] table, or a file
+        let written = set_sync_values("[leech]\nlapses_threshold = 8\n", values()).unwrap();
+        assert_eq!(parse(&written).sync.url.as_deref(), Some("https://vps"));
+        assert_eq!(parse(&written).leech.lapses_threshold, 8);
+        let written = set_sync_values("", values()).unwrap();
+        assert_eq!(parse(&written).sync.interval_minutes, 15);
     }
 
     #[test]
