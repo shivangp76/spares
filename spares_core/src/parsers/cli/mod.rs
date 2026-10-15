@@ -14,8 +14,13 @@
 //! <!--- exec = "pytest tests/" --->
 //! <!--- spares: cli end --->
 //! ```
-//! The only required key is `exec`. The surrounding note text outside the
-//! block is displayed in the terminal before exec runs.
+//! The only required key is `exec`. At review time the surrounding note text
+//! outside the block is printed in the terminal, then `exec` runs under
+//! `sh -c`.
+//!
+//! A note may hold several blocks; each one is a separate card. A note cannot
+//! mix CLI blocks with clozes or image occlusions, since a CLI card has no
+//! rendered form: give the CLI block its own note.
 //!
 //! ## Block identity
 //! An optional `id` key holds a 12-hex-character uid identifying the block:
@@ -34,7 +39,8 @@
 //! ## Score contract
 //! The child process owns stdin/stderr (so it may prompt interactively) and
 //! must emit a single trailing JSON object on stdout of the form
-//! `{"score": <float in [0,1]>}`. Any other trailing line shape is an error.
+//! `{"score": <float in [0,1]>}`, which is converted to a scheduler rating.
+//! Any other trailing line shape is an error.
 
 use std::ops::Range;
 
