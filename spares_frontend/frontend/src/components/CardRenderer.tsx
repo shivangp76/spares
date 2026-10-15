@@ -16,11 +16,13 @@ interface Props {
   version?: number;
   /** Called once the card is displayed, or has failed to. */
   onReady?: () => void;
+  /** Plays an audio clip linked from the card. Without it, the link is followed. */
+  onPlayAudio?: (path: string) => void;
 }
 
-export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady }: Props) {
-  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} />;
-  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} />;
+export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio }: Props) {
+  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} />;
+  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} />;
   return <RenderedFile path={path} version={version} onReady={onReady} />;
 }
 

@@ -9,6 +9,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   fetchFile,
+  fetchRenderAsset,
   fetchReviewQueue,
   getCredentials,
   isNetworkError,
@@ -228,6 +229,8 @@ async function downloadCardContent(card: GetReviewCardResponse): Promise<void> {
   try {
     // Kept by `fetchFile` for offline use
     await Promise.all(cardFiles(card).map(fetchFile));
+    // Kept by `fetchRenderAsset`
+    if (card.audio) await Promise.all([...card.audio.front, ...card.audio.back].map(fetchRenderAsset));
     if (card.browser_sources) {
       // Compiling fetches, and keeps, the compiler and the files the sources read
       const { compileTypst } = await import('../typst/compiler');
