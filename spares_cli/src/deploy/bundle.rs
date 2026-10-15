@@ -1,5 +1,8 @@
-//! The archive of spares built for the server, which `setup_vps.sh --bundle` installs:
-//! `spares_server`, `frontend/`, and unless the server skips LaTeX, `pandoc.deb`.
+//! The directory of spares built for the server, which `setup_vps.sh --bundle` installs:
+//! `spares_server`, `frontend/`, `setup_vps.sh` itself, and unless the server skips LaTeX,
+//! `pandoc.deb`. It is copied with rsync to [`REMOTE_DIR`] on the server and kept there, so the next
+//! deploy only sends what changed: mostly the binary, as the frontend's files are named by their
+//! contents.
 
 use std::fs;
 use std::path::Path;
@@ -15,6 +18,9 @@ use super::progress::Progress;
 use super::shell::Ssh;
 use super::shell::command_exists;
 use super::shell::run;
+
+/// Where the bundle is kept on the server, relative to the home directory of the user deploying
+pub(super) const REMOTE_DIR: &str = ".cache/spares-bundle";
 
 /// What a server runs: its Rust target and Debian architecture
 #[derive(Clone, Copy)]
@@ -65,15 +71,8 @@ impl Drop for TempDir {
 pub(super) struct Bundle(TempDir);
 
 impl Bundle {
-    pub(super) fn path(&self) -> PathBuf {
-        self.0.path().join("spares-bundle.tar.gz")
-    }
-
-    /// Its size, e.g. "38.2 MB"
-    pub(super) fn size(&self) -> String {
-        #[allow(clippy::cast_precision_loss)]
-        let megabytes = fs::metadata(self.path()).map_or(0, |m| m.len()) as f64 / 1_000_000.0;
-        format!("{megabytes:.1} MB")
+    pub(super) fn path(&self) -> &Path {
+        self.0.path()
     }
 
     /// Builds spares for `target` from the checkout at `repo`, as the "Building" step.
@@ -119,8 +118,8 @@ impl Bundle {
         };
 
         progress.part("Packing");
-        let contents = TempDir::new()?;
-        let dir = contents.path();
+        let bundle = Self(TempDir::new()?);
+        let dir = bundle.path();
         fs::copy(
             repo.join("target")
                 .join(triple)
@@ -132,19 +131,10 @@ impl Bundle {
             .arg("-R")
             .arg(frontend.join("dist"))
             .arg(dir.join("frontend")))?;
+        fs::copy(repo.join("scripts/setup_vps.sh"), dir.join("setup_vps.sh")).into_diagnostic()?;
         if let Some(pandoc) = pandoc {
             fs::copy(pandoc, dir.join("pandoc.deb")).into_diagnostic()?;
         }
-
-        let bundle = Self(TempDir::new()?);
-        // Without macOS metadata, which GNU tar on the server warns about
-        run(Command::new("tar")
-            .args(["--no-xattrs", "--no-mac-metadata", "-czf"])
-            .arg(bundle.path())
-            .arg("-C")
-            .arg(dir)
-            .arg(".")
-            .env("COPYFILE_DISABLE", "1"))?;
         Ok(bundle)
     }
 }

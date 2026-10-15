@@ -19,6 +19,7 @@ use spares_core::config::EnvironmentConfig;
 use spares_core::config::read_external_config;
 
 use bundle::Bundle;
+use bundle::REMOTE_DIR;
 use bundle::Target;
 use progress::Progress;
 use shell::Ssh;
@@ -127,25 +128,19 @@ async fn update() -> Result<(), Error> {
     )?;
     let target = Target::of(&ssh, &remote_host)?;
     let bundle = Bundle::build(&progress, &repo, target, no_latex != "true").await?;
-    progress.step("Uploading", &bundle.size());
+    progress.step("Uploading", &format!("to {remote_host}"));
+    upload(&ssh, &bundle, &remote_host)?;
+    drop(bundle);
     // Kept in step with this machine's, e.g. after moving
     let timezone = local_timezone()
         .map(|zone| format!(" --timezone {}", quote(&zone)))
         .unwrap_or_default();
-    ssh.upload(
-        &[&repo.join("scripts/setup_vps.sh"), &bundle.path()],
-        &format!("{remote_host}:/tmp/"),
-    )?;
-    drop(bundle);
     progress.step("Installing", &format!("on {remote_host}"));
     let mut command = ssh.command();
     command.args([
         "-t",
         &remote_host,
-        &format!(
-            "sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz{timezone}; \
-             status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status"
-        ),
+        &format!("sudo bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone}"),
     ]);
     progress.run(command)?;
     progress.end_step();
@@ -154,6 +149,16 @@ async fn update() -> Result<(), Error> {
         "Restart spares_serve here too, so both sides run the same version.".yellow()
     );
     progress.finish();
+    Ok(())
+}
+
+/// Copies `bundle` to [`REMOTE_DIR`] on `server` (as user@host), sending only what changed since
+/// the last deploy.
+fn upload(ssh: &Ssh, bundle: &Bundle, server: &str) -> Result<(), Error> {
+    let sent = ssh.sync(bundle.path(), &format!("{server}:{REMOTE_DIR}"))?;
+    #[allow(clippy::cast_precision_loss)]
+    let megabytes = sent as f64 / 1_000_000.0;
+    println!("Sent {megabytes:.1} MB");
     Ok(())
 }
 
