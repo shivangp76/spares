@@ -38,6 +38,24 @@ pub async fn insert_events(
     Ok(event_ids)
 }
 
+/// Puts `other`, an event or the group it leads, in the group `leader` leads (making `leader` a
+/// group if it was not one), so undoing either undoes both.
+pub(crate) async fn join_event_group(
+    db: &SqlitePool,
+    leader: i64,
+    other: i64,
+) -> Result<(), Error> {
+    sqlx::query(r"UPDATE event SET group_id = ? WHERE id IN (?, ?) OR group_id = ?")
+        .bind(leader)
+        .bind(leader)
+        .bind(other)
+        .bind(other)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
+}
+
 /// Create a group of events. Returns the `group_id` (which is the id of the first event).
 pub async fn create_event_group(
     db: &SqlitePool,

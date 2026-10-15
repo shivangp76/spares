@@ -876,3 +876,127 @@ mod sibling_tests {
         assert_eq!(special_states(&pool, &ids[2..]).await, [None, None]);
     }
 }
+
+#[cfg(test)]
+mod leech_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::REVIEW;
+    use super::tests::create_cards;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::review::rate_card_with_config;
+    use crate::api::undo::undo_event;
+    use crate::config::LeechAction;
+    use crate::config::LeechConfig;
+    use crate::config::SparesExternalConfig;
+    use crate::model::CardId;
+    use crate::model::SpecialState;
+    use crate::schedulers::get_scheduler_from_string;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::undo::UndoEventRequest;
+
+    const AGAIN: u32 = 1;
+
+    /// Forgets `card_id`, a card in review, returning the rating's event.
+    async fn lapse(
+        pool: &SqlitePool,
+        config: &SparesExternalConfig,
+        card_id: CardId,
+        now: DateTime<Utc>,
+    ) -> i64 {
+        set_card(pool, card_id, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        rate_card_with_config(
+            pool,
+            scheduler.as_ref(),
+            config,
+            RatingSubmission {
+                card_id,
+                rating: AGAIN,
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(1),
+                tag_id: None,
+            },
+            now,
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    async fn special_state(pool: &SqlitePool, card_id: CardId) -> Option<SpecialState> {
+        sqlx::query_scalar(r"SELECT special_state FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn note_tags(pool: &SqlitePool, card_id: CardId) -> Vec<String> {
+        sqlx::query_scalar(
+            r"SELECT t.name FROM tag t JOIN note_tag nt ON nt.tag_id = t.id
+            JOIN card c ON c.note_id = nt.note_id WHERE c.id = ?",
+        )
+        .bind(card_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn leeches_are_tagged_and_suspended_until_undone(pool: SqlitePool) {
+        let now = Utc::now();
+        let card = create_cards(&pool, 1, now - Duration::days(30)).await[0];
+        let config = SparesExternalConfig {
+            leech: LeechConfig {
+                lapses_threshold: 2,
+                action: LeechAction::Suspend,
+                ..LeechConfig::default()
+            },
+            ..SparesExternalConfig::default()
+        };
+
+        lapse(&pool, &config, card, now).await;
+        assert_eq!(special_state(&pool, card).await, None);
+        assert_eq!(note_tags(&pool, card).await, Vec::<String>::new());
+
+        let event = lapse(&pool, &config, card, now).await;
+        assert_eq!(
+            special_state(&pool, card).await,
+            Some(SpecialState::Suspended)
+        );
+        assert_eq!(note_tags(&pool, card).await, ["leech"]);
+
+        // As review clients undo a rating
+        undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: Some(event),
+                undo_group: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(special_state(&pool, card).await, None);
+        assert_eq!(note_tags(&pool, card).await, Vec::<String>::new());
+    }
+
+    #[sqlx::test]
+    async fn tag_action_keeps_reviewing(pool: SqlitePool) {
+        let now = Utc::now();
+        let card = create_cards(&pool, 1, now - Duration::days(30)).await[0];
+        let config = SparesExternalConfig {
+            leech: LeechConfig {
+                lapses_threshold: 1,
+                ..LeechConfig::default()
+            },
+            ..SparesExternalConfig::default()
+        };
+        lapse(&pool, &config, card, now).await;
+        assert_eq!(special_state(&pool, card).await, None);
+        assert_eq!(note_tags(&pool, card).await, ["leech"]);
+    }
+}
