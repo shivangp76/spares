@@ -109,6 +109,16 @@ export function insertBlock(view: EditorView | undefined, value: string, block: 
   return view.state.doc.toString();
 }
 
+/** Inserts text at the editor's cursor, in place of the selection, and returns the editor's new
+    contents. Without an editor, the text is appended to `value` after a space. */
+export function insertInline(view: EditorView | undefined, value: string, text: string): string {
+  if (!view) return value === '' || /\s$/.test(value) ? value + text : `${value} ${text}`;
+  const { from, to } = view.state.selection.main;
+  view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
+  view.focus();
+  return view.state.doc.toString();
+}
+
 /** Extensions of the images cards can show, as the server accepts them. */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
 const IMAGE_TYPE_EXTENSIONS: Record<string, string> = {

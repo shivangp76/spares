@@ -252,6 +252,8 @@ Which clips play:
 - **Replay** plays the front's clips, and then the back's if the card is flipped. In the web app, press `r` or click Replay in the audio bar above the card. In `spares card review`, pick Replay Audio.
 - With `t`, audio links are not part of the expected answer, so `{{[t] [🔊](/m/x.mp3)}}` gets no input box.
 
+To record a clip in the web app, click **Record audio** above a note's editor, record, and click Insert. The recording is uploaded to the server, stored in `audio` in the data directory, and a link to it is inserted at the cursor, e.g. `[listen](…)` in Markdown or `#link("…")[listen]` in Typst. Browsers that can record AAC (such as Safari) upload an m4a file; others upload WAV, since the formats they record are not ones clips can use. Recording needs the web app to be served over HTTPS or from localhost, as browsers only allow the microphone there.
+
 In the web app, clicking an audio link inside the card also plays it. If the browser blocks autoplay before the page has been used, a Play button appears instead. Clips are fetched from the server's render assets: rendering a note records its clips, and `spares sync cloud` sends them, like the other files notes read. Clips are downloaded with the cards for offline review.
 
 `spares card review` plays clips with the `audio_player` setting in `config.toml`, followed by the clip's path. It defaults to `afplay` on macOS and `mpv --no-video` elsewhere.

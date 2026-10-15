@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod browser_render;
 pub mod card;
 pub mod image;

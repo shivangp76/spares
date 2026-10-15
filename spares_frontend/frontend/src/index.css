@@ -261,6 +261,40 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   background: rgb(0 0 0 / 0.4);
 }
 
+.audio-recorder {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  width: min(400px, calc(100% - 32px));
+  box-sizing: border-box;
+}
+
+.audio-recorder::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.audio-recorder-content {
+  padding: 16px 20px 20px;
+}
+
+.audio-recorder-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--error);
+  animation: audio-recorder-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes audio-recorder-pulse {
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audio-recorder-dot { animation: none; }
+}
+
 .keybindings-help-content {
   padding: 16px 20px 20px;
 }

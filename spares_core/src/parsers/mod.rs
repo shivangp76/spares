@@ -185,6 +185,12 @@ pub trait Parseable: Send + Sync {
     /// Shows the image at `file_path`, an absolute path, where it is inserted into a note.
     fn construct_image(&self, file_path: &Path) -> String;
 
+    /// Links to the audio clip at `file_path`, an absolute path, where it is inserted into a note,
+    /// so it is found by [`Self::audio_refs`]. `None` if the parser has no audio clips.
+    fn construct_audio(&self, _file_path: &Path) -> Option<String> {
+        None
+    }
+
     /// Find all `spares: cli start…end` blocks in `data`. Default impl uses
     /// the parser's comment syntax, so this works for any host parser.
     /// The canonical implementation lives in [`cli::get_cli_blocks`]; this
