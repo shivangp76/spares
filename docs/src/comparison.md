@@ -46,4 +46,3 @@ The following are issues in Anki that this project aims to address:
 ## Current Limitations of spares
 
 - No card-level flagging system (tags are note-level only)
-- No support for audio cloze answers
