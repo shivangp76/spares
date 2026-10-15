@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 
+use colored::Colorize;
 use inquire::CustomType;
 use inquire::Password;
 use inquire::PasswordDisplayMode;
@@ -27,10 +28,12 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePool;
 
 use super::bundle::Bundle;
+use super::bundle::Target;
 use super::local_timezone;
+use super::progress::Progress;
+use super::progress::without_footer;
 use super::repo_dir;
 use super::shell::Ssh;
-use super::shell::bold;
 use super::shell::command_exists;
 use super::shell::confirm;
 use super::shell::output;
@@ -99,8 +102,23 @@ pub(super) async fn init(
     .map_err(|e| miette!("Failed to open the database: {e}"))?;
     let ssh = Ssh::new();
     let root = format!("root@{server}");
+    let mut steps = vec![
+        "Backing up the database",
+        "Connecting",
+        "Building",
+        "Uploading",
+        "Setting up the server",
+        "Setting up this machine",
+        "Restarting the local server",
+        "Uploading the database",
+        "Checking",
+    ];
+    if domain.is_none() {
+        steps.push("Closing the server's public ports");
+    }
+    let progress = Progress::start("init", &steps);
 
-    bold("Backing up the database");
+    progress.step("Backing up the database", "");
     let backup = data_dir.join(format!(
         "spares-main.before-deploy-{}.sqlite",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
@@ -112,9 +130,18 @@ pub(super) async fn init(
         .map_err(|e| miette!("Failed to back up the database: {e}"))?;
     println!("Saved {}", backup.display());
 
-    let bundle = Bundle::build(&ssh, &repo, &root, !no_latex).await?;
+    progress.step("Connecting", &format!("to {root}"));
+    let target = Target::of(&ssh, &root)?;
+    let bundle = Bundle::build(&progress, &repo, target, !no_latex).await?;
 
-    bold(&format!("Setting up the server (as {root})"));
+    progress.step("Uploading", &bundle.size());
+    ssh.upload(
+        &[&repo.join("scripts/setup_vps.sh"), &bundle.path()],
+        &format!("{root}:/tmp/"),
+    )?;
+    drop(bundle);
+
+    progress.step("Setting up the server", &format!("as {root}"));
     if !no_latex {
         println!("Installing LaTeX takes a while.");
     }
@@ -145,23 +172,21 @@ pub(super) async fn init(
         Some(zone) => args.extend(["--timezone".to_string(), zone]),
         None => warn("Could not tell this machine's time zone, so the server keeps its own."),
     }
-    ssh.upload(
-        &[&repo.join("scripts/setup_vps.sh"), &bundle.path()],
-        &format!("{root}:/tmp/"),
-    )?;
-    drop(bundle);
     let args = args
         .iter()
         .map(|arg| quote(arg))
         .collect::<Vec<_>>()
         .join(" ");
-    ssh.run_tty(
+    let mut command = ssh.command();
+    command.args([
+        "-t",
         &root,
         &format!(
             "bash /tmp/setup_vps.sh {args}; status=$?; \
              rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status"
         ),
-    )?;
+    ]);
+    progress.run(command)?;
 
     let url = ssh.output(&root, "cat /etc/spares/url")?;
     let api_key = ssh.output(
@@ -174,7 +199,7 @@ pub(super) async fn init(
     let host = host.to_string();
     println!("The server is at {url}");
 
-    bold("Setting up this machine");
+    progress.step("Setting up this machine", "");
     run(Command::new("security").args([
         "add-generic-password",
         "-U",
@@ -189,14 +214,14 @@ pub(super) async fn init(
     let interval = set_up_config(&user, &host, &url)?;
     set_up_shell_file(&url)?;
 
-    bold("Restarting the local server");
+    progress.step("Restarting the local server", "");
     println!("Restart spares_serve in a new terminal, so it picks up the new settings.");
     let local_address = env_config.socket_address.replace("0.0.0.0", "127.0.0.1");
     let base_url = format!("http://{local_address}");
     let local_key = wait_for_local_server(&base_url, &me, &url).await?;
     let client = crate::client_with_key(local_key.as_deref())?;
 
-    bold("Uploading the database");
+    progress.step("Uploading the database", "");
     let user_host = format!("{user}@{host}");
     run(ssh
         .command()
@@ -207,7 +232,7 @@ pub(super) async fn init(
             .map_err(|e| miette!("{e}"))?;
     }
 
-    bold("Checking");
+    progress.step("Checking", "");
     let here: String = sqlx::query_scalar(NOTE_COUNTS)
         .fetch_one(&pool)
         .await
@@ -231,7 +256,7 @@ pub(super) async fn init(
         .map_err(|e| miette!("{e}"))?;
 
     if domain.is_none() {
-        bold("Closing the server's public ports");
+        progress.step("Closing the server's public ports", "");
         println!(
             "You reached the server over Tailscale above. This allows only Tailscale in, so SSH \
              to its\npublic address stops working; log in with `ssh {user_host}` instead. If \
@@ -254,16 +279,18 @@ pub(super) async fn init(
         }
     }
 
-    bold("Done");
+    progress.end_step();
     println!(
-        "On your phone, with Tailscale on, open {url}, log in with the API key
+        "\n{}\nOn your phone, with Tailscale on, open {url}, log in with the API key
 (security find-generic-password -s {KEYCHAIN_SERVICE} -w) and add it to the home screen.
 
   spares sync cloud       sync both ways and copy files (sync.interval_minutes = {interval}
                           syncs in the background, without copying files)
   spares sync conflicts   resolve notes tagged sync-conflict
-  spares deploy update    update the server"
+  spares deploy update    update the server",
+        "Next".bold()
     );
+    progress.finish();
     Ok(())
 }
 
@@ -290,12 +317,13 @@ fn set_up_config(user: &str, host: &str, url: &str) -> Result<u64, Error> {
     } else {
         15
     };
-    let interval =
+    let interval = without_footer(|| {
         CustomType::<u64>::new("Sync in the background every how many minutes (0 for never)?")
             .with_default(default)
             .with_error_message("Type a whole number.")
             .prompt()
-            .map_err(|e| miette!("{e}"))?;
+    })
+    .map_err(|e| miette!("{e}"))?;
     let file = get_external_config_file();
     let old = fs::read_to_string(&file).unwrap_or_default();
     let new = set_sync_values(
@@ -415,11 +443,13 @@ async fn wait_for_local_server(
                 key = Some(found);
             } else {
                 warn("The local server wants its API key (its SPARES_API_KEY).");
-                let pasted = Password::new("Paste it here:")
-                    .without_confirmation()
-                    .with_display_mode(PasswordDisplayMode::Hidden)
-                    .prompt()
-                    .map_err(|e| miette!("{e}"))?;
+                let pasted = without_footer(|| {
+                    Password::new("Paste it here:")
+                        .without_confirmation()
+                        .with_display_mode(PasswordDisplayMode::Hidden)
+                        .prompt()
+                })
+                .map_err(|e| miette!("{e}"))?;
                 key = Some(pasted.split_whitespace().collect());
             }
             tried_keychain = true;

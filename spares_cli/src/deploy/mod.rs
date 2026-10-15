@@ -4,24 +4,25 @@
 
 mod bundle;
 mod init;
+mod progress;
 mod shell;
-mod status_bar;
 
 use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Args;
 use clap::Subcommand;
+use colored::Colorize;
 use miette::Error;
 use miette::miette;
 use spares_core::config::EnvironmentConfig;
 use spares_core::config::read_external_config;
 
 use bundle::Bundle;
+use bundle::Target;
+use progress::Progress;
 use shell::Ssh;
-use shell::bold;
 use shell::quote;
-use status_bar::StatusBar;
 
 #[derive(Args, Debug)]
 pub(crate) struct DeployArgs {
@@ -81,19 +82,6 @@ pub(crate) enum DeployCommands {
     },
 }
 
-/// The steps of `setup_vps.sh` that an update shows in its progress bar, each the start of the
-/// title of its "==> " line.
-const UPDATE_STEPS: &[&str] = &[
-    "Uploading",
-    "Setting the time zone",
-    "Installing packages",
-    "Installing pandoc",
-    "Adding",
-    "Installing the bundled spares",
-    "Configuring",
-    "Setting up",
-];
-
 pub(crate) async fn handle(args: DeployArgs, env_config: &EnvironmentConfig) -> Result<(), Error> {
     match args.command {
         DeployCommands::Init {
@@ -128,22 +116,28 @@ async fn update() -> Result<(), Error> {
         miette!("sync.remote_host is not set in config.toml. Run `spares deploy init` first.")
     })?;
     let ssh = Ssh::new();
+    let progress = Progress::start(
+        "update",
+        &["Connecting", "Building", "Uploading", "Installing"],
+    );
+    progress.step("Connecting", &format!("to {remote_host}"));
     let no_latex = ssh.output(
         &remote_host,
         "sed -n 's/^NO_LATEX=//p' /etc/spares/setup.conf",
     )?;
-    let bundle = Bundle::build(&ssh, &repo, &remote_host, no_latex != "true").await?;
-    bold(&format!("Updating {remote_host}"));
+    let target = Target::of(&ssh, &remote_host)?;
+    let bundle = Bundle::build(&progress, &repo, target, no_latex != "true").await?;
+    progress.step("Uploading", &bundle.size());
     // Kept in step with this machine's, e.g. after moving
     let timezone = local_timezone()
         .map(|zone| format!(" --timezone {}", quote(&zone)))
         .unwrap_or_default();
-    let bar = StatusBar::start(UPDATE_STEPS);
     ssh.upload(
         &[&repo.join("scripts/setup_vps.sh"), &bundle.path()],
         &format!("{remote_host}:/tmp/"),
     )?;
     drop(bundle);
+    progress.step("Installing", &format!("on {remote_host}"));
     let mut command = ssh.command();
     command.args([
         "-t",
@@ -153,8 +147,13 @@ async fn update() -> Result<(), Error> {
              status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status"
         ),
     ]);
-    status_bar::run(bar, command)?;
-    println!("Restart spares_serve here too, so both sides run the same version.");
+    progress.run(command)?;
+    progress.end_step();
+    println!(
+        "\n{}",
+        "Restart spares_serve here too, so both sides run the same version.".yellow()
+    );
+    progress.finish();
     Ok(())
 }
 
@@ -199,4 +198,12 @@ fn local_timezone() -> Option<String> {
     let zone = zone.to_str()?;
     zone.split_once("/zoneinfo/")
         .map(|(_, zone)| zone.to_string())
+}
+
+/// Where `spares deploy` keeps what it downloads and the times of its steps
+fn cache_dir() -> Option<PathBuf> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))?;
+    Some(cache.join("spares-deploy"))
 }
