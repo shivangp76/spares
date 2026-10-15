@@ -25,9 +25,9 @@ use crate::api::review::ReviewCard;
 use crate::api::review::ReviewFilterQuery;
 use crate::api::review::build_review_filter_query;
 use crate::api::review::bury_card;
+use crate::api::review::daily_limits_left;
 use crate::api::review::get_cards_left_by_state_and_time_estimate;
 use crate::api::review::insert_review;
-use crate::api::review::new_cards_left;
 use crate::api::review::rate_card;
 use crate::api::review::review_card_response;
 use crate::api::review::unbury_cards_and_update_config;
@@ -41,6 +41,7 @@ use crate::parsers::Parseable;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::review_state;
 use crate::schema::review::OfflineActionOutcome;
 use crate::schema::review::OfflineActionResult;
 use crate::schema::review::OfflineStudyAction;
@@ -62,8 +63,8 @@ struct QueueRow {
 /// The cards a review with `filter` would show next, in order, as of `requested_date`.
 ///
 /// Like [`get_review_card`](crate::api::review::get_review_card), cards are those due by the end
-/// of the day, plus those due on the next `days_ahead` days. New cards are capped by what is left
-/// of today's limit, since the client cannot know tomorrow's.
+/// of the day, plus those due on the next `days_ahead` days. New and review cards are capped by
+/// what is left of today's limits, since the client cannot know tomorrow's.
 pub async fn get_review_queue(
     db: &SqlitePool,
     ReviewQueueRequest {
@@ -76,7 +77,8 @@ pub async fn get_review_queue(
 ) -> Result<ReviewQueueResponse, Error> {
     unbury_cards_and_update_config(db).await?;
 
-    let new_cards_left_today = new_cards_left(db, requested_date).await?;
+    let limits_left = daily_limits_left(db, requested_date).await?;
+    let new_cards_left_today = limits_left.new;
     let Some(ReviewFilterQuery {
         where_clause,
         is_filtered_tag,
@@ -120,16 +122,27 @@ pub async fn get_review_queue(
     .await?;
 
     let mut new_cards_allowed = new_cards_left_today;
+    let mut reviews_allowed = limits_left.reviews;
     let mut cards = Vec::new();
     for QueueRow { card, due } in rows {
         if cards.len() >= limit as usize {
             break;
         }
-        if card.card_state == NEW_CARD_STATE {
-            if new_cards_allowed == 0 {
+        // Filtered tags have no limits, and learning cards are never held back
+        let allowed = if is_filtered_tag {
+            None
+        } else if card.card_state == NEW_CARD_STATE {
+            Some(&mut new_cards_allowed)
+        } else if card.card_state == review_state() {
+            Some(&mut reviews_allowed)
+        } else {
+            None
+        };
+        if let Some(allowed) = allowed {
+            if *allowed == 0 {
                 continue;
             }
-            new_cards_allowed -= 1;
+            *allowed -= 1;
         }
         let card = review_card_response(
             db,
