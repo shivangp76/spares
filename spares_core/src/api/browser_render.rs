@@ -7,6 +7,8 @@
 //!   when rendering locally. Rendering writes a [`RenderDependencies`] file next to each rendered
 //!   file, and [`sync_render_assets`] copies the files it lists into a content-addressed store in
 //!   the data directory, which is synced to the server along with the database.
+//! - Audio clips (see [`crate::parsers::audio`]) are stored the same way for every parser, since
+//!   web clients play them outside the rendered card.
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -41,6 +43,7 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
+use crate::parsers::audio::is_audio_path;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
@@ -215,7 +218,8 @@ struct RenderAssetRow {
 }
 
 /// Records the dependencies of `parser`'s rendered files for `note_ids` (all notes if `None`) and
-/// refreshes every stored asset whose file changed since it was last stored.
+/// refreshes every stored asset whose file changed since it was last stored. For parsers that do
+/// not [render in the browser](Parseable::renders_in_browser), only audio clips are recorded.
 ///
 /// Files that do not exist locally keep their stored copy, so this is safe to run on a server that
 /// only has the synced store.
@@ -224,10 +228,15 @@ pub async fn sync_render_assets<S: BuildHasher>(
     parser: &dyn Parseable,
     note_ids: Option<&HashSet<NoteId, S>>,
 ) -> Result<(), Error> {
+    let (mut files, mut packages) = read_render_dependencies(parser, note_ids);
+    // Other parsers' cards are shown rendered, so web clients only need their audio clips
     if !parser.renders_in_browser() {
-        return Ok(());
+        files.retain(|path| is_audio_path(path));
+        packages.clear();
+        if files.is_empty() {
+            return Ok(());
+        }
     }
-    let (files, packages) = read_render_dependencies(parser, note_ids);
 
     let existing: Vec<RenderAssetRow> =
         sqlx::query_as("SELECT path, hash, mtime, size FROM render_asset")

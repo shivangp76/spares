@@ -526,6 +526,7 @@ pub mod review {
     use crate::model::RatingId;
     use crate::model::StateId;
     use crate::model::TagId;
+    use crate::parsers::audio::CardAudio;
     use crate::parsers::typed_answer::TypedAnswerInfo;
 
     #[derive(Debug, Default, Deserialize, Serialize)]
@@ -633,6 +634,10 @@ pub mod review {
         /// Present iff the card asks for its answers to be typed (the cloze key `t`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub typed_answer: Option<TypedAnswerInfo>,
+        /// Present iff the card has audio clips. Their paths are absolute local paths, which web
+        /// clients fetch from the render assets.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub audio: Option<CardAudio>,
         pub cards_left_by_state: HashMap<StateId, u32>, // Count of cards left in each state for the relevant query
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,

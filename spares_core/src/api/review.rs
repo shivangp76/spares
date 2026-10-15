@@ -57,6 +57,7 @@ use crate::model::TagId;
 use crate::parsers::BackType;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::audio::card_audio;
 use crate::parsers::cli::compute_surrounding_text;
 use crate::parsers::cli::parse_cli_data;
 use crate::parsers::find_parser;
@@ -330,6 +331,7 @@ fn build_review_card_response(
         cli,
         browser_sources: None,
         typed_answer: None,
+        audio: None,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -763,7 +765,7 @@ pub(crate) async fn review_card_response(
 }
 
 /// Fills in the parts of `response` that come from parsing its card's note: the sources to compile
-/// in the browser and the answers to type.
+/// in the browser, the answers to type and the audio clips to play.
 async fn add_card_extras(
     db: &SqlitePool,
     response: &mut GetReviewCardResponse,
@@ -776,7 +778,7 @@ async fn add_card_extras(
         Ok(loaded) => loaded,
         Err(e) if !parser.renders_in_browser() => {
             warn!(
-                "Note {} card {} could not be parsed for its typed answer: {e}",
+                "Note {} card {} could not be parsed for its typed answer and audio: {e}",
                 response.note_id.letters(),
                 response.card_order
             );
@@ -786,6 +788,7 @@ async fn add_card_extras(
     };
     add_browser_render_sources(parser.as_ref(), response, &request, &card)?;
     response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
+    response.audio = card_audio(parser.as_ref(), &card);
     Ok(())
 }
 
@@ -1380,6 +1383,46 @@ mod tests {
                 ),
                 (2, None),
             ]
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_review_card_audio(pool: SqlitePool) -> () {
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::parsers::audio::CardAudio;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "[🔊](/m/q.mp3) Translate: {{ [🔊](/m/a.mp3) good morning}}".to_string(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let now = Utc::now();
+        create_notes(&pool, request, now, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let card_id: CardId = sqlx::query_scalar(r"SELECT id FROM card")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let review_card = get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            review_card.audio,
+            Some(CardAudio {
+                front: vec!["/m/q.mp3".to_string()],
+                back: vec!["/m/a.mp3".to_string()],
+            })
         );
     }
 
