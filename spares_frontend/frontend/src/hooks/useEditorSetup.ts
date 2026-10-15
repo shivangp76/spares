@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { vim } from '@replit/codemirror-vim';
 import { EditorView, type Extension } from '@uiw/react-codemirror';
+import { imageUpload } from '../imageUpload';
 import { clozeHighlighting, loadLanguage, type NoteSyntax, noteSyntax } from '../editorLanguages';
 import { useVimKeybindings } from '../preferences';
 import { useMediaQuery } from './useMediaQuery';
@@ -9,8 +10,9 @@ import { useMediaQuery } from './useMediaQuery';
     phones, lines wrap instead of scrolling sideways, and line numbers are left out to give the
     text the width. `dataExtensions`, for the note's data, also highlight the syntax of the note's
     parser and its clozes. The parser's language is loaded on demand, so its highlighting appears
-    once loaded. */
-export function useEditorSetup(parserName?: string | null) {
+    once loaded. With `imageParserId`, images pasted or dropped into the data are uploaded and
+    inserted in that parser's syntax. */
+export function useEditorSetup(parserName?: string | null, imageParserId?: number | null) {
   const vimEnabled = useVimKeybindings();
   const isNarrow = useMediaQuery('(max-width: 640px)');
   const syntax = noteSyntax(parserName);
@@ -32,10 +34,11 @@ export function useEditorSetup(parserName?: string | null) {
     [vimEnabled, isNarrow],
   );
   const dataExtensions = useMemo(() => {
-    if (syntax === null) return extensions;
+    const images = imageParserId == null ? [] : [imageUpload(imageParserId)];
+    if (syntax === null) return [...extensions, ...images];
     // A language loaded for a previous parser is left out until this parser's has loaded
     const extension = language?.syntax === syntax ? [language.extension] : [];
-    return [...extensions, ...extension, clozeHighlighting(syntax)];
-  }, [extensions, syntax, language]);
+    return [...extensions, ...extension, clozeHighlighting(syntax), ...images];
+  }, [extensions, syntax, language, imageParserId]);
   return { extensions, dataExtensions, lineNumbers: !isNarrow };
 }

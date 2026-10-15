@@ -21,7 +21,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const theme = useResolvedTheme();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
-  const editor = useEditorSetup(parsers?.find(p => p.id === parserId)?.name);
+  const editor = useEditorSetup(parsers?.find(p => p.id === parserId)?.name, parserId);
   const [data, setData] = useState('');
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
   const [tags, setTags] = useState('');

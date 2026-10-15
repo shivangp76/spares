@@ -303,6 +303,22 @@ export async function createImageOcclusion(
   return res.json();
 }
 
+/** Stores an image pasted or dropped into a note. `snippet` shows it in the parser's syntax, ready to insert into the note. */
+export async function uploadImage(parserId: number, image: File): Promise<{ path: string; snippet: string }> {
+  const { serverUrl, apiKey } = getCredentials();
+  const form = new FormData();
+  form.append('parser_id', String(parserId));
+  form.append('image', image, image.name);
+  // The browser sets the multipart Content-Type, with its boundary
+  const res = await fetch(`${serverUrl}/api/images`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  await throwIfNotOk(res, `Upload ${image.name}`);
+  return res.json();
+}
+
 /** A file of a stored image occlusion, by the absolute path a note refers to it by. */
 export async function fetchImageOcclusionFile(path: string): Promise<Blob> {
   const res = await apiSend('Image occlusion file', `/api/image-occlusions/file?path=${encodeURIComponent(path)}`);
