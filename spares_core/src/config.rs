@@ -159,6 +159,14 @@ pub fn get_env_config(env: Environment) -> EnvironmentConfig {
     }
 }
 
+/// The local server's API key, from `SPARES_API_KEY`. The server then refuses requests without it,
+/// so its clients send it too.
+pub fn local_api_key() -> Option<String> {
+    std::env::var("SPARES_API_KEY")
+        .ok()
+        .filter(|key| !key.is_empty())
+}
+
 /// Which replica this instance is, from `SPARES_REPLICA`: `0` is the laptop, `1` the server, and a
 /// later replica takes the next unused number. It decides which form of note id this instance
 /// writes (see [`crate::ids`]). It comes from the environment, never the database, since a full
