@@ -108,3 +108,24 @@ export function insertBlock(view: EditorView | undefined, value: string, block: 
   view.focus();
   return view.state.doc.toString();
 }
+
+/** Extensions of the images cards can show, as the server accepts them. */
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+const IMAGE_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+};
+
+/** The name to upload an image file under, or `null` if cards can't show its format. Pasted images
+    often have a generic name or none, so without a supported extension, it comes from the type. */
+export function imageUploadName(file: { name: string; type: string }): string | null {
+  const match = /^(.*)\.([^.]*)$/.exec(file.name);
+  if (match && IMAGE_EXTENSIONS.includes(match[2].toLowerCase())) return file.name;
+  const extension = IMAGE_TYPE_EXTENSIONS[file.type];
+  if (!extension) return null;
+  return `${(match ? match[1] : file.name) || 'image'}.${extension}`;
+}

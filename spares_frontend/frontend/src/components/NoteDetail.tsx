@@ -34,7 +34,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   const theme = useResolvedTheme();
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
-  const editor = useEditorSetup(note.parser_name);
+  const editor = useEditorSetup(note.parser_name, live ? null : note.parser_id);
   const [dataContent, setDataContent] = useState(note.data);
   // The editor's data as last saved, so edits made since can be told apart
   const [savedData, setSavedData] = useState(note.data);
