@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { audioLinkPath } from '../audio';
+import { widthInputs } from '../typst/width';
 
 interface Props {
   source: string;
   onReady?: () => void;
   /** Plays an audio clip linked from the card. Without it, the link is followed. */
   onPlayAudio?: (path: string) => void;
+  /** Called with each width the source is compiled for. */
+  onWidth?: (width: number) => void;
 }
 
 const XLINK = 'http://www.w3.org/1999/xlink';
@@ -14,10 +17,8 @@ type State =
   | { source: string; width: number; svg: string; error?: undefined }
   | { source: string; width: number; error: string; svg?: undefined };
 
-// The viewer's width is passed to sources as `sys.inputs.at("spares-width")`, in CSS pixels, so
-// templates can lay out pages to fit the screen. It is rounded down to a step and debounced so
-// small resizes do not recompile.
-const WIDTH_INPUT = 'spares-width';
+// The viewer's width is passed to sources (see `widthInputs`). It is rounded down to a step and
+// debounced so small resizes do not recompile.
 const WIDTH_STEP = 16;
 const RESIZE_DEBOUNCE_MS = 150;
 
@@ -42,7 +43,7 @@ function useStepWidth() {
   return [ref, width] as const;
 }
 
-export default function TypstViewer({ source, onReady, onPlayAudio }: Props) {
+export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: Props) {
   const [ref, width] = useStepWidth();
   const [result, setResult] = useState<State | null>(null);
   // Expanding compiles the source without the width input, so the template lays it out at its
@@ -53,10 +54,14 @@ export default function TypstViewer({ source, onReady, onPlayAudio }: Props) {
   const [natural, setNatural] = useState<{ source: string; svg?: string; error?: string } | null>(null);
 
   useEffect(() => {
+    if (width !== null) onWidth?.(width);
+  }, [width, onWidth]);
+
+  useEffect(() => {
     if (width === null) return;
     let cancelled = false;
     // Loaded lazily since the compiler is large and only needed for Typst cards.
-    import('../typst/compiler').then(({ compileTypst }) => compileTypst(source, { [WIDTH_INPUT]: String(width) })).then(
+    import('../typst/compiler').then(({ compileTypst }) => compileTypst(source, widthInputs(width))).then(
       svg => { if (!cancelled) setResult({ source, width, svg }); },
       (e: unknown) => { if (!cancelled) setResult({ source, width, error: String(e) }); },
     );

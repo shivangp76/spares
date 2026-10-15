@@ -167,6 +167,31 @@ export function warmUpTypst(): Promise<void> {
   });
 }
 
+/** Results compiled ahead of being shown, by source and inputs. Only the latest few are kept. */
+const precompiled = new Map<string, Promise<string>>();
+const MAX_PRECOMPILED = 4;
+
+const resultKey = (source: string, inputs: Record<string, string>) => JSON.stringify([source, inputs]);
+
+/**
+ * Compiles `source` ahead of it being shown, e.g. the next card while the review's filter is
+ * picked, so that `compileTypst` returns the result at once.
+ */
+export function precompileTypst(source: string, inputs: Record<string, string> = {}): Promise<string> {
+  const key = resultKey(source, inputs);
+  const existing = precompiled.get(key);
+  if (existing) return existing;
+  const result = enqueue(() => compileNow(source, inputs));
+  precompiled.set(key, result);
+  // A failure, e.g. without a connection, is not kept, so showing the source compiles it again
+  result.catch(() => { if (precompiled.get(key) === result) precompiled.delete(key); });
+  for (const old of precompiled.keys()) {
+    if (precompiled.size <= MAX_PRECOMPILED) break;
+    precompiled.delete(old);
+  }
+  return result;
+}
+
 /**
  * Compiles `source` to an SVG string. Rejects with the compiler's diagnostics, a string.
  *
@@ -174,5 +199,5 @@ export function warmUpTypst(): Promise<void> {
  * compiler otherwise reuses the inputs of the previous compile.
  */
 export function compileTypst(source: string, inputs: Record<string, string> = {}): Promise<string> {
-  return enqueue(() => compileNow(source, inputs));
+  return precompiled.get(resultKey(source, inputs)) ?? enqueue(() => compileNow(source, inputs));
 }

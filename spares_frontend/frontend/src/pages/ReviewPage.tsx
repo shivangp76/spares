@@ -29,6 +29,7 @@ import {
   getOfflineQueue,
   nextOfflineCard,
   performStudyAction,
+  precompileNextCard,
   refreshQueue,
   returnToQueue,
   syncPendingActions,
@@ -48,6 +49,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useShowReviewTimer, useVimKeybindings } from '../preferences';
+import { rememberReviewWidth } from '../typst/width';
 import {
   STATE_LABELS,
   type GetReviewCardResponse,
@@ -146,6 +148,9 @@ function ReviewTimer({ stopwatch, flipped }: { stopwatch: Stopwatch; flipped: bo
 function queryHasLimit(query: string): boolean {
   return /(^|[\s(])limit\s*=/.test(query);
 }
+
+/** How long typing in the filter pauses before the next card for it is compiled. */
+const PRECOMPILE_DELAY_MS = 500;
 
 /** Border, padding and line heights of a due count card on the landing page. */
 const DUE_CARD_HEIGHT = 2 + 12 + 26 + 16;
@@ -676,6 +681,17 @@ export default function ReviewPage() {
     refreshQueue(queueKey('query', ''), null, null);
   }, [onLanding]);
 
+  // Compile the next card downloaded for the filter entered, so that it shows at once if the review
+  // starts with it. After a pause in typing, so each key does not start a compile.
+  const landingQueueKey = onLanding ? queueKey(filterMode, filterInput) : null;
+  useEffect(() => {
+    if (landingQueueKey === null) return;
+    const timer = setTimeout(() => {
+      precompileNextCard(landingQueueKey).catch(e => { if (!isNetworkError(e)) console.error(e); });
+    }, PRECOMPILE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [landingQueueKey]);
+
   // Load the note editor while a card is shown, so opening the note isn't delayed by it
   const reviewing = phase === 'front' || phase === 'back';
   useEffect(() => {
@@ -944,7 +960,7 @@ export default function ReviewPage() {
               <>
                 {phase === 'front' && card.audio && <AudioBar audio={card.audio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} />
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} />
                 </div>
               </>
             )}
