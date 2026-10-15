@@ -10,9 +10,7 @@ See `spares_core::parsers::NoteSettings` for a full list of note settings.
 
 ### Note ids
 
-Notes are named by short lowercase letter ids, such as `gir`, which also name their files (`typst/gir.typ`). Ids sort in creation order, and notes created together get ids next to each other. Ids are accepted in any case. Notes created on the web server get one more letter, starting with `z` after their block (`giza`). Numeric ids from before `spares migrate ids` are listed in `id-map.tsv` in the data directory.
-
-The server needs `SPARES_REPLICA` (`0` on the laptop, `1` on the server) and `SPARES_SYNC_ROLE` (`client` on the laptop, `server` on the server).
+Notes are named by short lowercase letter ids, such as `gir`, which also name their files (`typst/gir.typ`). Ids sort in creation order, and notes created together get ids next to each other. Ids are accepted in any case. Numeric ids from before `spares migrate ids` are listed in `id-map.tsv` in the data directory. How ids are chosen is documented on `spares_core::ids`.
 
 ## Clozes
 
@@ -40,76 +38,20 @@ Each note can contain multiple linked notes, which are searched for using the pa
 
 ## Parsers
 
-Parsers allow notes to be created in different markup languages. By default, spares ships with a Markdown and LaTeX parser. These are meant to be modified by the user. Note that a markup language can have multiple parsers. For example, you may have a parser called LatexMath for math notes and LatexChem for chemistry notes. This would allow you to have different preambles since chemistry LaTeX packages will not be needed for math notes and vice versa.
+Parsers allow notes to be created in different markup languages. Spares ships with "markdown", "typst" and "latex-note" parsers, which are meant to be modified by the user (see `spares_core::parsers::impls`).
 
 ## Adapters
 
-Adapters allow spares to interface with different spaced repetition software. By default, spares ships with an adapter for Anki and for spares itself.
+Adapters allow spares to interface with different spaced repetition software. Spares ships with an adapter for Anki and for spares itself.
 
 ## Scheduling
 
-Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention.
+Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention. Scheduling is set in `config.toml`, whose settings are documented on `spares_core::config::SparesExternalConfig`:
 
-New cards first go through learning steps, and forgotten cards through relearning steps, as in Anki. Again returns to the first step, Hard repeats the current one, Good moves to the next step or graduates the card, and Easy graduates it immediately. Steps are in seconds, shorter than a day, and can be empty:
+- New cards first go through learning steps, and forgotten cards through relearning steps, as in Anki (`learning_steps`, `relearning_steps`).
+- A review's due date is chosen among a few days around the one FSRS proposes, preferring days with fewer cards due, away from the note's other cards, and avoiding easy days (`load_balance`, `disperse_siblings`, `[easy_days]`; see `spares_core::schedulers::placement`).
+- The `[queue]` table sets the order cards are shown in (`QueueConfig`), and `new_cards_daily_limit` and `reviews_daily_limit` how many.
 
-```toml
-learning_steps = [60, 600]  # 1 and 10 minutes
-relearning_steps = [600]    # 10 minutes
-```
+Changing these settings only affects cards as they are next rated. To apply them to every card now, run `spares card reschedule`.
 
-When a card in review is rated or rescheduled, FSRS proposes an interval and a small range of days around it. One day in that range is then chosen at random, weighted by these settings in `config.toml`:
-
-```toml
-# Prefer days that have fewer cards due.
-load_balance = true
-# Keep cards from the same note off the same and nearby days.
-disperse_siblings = true
-
-[easy_days]
-# Relative workload per weekday. Here, Sundays get half the reviews of other days.
-days_to_workload_percentage = { Mon = 1.0, Tue = 1.0, Wed = 1.0, Thu = 1.0, Fri = 1.0, Sat = 1.0, Sun = 0.5 }
-# Days with no reviews, such as a vacation.
-specific_dates = ["2026-12-25"]
-```
-
-Cards are only moved within their range, so these settings shift reviews by a few days at most. Cards in learning steps and cards due sooner than `minimum_interval` keep the interval FSRS gave them. If the settings rule out every day in the range, sibling dispersal is ignored first, and then the rest.
-
-Changing these settings, the learning steps, the FSRS parameters, or the scheduler only affects cards as they are next rated. To apply the change to every card now, run:
-
-```sh
-spares card reschedule
-```
-
-This replays each card's review history to recompute its memory state, then places it again with the settings above. Suspended and buried cards are included and keep their state. It cannot be undone, so it asks for confirmation (skip it with `--yes`).
-
-It always reschedules every card; there is no `--query`. Cards are placed one at a time, each seeing the due dates already given to the others, so rescheduling only some of them would leave the load spread across days unbalanced.
-
-### Review order
-
-The `[queue]` table of `config.toml` sets the order cards are shown in: review cards by due date, retrievability, relative overdueness, difficulty, note age or at random; new cards by note age or at random; and whether new cards are spread among reviews or shown before or after them. Each setting is documented on `QueueConfig` in the `spares_core::config` API docs (`cargo doc -p spares_core --open`).
-
-### Optimizing FSRS parameters
-
-FSRS starts with default parameters fitted to many people's reviews. Once you have a few hundred reviews, parameters fitted to your own history usually predict your memory better:
-
-```sh
-spares card optimize
-```
-
-This fits the parameters to your review log and prints them next to two measures of how well each set predicts the reviews you actually did, where lower is better: the log loss, and the RMSE between predicted and actual recall rates. Only reviews on a later day than the card's previous review count, and cards whose history was cut short by an import are skipped. It does not change anything.
-
-To save the new parameters and reschedule every card with them, run:
-
-```sh
-spares card optimize --apply
-```
-
-They are saved only if they predict your reviews better than the current ones. Like `spares card reschedule`, this cannot be undone, so it asks for confirmation (skip it with `--yes`). Optimizing again every month or so keeps the parameters in step with your history.
-
-The parameters are stored in `config.toml` and can also be set by hand. Leave the list empty to use the defaults:
-
-```toml
-fsrs_parameters = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
-```
-
-Parameters from Anki work too, including 19 values from FSRS-5 or 17 from FSRS-4.5. Run `spares card reschedule` after changing them by hand.
+Once you have a few hundred reviews, `spares card optimize` fits FSRS's parameters to your own history, which usually predicts your memory better. `spares card optimize --apply` saves them and reschedules every card. See `spares card reschedule --help` and `spares card optimize --help`.

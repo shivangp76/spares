@@ -16,6 +16,35 @@
 //! this is plain uniform fuzz. This is the same approach as Anki's load balancer, and replaces
 //! `fsrs4anki-helper`'s separate easy days, load balance and disperse siblings features.
 //!
+//! The weights are set in `config.toml` ([`load_balance`], [`disperse_siblings`], [`EasyDaysConfig`]):
+//!
+//! ```toml
+//! # Prefer days that have fewer cards due.
+//! load_balance = true
+//! # Keep cards from the same note off the same and nearby days.
+//! disperse_siblings = true
+//!
+//! [easy_days]
+//! # Relative workload per weekday. Here, Sundays get half the reviews of other days.
+//! days_to_workload_percentage = { Mon = 1.0, Tue = 1.0, Wed = 1.0, Thu = 1.0, Fri = 1.0, Sat = 1.0, Sun = 0.5 }
+//! # Days with no reviews, such as a vacation.
+//! specific_dates = ["2026-12-25"]
+//! ```
+//!
+//! Only cards in review are placed, when they are rated or rescheduled. Cards are only moved
+//! within their range, so these settings shift reviews by a few days at most. Cards in learning
+//! steps and cards due sooner than [`minimum_interval`] keep the interval FSRS gave them. If the
+//! settings rule out every day in the range, sibling dispersal is ignored first, and then the
+//! rest.
+//!
+//! Changing these settings only affects cards as they are next rated. `spares card reschedule`
+//! applies them to every card now.
+//!
+//! [`load_balance`]: crate::config::SparesExternalConfig::load_balance
+//! [`disperse_siblings`]: crate::config::SparesExternalConfig::disperse_siblings
+//! [`EasyDaysConfig`]: crate::config::EasyDaysConfig
+//! [`minimum_interval`]: crate::config::SparesExternalConfig::minimum_interval
+//!
 //! [`SrsScheduler::due_candidates`]: super::SrsScheduler::due_candidates
 
 use std::collections::HashMap;

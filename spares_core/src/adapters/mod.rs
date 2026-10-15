@@ -1,3 +1,6 @@
+//! Adapters let spares interface with different spaced repetition software. Spares ships with an
+//! adapter for Anki and for spares itself ([`impls`]).
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
