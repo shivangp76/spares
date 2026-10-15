@@ -275,6 +275,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let undo_payload = UnreviewPayload {
                 review_log,
                 card: payload.card.swap(),
+                left_tag: payload.left_tag,
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -284,6 +285,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let undo_payload = UnreviewPayload {
                 review_log,
                 card: payload.card.swap(),
+                left_tag: None,
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -293,6 +295,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let redo_payload = RateCardPayload {
                 review_log_id,
                 card: payload.card.swap(),
+                left_tag: payload.left_tag,
             };
             Ok(serde_json::to_value(redo_payload).unwrap())
         }

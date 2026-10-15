@@ -29,6 +29,7 @@ use crate::api::card::unbury_cards;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
+use crate::api::undo::payloads::FilteredTagExit;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
@@ -1023,12 +1024,17 @@ pub async fn rate_card(
 
     // Remove the card from the filtered tag it finished. This waits until the review is written,
     // since deleting an emptied tag first would leave the review referencing a missing tag.
-    if let Some(filtered_tag) = finished_tag {
-        delete_card_tags(db, &[(card_id, filtered_tag.id)]).await?;
-        if filtered_tag.auto_delete {
-            delete_empty_tags(db, &[filtered_tag.id]).await?;
+    let left_tag = match finished_tag {
+        Some(filtered_tag) => {
+            let deleted =
+                leave_filtered_tag(db, card_id, filtered_tag.id, filtered_tag.auto_delete).await?;
+            Some(FilteredTagExit {
+                tag_id: filtered_tag.id,
+                deleted_tag: deleted.then(|| filtered_tag.clone()),
+            })
         }
-    }
+        None => None,
+    };
 
     if log {
         let payload = RateCardPayload {
@@ -1065,6 +1071,7 @@ pub async fn rate_card(
                     },
                 ),
             },
+            left_tag,
         };
         let event_ids = insert_events(
             db,
@@ -1077,6 +1084,63 @@ pub async fn rate_card(
     }
 
     Ok(None)
+}
+
+/// Removes the card from a filtered tag it finished, deleting the tag if `auto_delete` is set and
+/// the card was its last. Returns whether the tag was deleted.
+pub(crate) async fn leave_filtered_tag(
+    db: &SqlitePool,
+    card_id: CardId,
+    tag_id: TagId,
+    auto_delete: bool,
+) -> Result<bool, Error> {
+    delete_card_tags(db, &[(card_id, tag_id)]).await?;
+    if !auto_delete {
+        return Ok(false);
+    }
+    delete_empty_tags(db, &[tag_id]).await?;
+    let remaining: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM tag WHERE id = ?")
+        .bind(tag_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(remaining == 0)
+}
+
+/// Reverses [`leave_filtered_tag`] for an undone review, recreating the tag if it was deleted.
+pub(crate) async fn rejoin_filtered_tag(
+    db: &SqlitePool,
+    card_id: CardId,
+    left_tag: &FilteredTagExit,
+) -> Result<(), Error> {
+    if let Some(tag) = &left_tag.deleted_tag {
+        // The tag is restored as it was, without rerunning its query, which today could match
+        // cards that were never in it.
+        sqlx::query(
+            r"INSERT OR IGNORE INTO tag (id, name, description, query, auto_delete, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(tag.id)
+        .bind(&tag.name)
+        .bind(&tag.description)
+        .bind(&tag.query)
+        .bind(tag.auto_delete)
+        .bind(tag.created_at.timestamp())
+        .bind(tag.updated_at.timestamp())
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    // Skipped if the tag has since been deleted some other way.
+    sqlx::query(
+        r"INSERT OR IGNORE INTO card_tag (card_id, tag_id) SELECT ?, id FROM tag WHERE id = ?",
+    )
+    .bind(card_id)
+    .bind(left_tag.tag_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
 }
 
 /// Adds `review_log`, a review produced by [`SrsScheduler::schedule`], to the review log.
