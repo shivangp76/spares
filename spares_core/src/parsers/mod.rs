@@ -25,6 +25,7 @@ use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
 
+pub mod audio;
 mod cards;
 pub(crate) mod cli;
 mod clozes;
@@ -139,6 +140,11 @@ pub trait Parseable: Send + Sync {
     /// expected to be typed, i.e. without markup. Whitespace is collapsed afterwards.
     fn typed_answer_text(&self, text: &str) -> String {
         text.to_string()
+    }
+
+    /// The links to audio files in `text` (see [`audio`]), in order.
+    fn audio_refs(&self, _text: &str) -> Vec<audio::AudioRef> {
+        Vec::new()
     }
 
     fn construct_setting(&self, data: &str) -> String;
