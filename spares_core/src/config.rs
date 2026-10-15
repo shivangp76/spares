@@ -344,7 +344,9 @@ impl Default for EasyDaysConfig {
 ///    so their steps (see [`SparesExternalConfig::learning_steps`]) are not stretched by the cards
 ///    around them.
 /// 2. New cards and review cards, each in their own order ([`Self::new_order`] and
-///    [`Self::review_order`]), combined as [`Self::new_review_mix`] says.
+///    [`Self::review_order`]), combined as [`Self::new_review_mix`] says. A review query that
+///    sorts, like `spares card review -q 'tag=chess sort_by_desc=c.difficulty'`, orders them by
+///    its sort instead (see "Sorting" in [`crate::search`]).
 /// 3. Learning and relearning cards whose current step ends within [`Self::learn_ahead_limit`],
 ///    the earliest first.
 /// 4. Cards buried until later today, in the order they were buried.

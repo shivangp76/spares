@@ -163,6 +163,20 @@ impl<'de> Evaluator<'de> {
         Ok(result)
     }
 
+    /// The sort the query asks for with `sort_by_asc` and `sort_by_desc` outside any limited
+    /// group, as `ORDER BY` terms (`"<expr> ASC"` or `"<expr> DESC"`) over the `c`, `n` and `p`
+    /// aliases, most significant first. A sort inside a limited group, like the one in
+    /// `(tag=a sort_by_asc=c.due limit=5)`, only picks the cards that group keeps, so it is left
+    /// out.
+    pub(crate) fn card_order_by(self) -> Result<Vec<String>, crate::Error> {
+        let to_error = |e: Report| crate::Error::Library(LibraryError::Search(e.to_string()));
+        let token_tree = self.parser.parse_expression().map_err(to_error)?;
+        let mut context = EvaluationContext::new(EvaluatorReturnItemType::CardIds, None);
+        context.root_context = true;
+        token_tree.evaluate(&mut context).map_err(to_error)?;
+        Ok(context.order_by)
+    }
+
     pub(crate) async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
         let token_tree = self
             .parser
@@ -723,8 +737,7 @@ impl EvaluationContext<'_> {
             }
             EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
                 if self.order_by.is_empty() {
-                    // Same order review uses, so a limited branch picks the cards that would be
-                    // shown first.
+                    // The cards due the longest first, as review shows them by default.
                     self.order_by.extend([
                         "c.due ASC".to_string(),
                         "n.created_at ASC".to_string(),
@@ -1388,6 +1401,21 @@ impl Evaluate for Atom<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn card_order_by_is_the_top_level_sort() {
+        let order = |query| Evaluator::new(query).card_order_by().unwrap();
+        assert_eq!(
+            order("tag=a sort_by_desc=c.difficulty sort_by_asc=c.due"),
+            ["c.difficulty DESC", "c.due ASC"]
+        );
+        assert_eq!(order("tag=a"), Vec::<String>::new());
+        // A sort inside a limited branch only picks what the branch keeps
+        assert_eq!(
+            order("(tag=a sort_by_asc=c.due limit=5) or (tag=b limit=1)"),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     #[allow(clippy::too_many_lines, reason = "test data is long")]
