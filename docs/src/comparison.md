@@ -14,7 +14,7 @@ The following are issues in Anki that this project aims to address:
   - Current limitation causes issues with LaTeX math expressions like `2^{2^{3}}`
   - See [this Reddit post](https://www.reddit.com/r/Anki/comments/a6grv9/anki_latex_cloze_1st_cloze_works_fine_2nd_cloze/)
 - Automatic cloze numbering (currently requires manual numbering)
-  - See `orders` in <https://docs.rs/spares/latest/spares/spares/parsers/struct.ClozeGroupingSettings.html>
+  - See `orders` on `spares_core::parsers::ClozeGroupingSettings` in the API docs
 
 ### Architecture and Design
 - Improved abstractions:

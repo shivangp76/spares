@@ -6,7 +6,7 @@ This application provides tools for a local spaced repetition system. It aims to
 
 A note contains information about one topic. A card is a note with some information removed. Clozes are used to create a card from a note. Multiple clozes can be used in one card.
 
-See <https://docs.rs/spares/latest/spares/spares/parsers/struct.NoteSettings.html> for a full list of note settings.
+See `spares_core::parsers::NoteSettings` for a full list of note settings.
 
 ### Note ids
 
@@ -22,9 +22,9 @@ Clozes can also be nested, but only across different cards.
 
 Cloze settings can also reference other cards. For example, the `inh:` setting copies a source card's scheduling and review history onto a newly created card. See the [Inheriting SRS data from another card](workflows.md#inheriting-srs-data-from-another-card) workflow for details.
 
-See <https://docs.rs/spares/latest/spares/spares/parsers/struct.ClozeSettings.html> for a full list of cloze settings.
+See `spares_core::parsers::ClozeSettings` for a full list of cloze settings.
 
-See <https://docs.rs/spares/latest/spares/spares/parsers/struct.ClozeGroupingSettings.html> for a full list of cloze grouping settings.
+See `spares_core::parsers::ClozeGroupingSettings` for a full list of cloze grouping settings.
 
 ## Tags
 
