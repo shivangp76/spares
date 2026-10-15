@@ -319,6 +319,22 @@ export async function uploadImage(parserId: number, image: File): Promise<{ path
   return res.json();
 }
 
+/** Stores an audio clip recorded for a note. `snippet` links to it in the parser's syntax, ready to insert into the note. */
+export async function uploadAudio(parserId: number, audio: File): Promise<{ path: string; snippet: string }> {
+  const { serverUrl, apiKey } = getCredentials();
+  const form = new FormData();
+  form.append('parser_id', String(parserId));
+  form.append('audio', audio, audio.name);
+  // The browser sets the multipart Content-Type, with its boundary
+  const res = await fetch(`${serverUrl}/api/audio`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  await throwIfNotOk(res, 'Upload recording');
+  return res.json();
+}
+
 /** Has the server download and store an image dragged from a web page, which browsers hand over
     by URL only. Like `uploadImage`, `snippet` shows it in the parser's syntax. */
 export async function uploadImageUrl(parserId: number, url: string): Promise<{ path: string; snippet: string }> {

@@ -4,7 +4,8 @@ import { createNotes, listParsers, renderNote } from '../api/client';
 import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
-import { formatNoteId, insertBlock } from '../utils';
+import { formatNoteId, insertBlock, insertInline } from '../utils';
+import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -83,7 +84,10 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
-          <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <InsertAudioButton parserId={parserId} onInsert={snippet => setData(insertInline(dataEditorRef.current?.view, data, snippet))} />
+            <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
+          </div>
         </div>
         <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} extensions={editor.dataExtensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
       </div>

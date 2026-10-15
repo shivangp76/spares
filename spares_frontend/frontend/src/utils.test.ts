@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { draggedImageUrl, imageUploadName } from './utils';
+import { draggedImageUrl, imageUploadName, insertInline } from './utils';
 
 test('imageUploadName keeps a supported extension', () => {
   expect(imageUploadName({ name: 'brain.PNG', type: 'image/png' })).toBe('brain.PNG');
@@ -29,4 +29,10 @@ test('draggedImageUrl ignores links and unusable images', () => {
   expect(draggedImageUrl('<img src="/relative.png">')).toBeNull();
   expect(draggedImageUrl('<img src="blob:https://a.org/1234">')).toBeNull();
   expect(draggedImageUrl('')).toBeNull();
+});
+
+test('insertInline appends after a space without an editor', () => {
+  expect(insertInline(undefined, '', '[listen](/a.wav)')).toBe('[listen](/a.wav)');
+  expect(insertInline(undefined, 'Say', '[listen](/a.wav)')).toBe('Say [listen](/a.wav)');
+  expect(insertInline(undefined, 'Say\n', '[listen](/a.wav)')).toBe('Say\n[listen](/a.wav)');
 });
