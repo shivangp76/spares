@@ -38,6 +38,7 @@ use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
+use crate::config::QueueConfig;
 use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
 use crate::config::read_external_config;
@@ -1009,10 +1010,23 @@ pub fn update_filtered_tag_scheduler_data(
     Ok(false)
 }
 
-#[expect(clippy::too_many_lines)]
 pub async fn rate_card(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
+    submission: RatingSubmission,
+    reviewed_at: DateTime<Utc>,
+    log: bool,
+) -> Result<Option<i64>, Error> {
+    let config = read_external_config()?;
+    rate_card_with_config(db, scheduler, &config, submission, reviewed_at, log).await
+}
+
+/// [`rate_card`] with `config` rather than the one in `config.toml`.
+#[expect(clippy::too_many_lines)]
+pub(crate) async fn rate_card_with_config(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
     RatingSubmission {
         card_id,
         rating,
@@ -1055,9 +1069,8 @@ pub async fn rate_card(
     // discarded. Handing either to the scheduler would make this review look like a continuation
     // of a lapse rather than the first review of a reset card.
     let latest_review_log = effective_review_logs(&review_logs).last().cloned();
-    let config = read_external_config()?;
     let (mut updated_card, mut new_review_log) = scheduler.schedule(
-        &config,
+        config,
         &card,
         latest_review_log,
         rating,
@@ -1074,7 +1087,7 @@ pub async fn rate_card(
     updated_card.due = place_due(
         db,
         scheduler,
-        &config,
+        config,
         &updated_card,
         &review_logs,
         reviewed_at,
@@ -1117,6 +1130,16 @@ pub async fn rate_card(
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+
+    // Siblings are buried until the day is over, so a review of an earlier day, sent late by an
+    // offline client, would bury them a day too long.
+    let reviewed_today = reviewed_at.with_timezone(&Local).date_naive()
+        >= Utc::now().with_timezone(&Local).date_naive();
+    let buried_siblings = if filtered_tag_opt.is_none() && reviewed_today {
+        bury_siblings(db, &config.queue, &before_card, reviewed_at).await?
+    } else {
+        Vec::new()
+    };
 
     // Remove the card from the filtered tag it finished. This waits until the review is written,
     // since deleting an emptied tag first would leave the review referencing a missing tag.
@@ -1168,6 +1191,7 @@ pub async fn rate_card(
                 ),
             },
             left_tag,
+            buried_siblings,
         };
         let event_ids = insert_events(
             db,
@@ -1180,6 +1204,59 @@ pub async fn rate_card(
     }
 
     Ok(None)
+}
+
+/// Buries the siblings of `card` (the other cards of its note) that
+/// [`QueueConfig::bury_new_siblings`] and [`QueueConfig::bury_review_siblings`] say to, now that it
+/// was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
+async fn bury_siblings(
+    db: &SqlitePool,
+    queue: &QueueConfig,
+    card: &Card,
+    reviewed_at: DateTime<Utc>,
+) -> Result<Vec<UpdateCardPayload>, Error> {
+    let states = [
+        (queue.bury_new_siblings, NEW_CARD_STATE),
+        (queue.bury_review_siblings, review_state()),
+    ]
+    .into_iter()
+    .filter_map(|(bury, state)| bury.then_some(state))
+    .join(", ");
+    if states.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (_, end_of_day) = get_start_end_local_date(&reviewed_at);
+    let sibling_ids: Vec<CardId> = sqlx::query_scalar(&format!(
+        r"UPDATE card SET special_state = ?, updated_at = ?
+        WHERE note_id = ? AND id != ? AND special_state IS NULL AND due <= ? AND state IN ({states})
+        RETURNING id"
+    ))
+    .bind(SpecialState::SchedulerBuried)
+    .bind(reviewed_at.timestamp())
+    .bind(card.note_id)
+    .bind(card.id)
+    .bind(end_of_day.timestamp())
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(sibling_ids
+        .into_iter()
+        .map(|card_id| UpdateCardPayload {
+            card_id,
+            order: None,
+            back_type: None,
+            due: None,
+            stability: None,
+            difficulty: None,
+            desired_retention: None,
+            special_state: Some(Transition {
+                before: None,
+                after: Some(SpecialState::SchedulerBuried),
+            }),
+            state: None,
+            custom_data: None,
+        })
+        .collect())
 }
 
 /// Removes the card from a filtered tag it finished, deleting the tag if `auto_delete` is set and

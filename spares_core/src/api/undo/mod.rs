@@ -487,6 +487,7 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
             let card_id = payload.card.card_id;
             update_card_event(db, vec![payload.card], false).await?;
+            update_card_event(db, payload.buried_siblings, false).await?;
             if let Some(left_tag) = payload.left_tag {
                 leave_filtered_tag(db, card_id, left_tag.tag_id, left_tag.deleted_tag.is_some())
                     .await?;
@@ -500,6 +501,7 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
             let card_id = payload.card.card_id;
             update_card_event(db, vec![payload.card], false).await?;
+            update_card_event(db, payload.buried_siblings, false).await?;
             if let Some(left_tag) = payload.left_tag {
                 rejoin_filtered_tag(db, card_id, &left_tag).await?;
             }

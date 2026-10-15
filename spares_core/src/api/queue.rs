@@ -709,3 +709,170 @@ mod learn_ahead_tests {
         assert_eq!(available_at(&pool, now).await, None);
     }
 }
+
+#[cfg(test)]
+mod sibling_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::REVIEW;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::review::rate_card_with_config;
+    use crate::api::undo::redo_event;
+    use crate::api::undo::undo_event;
+    use crate::config::SparesExternalConfig;
+    use crate::model::CardId;
+    use crate::model::SpecialState;
+    use crate::parsers::get_all_parsers;
+    use crate::schedulers::get_scheduler_from_string;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::undo::RedoEventRequest;
+    use crate::schema::undo::UndoEventRequest;
+
+    /// The cards of one note with four clozes, in order.
+    async fn siblings(pool: &SqlitePool, now: DateTime<Utc>) -> Vec<CardId> {
+        let parser = create_parser_helper(pool, "markdown").await;
+        create_notes(
+            pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{a}} {{b}} {{c}} {{d}}".to_string(),
+                    keywords: Vec::new(),
+                    tags: Vec::new(),
+                    is_suspended: false,
+                    custom_data: serde_json::Map::new(),
+                }],
+            },
+            now - Duration::days(30),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        sqlx::query_scalar(r#"SELECT id FROM card ORDER BY "order""#)
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn special_states(pool: &SqlitePool, ids: &[CardId]) -> Vec<Option<SpecialState>> {
+        let mut states = Vec::new();
+        for id in ids {
+            states.push(
+                sqlx::query_scalar(r"SELECT special_state FROM card WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap(),
+            );
+        }
+        states
+    }
+
+    async fn rate(
+        pool: &SqlitePool,
+        config: &SparesExternalConfig,
+        card_id: CardId,
+        now: DateTime<Utc>,
+    ) {
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        rate_card_with_config(
+            pool,
+            scheduler.as_ref(),
+            config,
+            RatingSubmission {
+                card_id,
+                rating: 3,
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(1),
+                tag_id: None,
+            },
+            now,
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    fn burying(new: bool, review: bool) -> SparesExternalConfig {
+        let mut config = SparesExternalConfig::default();
+        config.queue.bury_new_siblings = new;
+        config.queue.bury_review_siblings = review;
+        config
+    }
+
+    #[sqlx::test]
+    async fn rating_buries_siblings_and_undo_unburies_them(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = siblings(&pool, now).await;
+        let [rated, new, due_review, later_review] = ids[..] else {
+            panic!("expected 4 cards, got {ids:?}")
+        };
+        set_card(&pool, due_review, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        set_card(
+            &pool,
+            later_review,
+            REVIEW,
+            now + Duration::days(5),
+            5.0,
+            5.0,
+        )
+        .await;
+        let others = [new, due_review, later_review];
+        let buried = Some(SpecialState::SchedulerBuried);
+
+        rate(&pool, &burying(true, false), rated, now).await;
+        assert_eq!(special_states(&pool, &others).await, [buried, None, None]);
+        undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: None,
+                undo_group: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(special_states(&pool, &others).await, [None, None, None]);
+
+        // Only review siblings due today are buried
+        rate(&pool, &burying(true, true), rated, now).await;
+        assert_eq!(special_states(&pool, &others).await, [buried, buried, None]);
+        undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: None,
+                undo_group: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(special_states(&pool, &others).await, [None, None, None]);
+        redo_event(
+            &pool,
+            RedoEventRequest {
+                event_id: None,
+                redo_group: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(special_states(&pool, &others).await, [buried, buried, None]);
+    }
+
+    #[sqlx::test]
+    async fn siblings_are_not_buried_by_default_or_for_past_days(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = siblings(&pool, now).await;
+        rate(&pool, &SparesExternalConfig::default(), ids[0], now).await;
+        assert_eq!(special_states(&pool, &ids[1..]).await, [None, None, None]);
+        // A review from yesterday, synced late
+        rate(&pool, &burying(true, true), ids[1], now - Duration::days(1)).await;
+        assert_eq!(special_states(&pool, &ids[2..]).await, [None, None]);
+    }
+}

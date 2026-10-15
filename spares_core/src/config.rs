@@ -391,6 +391,24 @@ pub struct QueueConfig {
     /// Filtered tags are not affected: they show every card in them, whenever it is due.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
+    /// Whether rating a card buries the new cards of its note until the next day. Defaults to
+    /// `false`.
+    ///
+    /// Cards of the same note often give each other away, so seeing one makes the next easier
+    /// than it would be on its own. With this set, a new note's cards are learned one a day.
+    ///
+    /// Siblings are only buried when the card is rated on the day it is reviewed, outside a
+    /// filtered tag (the cards of a filtered tag were picked to be studied together), and
+    /// undoing the rating unburies them. Buried siblings are listed by `c.scheduler_buried`
+    /// queries and unburied with `spares card unbury`.
+    pub bury_new_siblings: bool,
+    /// Whether rating a card buries the review cards of its note that are due today until the
+    /// next day. Defaults to `false`. See [`Self::bury_new_siblings`].
+    ///
+    /// [`SparesExternalConfig::disperse_siblings`] keeps siblings from being due on the same day
+    /// to begin with; this handles the ones that are anyway, such as after a backlog. Learning
+    /// and relearning siblings are never buried, since that would break their steps.
+    pub bury_review_siblings: bool,
 }
 
 impl Default for QueueConfig {
@@ -400,6 +418,8 @@ impl Default for QueueConfig {
             new_order: NewCardOrder::default(),
             new_review_mix: NewReviewMix::default(),
             learn_ahead_limit: Duration::minutes(20),
+            bury_new_siblings: false,
+            bury_review_siblings: false,
         }
     }
 }

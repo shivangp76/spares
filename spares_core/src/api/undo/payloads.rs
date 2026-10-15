@@ -217,6 +217,12 @@ pub struct RateCardPayload {
     pub card: UpdateCardPayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub left_tag: Option<FilteredTagExit>,
+    /// The card's siblings the rating buried, as
+    /// [`QueueConfig::bury_new_siblings`](crate::config::QueueConfig::bury_new_siblings) and
+    /// [`QueueConfig::bury_review_siblings`](crate::config::QueueConfig::bury_review_siblings) say
+    /// to, so undoing the rating unburies them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buried_siblings: Vec<UpdateCardPayload>,
 }
 
 /// A card leaving the filtered tag that its review finished, kept so undo can put it back.
@@ -240,6 +246,10 @@ pub struct UnreviewPayload {
     /// Carried from `RateCardPayload::left_tag`; always `None` for `UnforgetCard`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub left_tag: Option<FilteredTagExit>,
+    /// Carried from `RateCardPayload::buried_siblings`, swapped; always empty for
+    /// `UnforgetCard`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buried_siblings: Vec<UpdateCardPayload>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
