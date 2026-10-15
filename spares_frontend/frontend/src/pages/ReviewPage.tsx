@@ -44,7 +44,7 @@ import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
-import { useShowReviewTimer } from '../preferences';
+import { useShowReviewTimer, useVimKeybindings } from '../preferences';
 import {
   STATE_LABELS,
   type GetReviewCardResponse,
@@ -200,6 +200,7 @@ export default function ReviewPage() {
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const notePanelRef = useRef<HTMLDivElement>(null);
+  const answerBarRef = useRef<HTMLDivElement>(null);
   const [keywordResults, setKeywordResults] = useState<{ keyword: string; notes: NoteResponse[] } | null>(null);
   const [dueDatePicker, setDueDatePicker] = useState<'card' | 'note' | null>(null);
   const [dueDateValue, setDueDateValue] = useState('');
@@ -661,6 +662,26 @@ export default function ReviewPage() {
   useEffect(() => {
     if (reviewing) loadNoteDetail().catch(console.error);
   }, [reviewing]);
+  // Likewise the Vim answer box, for cards with typed answers
+  const vimKeybindings = useVimKeybindings();
+  useEffect(() => {
+    if (reviewing && vimKeybindings) import('../components/VimAnswerInput').catch(console.error);
+  }, [reviewing, vimKeybindings]);
+
+  // The page leaves room below the card for the pinned answer bar, which grows with the typed
+  // answer boxes
+  const hasAnswerBar = card !== null && ((phase === 'front' && !card.cli) || phase === 'back');
+  useEffect(() => {
+    const bar = answerBarRef.current;
+    if (!hasAnswerBar || !bar) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => root.style.setProperty('--answer-bar-height', `${bar.offsetHeight}px`));
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty('--answer-bar-height');
+    };
+  }, [hasAnswerBar]);
 
   // After leaving a session, focus the prefilled filter so a new one can be typed straight away
   const returnedToLanding = phase === 'landing' && sessionStart !== null;
@@ -886,10 +907,6 @@ export default function ReviewPage() {
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
                   <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} />
                 </div>
-                {/* Unmounted on the back, so no hidden box keeps the focus from the rating hotkeys */}
-                {phase === 'front' && card.typed_answer && (
-                  <TypedAnswerInputs info={card.typed_answer} answers={typedAnswers} onChange={setTypedAnswers} onSubmit={showAnswer} />
-                )}
               </>
             )}
           </div>
@@ -904,11 +921,20 @@ export default function ReviewPage() {
           )}
 
           {((phase === 'front' && !card.cli) || phase === 'back') && (
-            <div className="review-answer-bar">
+            <div ref={answerBarRef} className="review-answer-bar">
               {phase === 'front' ? (
-                <button onClick={showAnswer} className="touch-target" style={{ ...primaryButton, width: '100%', padding: 12, fontSize: 15, fontWeight: 600 }}>
-                  Show Answer <span className="key-hint" style={{ fontSize: 12, fontWeight: 400 }}>(Space)</span>
-                </button>
+                <>
+                  {/* Pinned with the button, so a card that wants a typed answer shows it however
+                      far the card is scrolled. Unmounted on the back, so no hidden box keeps the
+                      focus from the rating hotkeys. */}
+                  {card.typed_answer && (
+                    <TypedAnswerInputs info={card.typed_answer} answers={typedAnswers} onChange={setTypedAnswers} onSubmit={showAnswer} />
+                  )}
+                  <button onClick={showAnswer} className="touch-target" style={{ ...primaryButton, width: '100%', padding: 12, fontSize: 15, fontWeight: 600 }}>
+                    {card.typed_answer ? 'Check Answer' : 'Show Answer'}{' '}
+                    <span className="key-hint" style={{ fontSize: 12, fontWeight: 400 }}>({card.typed_answer ? 'Enter' : 'Space'})</span>
+                  </button>
+                </>
               ) : (
                 <div style={{ display: 'flex', gap: 8 }}>
                   {ratings.map((r, i) => (

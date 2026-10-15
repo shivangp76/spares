@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
+import { useVimKeybindings } from '../preferences';
 import type { TypedAnswerInfo } from '../types/spares';
 import { compareTypedAnswer, isExact, type DiffSegment, type SegmentKind } from '../typedAnswer';
 
@@ -17,51 +18,76 @@ function blankLabel(info: TypedAnswerInfo, index: number): string | null {
   return info.blanks.length > 1 ? `Blank ${index + 1}` : null;
 }
 
-/** An input box per blank of the card front. Tab moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the answer. */
+const VimAnswerInput = lazy(() => import('./VimAnswerInput'));
+
+/** An input box per blank of the card front, with Vim keybindings if they are on in the settings.
+    Enter moves to the next box, and Enter in the last box (or Ctrl/Cmd+Enter in any) shows the
+    answer. */
 export function TypedAnswerInputs({ info, answers, onChange, onSubmit }: {
   info: TypedAnswerInfo;
   answers: string[];
   onChange: (answers: string[]) => void;
   onSubmit: () => void;
 }) {
+  const vimEnabled = useVimKeybindings();
+  const form = useRef<HTMLFormElement>(null);
   const last = info.blanks.length - 1;
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
-    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-    e.preventDefault();
+  function onEnter(e: React.KeyboardEvent, index: number) {
     if (index === last || e.ctrlKey || e.metaKey) {
       onSubmit();
       return;
     }
-    const next = e.currentTarget.form?.elements.namedItem(`blank-${index + 1}`);
-    if (next instanceof HTMLInputElement) next.focus();
+    const next = form.current?.querySelector(`[data-blank="${index + 1}"] :is(input, .cm-content)`);
+    if (next instanceof HTMLElement) next.focus();
+  }
+  function setAnswer(index: number, value: string) {
+    const next = info.blanks.map((_, j) => answers[j] ?? '');
+    next[index] = value;
+    onChange(next);
   }
   return (
-    <form style={{ ...box, display: 'grid', gap: 8 }} onSubmit={e => e.preventDefault()}>
+    <form ref={form} className="typed-answer-inputs" onSubmit={e => e.preventDefault()}>
       {info.blanks.map((blank, i) => {
         const label = blankLabel(info, i);
+        const placeholder = blank.hint ?? (label ? undefined : 'Type the answer');
+        const input = (
+          <input
+            value={answers[i] ?? ''}
+            onChange={e => setAnswer(i, e.target.value)}
+            onKeyDown={e => {
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              onEnter(e, i);
+            }}
+            placeholder={placeholder}
+            aria-label={label ?? 'Answer'}
+            // The answer is typed right after the card is shown
+            autoFocus={i === 0}
+            autoComplete="off"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint={i === last ? 'done' : 'next'}
+            style={{ ...answerText, padding: '8px 10px', borderRadius: 4, border: '1px solid var(--border)', minWidth: 0 }}
+          />
+        );
         return (
-          <label key={i} style={{ display: 'grid', gap: 4 }}>
+          <label key={i} data-blank={i} style={{ display: 'grid', gap: 4, minWidth: 0 }}>
             {label && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</span>}
-            <input
-              name={`blank-${i}`}
-              value={answers[i] ?? ''}
-              onChange={e => {
-                const next = info.blanks.map((_, j) => answers[j] ?? '');
-                next[i] = e.target.value;
-                onChange(next);
-              }}
-              onKeyDown={e => onKeyDown(e, i)}
-              placeholder={blank.hint ?? (label ? undefined : 'Type the answer')}
-              aria-label={label ?? 'Answer'}
-              // The answer is typed right after the card is shown
-              autoFocus={i === 0}
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              enterKeyHint={i === last ? 'done' : 'next'}
-              style={{ ...answerText, padding: '8px 10px', borderRadius: 4, border: '1px solid var(--border)' }}
-            />
+            {vimEnabled ? (
+              // The plain box stands in while the editor loads
+              <Suspense fallback={input}>
+                <VimAnswerInput
+                  value={answers[i] ?? ''}
+                  onChange={value => setAnswer(i, value)}
+                  onEnter={e => onEnter(e, i)}
+                  placeholder={placeholder}
+                  label={label ?? 'Answer'}
+                  enterKeyHint={i === last ? 'done' : 'next'}
+                  autoFocus={i === 0}
+                />
+              </Suspense>
+            ) : input}
           </label>
         );
       })}
