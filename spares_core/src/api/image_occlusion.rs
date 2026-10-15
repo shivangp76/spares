@@ -53,11 +53,11 @@ use crate::schema::note::UpdateTags;
 /// The SVG new image occlusions start from. It has the layers the parser looks for.
 pub const IMAGE_OCCLUSION_TEMPLATE: &str = include_str!("../parsers/image_occlusion/template.svg");
 
-/// Image formats the card renderer can draw clozes over.
+/// Image formats cards can show, and the card renderer can draw clozes over.
 const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 
 /// Length of the unique suffix appended to stored file stems.
-const HASH_LENGTH: usize = 12;
+pub(crate) const HASH_LENGTH: usize = 12;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateImageOcclusionResponse {
@@ -81,7 +81,7 @@ pub fn get_image_occlusion_editor_config() -> Result<ImageOcclusionEditorSetup, 
     })
 }
 
-fn other_error(description: String) -> Error {
+pub(crate) fn other_error(description: String) -> Error {
     Error::Library(LibraryError::Note(NoteErrorKind::Other { description }))
 }
 
@@ -97,6 +97,45 @@ fn strip_hash_suffix(stem: &str) -> &str {
             base
         }
         _ => stem,
+    }
+}
+
+/// The lowercase extension of `image_filename`, if it is an image format cards can show.
+pub(crate) fn image_extension(image_filename: &str) -> Result<String, Error> {
+    Path::new(image_filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .filter(|e| IMAGE_EXTENSIONS.contains(&e.as_str()))
+        .ok_or_else(|| {
+            other_error(format!(
+                "Unsupported image: {image_filename}. Supported formats: {}.",
+                IMAGE_EXTENSIONS.join(", ")
+            ))
+        })
+}
+
+/// The stem of `filename` without a suffix added when it was stored, keeping only characters that
+/// are safe in a path and in every parser's syntax. `default` if nothing is left.
+pub(crate) fn sanitized_stem(filename: &str, default: &str) -> String {
+    let stem: String = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(strip_hash_suffix)
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if stem.is_empty() {
+        default.to_string()
+    } else {
+        stem
     }
 }
 
@@ -118,38 +157,8 @@ fn store_image_occlusion_files(
         &mut 0,
     )?;
 
-    let filename = Path::new(image_filename);
-    let extension = filename
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_lowercase)
-        .filter(|e| IMAGE_EXTENSIONS.contains(&e.as_str()))
-        .ok_or_else(|| {
-            other_error(format!(
-                "Unsupported image occlusion image: {image_filename}. Supported formats: {}.",
-                IMAGE_EXTENSIONS.join(", ")
-            ))
-        })?;
-    // Only keep characters that are safe in a path and in every parser's syntax
-    let stem: String = filename
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(strip_hash_suffix)
-        .unwrap_or_default()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let stem = if stem.is_empty() {
-        "image_occlusion".to_string()
-    } else {
-        stem
-    };
+    let extension = image_extension(image_filename)?;
+    let stem = sanitized_stem(image_filename, "image_occlusion");
 
     let directory = get_image_occlusion_directory();
     create_dir_all(&directory).map_err(|e| Error::Io {

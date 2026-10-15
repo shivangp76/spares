@@ -324,6 +324,11 @@ impl Parseable for TypstParser {
         )
     }
 
+    fn construct_image(&self, file_path: &Path) -> String {
+        // `std` in case a note or preamble shadows `image`
+        format!("#std.image(\"{}\", width: 80%)", file_path.display())
+    }
+
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
         if is_test_mode() {
             return get_cache_dir();

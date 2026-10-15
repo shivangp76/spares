@@ -22,6 +22,8 @@ use crate::handlers::card::list_cards_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
+use crate::handlers::image::IMAGE_BODY_LIMIT;
+use crate::handlers::image::create_image_handler;
 use crate::handlers::image_occlusion::IMAGE_OCCLUSION_BODY_LIMIT;
 use crate::handlers::image_occlusion::create_image_occlusion_handler;
 use crate::handlers::image_occlusion::get_image_occlusion_editor_config_handler;
@@ -93,6 +95,11 @@ use crate::handlers::undo::undo_event_handler;
 
 fn image_occlusion_routes() -> Router<Arc<AppState>> {
     Router::new()
+        // Images pasted or dropped into a note
+        .route(
+            "/api/images",
+            post(create_image_handler).layer(DefaultBodyLimit::max(IMAGE_BODY_LIMIT)),
+        )
         .route(
             "/api/image-occlusions/editor-config",
             get(get_image_occlusion_editor_config_handler),
