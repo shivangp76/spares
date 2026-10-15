@@ -105,7 +105,10 @@ impl Default for ImageOcclusionConfig {
     }
 }
 
-/// The initial style of the image occlusion editor.
+/// The initial style of the image occlusion editor, set by `[image_occlusion.editor]` in
+/// `config.toml`. The editor embedded in the web app gets it from
+/// `GET /api/image-occlusions/editor-config`, and the standalone editor from `spares_frontend`
+/// when it starts. After changing it, reload the web app or restart `spares_frontend`.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ImageOcclusionEditorConfig {
