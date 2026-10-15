@@ -76,13 +76,23 @@ a:visited {
   color: var(--link-visited);
 }
 
-/* Typst pages are transparent and written for a white page, so give them a white page in dark mode */
+/* Typst pages are transparent and written for a white page, so they are given one in dark mode, or
+   one inverted to the dark interface's colours when shown dark (see `useTypstTheme`) */
 .typst-viewer svg {
   /* Inline SVGs sit on the text baseline, leaving a gap below them for descenders */
   display: block;
   width: 100%;
   height: auto;
+}
+
+.typst-viewer-light svg {
   background: light-dark(transparent, #fff);
+}
+
+/* Turns white into about --bg and black into about --text. The hue is turned back so colours keep it */
+.typst-viewer-dark svg {
+  background: #fff;
+  filter: invert(0.9) hue-rotate(180deg);
 }
 
 /* Expanded Typst pages keep the size the template laid them out at, and scroll sideways */
@@ -91,17 +101,22 @@ a:visited {
   max-width: none;
 }
 
-.typst-expand {
+.typst-tools {
   position: absolute;
   top: 4px;
   right: 4px;
+  display: flex;
+  gap: 4px;
+}
+
+.typst-tools button {
   padding: 2px 8px;
   font-size: 12px;
   opacity: 0.6;
 }
 
-.typst-expand:hover,
-.typst-expand:focus-visible {
+.typst-tools button:hover,
+.typst-tools button:focus-visible {
   opacity: 1;
 }
 
