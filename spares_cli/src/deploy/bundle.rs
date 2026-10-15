@@ -97,10 +97,12 @@ impl Bundle {
         run(Command::new("rustup")
             .args(["target", "add", triple])
             .stdout(Stdio::null()))?;
-        // glibc 2.31 (Debian 11, Ubuntu 20.04) or newer runs it
+        // glibc 2.31 (Debian 11, Ubuntu 20.04) or newer runs it. Without debuginfo, which is
+        // stripped anyway, it compiles about a quarter faster.
         run(Command::new("cargo")
             .args(["zigbuild", "--release", "-p", "spares_server", "--target"])
             .arg(format!("{triple}.2.31"))
+            .env("CARGO_PROFILE_RELEASE_DEBUG", "false")
             .env("CARGO_PROFILE_RELEASE_STRIP", "debuginfo")
             .current_dir(repo))?;
         progress.part("Building the frontend");
