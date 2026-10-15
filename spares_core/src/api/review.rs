@@ -853,15 +853,17 @@ pub async fn get_review_card_by_id(
     }
 }
 
-pub async fn update_filtered_tag_scheduler_data(
-    db: &SqlitePool,
+/// Updates the card's scheduler data for `filtered_tag`, returning whether this review finished the
+/// card's run through the tag. The caller then removes the card from the tag, once the review that
+/// references the tag has been written.
+pub fn update_filtered_tag_scheduler_data(
     scheduler: &dyn SrsScheduler,
-    filtered_tag: Tag,
+    filtered_tag: &Tag,
     updated_card: &mut Card,
     rating: RatingId,
     recall_duration: Duration,
     reviewed_at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let scheduler_name = scheduler.get_scheduler_name();
     let tag_id_str = filtered_tag.id.to_string();
     assert!(matches!(updated_card.custom_data, Value::Object(_)));
@@ -905,16 +907,9 @@ pub async fn update_filtered_tag_scheduler_data(
                 custom_data.remove(&tag_id_str);
             }
         }
-
-        // Remove filtered tag from card
-        delete_card_tags(db, &[(updated_card.id, filtered_tag.id)]).await?;
-
-        // Delete filtered tag if there are no more notes
-        if filtered_tag.auto_delete {
-            delete_empty_tags(db, &[filtered_tag.id]).await?;
-        }
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 #[expect(clippy::too_many_lines)]
@@ -993,18 +988,18 @@ pub async fn rate_card(
     new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());
 
     // Update filtered tag scheduler data
-    if let Some(filtered_tag) = filtered_tag_opt {
-        update_filtered_tag_scheduler_data(
-            db,
+    let finished_tag = match &filtered_tag_opt {
+        Some(filtered_tag) => update_filtered_tag_scheduler_data(
             scheduler,
             filtered_tag,
             &mut updated_card,
             rating,
             recall_duration,
             reviewed_at,
-        )
-        .await?;
-    }
+        )?
+        .then_some(filtered_tag),
+        None => None,
+    };
 
     // Add entry to review_log
     let review_log_id = insert_review(db, &new_review_log, tag_id).await?;
@@ -1025,6 +1020,15 @@ pub async fn rate_card(
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+
+    // Remove the card from the filtered tag it finished. This waits until the review is written,
+    // since deleting an emptied tag first would leave the review referencing a missing tag.
+    if let Some(filtered_tag) = finished_tag {
+        delete_card_tags(db, &[(card_id, filtered_tag.id)]).await?;
+        if filtered_tag.auto_delete {
+            delete_empty_tags(db, &[filtered_tag.id]).await?;
+        }
+    }
 
     if log {
         let payload = RateCardPayload {
@@ -1938,6 +1942,62 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn test_rate_card_deletes_emptied_auto_delete_filtered_tag(pool: SqlitePool) -> () {
+        let created_notes = create_note_helper(&pool).await;
+        let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE note_id = ?")
+            .bind(created_notes[2].id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let tag = create_tag(
+            &pool,
+            CreateTagRequest {
+                name: "auto-delete filtered tag".to_string(),
+                description: String::new(),
+                query: Some(format!("c.id={}", card.id)),
+                auto_delete: true,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tag_card_ids(&pool, tag.id).await, vec![card.id]);
+
+        // An Easy rating finishes the only card in the tag.
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        let now = Utc::now();
+        rate_card(
+            &pool,
+            scheduler.as_ref(),
+            RatingSubmission {
+                card_id: card.id,
+                rating: 4,
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(2),
+                tag_id: Some(tag.id),
+            },
+            now,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let tag_count: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM tag WHERE id = ?")
+            .bind(tag.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tag_count, 0, "the emptied auto-delete tag must be deleted");
+        let review_count: i64 =
+            sqlx::query_scalar(r"SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+                .bind(card.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(review_count, 1, "the review must still be recorded");
     }
 
     async fn tag_card_ids(pool: &SqlitePool, tag_id: TagId) -> Vec<CardId> {
