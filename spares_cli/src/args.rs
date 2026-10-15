@@ -59,9 +59,15 @@ pub(crate) enum Commands {
     /// By default, runs in interactive bulk mode: all changes are shown together and you choose
     /// to push or pull them as a group. Use `--individual` to review changes one at a time.
     ///
-    /// Use `--ids` or `--files` to filter to specific notes. Use `--print-files` for
-    /// non-interactive output suitable for piping to fzf for batch selection. See the
-    /// workflows documentation for more details.
+    /// Use `--ids` or `--files` to filter to specific notes, e.g.
+    /// `spares sync --from anki --to spares --ids aae aal gir`. Add `--dry-run` to only see the
+    /// changes.
+    ///
+    /// Use `--print-files` for non-interactive output: it prints the cache-rendered paths of
+    /// changed notes, which `--files` accepts, so they can be selected with fzf:
+    ///
+    /// `spares sync --print-files | fzf -m --preview 'bat --color=always {}' | xargs spares sync
+    /// --files @-`
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),
@@ -263,7 +269,17 @@ pub(crate) enum NoteCommands {
     ///
     /// Spares writes notes to a repository it commits to (`notes-spares` in the data directory),
     /// and your notes directory becomes a clone of it. Fetch to get changes made in spares; push
-    /// to `main` to import your changes. Rerunning continues an interrupted setup.
+    /// to `main` to import your changes. The server must be running. Rerunning continues an
+    /// interrupted setup.
+    ///
+    /// The old notes directory is kept as `notes.pre-vcs-<time>`. Notes you had edited without
+    /// syncing are put in their own commit (the `pre-vcs-local-edits` branch, or a jj change), which
+    /// is printed. A file can also differ because spares changed the note without rewriting it (an
+    /// undo, a tag rename), and pushing such a file would revert that change, so review them before
+    /// pushing them. Other files from the old directory are copied into the clone as untracked
+    /// files. Delete the old directory once you are done.
+    ///
+    /// See "Notes as a git or jj repository" in the manual's Workflows page for using the clone.
     InitVcs {
         /// Make the notes directory a jj repository colocated with git
         #[arg(long)]
