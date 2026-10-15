@@ -39,8 +39,10 @@ import CardRenderer from '../components/CardRenderer';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
+import AudioBar from '../components/AudioBar';
 import ReviewHeatmap from '../components/ReviewHeatmap';
 import Navbar from '../components/Navbar';
+import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -173,6 +175,7 @@ export default function ReviewPage() {
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
   // What was typed into each blank of the card's typed answer
   const [typedAnswers, setTypedAnswers] = useState<string[]>([]);
+  const audioPlayer = useAudioPlayer();
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [config, setConfig] = useState<ReviewConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -290,6 +293,20 @@ export default function ReviewPage() {
       setPhase('error');
     }
   }, [syncStopwatch]);
+
+  // Autoplays the clips each side shows, as the card is shown and flipped. Replay plays both.
+  const { play: playAudio, stop: stopAudio } = audioPlayer;
+  useEffect(() => {
+    if (!card || (phase !== 'front' && phase !== 'back')) { stopAudio(); return; }
+    const clips = phase === 'front' ? card.audio?.front : card.audio?.back;
+    if (clips?.length) playAudio(clips);
+    else stopAudio();
+  }, [card, phase, playAudio, stopAudio]);
+  const replayAudio = useCallback(() => {
+    if (!card?.audio) return;
+    playAudio(phase === 'back' ? [...card.audio.front, ...card.audio.back] : card.audio.front);
+  }, [card, phase, playAudio]);
+  const playAudioClip = useCallback((path: string) => playAudio([path]), [playAudio]);
 
   const refreshStatistics = useCallback(() => {
     if (!credentials) return Promise.resolve();
@@ -753,6 +770,7 @@ export default function ReviewPage() {
         case 's': suspendCard(); break;
         case 'e': toggleCardNote(); break;
         case 'q': switchQuery(); break;
+        case 'r': replayAudio(); break;
       }
     }
     window.addEventListener('keydown', handleKey);
@@ -904,8 +922,9 @@ export default function ReviewPage() {
               </div>
             ) : (
               <>
+                {phase === 'front' && card.audio && <AudioBar audio={card.audio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} />
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} />
                 </div>
               </>
             )}
@@ -913,9 +932,10 @@ export default function ReviewPage() {
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
+              {phase === 'back' && card.audio && <AudioBar audio={card.audio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
-                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} />
+                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} onPlayAudio={playAudioClip} />
               </div>
             </div>
           )}

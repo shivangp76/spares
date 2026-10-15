@@ -26,6 +26,8 @@ export interface GetReviewCardResponse {
   browser_sources?: BrowserRenderSources;
   // Present iff the card asks for its answers to be typed (the cloze key `t`)
   typed_answer?: TypedAnswerInfo;
+  // Present iff the card has audio clips
+  audio?: CardAudio;
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
@@ -50,6 +52,14 @@ export interface TypedAnswerInfo {
   mode: TypeAnswer;
   // One per answer cloze, in reading order
   blanks: TypedBlank[];
+}
+
+// Absolute paths of audio clips, fetched from the render assets
+export interface CardAudio {
+  // Played when the card is shown
+  front: string[];
+  // Played when it is flipped. Clips on the front are not repeated.
+  back: string[];
 }
 
 export interface BrowserRenderSources {
