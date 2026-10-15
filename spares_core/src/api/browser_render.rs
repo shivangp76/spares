@@ -426,6 +426,15 @@ pub async fn get_render_asset(
     Ok(hash.map(|hash| (get_render_assets_dir().join(&hash), hash)))
 }
 
+/// Stored Typst files, e.g. preambles. Most sources read the same few, so web clients load them
+/// ahead of compiling rather than discover each by a failed compile.
+pub async fn list_render_sources(db: &SqlitePool) -> Result<Vec<String>, Error> {
+    sqlx::query_scalar("SELECT path FROM render_asset WHERE path LIKE '%.typ' ORDER BY path")
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
 /// Package specs (`namespace/name/version`) that rendered files have imported.
 pub async fn list_render_packages(db: &SqlitePool) -> Result<Vec<String>, Error> {
     sqlx::query_scalar("SELECT spec FROM render_package ORDER BY spec")
