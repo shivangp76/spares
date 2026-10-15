@@ -17,6 +17,7 @@ use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::TypeAnswer;
+use crate::parsers::audio::remove_audio_refs;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 
 /// One answer cloze of a card, which gets an input box of its own.
@@ -97,6 +98,7 @@ pub fn expected_typed_answers(
                 start = delimiter.end;
             }
             text.push_str(&note_data[start..range.end]);
+            let text = remove_audio_refs(parser, &text);
             let expected = clean_typed_answer(&parser.typed_answer_text(&text));
             (!expected.is_empty()).then_some(TypedBlank { expected, hint })
         })
@@ -304,7 +306,7 @@ mod tests {
     fn test_expected_typed_answers() {
         let markdown = MarkdownParser::new();
         let typst = TypstParser::new();
-        let cases: [(&dyn Parseable, &str, Vec<Option<TypedAnswerInfo>>); 12] = [
+        let cases: [(&dyn Parseable, &str, Vec<Option<TypedAnswerInfo>>); 14] = [
             // A
             (
                 &markdown,
@@ -376,6 +378,13 @@ mod tests {
             ),
             // N: an answer without text gets no box
             (&markdown, "a {{[t] ![](/m/x.png)}}", vec![None]),
+            (&markdown, "a {{[t] [🔊](/m/x.mp3)}}", vec![None]),
+            // L: audio links are not typed
+            (
+                &typst,
+                r#"#link("/m/q.mp3")[🔊] Translate: #cl[#link("/m/a.mp3")[🔊] good morning][t]"#,
+                vec![info(DIFF, &["good morning"])],
+            ),
         ];
         for (parser, data, expected) in cases {
             assert_eq!(infos(parser, data), expected, "{data}");

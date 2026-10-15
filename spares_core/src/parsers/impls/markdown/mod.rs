@@ -33,6 +33,8 @@ use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::WebRenderMode;
+use crate::parsers::audio::AudioRef;
+use crate::parsers::audio::find_audio_refs;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
@@ -123,6 +125,15 @@ impl Parseable for MarkdownParser {
         let links_regex = get_or_compile_regex(r"!?\[([^\]]*)\](?:\([^)]*\)|\{[^}]*\})").unwrap();
         let text = links_regex.replace_all(text, "$1");
         text.replace(['*', '_', '`'], "")
+    }
+
+    fn audio_refs(&self, text: &str) -> Vec<AudioRef> {
+        // `[text](path)` or `[text](<path>)`, with an optional title, but not an image
+        find_audio_refs(
+            text,
+            r#"(?<!!)\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"]*")?\)"#,
+            r"(?s)<!--.*?-->|```.*?```|`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$",
+        )
     }
 
     fn construct_setting(&self, data: &str) -> String {

@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 use super::generate_files::CardSide;
@@ -265,6 +266,22 @@ fn complete_note(
             }));
         note_data
     };
+
+    // Audio clips are found by their absolute path, both by PDF viewers and by the server
+    for audio_ref in output_parser.audio_refs(&new_data) {
+        if !Path::new(&audio_ref.path).is_absolute() {
+            local_settings.errors_and_warnings.push(LibraryError::Note(
+                NoteErrorKind::SettingsWarning {
+                    description: format!(
+                        "The audio clip `{}` has a relative path, so it cannot be played. Use an absolute path.",
+                        audio_ref.path
+                    ),
+                    src: new_data.clone(),
+                    at: audio_ref.range.into(),
+                },
+            ));
+        }
+    }
 
     // Get linked notes
     let linked_notes = output_parser.get_linked_notes(new_data.as_str());
@@ -669,6 +686,30 @@ mod tests {
         assert!(
             note_data.contains("id = "),
             "a uid should be minted into the block: {note_data}"
+        );
+    }
+
+    #[test]
+    fn test_get_notes_relative_audio_warning() {
+        let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
+        let adapter = get_adapter_from_string("spares").unwrap();
+        let data = indoc! {r#"
+            // spares: note start
+            #link("clip.mp3")[🔊] #link("/m/clip.mp3")[🔊] #cl[answer]
+            // spares: note end
+        "#};
+        let notes = get_notes(parser.as_ref(), None, data, adapter.as_ref(), false, None).unwrap();
+        let warnings = notes[0]
+            .0
+            .errors_and_warnings
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            warnings,
+            vec![
+                "The audio clip `clip.mp3` has a relative path, so it cannot be played. Use an absolute path."
+            ]
         );
     }
 }
