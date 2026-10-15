@@ -1,4 +1,4 @@
-import { Decoration, type DecorationSet, EditorView, type Extension, StateEffect, StateField, WidgetType } from '@uiw/react-codemirror';
+import { Decoration, type DecorationSet, EditorView, type Extension, StateEffect, StateField, ViewPlugin, WidgetType } from '@uiw/react-codemirror';
 import { uploadImage } from './api/client';
 import { imageUploadName } from './utils';
 
@@ -79,11 +79,128 @@ function imageFiles(data: DataTransfer | null): File[] {
   return Array.from(data?.files ?? []).filter(file => file.type.startsWith('image/'));
 }
 
+/** Whether a drag carries image files. Only the files' types are known until they are dropped,
+    and some browsers hide those too, so a drag of files of unknown types might be images. */
+function dragsImages(data: DataTransfer | null): boolean {
+  if (!data?.types.includes('Files')) return false;
+  const files = Array.from(data.items).filter(item => item.kind === 'file');
+  return files.length === 0 || files.some(item => item.type === '' || item.type.startsWith('image/'));
+}
+
+/** How long after the last `dragover` a drag is taken to have ended, in case no event says so.
+    Browsers repeat `dragover` every 350 ms or so while dragging over the page. */
+const DRAG_END_DELAY_MS = 1000;
+
+/** Accepts images dropped anywhere on the editor, gutters and padding included, not only on its
+    text. While images are dragged over the page, a banner over the editor shows they can be
+    dropped there. */
+const imageDrop = (parserId: number) => ViewPlugin.define(view => {
+  const banner = document.createElement('div');
+  banner.className = 'cm-image-drop-banner';
+  banner.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  banner.append(label);
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function show(over: boolean) {
+    label.textContent = over ? 'Release to insert' : 'Drop images here to insert them';
+    banner.classList.toggle('cm-image-drop-banner-over', over);
+    if (!banner.isConnected) view.dom.append(banner);
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(hide, DRAG_END_DELAY_MS);
+  }
+  function hide() {
+    clearTimeout(hideTimer);
+    banner.remove();
+  }
+
+  const onWindowDrag = (event: DragEvent) => {
+    if (!dragsImages(event.dataTransfer)) return;
+    // Over the editor, `onEditorDragOver` shows the banner
+    if (!view.dom.contains(event.target as Node)) show(false);
+  };
+  // Captured so they run before CodeMirror's handlers on the text, which would insert a dropped
+  // file's contents as text. CodeMirror skips its handlers for events already handled.
+  // Leaving the window, or cancelling the drag, which some browsers report at (0, 0). Not
+  // `relatedTarget`, which Safari leaves out between elements too.
+  const onWindowDragLeave = (event: DragEvent) => {
+    const { clientX: x, clientY: y } = event;
+    if (x <= 0 || y <= 0 || x >= window.innerWidth || y >= window.innerHeight) hide();
+  };
+  const onEditorDragOver = (event: DragEvent) => {
+    if (!dragsImages(event.dataTransfer)) return;
+    // Allow the drop anywhere on the editor
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    show(true);
+  };
+  const onEditorDrop = (event: DragEvent) => {
+    hide();
+    const files = imageFiles(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    // Not precise, so a drop beside or below the text goes to its nearest place
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+    view.focus();
+    void insertImages(view, parserId, files, pos);
+  };
+
+  window.addEventListener('dragenter', onWindowDrag);
+  window.addEventListener('dragover', onWindowDrag);
+  window.addEventListener('dragleave', onWindowDragLeave);
+  window.addEventListener('drop', hide);
+  window.addEventListener('dragend', hide);
+  view.dom.addEventListener('dragover', onEditorDragOver, true);
+  view.dom.addEventListener('drop', onEditorDrop, true);
+  return {
+    destroy() {
+      hide();
+      window.removeEventListener('dragenter', onWindowDrag);
+      window.removeEventListener('dragover', onWindowDrag);
+      window.removeEventListener('dragleave', onWindowDragLeave);
+      window.removeEventListener('drop', hide);
+      window.removeEventListener('dragend', hide);
+      view.dom.removeEventListener('dragover', onEditorDragOver, true);
+      view.dom.removeEventListener('drop', onEditorDrop, true);
+    },
+  };
+});
+
+const imageDropTheme = EditorView.baseTheme({
+  '.cm-image-drop-banner': {
+    position: 'absolute',
+    inset: '0',
+    // Above the gutters
+    zIndex: '300',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '2px dashed var(--accent)',
+    borderRadius: '4px',
+    background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+    // Drag events go to the editor underneath, so the drop lands there
+    pointerEvents: 'none',
+  },
+  '.cm-image-drop-banner-over': {
+    background: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+  },
+  '.cm-image-drop-banner span': {
+    padding: '4px 10px',
+    borderRadius: '4px',
+    background: 'var(--bg)',
+    color: 'var(--accent)',
+    fontSize: '13px',
+    fontWeight: '600',
+  },
+});
+
 /** Uploads images pasted or dropped into the editor, and inserts them in the syntax of the note's
     parser where they were pasted or dropped. */
 export function imageUpload(parserId: number): Extension {
   return [
     uploads,
+    imageDrop(parserId),
+    imageDropTheme,
     EditorView.domEventHandlers({
       paste(event, view) {
         // Spreadsheets also put a picture of copied cells on the clipboard, but the text is wanted
@@ -92,15 +209,6 @@ export function imageUpload(parserId: number): Extension {
         if (files.length === 0) return false;
         event.preventDefault();
         void insertImages(view, parserId, files, view.state.selection.main.head);
-        return true;
-      },
-      drop(event, view) {
-        const files = imageFiles(event.dataTransfer);
-        if (files.length === 0) return false;
-        // Otherwise CodeMirror inserts the files' contents as text
-        event.preventDefault();
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
-        void insertImages(view, parserId, files, pos);
         return true;
       },
     }),
