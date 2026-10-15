@@ -18,6 +18,7 @@ use crate::schedulers::learning_states;
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct QueueCaps {
     pub(crate) new: Option<u32>,
+    pub(crate) reviews: Option<u32>,
 }
 
 /// A sort key: a SQL expression over the `c` (card) and `n` (note) aliases, and whether it sorts
@@ -131,18 +132,20 @@ pub(crate) fn queue_order_by(config: &QueueConfig, now: DateTime<Utc>, caps: Que
         NewReviewMix::Interleaved => {
             // Each card's position within its kind, as a fraction of how many of that kind can
             // still be shown today. Sorting by it spreads the smaller kind evenly over the larger.
-            // Cards past today's limit get fractions over 1, so they come after the rest.
+            // Cards past today's limits get fractions over 1, so they come after the rest.
             let partition = format!("PARTITION BY {group}, {is_new}");
             let count = format!("COUNT(*) OVER ({partition})");
-            let new_count = match caps.new {
+            let capped = |cap: Option<u32>| match cap {
                 Some(cap) => format!("MAX(MIN({count}, {cap}), 1)"),
                 None => count.clone(),
             };
             vec![
                 asc(format!(
                     "(ROW_NUMBER() OVER ({partition} ORDER BY {}) - 0.5) / \
-                     CASE WHEN {is_new} THEN {new_count} ELSE {count} END",
-                    render(&within_kind)
+                     CASE WHEN {is_new} THEN {} ELSE {} END",
+                    render(&within_kind),
+                    capped(caps.new),
+                    capped(caps.reviews),
                 )),
                 // Reviews before new cards on a tie
                 asc(is_new.clone()),
@@ -507,8 +510,118 @@ pub(crate) mod tests {
         // With only one new card left today, it is spread over all the reviews, and the other
         // comes after them.
         assert_eq!(
-            order(NewReviewMix::Interleaved, QueueCaps { new: Some(1) }).await,
+            order(
+                NewReviewMix::Interleaved,
+                QueueCaps {
+                    new: Some(1),
+                    reviews: None
+                }
+            )
+            .await,
             vec![r[0], r[1], r[2], new[0], r[3], r[4], r[5], new[1]]
+        );
+        // Likewise for reviews: with three left today, the new cards are spread over those three
+        assert_eq!(
+            order(
+                NewReviewMix::Interleaved,
+                QueueCaps {
+                    new: None,
+                    reviews: Some(3)
+                }
+            )
+            .await,
+            vec![r[0], new[0], r[1], new[1], r[2], r[3], r[4], r[5]]
+        );
+    }
+}
+
+#[cfg(test)]
+mod daily_limit_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::NEW;
+    use super::tests::REVIEW;
+    use super::tests::add_review;
+    use super::tests::create_cards;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::review::DailyLimitsLeft;
+    use crate::api::review::daily_limits_left_with;
+    use crate::config::SparesExternalConfig;
+
+    fn limits(new: u32, reviews: u32, new_cards_ignore_review_limit: bool) -> SparesExternalConfig {
+        SparesExternalConfig {
+            new_cards_daily_limit: new,
+            reviews_daily_limit: reviews,
+            new_cards_ignore_review_limit,
+            ..SparesExternalConfig::default()
+        }
+    }
+
+    #[sqlx::test]
+    async fn review_limit_holds_back_new_cards(pool: SqlitePool) {
+        let now = Utc::now();
+        // Three reviews due and two new cards
+        let ids = create_cards(&pool, 5, now - Duration::days(30)).await;
+        for card in &ids[..3] {
+            set_card(&pool, *card, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        }
+        let left = async |config: &SparesExternalConfig| {
+            daily_limits_left_with(&pool, config, now).await.unwrap()
+        };
+
+        // Room for 5 cards, of which the reviews due take 3
+        assert_eq!(
+            left(&limits(10, 5, false)).await,
+            DailyLimitsLeft { new: 2, reviews: 5 }
+        );
+        assert_eq!(
+            left(&limits(10, 5, true)).await,
+            DailyLimitsLeft {
+                new: 10,
+                reviews: 5
+            }
+        );
+        // More reviews due than the limit leaves no room for new cards
+        assert_eq!(
+            left(&limits(10, 2, false)).await,
+            DailyLimitsLeft { new: 0, reviews: 2 }
+        );
+
+        // Studying a review card uses up one review, and leaves one fewer due
+        add_review(&pool, ids[0], now, REVIEW).await;
+        set_card(&pool, ids[0], REVIEW, now + Duration::days(3), 5.0, 5.0).await;
+        assert_eq!(
+            left(&limits(10, 5, false)).await,
+            DailyLimitsLeft { new: 2, reviews: 4 }
+        );
+
+        // Studying a new card uses up a new card and, unless ignored, a review
+        add_review(&pool, ids[3], now, NEW).await;
+        assert_eq!(
+            left(&limits(10, 5, false)).await,
+            DailyLimitsLeft { new: 1, reviews: 3 }
+        );
+        assert_eq!(
+            left(&limits(10, 5, true)).await,
+            DailyLimitsLeft { new: 9, reviews: 4 }
+        );
+    }
+
+    /// Reviews of earlier days, and of cards in their (re)learning steps, do not count.
+    #[sqlx::test]
+    async fn only_todays_reviews_count(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = create_cards(&pool, 1, now - Duration::days(30)).await;
+        set_card(&pool, ids[0], REVIEW, now + Duration::days(5), 5.0, 5.0).await;
+        add_review(&pool, ids[0], now - Duration::days(2), REVIEW).await;
+        add_review(&pool, ids[0], now, super::tests::RELEARNING).await;
+        assert_eq!(
+            daily_limits_left_with(&pool, &limits(10, 5, false), now)
+                .await
+                .unwrap(),
+            DailyLimitsLeft { new: 5, reviews: 5 }
         );
     }
 }

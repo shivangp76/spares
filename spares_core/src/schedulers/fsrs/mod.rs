@@ -70,6 +70,11 @@ pub(crate) fn learning_states() -> [StateId; 2] {
     ]
 }
 
+/// The state of cards that graduated from their learning steps.
+pub(crate) fn review_state() -> StateId {
+    state_to_number(State::Review)
+}
+
 /// The interval, in days, after which a card with `stability` is expected to fall to
 /// `desired_retention`. Not rounded, clamped or fuzzed.
 #[cfg(test)]
