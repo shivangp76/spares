@@ -1,41 +1,28 @@
 # Card queue plan
 
-Features that bring spares' card queue up to Anki's, and beyond. Settings are documented on the
-structs in `spares_core::config` (`cargo doc -p spares_core --open`), so this file only tracks
-what is done and what is left.
+Work left to bring spares' card queue up to Anki's, and beyond. What is done is documented on the
+code: the settings on `QueueConfig`, `LeechConfig` and `SparesExternalConfig` in
+`spares_core::config`, and the rest where it is implemented (`cargo doc --workspace --no-deps
+--document-private-items --open`).
 
-## Done
+## Gaps in what is done
 
-| # | Feature | Where it is set | Notes |
-|---|---|---|---|
-| 1 | Review order | `[queue]` `review_order`, `new_order`, `new_review_mix` (`QueueConfig`) | Learning cards whose step is over always come first. New cards are now interleaved with reviews by default, rather than sorted with them by due date. |
-| 2 | Daily review limit | `reviews_daily_limit`, `new_cards_ignore_review_limit` | Default 9999 (no limit). As in Anki, new cards only fill the room the reviews due today leave under the limit. |
-| 3 | Learn ahead limit | `[queue]` `learn_ahead_limit` (default 20 min) | `POST /api/review/next-available` says when the next held-back learning card can be shown; the CLI and the web app wait for it. |
-| 4 | Sibling burying | `[queue]` `bury_new_siblings`, `bury_review_siblings` | Off by default. Part of the rating's undo event. Not done in filtered tags or for reviews of earlier days synced late. |
-| 5 | Leech actions | `[leech]` `action` (`tag`, `suspend`, `none`), `tag_name` | Default `tag`, so leeches' notes now get a `leech` tag. Repeats every half threshold. The tag joins the rating's undo group. |
-| 6 | Query sort sets the review order | `sort_by_asc` / `sort_by_desc` in a review query or a filtered tag's query | Overrides the `[queue]` orders for new and review cards. |
-| 7 | Filtered tags without rescheduling | `reschedule` column on tags (`spares tag add/edit --reschedule false`, web tags page) | Only this part of step 7 was done. |
+- **Log cram reviews.** A rating in a filtered tag with `reschedule = false` writes no
+  `review_log` row, so it is missing from statistics and the heatmap (see
+  `rate_card_without_rescheduling`). Logging it needs a new `ReviewLogKind`, a rebuild of
+  `review_log` for its `CHECK`, and every replay of reviews taught to skip that kind.
+- **Learn ahead limit offline.** `nextOfflineCard` could apply the limit itself, given it in
+  `ReviewQueueResponse`.
+- **Leech actions for late offline reviews.** A review inserted into a card's history does not go
+  through `rate_card`, so it never tags or suspends.
+- **Cap the counts by the limits.** `cards_left_by_state` and the statistics' cards due today
+  should count only the cards today's new and review limits allow.
+- **Review limit in review snapshots.** A query with `limit` only leaves out review cards once the
+  daily limit is used up; it could also cap them at what is left of it.
+- **Per-tag exit rule for filtered tags.** Cards still leave a filtered tag after 2 Goods or 1 Easy
+  (`Fsrs::filtered_tag_schedule`); a rule per tag would be a column like `reschedule`.
 
-### Known gaps in what is done
-
-- **Cram reviews are not logged.** A rating in a tag with `reschedule = false` writes no
-  `review_log` row, so it is missing from statistics and the heatmap. Logging it needs a new
-  `ReviewLogKind`, and `review_log`'s `CHECK ((kind = 0) = (rating IS NOT NULL))` means rebuilding
-  the table. Every reader that replays reviews would then have to skip that kind.
-- **Offline review ignores the learn ahead limit.** The downloaded queue includes learning cards
-  whenever they are due, and the web client shows them as soon as nothing else is left, as before.
-  `nextOfflineCard` could apply the limit itself, given it in `ReviewQueueResponse`.
-- **Late offline reviews skip leech actions.** A review inserted into a card's history (because a
-  later review of the card already synced) does not go through `rate_card`, so it never tags or
-  suspends.
-- **Counts are not capped by the limits.** `cards_left_by_state` and the statistics' cards due
-  today count every due card, not just those today's new and review limits allow.
-- **Review snapshots only partly respect the review limit.** A query with `limit` leaves out
-  review cards once the daily limit is used up, but otherwise only its own `limit`s apply.
-- **The rest of step 7.** Filtered tags still leave after 2 Goods or 1 Easy
-  (`Fsrs::filtered_tag_schedule`); a per-tag exit rule would be a column like `reschedule`.
-
-## Step 8: queue presets per tag
+## Queue presets per tag
 
 Anki's deck presets give each deck its own limits, steps and order. spares has one global
 `config.toml`, but tags can play the role of decks.
@@ -67,7 +54,8 @@ review_order = "retrievability"
   one matching the review query's tag, and mixed sessions use the top-level order.
 - **Scheduling.** `rate_card` would look up the card's preset for its steps before calling the
   scheduler, and `spares card reschedule` would do the same per card.
-- Wait until steps 1–3 have been used for a while, so the settings presets copy have settled.
+- Wait until the queue settings have been used for a while, so the settings presets copy have
+  settled.
 
 ## Further ideas
 
