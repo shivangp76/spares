@@ -182,6 +182,9 @@ pub trait Parseable: Send + Sync {
         output_type: ConstructImageOcclusionType,
     ) -> String;
 
+    /// Shows the image at `file_path`, an absolute path, where it is inserted into a note.
+    fn construct_image(&self, file_path: &Path) -> String;
+
     /// Find all `spares: cli start…end` blocks in `data`. Default impl uses
     /// the parser's comment syntax, so this works for any host parser.
     /// The canonical implementation lives in [`cli::get_cli_blocks`]; this

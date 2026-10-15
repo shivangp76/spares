@@ -151,6 +151,22 @@ impl Parseable for LatexParserNote {
         construct_image_occlusion(self, image_occlusion_data, output_type)
     }
 
+    fn construct_image(&self, file_path: &Path) -> String {
+        // `graphicx` cannot include SVGs. The `svg` package can, as for image occlusions.
+        let command = if file_path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+        {
+            "includesvg"
+        } else {
+            "includegraphics"
+        };
+        format!(
+            "\\{command}[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{{{}}}",
+            file_path.display()
+        )
+    }
+
     fn get_output_rendered_dir(&self, output_type: RenderOutputDirectoryType) -> PathBuf {
         get_output_rendered_dir(self, output_type)
     }
