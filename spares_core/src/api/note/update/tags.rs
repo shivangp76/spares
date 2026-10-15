@@ -82,6 +82,7 @@ pub(super) async fn add_tags_to_note(
             description: String::new(),
             query: None,
             auto_delete: DEFAULT_TAG_AUTO_DELETE,
+            reschedule: true,
             created_at: created_tag.created_at,
             updated_at: created_tag.updated_at,
             note_ids: vec![],

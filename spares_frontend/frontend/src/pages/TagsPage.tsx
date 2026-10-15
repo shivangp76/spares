@@ -109,6 +109,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
   const [description, setDescription] = useState(tag?.description ?? '');
   const [query, setQuery] = useState(tag?.query ?? '');
   const [autoDelete, setAutoDelete] = useState(tag?.auto_delete ?? true);
+  const [reschedule, setReschedule] = useState(tag?.reschedule ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,9 +125,10 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
         if (description !== tag.description) req.description = description;
         if (newQuery !== tag.query) req.query = newQuery;
         if (autoDelete !== tag.auto_delete) req.auto_delete = autoDelete;
+        if (reschedule !== tag.reschedule) req.reschedule = reschedule;
         onSaved(Object.keys(req).length > 1 ? await updateTag(req) : tag);
       } else {
-        onSaved(await createTag({ name, description, query: newQuery, auto_delete: autoDelete }));
+        onSaved(await createTag({ name, description, query: newQuery, auto_delete: autoDelete, reschedule }));
       }
     } catch (e) {
       setError(String(e));
@@ -150,6 +152,15 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
           <input type="checkbox" checked={autoDelete} onChange={e => setAutoDelete(e.target.checked)} style={{ marginRight: 6 }} />
           Delete automatically when no notes have it
         </label>
+        {query.trim() && (
+          <>
+            <span />
+            <label title="Off to cram: cards are shown until rated Good twice or Easy once, without changing when they are next due">
+              <input type="checkbox" checked={reschedule} onChange={e => setReschedule(e.target.checked)} style={{ marginRight: 6 }} />
+              Reschedule cards rated while studying this tag
+            </label>
+          </>
+        )}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
         <button onClick={save} disabled={saving} className="touch-target-small">{saving ? 'Saving…' : tag ? 'Save' : 'Create'}</button>
@@ -273,7 +284,7 @@ export default function TagsPage() {
                   <td style={td} className="hide-narrow">{tag.id}</td>
                   <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
                   <td style={td} className="hide-narrow">{tag.description || '—'}</td>
-                  <td style={td} className="hide-narrow">{tag.query !== null ? <code>{tag.query}</code> : '—'}</td>
+                  <td style={td} className="hide-narrow">{tag.query !== null ? <><code>{tag.query}</code>{!tag.reschedule && ' (no rescheduling)'}</> : '—'}</td>
                   <td style={td} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', gap: 4 }}>

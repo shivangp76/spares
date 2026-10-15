@@ -186,6 +186,17 @@ pub struct Tag {
     /// query to be saved and the tag to be rebuilt so those cards can be reviewed again in the
     /// future.
     pub auto_delete: bool,
+    /// For a filtered tag: whether rating a card while studying the tag reschedules it, as rating
+    /// it anywhere else does. `true` by default.
+    ///
+    /// Set it to `false` to cram, for example before an exam: cards are shown until they are
+    /// rated Good twice or Easy once, as in any filtered tag, but their due dates and memory
+    /// states are left as they were, and the ratings are not written to the review log. They do
+    /// not count toward statistics or the daily limits, and the card's next real review is not
+    /// pushed back by having just seen it. Undo still takes a rating back.
+    // Tags kept in undo events from before this field read as rescheduling, as they all did.
+    #[serde(default = "reschedule_default")]
+    pub reschedule: bool,
     #[serde(with = "ts_seconds")]
     pub created_at: DateTime<Utc>,
     /// Bumped when the tag's definition changes or its filtered card set is rebuilt, but not when
@@ -193,6 +204,10 @@ pub struct Tag {
     /// tag was built today.
     #[serde(with = "ts_seconds")]
     pub updated_at: DateTime<Utc>,
+}
+
+fn reschedule_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]

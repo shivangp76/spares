@@ -402,6 +402,7 @@ pub(crate) async fn create_notes_event(
                         description: String::new(),
                         query: None,
                         auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                        reschedule: true,
                     },
                     false,
                 )
@@ -755,6 +756,7 @@ async fn add_note_tags(
                 description: String::new(),
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                reschedule: true,
             };
             let tag_response = create_tag(db, create_tag_request, false).await?;
             tag_ids.push(tag_response.id);
@@ -764,6 +766,7 @@ async fn add_note_tags(
                 description: String::new(),
                 query: None,
                 auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                reschedule: true,
                 created_at: tag_response.created_at,
                 updated_at: tag_response.updated_at,
                 note_ids: vec![],

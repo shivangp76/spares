@@ -29,6 +29,7 @@ async fn e2e_undo_create_tag_restores_state(pool: SqlitePool) {
             description: "desc".to_string(),
             query: None,
             auto_delete: false,
+            reschedule: true,
         },
         true,
     )
@@ -91,6 +92,7 @@ async fn e2e_undo_update_tag_restores_previous_name(pool: SqlitePool) {
             description: None,
             query: None,
             auto_delete: None,
+            reschedule: None,
         },
         true,
     )
@@ -124,6 +126,7 @@ async fn e2e_undo_create_tag_with_note_tags_fails_with_dependency_error(pool: Sq
             description: "desc".to_string(),
             query: None,
             auto_delete: false,
+            reschedule: true,
         },
         true,
     )

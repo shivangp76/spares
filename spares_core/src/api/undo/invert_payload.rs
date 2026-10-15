@@ -195,6 +195,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                reschedule: payload.reschedule,
                 created_at: payload.created_at,
                 updated_at: payload.updated_at,
                 note_ids,
@@ -211,6 +212,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description.map(|t| t.swap()),
                 query: payload.query.map(|t| t.swap()),
                 auto_delete: payload.auto_delete.map(|t| t.swap()),
+                reschedule: payload.reschedule.map(|t| t.swap()),
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -223,6 +225,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 description: payload.description,
                 query: payload.query,
                 auto_delete: payload.auto_delete,
+                reschedule: payload.reschedule,
                 created_at: payload.created_at,
                 updated_at: payload.updated_at,
                 note_ids: payload.note_ids,
@@ -271,7 +274,10 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::RateCard => {
             let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log = take_review_log(db, payload.review_log_id).await?;
+            let review_log = match payload.review_log_id {
+                Some(review_log_id) => Some(take_review_log(db, review_log_id).await?),
+                None => None,
+            };
             let undo_payload = UnreviewPayload {
                 review_log,
                 card: payload.card.swap(),
@@ -288,7 +294,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let payload: ForgetCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
             let review_log = take_review_log(db, payload.review_log_id).await?;
             let undo_payload = UnreviewPayload {
-                review_log,
+                review_log: Some(review_log),
                 card: payload.card.swap(),
                 left_tag: None,
                 buried_siblings: Vec::new(),
@@ -297,7 +303,10 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::UnrateCard => {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log_id = restore_review_log(db, &payload.review_log).await?;
+            let review_log_id = match &payload.review_log {
+                Some(review_log) => Some(restore_review_log(db, review_log).await?),
+                None => None,
+            };
             let redo_payload = RateCardPayload {
                 review_log_id,
                 card: payload.card.swap(),
@@ -312,7 +321,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::UnforgetCard => {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log_id = restore_review_log(db, &payload.review_log).await?;
+            let review_log = payload
+                .review_log
+                .as_ref()
+                .expect("undoing a forget keeps the review log row it took");
+            let review_log_id = restore_review_log(db, review_log).await?;
             let redo_payload = ForgetCardPayload {
                 review_log_id,
                 card: payload.card.swap(),
@@ -457,6 +470,7 @@ mod tests {
                 description: "desc".to_string(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             false,
         )
@@ -505,6 +519,7 @@ mod tests {
                 description: "desc".to_string(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             false,
         )
@@ -543,6 +558,7 @@ mod tests {
                 description: "desc".to_string(),
                 query: None,
                 auto_delete: false,
+                reschedule: true,
             },
             false,
         )

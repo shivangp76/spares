@@ -593,6 +593,7 @@ async fn simulate_filtered_tag_reviews(
         description: String::new(),
         query: Some(filtered_tag_query.to_string()),
         auto_delete: true,
+        reschedule: true,
     };
     let tag_res = create_tag(pool, request, false).await;
     assert!(tag_res.is_ok());

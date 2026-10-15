@@ -125,6 +125,7 @@ pub async fn update_notes_event(
                             description: String::new(),
                             query: None,
                             auto_delete: DEFAULT_TAG_AUTO_DELETE,
+                            reschedule: true,
                         },
                         false,
                     )
