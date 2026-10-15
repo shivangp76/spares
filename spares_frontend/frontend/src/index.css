@@ -231,6 +231,74 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   opacity: 0.6;
 }
 
+/* The ? popup listing every keybinding */
+.keybindings-help {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  width: min(440px, calc(100% - 32px));
+  box-sizing: border-box;
+}
+
+.keybindings-help::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.keybindings-help-content {
+  padding: 16px 20px 20px;
+}
+
+.keybindings-help table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 2px;
+  font-size: 14px;
+}
+
+.keybindings-help td {
+  padding: 4px 8px;
+}
+
+.keybindings-help td:first-child {
+  white-space: nowrap;
+  width: 1%;
+  border-radius: 4px 0 0 4px;
+}
+
+.keybindings-help td:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.keybindings-help kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+
+.keybindings-help tr.available td {
+  background: var(--tone-blue-bg);
+  color: var(--tone-blue-fg);
+  font-weight: 600;
+}
+
+.keybindings-help tr.available kbd {
+  border-color: var(--tone-blue-border);
+  color: var(--tone-blue-fg);
+}
+
+.keybindings-help tr.unavailable {
+  opacity: 0.45;
+}
+
 /* Show Answer and the ratings are pinned to the bottom of the screen (within thumb reach on
    phones), however short or tall the card is. The side padding lines the buttons up with the
    .page column. */

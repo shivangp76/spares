@@ -36,6 +36,7 @@ import {
 } from '../offline/review';
 import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
+import KeybindingsHelp, { type Keybinding } from '../components/KeybindingsHelp';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
@@ -743,35 +744,52 @@ export default function ReviewPage() {
     }
   }
 
-  // Keyboard shortcuts — re-bind on every render so closures are current
+  // Keyboard shortcuts, as listed by the ? popup
+  const [showKeybindings, setShowKeybindings] = useState(false);
+  const cardShown = reviewing && card !== null;
+  const hasAudio = !!card?.audio && (card.audio.front.length > 0 || (phase === 'back' && card.audio.back.length > 0));
+  const keybindings: Keybinding[] = [
+    { keys: ['Space'], description: 'Show answer', available: phase === 'front' },
+    { keys: ['Enter'], description: 'Check typed answer (in an answer box)', available: phase === 'front' && !!card?.typed_answer },
+    ...ratings.map((r, i) => ({ keys: [String(i + 1)], description: `Rate ${r.description}`, available: phase === 'back' })),
+    { keys: ['u'], description: phase === 'back' ? 'Undo (hide the answer)' : 'Undo', available: reviewing },
+    { keys: ['U'], description: 'Redo', available: reviewing && lastUndo !== null },
+    { keys: ['b'], description: 'Bury card', available: cardShown },
+    { keys: ['s'], description: 'Suspend card', available: cardShown },
+    { keys: ['e'], description: cardShown && panelNote?.id === card.note_id ? 'Close note' : 'Edit note', available: cardShown },
+    { keys: ['q'], description: 'Switch query', available: reviewing },
+    { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
+    { keys: ['?'], description: 'Show or hide keyboard shortcuts', available: true },
+  ];
+
+  // Re-bound on every render so closures are current
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const target = e.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
       if (target instanceof Element && target.closest('.cm-editor')) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === '?') {
+        e.preventDefault();
+        setShowKeybindings(v => !v);
+        return;
+      }
+      // The popup covers the card, so nothing should change behind it
+      if (showKeybindings) return;
       if (phase !== 'front' && phase !== 'back') return;
       // Space shows the answer, so it must not also click a button (or toggle a section) left
       // focused by a mouse click, e.g. Bury Card when pressed on the back
       if (e.code === 'Space' && target instanceof Element && target.closest('button, summary')) e.preventDefault();
-      if (phase === 'front' && e.code === 'Space') {
-        e.preventDefault();
-        showAnswer();
-        return;
-      }
-      if (phase === 'back') {
-        const idx = parseInt(e.key, 10) - 1;
-        if (idx >= 0 && idx < ratings.length) { rate(ratings[idx].id); return; }
-      }
-      switch (e.key) {
-        case 'u': undo(); break;
-        case 'U': redo(); break;
-        case 'b': buryCard(); break;
-        case 's': suspendCard(); break;
-        case 'e': toggleCardNote(); break;
-        case 'q': switchQuery(); break;
-        case 'r': replayAudio(); break;
-      }
+      const key = e.code === 'Space' ? 'Space' : e.key;
+      if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
+      const actions: Record<string, () => void> = {
+        Space: showAnswer, u: undo, U: redo, b: buryCard, s: suspendCard, e: toggleCardNote, q: switchQuery, r: replayAudio,
+      };
+      ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
+      const action = actions[key];
+      if (!action) return;
+      if (key === 'Space') e.preventDefault();
+      action();
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
@@ -809,6 +827,7 @@ export default function ReviewPage() {
     <div className="page">
       <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 16 }}>Review</h2>
+      {showKeybindings && <KeybindingsHelp bindings={keybindings} onClose={() => setShowKeybindings(false)} />}
 
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>
