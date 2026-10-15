@@ -3,7 +3,7 @@
 This sets up a small VPS that your phone (or any browser) reviews on, kept in two-way sync with your laptop. It was first done on Vultr's cheapest plan (512 MB, 10 GB, IPv6 only, $2.50/month) on 2026-10-14, from a Mac. The server is only reachable over [Tailscale](https://tailscale.com); nothing is open to the internet.
 
 Two parts do the work:
-- `spares deploy` runs on the laptop, in the repo. It builds spares for Linux from that checkout, uploads it, and sets up both sides.
+- `spares deploy` runs on the laptop, in the repo. It builds spares for Linux from that checkout, uploads it with rsync, and sets up both sides. It shows each step as it goes and the time each took at the end.
 - `scripts/setup_vps.sh` runs on the server (`spares deploy` uploads and runs it). It installs spares, a systemd service, swap and Tailscale's HTTPS.
 
 The server never builds anything or downloads from GitHub, so it needs neither the memory to compile spares nor IPv4.
@@ -74,7 +74,7 @@ spares deploy init spares --no-latex
 It takes 10–15 minutes. What it does, and what it asks:
 
 1. **Backs up your database** to `~/.local/share/spares/spares-main.before-deploy-<time>.sqlite`.
-2. **Builds** spares for the server and the web app (a 60 MB archive), and uploads them with `setup_vps.sh`.
+2. **Builds** spares for the server and the web app, and uploads them with `setup_vps.sh` (about 50 MB) to `~/.cache/spares-bundle` on the server. It keeps that copy, so later deploys send only what changed.
 3. **Sets up the server** as root: your user (it asks you to choose a **sudo password** for it, needed for `sudo` on the server later), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS.
    - **The first time on a tailnet**, Tailscale prints a link to enable HTTPS (`https://login.tailscale.com/f/serve?node=...`) and waits. Open it and enable **HTTPS**. **Don't enable Funnel**, which would put the server on the public internet.
 4. **Sets up the laptop:**
@@ -103,7 +103,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 - **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It also sets the server's time zone to the laptop's again, e.g. after you move.
+- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It asks for your sudo password on the server, and sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server
@@ -116,11 +116,13 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 | `setup_vps.sh`'s arguments, the URL | `/etc/spares/setup.conf`, `/etc/spares/url` |
 | Database and data | the same path as on the laptop (`/Users/<you>` links to `/home/<you>`) |
 | `config.toml` (copied from the laptop) | `~/.config/spares/config.toml` |
+| The last deploy's build, which the next one updates | `~/.cache/spares-bundle` |
 
 Spares uses about 15 MB of memory idle and 30 MB while sending the whole database, so 512 MB is plenty. `setup_vps.sh` adds 1 GB of swap for `apt`.
 
 ## Troubleshooting
 
+- **The first `update` is slower**: it compiles only after connecting, as it doesn't know the server's architecture yet. `spares deploy` keeps that, the pandoc package and the time of each step in `~/.cache/spares-deploy`. If `~/.cache/spares-bundle` on the server is gone, the next deploy uploads everything again.
 - **"No spares server answers at 127.0.0.1:8080"**: the local server isn't running yet (it compiles first), or listens elsewhere (`SPARES_SOCKET_ADDRESS`).
 - **The phone shows other streaks, or reviews on the wrong day of the heatmap, than the laptop**: the server is in another time zone (VPSs start in UTC), and spares counts days in the server's. Run `spares deploy update` to set it to the laptop's; `timedatectl` on the server shows it.
 - **The local server can't reach the VPS**: check that `tailscale status` on the laptop lists `spares`, and that Tailscale is running (`sudo brew services start tailscale`).
