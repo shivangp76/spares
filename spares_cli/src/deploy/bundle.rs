@@ -11,10 +11,30 @@ use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
 
+use super::progress::Progress;
 use super::shell::Ssh;
-use super::shell::bold;
 use super::shell::command_exists;
 use super::shell::run;
+
+/// What a server runs: its Rust target and Debian architecture
+#[derive(Clone, Copy)]
+pub(super) struct Target {
+    triple: &'static str,
+    deb_arch: &'static str,
+}
+
+impl Target {
+    /// The target of `server` (as user@host)
+    pub(super) fn of(ssh: &Ssh, server: &str) -> Result<Self, Error> {
+        let arch = ssh.output(server, "uname -m")?;
+        let (triple, deb_arch) = match arch.as_str() {
+            "x86_64" => ("x86_64-unknown-linux-gnu", "amd64"),
+            "aarch64" => ("aarch64-unknown-linux-gnu", "arm64"),
+            _ => return Err(miette!("Unsupported server architecture: {arch}")),
+        };
+        Ok(Self { triple, deb_arch })
+    }
+}
 
 /// A directory under the system's temporary one, removed when dropped.
 pub(super) struct TempDir(PathBuf);
@@ -49,13 +69,21 @@ impl Bundle {
         self.0.path().join("spares-bundle.tar.gz")
     }
 
-    /// Builds spares for `server` (as user@host) from the checkout at `repo`.
+    /// Its size, e.g. "38.2 MB"
+    pub(super) fn size(&self) -> String {
+        #[allow(clippy::cast_precision_loss)]
+        let megabytes = fs::metadata(self.path()).map_or(0, |m| m.len()) as f64 / 1_000_000.0;
+        format!("{megabytes:.1} MB")
+    }
+
+    /// Builds spares for `target` from the checkout at `repo`, as the "Building" step.
     pub(super) async fn build(
-        ssh: &Ssh,
+        progress: &Progress,
         repo: &Path,
-        server: &str,
+        target: Target,
         with_pandoc: bool,
     ) -> Result<Self, Error> {
+        progress.step("Building", &format!("spares for {}", target.triple));
         for command in ["zig", "cargo-zigbuild", "bun", "rustup"] {
             if !command_exists(command) {
                 return Err(miette!(
@@ -64,33 +92,36 @@ impl Bundle {
                 ));
             }
         }
-        let arch = ssh.output(server, "uname -m")?;
-        let (target, deb_arch) = match arch.as_str() {
-            "x86_64" => ("x86_64-unknown-linux-gnu", "amd64"),
-            "aarch64" => ("aarch64-unknown-linux-gnu", "arm64"),
-            _ => return Err(miette!("Unsupported server architecture: {arch}")),
-        };
-        bold(&format!("Building spares for {target}"));
+        let Target { triple, deb_arch } = target;
+        progress.part("Compiling spares_server");
         run(Command::new("rustup")
-            .args(["target", "add", target])
+            .args(["target", "add", triple])
             .stdout(Stdio::null()))?;
         // glibc 2.31 (Debian 11, Ubuntu 20.04) or newer runs it
         run(Command::new("cargo")
             .args(["zigbuild", "--release", "-p", "spares_server", "--target"])
-            .arg(format!("{target}.2.31"))
+            .arg(format!("{triple}.2.31"))
             .env("CARGO_PROFILE_RELEASE_STRIP", "debuginfo")
             .current_dir(repo))?;
+        progress.part("Building the frontend");
         let frontend = repo.join("spares_frontend/frontend");
         run(Command::new("bun").arg("install").current_dir(&frontend))?;
         run(Command::new("bun")
             .args(["run", "build"])
             .current_dir(&frontend))?;
 
+        let pandoc = if with_pandoc {
+            Some(pandoc_deb(progress, repo, deb_arch).await?)
+        } else {
+            None
+        };
+
+        progress.part("Packing");
         let contents = TempDir::new()?;
         let dir = contents.path();
         fs::copy(
             repo.join("target")
-                .join(target)
+                .join(triple)
                 .join("release/spares_server"),
             dir.join("spares_server"),
         )
@@ -99,8 +130,7 @@ impl Bundle {
             .arg("-R")
             .arg(frontend.join("dist"))
             .arg(dir.join("frontend")))?;
-        if with_pandoc {
-            let pandoc = pandoc_deb(repo, deb_arch).await?;
+        if let Some(pandoc) = pandoc {
             fs::copy(pandoc, dir.join("pandoc.deb")).into_diagnostic()?;
         }
 
@@ -113,33 +143,25 @@ impl Bundle {
             .arg(dir)
             .arg(".")
             .env("COPYFILE_DISABLE", "1"))?;
-        let size = fs::metadata(bundle.path()).into_diagnostic()?.len();
-        #[allow(clippy::cast_precision_loss)]
-        let megabytes = size as f64 / 1_000_000.0;
-        println!("Built {megabytes:.1} MB to upload.");
         Ok(bundle)
     }
 }
 
 /// The pandoc package that `setup_vps.sh` installs (its `PANDOC_VERSION`), downloaded once into
 /// the cache.
-async fn pandoc_deb(repo: &Path, deb_arch: &str) -> Result<PathBuf, Error> {
+async fn pandoc_deb(progress: &Progress, repo: &Path, deb_arch: &str) -> Result<PathBuf, Error> {
     let setup = fs::read_to_string(repo.join("scripts/setup_vps.sh")).into_diagnostic()?;
     let version = setup
         .lines()
         .find_map(|line| line.strip_prefix("PANDOC_VERSION=\"")?.strip_suffix('"'))
         .ok_or_else(|| miette!("No PANDOC_VERSION in setup_vps.sh."))?;
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
-        .ok_or_else(|| miette!("HOME is not set."))?
-        .join("spares-deploy");
+    let cache = super::cache_dir().ok_or_else(|| miette!("HOME is not set."))?;
     let cached = cache.join(format!("pandoc-{version}-{deb_arch}.deb"));
     if !cached.is_file() {
         let url = format!(
             "https://github.com/jgm/pandoc/releases/download/{version}/pandoc-{version}-1-{deb_arch}.deb"
         );
-        println!("Downloading {url}");
+        progress.part(&format!("Downloading pandoc {version}"));
         let bytes = reqwest::get(&url)
             .await
             .and_then(reqwest::Response::error_for_status)
