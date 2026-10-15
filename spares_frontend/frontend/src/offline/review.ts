@@ -18,6 +18,7 @@ import {
   syncOfflineActions,
 } from '../api/client';
 import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter } from '../types/spares';
+import { lastReviewWidth, widthInputs } from '../typst/width';
 import { backPath, backWebPath } from '../utils';
 import {
   addPendingAction,
@@ -346,6 +347,19 @@ export async function nextOfflineCard(key: string, now: Date = new Date()): Prom
     cards_left_by_state: cardsLeftByState,
     time_estimate: Math.round(due.length * queue.secondsPerCard),
   };
+}
+
+/**
+ * Compiles both sides of the next card in the queue for `key`, at the width review cards were last
+ * shown at, so that the card shows at once if the server gives it next.
+ */
+export async function precompileNextCard(key: string): Promise<void> {
+  const width = lastReviewWidth();
+  const card = width === null ? null : await nextOfflineCard(key);
+  if (width === null || !card?.browser_sources) return;
+  const { precompileTypst } = await import('../typst/compiler');
+  const inputs = widthInputs(width);
+  await Promise.all([precompileTypst(card.browser_sources.card_front, inputs), precompileTypst(card.browser_sources.card_back, inputs)]);
 }
 
 /** Puts a card back at the front of the queue for `key`, e.g. after its rating was undone. */
