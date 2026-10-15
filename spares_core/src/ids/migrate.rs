@@ -1,8 +1,16 @@
 //! `spares migrate ids`: renumbers a database's notes from the old numeric ids to letter ids, once,
-//! before a second replica exists. See "The migration" in `docs/src/sync_design.md`.
+//! before a second replica exists (see [`super`] for the id scheme).
 //!
 //! Notes keep their order: the oldest gets `aaa`, the next `aab`, and so on through consecutive
-//! laptop slots, so slot `z` stays free in every block for the server.
+//! laptop slots, so slot `z` stays free in every block for the server. The existing notes took
+//! `aaa` to `giq`.
+//!
+//! It rewrites every reference (cards, tags, keywords, links, `inh:` references, tag queries),
+//! empties the undo history, regenerates note and card files (with `git mv` in the notes
+//! repository, so `git log --follow` works), rewrites the `spares sync` hash index, clears render
+//! caches and writes [`super::ID_MAP_FILE_NAME`]. The server refuses to start on an unmigrated
+//! database. The Anki collection keeps the old numeric ids, so re-importing from Anki would add
+//! those notes as new ones.
 //!
 //! The database is rewritten in one transaction ([`rewrite_database`]). Files are regenerated from
 //! it afterwards ([`regenerate_files`]); `app_state` records that this is still to do, so rerunning

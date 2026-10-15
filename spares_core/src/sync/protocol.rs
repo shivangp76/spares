@@ -1,4 +1,26 @@
 //! Requests and responses between the client and the server (`/api/sync/*`).
+//!
+//! There is no chunking, since there are only two replicas. A normal sync:
+//!
+//! 1. **`meta`**. The client refuses to sync if the clocks differ by more than 5 minutes, the
+//!    schema versions differ, both sides have the same replica number, or the roles aren't one
+//!    `client` and one `server`. It requires a full sync (412, with the reason) if it has never
+//!    synced, `needs_full_sync` is set, the server's epoch changed (another full upload replaced
+//!    it), its last usn is ahead of the server's (server restored from a backup), or behind what
+//!    `sync_client` recorded for it (client restored from a backup).
+//! 2. **`pull {since}`**. The server stamps everything changed on it since its last stamp (phone
+//!    edits included) with `usn + 1`, and returns rows with `usn > since`, plus every card of each
+//!    changed note.
+//! 3. The client merges in one local transaction ([`super::client`]), then **`push`**es everything
+//!    dirty. The server answers 409 if anything changed on it since the pull (a phone edit while
+//!    the client merged); the client rolls back and starts over, up to 3 times. Otherwise the
+//!    server applies the changes in one transaction (foreign keys deferred), stamps them, records
+//!    the client in `sync_client`, and returns the new usn and row counts.
+//! 4. The client stamps its dirty rows, clears its graves and bases, compares counts and commits.
+//!    If the counts differ, it rolls back and sets `needs_full_sync`.
+//!
+//! **Crash safety:** if the client fails after the server committed a push, the next pull returns
+//! the client's own changes, which match its still-dirty rows and merge to themselves.
 
 use serde::Deserialize;
 use serde::Serialize;
