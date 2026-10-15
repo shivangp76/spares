@@ -56,6 +56,74 @@ confirm() {
 }
 spares() { (cd "$REPO" && RUSTFLAGS=-Awarnings cargo run --quiet --bin spares -- "$@"); }
 
+# Passes its input through to the terminal, with a progress bar pinned to the last line: `cmd |
+# status_bar <step>...`. The bar starts at the first step and moves to the step whose title starts
+# the latest "==> " line of the input, so steps that never come are skipped. It reads and writes as
+# the data comes, not by lines, so prompts without a newline (e.g. sudo's) still show.
+status_bar() {
+  if [[ ! -t 1 ]]; then cat; return; fi
+  # shellcheck disable=SC2016 # perl, not shell
+  perl -e '
+    use strict; use warnings;
+    my @steps = @ARGV;
+    my ($rows, $cols, $step, $line, $resized) = (24, 80, 0, "", 0);
+    my $start = time;
+    sub out { syswrite STDOUT, $_[0] }
+    sub size {
+      my $size = `stty size </dev/tty 2>/dev/null`;
+      ($rows, $cols) = ($1, $2) if $size =~ /(\d+) (\d+)/;
+    }
+    # Scrolls the output above the last line, keeping the cursor where it is
+    sub region { out("\e7\e[1;" . ($rows - 1) . "r\e8") }
+    sub draw {
+      my $elapsed = time - $start;
+      my $width = 20;
+      my $filled = int($width * $step / @steps);
+      my $label = sprintf " %d/%d %s  %d:%02d", $step + 1, scalar @steps, $steps[$step],
+        $elapsed / 60, $elapsed % 60;
+      $label = substr($label, 0, $cols - $width - 1) if length($label) > $cols - $width - 1;
+      out("\e7\e[$rows;1H\e[2K\e[1m" . ("\xe2\x96\x88" x $filled) . "\e[2m"
+        . ("\xe2\x96\x91" x ($width - $filled)) . "\e[0m$label\e8");
+    }
+    my $cleaned = 0;
+    sub cleanup {
+      return if $cleaned++;
+      out("\e7\e[r\e8\e7\e[$rows;1H\e[2K\e8");
+    }
+    $SIG{WINCH} = sub { $resized = 1 };
+    $SIG{$_} = sub { cleanup(); exit 130 } for qw(INT TERM HUP);
+    size();
+    # Makes room for the bar if the cursor is on the last line
+    out("\n\e[1A");
+    region();
+    draw();
+    my $in = "";
+    vec($in, fileno(STDIN), 1) = 1;
+    while (1) {
+      if ($resized) { $resized = 0; size(); region(); draw(); }
+      my $ready = select(my $r = $in, undef, undef, 1);
+      if ($ready < 0) { next if $!{EINTR}; last; }
+      if ($ready == 0) { draw(); next; }
+      my $n = sysread STDIN, my $data, 65536;
+      next if !defined $n && $!{EINTR};
+      last if !$n;
+      out($data);
+      $line .= $data;
+      my @lines = split /\n/, $line, -1;
+      $line = substr(pop @lines, -1000);
+      for (@lines) {
+        s/\r//g;
+        next unless /^==> (.*)/;
+        my $title = $1;
+        for my $i ($step .. $#steps) {
+          if (index($title, $steps[$i]) == 0) { $step = $i; draw(); last; }
+        }
+      }
+    }
+    cleanup();
+  ' "$@"
+}
+
 # Matches the header of the [sync] table of config.toml. Passed to awk through the environment,
 # since `awk -v` would interpret its backslashes.
 SYNC_HEADER='^[[:space:]]*\[sync\][[:space:]]*(#.*)?$'
@@ -376,13 +444,16 @@ update() {
   bundle="$(mktemp -d)/spares-bundle.tar.gz"
   build_bundle "$remote_host" "$bundle" "$([[ "$no_latex" == true ]] && echo false || echo true)"
   bold "Updating $remote_host"
-  upload "$REPO/scripts/setup_vps.sh" "$bundle" "$remote_host:/tmp/"
-  rm -rf "$(dirname "$bundle")"
   # Kept in step with this machine's, e.g. after moving
   timezone="$(local_timezone)"
-  # shellcheck disable=SC2016 # expanded there
-  remote -t "$remote_host" "sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz${timezone:+ --timezone $(printf %q "$timezone")};"'
-    status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status'
+  {
+    upload "$REPO/scripts/setup_vps.sh" "$bundle" "$remote_host:/tmp/"
+    rm -rf "$(dirname "$bundle")"
+    # shellcheck disable=SC2016 # expanded there
+    remote -t "$remote_host" "sudo bash /tmp/setup_vps.sh --bundle /tmp/spares-bundle.tar.gz${timezone:+ --timezone $(printf %q "$timezone")};"'
+      status=$?; rm -f /tmp/setup_vps.sh /tmp/spares-bundle.tar.gz; exit $status'
+  } | status_bar "Uploading" "Setting the time zone" "Installing packages" "Installing pandoc" \
+    "Adding" "Installing the bundled spares" "Configuring" "Setting up"
   echo "Restart spares_serve here too, so both sides run the same version."
 }
 
