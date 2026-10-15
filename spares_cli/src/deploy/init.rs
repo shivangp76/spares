@@ -29,6 +29,7 @@ use sqlx::sqlite::SqlitePool;
 
 use super::bundle::Bundle;
 use super::bundle::REMOTE_DIR;
+use super::bundle::Server;
 use super::bundle::Target;
 use super::local_timezone;
 use super::progress::Progress;
@@ -106,7 +107,6 @@ pub(super) async fn init(
     let root = format!("root@{server}");
     let mut steps = vec![
         "Backing up the database",
-        "Connecting",
         "Building",
         "Uploading",
         "Setting up the server",
@@ -132,15 +132,19 @@ pub(super) async fn init(
         .map_err(|e| miette!("Failed to back up the database: {e}"))?;
     println!("Saved {}", backup.display());
 
-    progress.step("Connecting", &format!("to {root}"));
-    // For uploading the bundle, before setup_vps.sh installs it. Fresh Debian images lack it.
-    ssh.output(
-        &root,
-        "command -v rsync >/dev/null || \
-         { apt-get update -qq && apt-get install -y -qq rsync; } >&2",
-    )?;
-    let target = Target::of(&ssh, &root)?;
-    let bundle = Bundle::build(&progress, &repo, target, !no_latex).await?;
+    let bundle = Bundle::build(&progress, &repo, &root, || {
+        // rsync uploads the bundle, before setup_vps.sh installs it. Fresh Debian images lack it.
+        let arch = ssh.output(
+            &root,
+            "command -v rsync >/dev/null || \
+             { apt-get update -qq && apt-get install -y -qq rsync; } >&2; uname -m",
+        )?;
+        Ok(Server {
+            target: Target::of_arch(&arch)?,
+            with_pandoc: !no_latex,
+        })
+    })
+    .await?;
 
     progress.step("Uploading", &format!("to {root}"));
     upload(&ssh, &bundle, &root)?;
