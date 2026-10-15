@@ -190,7 +190,7 @@ pub(super) async fn init(
         &root,
         &format!("bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\" {args}"),
     ]);
-    progress.run(command)?;
+    progress.run(command, None)?;
 
     let url = ssh.output(&root, "cat /etc/spares/url")?;
     let api_key = ssh.output(

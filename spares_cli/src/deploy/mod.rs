@@ -17,11 +17,14 @@ use bundle::Target;
 use clap::Args;
 use clap::Subcommand;
 use colored::Colorize;
+use inquire::Password;
+use inquire::PasswordDisplayMode;
 use miette::Error;
 use miette::miette;
 use progress::Progress;
 use shell::Ssh;
 use shell::quote;
+use shell::warn;
 use spares_core::config::EnvironmentConfig;
 use spares_core::config::read_external_config;
 
@@ -42,7 +45,8 @@ pub(crate) enum DeployCommands {
     /// 1. backs up the database;
     ///
     /// 2. builds spares for the server and runs `setup_vps.sh` there as root, which creates the
-    ///    user, asks for its sudo password and, if needed, prints a link to join your tailnet;
+    ///    user (with sudo there without a password) and, if needed, prints a link to join your
+    ///    tailnet;
     ///
     /// 3. stores the server's API key in the Keychain, and sets `remote_host`, `url` and
     ///    `interval_minutes` in the [sync] table of config.toml;
@@ -68,6 +72,9 @@ pub(crate) enum DeployCommands {
         no_latex: bool,
     },
     /// Builds this checkout and installs it on the server (with sudo there).
+    ///
+    /// The server lets your user use sudo without a password. If it does not yet (set up before
+    /// it did), this asks for the password first, so the rest runs unattended.
     ///
     /// Restart the local server at the same time: the two refuse to sync across database
     /// versions.
@@ -117,6 +124,7 @@ async fn update() -> Result<(), Error> {
         miette!("sync.remote_host is not set in config.toml. Run `spares deploy init` first.")
     })?;
     let ssh = Ssh::new();
+    let sudo_password = sudo_password(&ssh, &remote_host)?;
     let progress = Progress::start("update", &["Building", "Uploading", "Installing"]);
     let bundle = Bundle::build(&progress, &repo, &remote_host, || {
         let output = ssh.output(
@@ -138,13 +146,17 @@ async fn update() -> Result<(), Error> {
         .map(|zone| format!(" --timezone {}", quote(&zone)))
         .unwrap_or_default();
     progress.step("Installing", &format!("on {remote_host}"));
+    // With the password asked for at the start, on standard input, so this does not wait for it
+    let (sudo, input) = match &sudo_password {
+        Some(password) => ("sudo -S -p ''", Some(format!("{password}\n"))),
+        None => ("sudo -n", None),
+    };
     let mut command = ssh.command();
     command.args([
-        "-t",
         &remote_host,
-        &format!("sudo bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone}"),
+        &format!("{sudo} bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone}"),
     ]);
-    progress.run(command)?;
+    progress.run(command, input.as_deref())?;
     progress.end_step();
     println!(
         "\n{}",
@@ -152,6 +164,31 @@ async fn update() -> Result<(), Error> {
     );
     progress.finish();
     Ok(())
+}
+
+/// The password of the user's sudo on `host` (as user@host), asked for and checked before the
+/// update starts so that it can run unattended. `None` if sudo needs none there, as on servers set
+/// up since `setup_vps.sh` allows that.
+fn sudo_password(ssh: &Ssh, host: &str) -> Result<Option<String>, Error> {
+    if ssh.output(host, "sudo -n true 2>/dev/null && echo yes || true")? == "yes" {
+        return Ok(None);
+    }
+    for _ in 0..3 {
+        let password = Password::new(&format!("Your sudo password on {host}:"))
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Hidden)
+            .prompt()
+            .map_err(|e| miette!("{e}"))?;
+        if ssh.succeeds_with_input(
+            host,
+            "sudo -k -S -p '' true 2>/dev/null",
+            &format!("{password}\n"),
+        )? {
+            return Ok(Some(password));
+        }
+        warn("Sorry, try again.");
+    }
+    Err(miette!("Wrong sudo password on {host}."))
 }
 
 /// Copies `bundle` to [`REMOTE_DIR`] on `server` (as user@host), sending only what changed since

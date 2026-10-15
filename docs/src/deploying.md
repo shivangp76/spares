@@ -75,7 +75,7 @@ It takes 10–15 minutes. What it does, and what it asks:
 
 1. **Backs up your database** to `~/.local/share/spares/spares-main.before-deploy-<time>.sqlite`.
 2. **Builds** spares for the server and the web app, and uploads them with `setup_vps.sh` (about 50 MB) to `~/.cache/spares-bundle` on the server. It keeps that copy, so later deploys send only what changed.
-3. **Sets up the server** as root: your user (it asks you to choose a **sudo password** for it, needed for `sudo` on the server later), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS.
+3. **Sets up the server** as root: your user (who can use `sudo` on the server without a password), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS.
    - **The first time on a tailnet**, Tailscale prints a link to enable HTTPS (`https://login.tailscale.com/f/serve?node=...`) and waits. Open it and enable **HTTPS**. **Don't enable Funnel**, which would put the server on the public internet.
 4. **Sets up the laptop:**
    - stores the server's API key in the Keychain (service `spares-sync`);
@@ -103,7 +103,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 - **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It asks for your sudo password on the server, and sets the server's time zone to the laptop's again, e.g. after you move.
+- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server

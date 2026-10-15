@@ -260,13 +260,23 @@ impl Progress {
 
     /// Runs `command`, passing its output through to the terminal, and makes each "==> " line of
     /// its standard output a part of the step running. It passes the output on as it comes, not by
-    /// lines, so prompts without a newline (e.g. sudo's) still show.
-    pub(super) fn run(&self, mut command: Command) -> Result<(), Error> {
+    /// lines, so prompts without a newline (e.g. sudo's) still show. With `input`, that is its
+    /// standard input instead of the terminal's.
+    pub(super) fn run(&self, mut command: Command, input: Option<&str>) -> Result<(), Error> {
         let program = command.get_program().to_string_lossy().into_owned();
+        if input.is_some() {
+            command.stdin(Stdio::piped());
+        }
         let mut child = command
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| miette!("Could not run {program}: {e}"))?;
+        if let Some(input) = input {
+            let mut stdin = child.stdin.take().expect("piped");
+            stdin
+                .write_all(input.as_bytes())
+                .map_err(|e| miette!("Could not write to {program}: {e}"))?;
+        }
         let mut stdout = child.stdout.take().expect("piped");
         let mut lines = StepLines::default();
         let mut buffer = vec![0; 65536];
