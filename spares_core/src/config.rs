@@ -640,9 +640,10 @@ pub struct SparesExternalConfig {
     /// in review with a short interval instead.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub relearning_steps: Vec<Duration>,
-    /// The FSRS model's parameters: 21 for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5. Empty to
-    /// use the FSRS-6 defaults. `spares card optimize --apply` sets these from your review
-    /// history.
+    /// The FSRS model's parameters: 21 for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5, so
+    /// parameters from Anki work too. Empty to use the FSRS-6 defaults, which are fitted to many
+    /// people's reviews. `spares card optimize --apply` sets these from your review history. Run
+    /// `spares card reschedule` after changing them by hand.
     pub fsrs_parameters: Vec<f32>,
     /// Spread reviews so that each day has a similar number of cards due, in proportion to its
     /// easy-day workload percentage.

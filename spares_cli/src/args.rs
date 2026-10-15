@@ -366,9 +366,32 @@ pub(crate) enum CardCommands {
     Postpone(PostponeArgs),
     /// Recompute every card's memory state and due date from its review history (run after
     /// changing the scheduler, its parameters, learning steps or easy days)
+    ///
+    /// Changing these settings only affects cards as they are next rated. This applies the change
+    /// to every card now: it replays each card's review history to recompute its memory state,
+    /// then places it again with the load balancing, sibling dispersal and easy days settings.
+    /// Suspended and buried cards are included and keep their state.
+    ///
+    /// It always reschedules every card; there is no `--query`. Cards are placed one at a time,
+    /// each seeing the due dates already given to the others, so rescheduling only some of them
+    /// would leave the load spread across days unbalanced.
+    ///
+    /// It cannot be undone, so it asks for confirmation.
     Reschedule(RescheduleArgs),
     /// Fit the scheduler's parameters to your review history and compare them with the current
     /// ones. Use `--apply` to save them and reschedule every card.
+    ///
+    /// Once you have a few hundred reviews, parameters fitted to your own history usually predict
+    /// your memory better than the defaults. This prints the fitted parameters next to two
+    /// measures of how well each set predicts the reviews you actually did, where lower is better:
+    /// the log loss, and the RMSE between predicted and actual recall rates. Only reviews on a
+    /// later day than the card's previous review count, and cards whose history was cut short by
+    /// an import are skipped. Without `--apply`, it does not change anything.
+    ///
+    /// With `--apply`, the parameters are saved to `fsrs_parameters` in config.toml only if they
+    /// predict your reviews better than the current ones, and every card is rescheduled. Like
+    /// `spares card reschedule`, this cannot be undone, so it asks for confirmation. Optimizing
+    /// again every month or so keeps the parameters in step with your history.
     Optimize(OptimizeArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
