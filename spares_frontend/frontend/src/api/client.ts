@@ -319,6 +319,15 @@ export async function uploadImage(parserId: number, image: File): Promise<{ path
   return res.json();
 }
 
+/** Has the server download and store an image dragged from a web page, which browsers hand over
+    by URL only. Like `uploadImage`, `snippet` shows it in the parser's syntax. */
+export async function uploadImageUrl(parserId: number, url: string): Promise<{ path: string; snippet: string }> {
+  return apiFetch('Download image', '/api/images/url', {
+    method: 'POST',
+    body: JSON.stringify({ parser_id: parserId, url }),
+  });
+}
+
 /** A file of a stored image occlusion, by the absolute path a note refers to it by. */
 export async function fetchImageOcclusionFile(path: string): Promise<Blob> {
   const res = await apiSend('Image occlusion file', `/api/image-occlusions/file?path=${encodeURIComponent(path)}`);

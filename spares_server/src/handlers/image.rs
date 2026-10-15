@@ -4,15 +4,18 @@ use axum::Json;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use serde::Deserialize;
 use serde_json::json;
+use spares_core::api::image::MAX_IMAGE_SIZE;
 use spares_core::api::image::create_image;
+use spares_core::api::image::create_image_from_url;
 use spares_core::parsers::get_all_parsers;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
 
-/// Pasted screenshots and dropped photos can be large.
-pub(crate) const IMAGE_BODY_LIMIT: usize = 64 * 1024 * 1024;
+/// Pasted screenshots and dropped photos can be large. Room is left for the multipart framing.
+pub(crate) const IMAGE_BODY_LIMIT: usize = MAX_IMAGE_SIZE + 1024 * 1024;
 
 fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::BAD_REQUEST, Json(json!({ "message": message })))
@@ -65,5 +68,22 @@ pub(crate) async fn create_image_handler(
     )
     .await
     .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CreateImageFromUrlRequest {
+    parser_id: i64,
+    url: String,
+}
+
+/// For images dragged from a web page, which browsers hand over by URL only.
+pub(crate) async fn create_image_from_url_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<CreateImageFromUrlRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let result = create_image_from_url(&data.db, body.parser_id, &body.url, &get_all_parsers())
+        .await
+        .map_err(error_to_response)?;
     Ok(Json(result))
 }

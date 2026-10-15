@@ -129,3 +129,16 @@ export function imageUploadName(file: { name: string; type: string }): string | 
   if (!extension) return null;
   return `${(match ? match[1] : file.name) || 'image'}.${extension}`;
 }
+
+/** The URL of the image in HTML dragged from a web page, which is all some browsers hand over for
+    it. `null` if the HTML has no image with an http, https or data URL. */
+export function draggedImageUrl(html: string): string | null {
+  const match = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(html);
+  const src = match ? (match[1] ?? match[2] ?? match[3]).replace(/&amp;/g, '&') : null;
+  if (!src) return null;
+  try {
+    return ['http:', 'https:', 'data:'].includes(new URL(src).protocol) ? src : null;
+  } catch {
+    return null;
+  }
+}

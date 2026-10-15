@@ -23,6 +23,7 @@ use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
 use crate::handlers::image::IMAGE_BODY_LIMIT;
+use crate::handlers::image::create_image_from_url_handler;
 use crate::handlers::image::create_image_handler;
 use crate::handlers::image_occlusion::IMAGE_OCCLUSION_BODY_LIMIT;
 use crate::handlers::image_occlusion::create_image_occlusion_handler;
@@ -100,6 +101,7 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
             "/api/images",
             post(create_image_handler).layer(DefaultBodyLimit::max(IMAGE_BODY_LIMIT)),
         )
+        .route("/api/images/url", post(create_image_from_url_handler))
         .route(
             "/api/image-occlusions/editor-config",
             get(get_image_occlusion_editor_config_handler),
