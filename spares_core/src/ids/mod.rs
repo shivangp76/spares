@@ -1,20 +1,158 @@
 //! Note ids: short lowercase letter strings (`gir`, `giza`) that are unique across replicas without
-//! coordination, sort in creation order, and keep notes created together next to each other. See
-//! "Note ids" in `docs/src/sync_design.md` for the reasoning.
+//! coordination, sort in creation order, and keep notes created together next to each other.
 //!
-//! An id is stored as an `i64`: its letters read as a base-27 number left-aligned to
-//! [`MAX_LETTERS`] places (`a` = 1 … `z` = 26, an empty place = 0). Comparing the integers
-//! therefore compares the strings, whatever their lengths, and the database schema and the JSON
-//! wire format keep using integers.
+//! # Requirements
 //!
-//! Ids are handed out by [`allocate_note_ids`]:
-//! - **Blocks** are consecutive letter runs `aa`, `ab`, …, `sz`, `taa`, …, whose first letter decides
-//!   their length (see [`block_len`]).
-//! - The laptop (replica 0) writes `<block><slot>`, with slots `a`–`y`.
-//! - The server (replica 1) writes `<block>z<tail>`, after the laptop's notes in the newest block it
-//!   has seen.
+//! 1. **Unique without coordination**, so an offline laptop can still create notes.
+//! 2. **Short.** Laptop-created notes get 3 letters for roughly the next 6,000 notes (4–7 years at
+//!    the current rate), then 4 letters for decades. Notes created on the web get one more letter.
+//!    No id is longer than 8 letters. No scheme can keep 3 letters much longer: there are only
+//!    17,576 of them, and the 4,117 notes that existed at the migration take a quarter.
+//! 3. **Letters only.** macOS Finder sorts runs of digits as numbers, so mixed letters and digits
+//!    would sort wrongly, and the phone needs no number keyboard.
+//! 4. **Lowercase only**, which is safe on case-insensitive file systems. Input is accepted in any
+//!    case, because phone keyboards capitalize the first letter.
+//! 5. **Notes imported together sort next to each other**, even when the other replica creates
+//!    notes at the same time, so related notes can be browsed with the arrow keys.
+//! 6. **Ids follow creation order across devices.** A note created after a sync sorts after
+//!    everything either side created before that sync. Notes created on both sides while out of
+//!    sync are ordered by position rather than time.
+//! 7. **Never reused**, even after a delete or an undo.
+//! 8. **Derived from the data, not the clock**, so clock changes and full syncs can't break it.
 //!
-//! No id is the start of another, so sorting the strings sorts by block, then slot, then tail.
+//! # Format
+//!
+//! ```text
+//! laptop:  <block><slot>          e.g. block "gi" + slot "r"        → "gir"
+//! server:  <block>z<tail>         e.g. block "gi" + "z" + tail "a"  → "giza"
+//! ```
+//!
+//! - **Blocks** are consecutive letter runs: `aa`, `ab`, …, `az`, `ba`, …. Each block has 25 laptop
+//!   slots, `a`–`y`. **`z` is reserved for the server**, so the server's notes in a block sort after
+//!   the laptop's.
+//! - **The first letter decides the block's length** ([`block_len`]), so blocks grow instead of
+//!   running out:
+//!
+//!   | First letter | Block | Laptop id | Server id | Laptop slots |
+//!   |---|---|---|---|---|
+//!   | `a`–`s` | 2 letters | 3 | 4 | 12,350 |
+//!   | `t`–`x` | 3 letters | 4 | 5 | 84,500 |
+//!   | `y` | 4 letters | 5 | 6 | 439,400 |
+//!   | `z` | 5 letters | 6 | 7 | 11.4 million |
+//!
+//! - **The tail** (server only) is 1 letter (`a`–`y`) for the server's first 25 notes in a block,
+//!   then `z` + 2 letters for the next 650.
+//! - **No id is the start of another.** No block is the start of another block, and after its block
+//!   a laptop id has `a`–`y` where a server id has `z`. So sorting the strings sorts by block, then
+//!   slot, then tail, in both byte order and Finder's order (`localizedStandardCompare`, checked on
+//!   names like `giy.typ`, `giza.typ`, `gizzaa.typ`, `gja.typ`, `taaa.typ`).
+//! - Creation time stays in `created_at`.
+//!
+//! # Allocation
+//!
+//! Each replica keeps a cursor, the last note id it handed out (see [the high-water
+//! mark](#the-high-water-mark)). **M** is the larger of the cursor and the largest note id in the
+//! table: the newest note this replica has created or seen.
+//!
+//! - **The laptop takes the next free slots after M:** `gir`, `gis`, …, `giy`, `gja`, ….
+//!   - If M is a server note (`giza`), the next slot is the start of the next block (`gja`).
+//!   - **A call that doesn't fit in what's left of the current block starts at the next block**,
+//!     then fills as many blocks as it needs. An import of 60 notes takes `gja`–`gjy`,
+//!     `gka`–`gky`, `gla`–`glj`, all 3 letters.
+//! - **The server takes the next tail ids after M.** Its first note goes after the newest note it
+//!   has seen (`giq` → `giza`), later ones follow (`gizb`, …) until it sees a newer laptop note.
+//!   The server never writes into a block it hasn't seen a note in.
+//!
+//! Why this meets the requirements:
+//! - **Unique:** each side writes only its own form, and its cursor never goes back.
+//! - **Imports stay together:** the only foreign ids that can sort inside a laptop import are
+//!   server tails of the blocks it fills. The server writes only into the tail of the newest block
+//!   it has seen. An import that crosses a block boundary starts in a fresh block, so the server
+//!   sees none of its blocks until it has all of them, and then writes after the last one. A server
+//!   call is one run of tail ids.
+//! - **Creation order:** both sides always allocate above M, and after a sync M covers everything
+//!   the other side created before it.
+//!
+//! **Cost.** Skipped slots are lost for good: the rest of a block when a call doesn't fit (about
+//! 15% of slots on the real history), and the rest of the laptop's block each time it resumes
+//! after seeing a web-created note (about 12 slots each). Replaying the 2025–2026 creation history
+//! at 1,000–1,500 notes a year with up to 25 web-created notes a year, laptop ids stay 3 letters
+//! for 4–7 more years, then 4 letters for about 45–75 years. At 100 web-created notes a year, 3
+//! letters last 2.5–3.5 years.
+//!
+//! [`allocate_note_ids`] gets all of a call's notes at once, so an import gets one run of ids. Undo
+//! and redo replay the ids stored in the event and don't allocate. Allocation returns an error
+//! rather than produce a 9th letter, which only a server creating hundreds of notes in one block
+//! without seeing a newer laptop note could reach.
+//!
+//! Only replicas `0` and `1` have note id rules; allocation refuses any other. How a third replica
+//! would fit in is in `docs/sync_plan.md`.
+//!
+//! # The high-water mark
+//!
+//! "Largest id in the table + 1" hands out a deleted note's id again once the newest notes are
+//! deleted. Two unrelated notes would then share one file path in the notes repository's history,
+//! "create, undo, create, redo" would fail on the primary key, and sync would carry a grave and a
+//! new note with the same id.
+//!
+//! So `id_counter(replica, tbl, last)` stores, per replica and table, the largest id that replica
+//! ever handed out. Deletes never lower it. It's keyed by replica because full syncs copy the
+//! whole database, including the other side's rows. The next id starts from
+//! `max(last, largest in the table)`, which counts ids that arrived from the other replica.
+//!
+//! - **Locking.** The allocation's first statement is a no-op write on its `id_counter` row, so the
+//!   transaction takes SQLite's write lock before it reads the table's maximum. With sqlx's default
+//!   deferred transaction, reading first would let two concurrent creates read the same maximum.
+//! - **A full sync never lowers the receiving replica's own counter.** `id_counter` rows are merged
+//!   by taking the larger value. Otherwise a full download could make the laptop hand out again an
+//!   id it allocated and deleted before the sync.
+//!
+//! # Storage
+//!
+//! Ids stay `INTEGER PRIMARY KEY`. The letters are stored as a base-27 number left-aligned to
+//! [`MAX_LETTERS`] places: a letter is its position + 1 (`a` = 1 … `z` = 26), and an empty place
+//! is 0. So `gir` is 7·27⁷ + 9·27⁶ + 18·27⁵.
+//!
+//! - Comparing the integers compares the strings, whatever their lengths, and the database schema
+//!   and JSON wire format keep integers.
+//! - The packing doesn't depend on blocks or tails, so the allocation rules can change without
+//!   touching stored ids, and decoding (frontend, nvim) needs no knowledge of them.
+//! - The largest value, `zzzzzzzz` ([`MAX_PACKED`]), is 27⁸ − 1 (39 bits), exact as a JS or Lua
+//!   number. The frontend must decode with division and `Math.floor`, since JS `>>` works on 32
+//!   bits.
+//! - The smallest id, `a` ([`MIN_PACKED`]), is 27⁷, far above the old numeric ids, so a note id
+//!   below 27⁷ can only be unmigrated. No valid id packs to `0`, so there are no sentinel ids.
+//! - [`NoteId`] is a newtype; other ids stay `i64`. Any letter string parses, whether or not the
+//!   allocator could produce it. Digits are rejected, with a hint to look the old id up in
+//!   [`ID_MAP_FILE_NAME`].
+//!
+//! # Other tables
+//!
+//! Cards, review logs, tags and parsers have no human-facing requirement, but still need ids
+//! unique across replicas. New rows take the smallest id above `max(high-water marks, MAX(id))`
+//! that is congruent to `SPARES_REPLICA` mod [`ID_STEP`] ([`next_ids`]).
+//!
+//! - The modulus is fixed at 8, not the current replica count, so adding a replica never changes
+//!   the rule for existing ones. Wasting 7/8 of the numbers costs nothing, since these ids are
+//!   never shown.
+//! - Existing rows kept their ids when note ids were migrated, so review logs, the phone's offline
+//!   queue and undo payloads still refer to the right cards.
+//! - `note_tag`, `card_tag`, `note_link` and `note_keyword` keep SQLite's own row ids. They are
+//!   identified by their parent row and contents.
+//!
+//! # Alternatives considered
+//!
+//! - **Batches of 26** (the scheme this replaced): every existing note and every new single note
+//!   was 4 letters, imports over 26 notes (half of the notes created since 2025) were 5, every call
+//!   took a whole batch even for one note, and parity reserved half the batches for a server that
+//!   rarely creates notes.
+//! - **Keeping the laptop in its block after it sees a web note** (`giq`, then phone `giza`, then
+//!   laptop `gir` rather than `gja`). It would remove the ~12 slots lost per web note (a year more
+//!   of 3-letter ids at 25 web notes a year), but the web note would sort after laptop notes
+//!   created later, breaking requirement 6.
+//! - **No vowels (base 21)**, so ids never spell words, including rude ones. It makes ids longer.
+//!   If some ids turn out annoying, the allocator can skip a denylist of slots at any time; a
+//!   skipped slot costs capacity, never correctness.
 
 pub mod migrate;
 
@@ -340,7 +478,7 @@ fn ids_after(replica: Replica, newest: Option<NoteId>, n: usize) -> Result<Vec<N
         number => {
             return Err(note_error(format!(
                 "Replica {number} cannot create notes yet: only replicas 0 (laptop) and 1 (server) \
-                 have note id rules. See \"A third replica\" in docs/src/sync_design.md."
+                 have note id rules. See \"A third replica\" in docs/sync_plan.md."
             )));
         }
     };

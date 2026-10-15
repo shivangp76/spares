@@ -5,6 +5,9 @@
 //! Rows are written parents first and deleted children first, so foreign keys hold after every
 //! statement. Upserts use `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`, which deletes the
 //! old row first and so cascades to its children.
+//!
+//! Incoming notes' `live_block_order` is cleared before notes are written, so two live notes
+//! swapping block orders in one sync don't trip the unique index.
 
 use std::collections::BTreeSet;
 

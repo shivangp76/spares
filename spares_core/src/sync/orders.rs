@@ -5,6 +5,13 @@
 //! conflict. So before merging, each side's orders are replaced with the ids of the cards they
 //! name on that side ([`to_card_ids`]); a cloze that only moved then reads the same on both
 //! sides, and the merged text says directly which card each cloze keeps ([`from_card_ids`]).
+//!
+//! The base's orders are read with the cards in `sync_base`, which is why a deleted card's base is
+//! kept. After the merge, `reconcile_cards` (in [`super::client`]) gives each cloze the card its
+//! merged text names, else the card with its cloze uid, else the card in its place; cards nothing
+//! names are deleted, clozes without a card get new ones, and the text is written back with
+//! sequential orders. `spares sync conflicts` shows diffs the same way (`o:c40`), so a cloze that
+//! only moved reads the same.
 
 use std::collections::HashMap;
 use std::ops::Range;

@@ -2,7 +2,16 @@
 //!
 //! The incoming database is copied in table by table from an attached snapshot, in one
 //! transaction, rather than by swapping the database file, so it works while the server has the
-//! database open.
+//! database open. The snapshot is made with `VACUUM INTO`, and its integrity and schema version
+//! are checked first. Afterwards every row has `usn = 0`, and graves, bases and undo history are
+//! cleared.
+//!
+//! - **Upload:** the client marks everything synced and sets `needs_full_sync` until the upload
+//!   succeeds. Edits made during the upload stay dirty, with what was uploaded as their base. The
+//!   server gets a new epoch, so any other client must full sync too.
+//! - **Download:** the client continues from the `sync_usn` and epoch in the server's snapshot.
+//!   Rows that were dirty on the server are stamped and sent again on the next pull, where they
+//!   merge to themselves.
 
 use std::path::Path;
 
