@@ -124,6 +124,9 @@ pub struct NoteSettingsKeys {
     pub back_emphasis: ReadWriteValue,
     pub type_answer: ReadWriteValue,
     pub custom_data: ReadWriteValue,
+    /// A global setting that makes the notes after it live notes of the named sync group: they are
+    /// matched to the database by their position in the file, so a file can be edited and imported
+    /// again. See "Live notes" in the docs of `spares_cli::import`.
     pub live_sync_name: ReadWriteValue,
     pub settings_delim: &'static str,
     pub settings_key_value_delim: &'static str,

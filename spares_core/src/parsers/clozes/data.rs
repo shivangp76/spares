@@ -119,11 +119,36 @@ pub struct ClozeGroupingSettings {
     /// Any unique string that is shared among all clozes that are meant to be a part of the same card. The special keyword `*` indicates this cloze is a part of all groups.
     /// If this is not specified, then the cloze will be in its own group. In other words, a card will be created for this cloze and the card will only contain this one cloze.
     pub grouping: ClozeGrouping,
-    /// When the card produced by this cloze is *newly created*, copy SRS fields from the card at the given note id and order. This field is not serialized, i.e., it is stripped from stored note data after processing.
+    /// `inh:NOTE_ID/ORDER`: when the card produced by this cloze is *newly created*, copy SRS
+    /// data from the card at the given note id and order, so it is scheduled as if it had been
+    /// reviewed before instead of starting fresh.
     ///
-    /// This is added to support 2 workflows:
+    /// This is added to support workflows such as:
     /// - Moving a card to a different note
     /// - Splitting a card into multiple cards
+    /// - Importing material you already know
+    ///
+    /// The new card inherits the source card's `stability`, `difficulty`, `desired_retention`,
+    /// `state`, `due`, and `special_state`, along with its full review history.
+    ///
+    /// - `NOTE_ID` is the id of the note containing the source card.
+    /// - `ORDER` is the 1-based order of the source card within its note (the first card of a
+    ///   note has order 1). `spares card get -n NOTE_ID` lists a note's cards with their `order`.
+    ///
+    /// ```md
+    /// The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:aae/1] at about 10,935 meters}}.
+    /// ```
+    ///
+    /// - The source card must already exist in the database; otherwise the import fails with an
+    ///   error.
+    /// - `ORDER` must be `>= 1`.
+    /// - It applies to cards created when a note is created or updated. On a card that already
+    ///   exists, it is an error.
+    /// - For clozes that produce both a forward and backward card (via `r:`), only the forward card
+    ///   inherits — the backward card starts fresh.
+    /// - Each cloze in a note can carry its own `inh:` pointing at a different source card.
+    /// - This field is not serialized, i.e., it is stripped from stored note data after
+    ///   processing, so it will not be re-applied on subsequent imports.
     pub inherit: Option<ReadableCardIdentifier>,
     /// `orders` is used to specify the order of the cards created from a cloze. Using this information, a card's parameters can be properly lined up when a cloze is added, deleted, or moved.
     /// It is only specified on the first cloze in a card, since that determines the order of how the cards are parsed.
