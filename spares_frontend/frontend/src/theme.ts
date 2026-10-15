@@ -55,3 +55,24 @@ export function useResolvedTheme(): 'light' | 'dark' {
     return darkQuery.matches ? 'dark' : 'light';
   });
 }
+
+// Typst pages are shown in the interface's theme unless toggled. The toggle is shared by every
+// viewer, so it carries over to the back of the card and the next ones, until the page reloads.
+const TYPST_CHANGE_EVENT = 'spares-typst-theme-change';
+let typstThemeOverride: 'light' | 'dark' | null = null;
+
+export function setTypstTheme(theme: 'light' | 'dark'): void {
+  typstThemeOverride = theme;
+  window.dispatchEvent(new Event(TYPST_CHANGE_EVENT));
+}
+
+function subscribeTypst(onChange: () => void): () => void {
+  window.addEventListener(TYPST_CHANGE_EVENT, onChange);
+  return () => window.removeEventListener(TYPST_CHANGE_EVENT, onChange);
+}
+
+/** The theme Typst pages are shown in. */
+export function useTypstTheme(): 'light' | 'dark' {
+  const resolved = useResolvedTheme();
+  return useSyncExternalStore(subscribeTypst, () => typstThemeOverride) ?? resolved;
+}
