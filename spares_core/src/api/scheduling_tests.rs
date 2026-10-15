@@ -240,20 +240,26 @@ async fn review_log_records_the_interval_actually_given(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn leeches_are_cards_with_many_lapses(pool: SqlitePool) {
-    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f"]).await;
-    let (leech, struggling_learner) = (cards[0][0], cards[1][0]);
+    let threshold = read_external_config().unwrap().leech.lapses_threshold;
+    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f", "g {{ h }} i"]).await;
+    let (leech, almost_leech, struggling_learner) = (cards[0][0], cards[1][0], cards[2][0]);
     let mut at = Utc::now() - Duration::days(400);
-    // Graduate, then lapse and recover repeatedly. Each `Again` is on a card in review.
-    rate(&pool, leech, GOOD, at).await;
-    rate(&pool, leech, GOOD, at + Duration::days(1)).await;
-    for _ in 0..9 {
-        at += Duration::days(10);
-        rate(&pool, leech, AGAIN, at).await;
-        rate(&pool, leech, GOOD, at + Duration::hours(1)).await;
-        rate(&pool, leech, GOOD, at + Duration::days(1)).await;
+    // Graduate, then lapse and recover repeatedly. Each `Again` is on a card in review. A card
+    // becomes a leech on reaching the threshold, not on exceeding it.
+    for (card_id, lapses) in [(leech, threshold), (almost_leech, threshold - 1)] {
+        let mut at = at;
+        rate(&pool, card_id, GOOD, at).await;
+        rate(&pool, card_id, GOOD, at + Duration::days(1)).await;
+        for _ in 0..lapses {
+            at += Duration::days(10);
+            rate(&pool, card_id, AGAIN, at).await;
+            rate(&pool, card_id, GOOD, at + Duration::hours(1)).await;
+            rate(&pool, card_id, GOOD, at + Duration::days(1)).await;
+        }
     }
-    // Fails just as often, but only ever during its first learning step.
-    for i in 0..12 {
+    // Fails more often, but only ever during its first learning step.
+    at += Duration::days(10 * i64::from(threshold + 1));
+    for i in 0..i64::from(threshold + 4) {
         rate(&pool, struggling_learner, AGAIN, at + Duration::minutes(i)).await;
     }
 

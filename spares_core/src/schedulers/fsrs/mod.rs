@@ -111,7 +111,7 @@ impl SrsScheduler for Fsrs {
                   SELECT card_id FROM review_log
                   WHERE kind = ? AND rating = ? AND previous_state = ?
                   GROUP BY card_id
-                  HAVING COUNT(*) > ?
+                  HAVING COUNT(*) >= ?
                 )
               ORDER BY due ASC",
         )

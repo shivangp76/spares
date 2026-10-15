@@ -337,7 +337,7 @@ impl Default for EasyDaysConfig {
 pub struct LeechConfig {
     // pub auto_tag: bool,
     // pub tag_name: String,
-    /// The number of lapses after which to tag a card as a leech.
+    /// The number of lapses at which a card becomes a leech.
     pub lapses_threshold: u32,
 }
 
