@@ -807,7 +807,7 @@ mod learn_ahead_tests {
         assert_eq!(available_at(&pool, now).await, Some(due - LIMIT));
         assert_eq!(next_card(&pool, due - LIMIT).await, Some(card));
 
-        // The offline queue has it anyway, since its client picks when to show it
+        // The offline queue has it anyway, with when the limit lets its client show it
         let queue = get_review_queue(
             &pool,
             ReviewQueueRequest {
@@ -821,6 +821,23 @@ mod learn_ahead_tests {
         .await
         .unwrap();
         assert_eq!(queue.cards.len(), 1);
+        assert_eq!(queue.cards[0].shown_from, Some(due - LIMIT));
+
+        // A review card is never held back
+        set_card(&pool, card, REVIEW, now - Duration::days(1), 1.0, 5.0).await;
+        let queue = get_review_queue(
+            &pool,
+            ReviewQueueRequest {
+                filter: None,
+                limit: 10,
+                days_ahead: 0,
+            },
+            now,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(queue.cards[0].shown_from, None);
 
         // Due tomorrow: done for today
         set_card(&pool, card, LEARNING, now + Duration::days(1), 1.0, 5.0).await;
