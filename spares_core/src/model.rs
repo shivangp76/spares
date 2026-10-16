@@ -570,9 +570,11 @@ mod tests {
                 .is_err(),
             "a cram without a rating is not"
         );
+        // Later migrations add indexes of their own
         let indexes: i64 = sqlx::query_scalar(
             r"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_log'
-              AND name LIKE 'idx_%'",
+              AND name IN ('idx_review_log_card_id_reviewed_at', 'idx_review_log_reviewed_at',
+                           'idx_review_log_tag_id', 'idx_review_log_usn')",
         )
         .fetch_one(&pool)
         .await
@@ -583,6 +585,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(integrity, "ok");
+    }
+
+    /// `20261016120000_review_log_previous_interval` fills each review's previous interval from
+    /// the reviews already there: the previous Review of the same card, by time and then id,
+    /// skipping crams, forgets and other cards.
+    #[sqlx::test(migrations = false)]
+    async fn migration_review_log_previous_interval_fills_existing_rows(pool: SqlitePool) {
+        const MIGRATION: i64 = 20_261_016_120_000;
+        let migrator = Migrator::new(migrator_path()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration() && m.version < MIGRATION)
+        {
+            conn.apply(migration).await.unwrap();
+        }
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        // Card 1: reviews at 3000, 1000 and 2000 (inserted out of order), a cram at 2500 and two
+        // reviews at the same second, 4000. Card 2: one review. An orphan.
+        sqlx::query(
+            r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+               VALUES (1, 1, 3000, 0, 3, 'fsrs', 30, 1, 1, 2, '{}'),
+                      (2, 1, 1000, 0, 3, 'fsrs', 10, 1, 1, 0, '{}'),
+                      (3, 1, 2000, 0, 3, 'fsrs', 20, 1, 1, 2, '{}'),
+                      (4, 1, 2500, 16, 3, 'fsrs', NULL, 1, 1, 2, '{}'),
+                      (5, 2, 1500, 0, 3, 'fsrs', 15, 1, 1, 0, '{}'),
+                      (6, NULL, 3500, 0, 3, 'fsrs', 35, 1, 1, 2, '{}'),
+                      (7, 1, 4000, 0, 3, 'fsrs', 40, 1, 1, 2, '{}'),
+                      (8, 1, 4000, 0, 3, 'fsrs', 41, 1, 1, 2, '{}')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        migrator.run(&pool).await.unwrap();
+
+        let rows: Vec<(i64, Option<i64>)> =
+            sqlx::query_as(r"SELECT id, previous_interval FROM review_log ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            [
+                (1, Some(20)),
+                (2, None),
+                (3, Some(10)),
+                (4, None),
+                (5, None),
+                (6, None),
+                (7, Some(30)),
+                (8, Some(40)),
+            ]
+        );
     }
 
     #[test]

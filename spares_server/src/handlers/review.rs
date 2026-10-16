@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::Json;
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
@@ -13,16 +14,19 @@ use spares_core::api::review::next_review_card_available_at;
 use spares_core::api::review::submit_study_action;
 use spares_core::api::statistics::get_review_history;
 use spares_core::api::statistics::get_statistics;
+use spares_core::api::statistics::get_statistics_graphs;
 use spares_core::config::read_external_config;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::review::GetReviewCardRequest;
 use spares_core::schema::review::ReviewConfigResponse;
+use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::ReviewQueueRequest;
 use spares_core::schema::review::ReviewSnapshotRequest;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::schema::review::SyncOfflineActionsRequest;
+use spares_core::schema::statistics::StatisticsGraphsRequest;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -116,11 +120,22 @@ pub(crate) async fn get_statistics_handler(
 
 pub(crate) async fn get_review_history_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Query(request): Query<ReviewHistoryRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let history_response = get_review_history(&data.db)
+    let history_response = get_review_history(&data.db, request)
         .await
         .map_err(error_to_response)?;
     Ok(Json(history_response))
+}
+
+pub(crate) async fn get_statistics_graphs_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<StatisticsGraphsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let graphs = get_statistics_graphs(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(graphs))
 }
 
 pub(crate) async fn get_review_config_handler()

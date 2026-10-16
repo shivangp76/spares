@@ -366,6 +366,7 @@ async fn simulate_reviews(
         let request = StatisticsRequest {
             scheduler_name: scheduler_name.to_string(),
             date: requested_date,
+            tz: None,
         };
         let statistics_res = get_statistics(pool, request).await;
         assert!(statistics_res.is_ok());
@@ -397,6 +398,7 @@ async fn simulate_reviews(
             let request = StatisticsRequest {
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
+                tz: None,
             };
             let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
@@ -421,6 +423,7 @@ async fn simulate_reviews(
             let request = StatisticsRequest {
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
+                tz: None,
             };
             let new_statistics_res = get_statistics(pool, request).await;
             assert!(new_statistics_res.is_ok());
@@ -483,6 +486,7 @@ async fn simulate_reviews(
             let request = StatisticsRequest {
                 scheduler_name: scheduler_name.to_string(),
                 date: requested_date,
+                tz: None,
             };
             let statistics_res = get_statistics(pool, request).await;
             assert!(statistics_res.is_ok());

@@ -85,6 +85,8 @@ pub enum LibraryError {
     InvalidConfig(String),
     #[error("{0}")]
     Search(String),
+    #[error("{0}")]
+    InvalidTimeZone(String),
 }
 
 #[derive(Clone, Debug, Diagnostic, Error)]

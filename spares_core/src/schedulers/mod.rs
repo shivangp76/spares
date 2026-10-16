@@ -31,6 +31,7 @@ pub mod placement;
 pub(crate) use fsrs::learning_states;
 #[cfg(test)]
 pub(crate) use fsrs::optimal_interval_days;
+pub(crate) use fsrs::relearning_state;
 pub(crate) use fsrs::review_state;
 
 #[derive(Debug)]
@@ -38,6 +39,10 @@ pub struct MoveCardsResult {
     pub card_payloads: Vec<UpdateCardPayload>,
     pub message: String,
 }
+
+/// See [`SrsScheduler::retrievability`]. Takes a card's stability and the days elapsed since its
+/// last review.
+pub type RetrievabilityFn = Box<dyn Fn(f64, f64) -> f64 + Send + Sync>;
 
 #[async_trait]
 pub trait SrsScheduler: Send + Sync {
@@ -77,6 +82,27 @@ pub trait SrsScheduler: Send + Sync {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let idx = (position as usize).min(last);
         Ok(ratings[idx].clone())
+    }
+
+    /// Whether `rating` means the card was remembered. Statistics count it as passed (true
+    /// retention, % correct). Every rating but the lowest by default, so with FSRS's ratings,
+    /// Again fails and Hard, Good and Easy pass.
+    fn is_pass(&self, rating: RatingId) -> bool {
+        self.get_ratings()
+            .iter()
+            .map(|r| r.id)
+            .min()
+            .is_none_or(|lowest| rating != lowest)
+    }
+
+    /// The probability of recalling a card, as a function of its stability and the days since its
+    /// last review, under `config`. `None`, the default, if the scheduler has no forgetting curve,
+    /// in which case statistics leave retrievability out.
+    ///
+    /// It returns a function rather than taking the card, so statistics can read the config once
+    /// and then apply it to every card.
+    fn retrievability(&self, _config: &SparesExternalConfig) -> Option<RetrievabilityFn> {
+        None
     }
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error>;

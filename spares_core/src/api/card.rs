@@ -1123,6 +1123,7 @@ mod forget_tests {
         let request = || StatisticsRequest {
             scheduler_name: "fsrs".to_string(),
             date: now,
+            tz: None,
         };
         let before = get_statistics(&pool, request()).await.unwrap();
         forget_card(&pool, card_id, now, true).await.unwrap();
@@ -1141,6 +1142,7 @@ mod forget_tests {
         use chrono::Local;
 
         use crate::api::statistics::get_review_history;
+        use crate::schema::review::ReviewHistoryRequest;
 
         let card_id = create_single_card(&pool).await;
         let now = Utc::now();
@@ -1150,7 +1152,9 @@ mod forget_tests {
         rate(&pool, card_id, 3, now).await;
         forget_card(&pool, card_id, now, true).await.unwrap();
 
-        let history = get_review_history(&pool).await.unwrap();
+        let history = get_review_history(&pool, ReviewHistoryRequest::default())
+            .await
+            .unwrap();
         let local_date = |at: DateTime<Utc>| at.with_timezone(&Local).date_naive();
         assert_eq!(history.review_count_by_date.len(), 2);
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);

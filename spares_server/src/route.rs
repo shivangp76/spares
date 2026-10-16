@@ -68,6 +68,7 @@ use crate::handlers::review::get_review_card_handler;
 use crate::handlers::review::get_review_config_handler;
 use crate::handlers::review::get_review_history_handler;
 use crate::handlers::review::get_review_queue_handler;
+use crate::handlers::review::get_statistics_graphs_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::submit_study_action_handler;
@@ -194,6 +195,10 @@ fn review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/snapshot", post(create_review_snapshot_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
         .route("/api/review/history", get(get_review_history_handler))
+        .route(
+            "/api/statistics/graphs",
+            post(get_statistics_graphs_handler),
+        )
         .route("/api/review/config", get(get_review_config_handler))
 }
 

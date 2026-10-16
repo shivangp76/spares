@@ -1,10 +1,18 @@
+mod graphs;
+mod local_time;
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
 
 use chrono::Duration;
 use chrono::Local;
-use chrono::NaiveDate;
 use chrono::Utc;
+use graphs::CardFilter;
+pub use graphs::get_statistics_graphs;
 use itertools::Itertools;
+use local_time::Zone;
+use local_time::date_of_day_number;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -22,6 +30,7 @@ use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schema::review::ReviewHistoryRequest;
 use crate::schema::review::ReviewHistoryResponse;
 use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
@@ -35,6 +44,7 @@ pub async fn get_statistics(
     let StatisticsRequest {
         scheduler_name,
         date: requested_date,
+        tz: _,
     } = request;
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
 
@@ -186,22 +196,43 @@ pub async fn get_statistics(
 }
 
 /// Counts the graded reviews, and apart from them the crams, on each local date, for a review
-/// heatmap.
-pub async fn get_review_history(db: &SqlitePool) -> Result<ReviewHistoryResponse, Error> {
-    // Reviews of since-deleted cards still count, as they were studied all the same
-    let count_by_date = async |kind: ReviewLogKind| -> Result<HashMap<NaiveDate, u32>, Error> {
-        let counts: Vec<(NaiveDate, u32)> = sqlx::query_as(
-            r"SELECT date(reviewed_at, 'unixepoch', 'localtime') AS day, COUNT(*) FROM review_log
-              WHERE kind = ? GROUP BY day",
-        )
-        .bind(kind)
+/// heatmap, optionally of the cards matching a query and in a client's time zone.
+pub async fn get_review_history(
+    db: &SqlitePool,
+    request: ReviewHistoryRequest,
+) -> Result<ReviewHistoryResponse, Error> {
+    let zone = Zone::parse(request.tz.as_deref())?;
+    let cards = CardFilter::new(db, request.query.as_deref()).await?;
+    // Reviews of since-deleted cards still count without a query, as they were studied all the
+    // same
+    let (first, last): (Option<i64>, Option<i64>) =
+        sqlx::query_as(r"SELECT MIN(reviewed_at), MAX(reviewed_at) FROM review_log")
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let clock = zone.clock(first.unwrap_or_default(), last.unwrap_or_default());
+    let rows: Vec<(i64, ReviewLogKind, u32)> = cards
+        .bind(sqlx::query_as(&format!(
+            r"SELECT {day} AS day, kind, COUNT(*) FROM review_log
+              WHERE kind IN ({review}, {cram}){filter} GROUP BY day, kind",
+            day = clock.day("reviewed_at"),
+            review = ReviewLogKind::Review as u8,
+            cram = ReviewLogKind::Cram as u8,
+            filter = cards.sql("card_id"),
+        )))
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(counts.into_iter().collect())
+    let mut response = ReviewHistoryResponse {
+        review_count_by_date: HashMap::new(),
+        cram_count_by_date: HashMap::new(),
     };
-    Ok(ReviewHistoryResponse {
-        review_count_by_date: count_by_date(ReviewLogKind::Review).await?,
-        cram_count_by_date: count_by_date(ReviewLogKind::Cram).await?,
-    })
+    for (day, kind, count) in rows {
+        let counts = match kind {
+            ReviewLogKind::Cram => &mut response.cram_count_by_date,
+            _ => &mut response.review_count_by_date,
+        };
+        counts.insert(date_of_day_number(day), count);
+    }
+    Ok(response)
 }
