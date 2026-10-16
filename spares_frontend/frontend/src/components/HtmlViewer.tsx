@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFile } from '../api/client';
 import { audioLinkPath } from '../audio';
+import { scrollClozesIntoView } from '../clozeScroll';
 import { useResolvedTheme } from '../theme';
 import { parseNoteId } from '../utils';
 
@@ -12,6 +13,8 @@ interface Props {
   onReady?: () => void;
   /** Plays an audio clip linked from the card. Without it, the link opens in a new tab. */
   onPlayAudio?: (path: string) => void;
+  /** Scrolls the card's clozes into view once it is displayed, unless they already are. */
+  scrollToCloze?: boolean;
 }
 
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
@@ -23,11 +26,14 @@ const STYLE_ID = 'spares-theme';
  * can run. `allow-same-origin` lets the app size and theme it, and must never be combined with
  * `allow-scripts`, which would remove the sandbox.
  */
-export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio }: Props) {
+export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio, scrollToCloze }: Props) {
   const key = `${path}?v=${version}`;
   const [loaded, setLoaded] = useState<{ key: string; html?: string; error?: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(0);
+  // The key of the document the iframe has loaded, and of the last one scrolled to while shown
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const scrolledKeyRef = useRef<string | null>(null);
   const theme = useResolvedTheme();
   const themeRef = useRef(theme);
   const onOpenNoteRef = useRef(onOpenNote);
@@ -58,6 +64,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     const iframe = iframeRef.current;
     if (!iframe || current?.html === undefined) return;
     let observer: ResizeObserver | null = null;
+    const loadedFor = current.key;
     const onLoad = () => {
       const doc = iframe.contentDocument;
       if (!doc) return;
@@ -66,6 +73,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
       observer = new ResizeObserver(() => setHeight(doc.documentElement.scrollHeight));
       observer.observe(doc.documentElement);
       setHeight(doc.documentElement.scrollHeight);
+      setLoadedKey(loadedFor);
       onReady?.();
     };
     iframe.addEventListener('load', onLoad);
@@ -74,6 +82,24 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
       observer?.disconnect();
     };
   }, [current, onReady]);
+
+  // Once the iframe has its height, so the page is long enough to scroll to the clozes. The
+  // clozes are pandoc's `[…]{.mark}` spans, which only the card's own clozes are rendered as.
+  useEffect(() => {
+    if (!scrollToCloze) {
+      scrolledKeyRef.current = null;
+      return;
+    }
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc || loadedKey !== current?.key || height === 0 || scrolledKeyRef.current === loadedKey) return;
+    scrolledKeyRef.current = loadedKey;
+    const offset = iframe.getBoundingClientRect().top;
+    scrollClozesIntoView([...doc.querySelectorAll('mark')].map(mark => {
+      const rect = mark.getBoundingClientRect();
+      return { top: offset + rect.top, bottom: offset + rect.bottom };
+    }));
+  }, [scrollToCloze, loadedKey, current, height]);
 
   // Re-themes on a theme change, without reloading
   useEffect(() => {

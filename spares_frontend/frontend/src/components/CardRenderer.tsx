@@ -20,11 +20,13 @@ interface Props {
   onPlayAudio?: (path: string) => void;
   /** Called with each width a Typst source is compiled for. */
   onTypstWidth?: (width: number) => void;
+  /** Scrolls the card's clozes into view once it is displayed, e.g. while its side is shown. */
+  scrollToCloze?: boolean;
 }
 
-export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio, onTypstWidth }: Props) {
+export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio, onTypstWidth, scrollToCloze }: Props) {
   if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} />;
-  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} />;
+  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} scrollToCloze={scrollToCloze} />;
   return <RenderedFile path={path} version={version} onReady={onReady} />;
 }
 
