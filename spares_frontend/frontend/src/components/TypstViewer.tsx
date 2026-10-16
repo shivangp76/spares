@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { audioLinkPath } from '../audio';
+import { scrollClozesIntoView } from '../clozeScroll';
 import { setTypstThemePreference, useTypstTheme } from '../theme';
 import { widthInputs } from '../typst/width';
 
@@ -10,9 +11,14 @@ interface Props {
   onPlayAudio?: (path: string) => void;
   /** Called with each width the source is compiled for. */
   onWidth?: (width: number) => void;
+  /** Scrolls the card's cloze into view when it is displayed or moves, unless it is in view. */
+  scrollToCloze?: boolean;
 }
 
 const XLINK = 'http://www.w3.org/1999/xlink';
+// The template draws the card's ID (`cloze_tag_str` in spares_core) as invisible text at its first
+// answer cloze, for PDF viewers to search for. The SVG keeps it as text in its selection layer.
+const CARD_ID = /^card-[a-z]+-\d+$/;
 
 type State =
   | { source: string; width: number; svg: string; error?: undefined }
@@ -44,7 +50,7 @@ function useStepWidth() {
   return [ref, width] as const;
 }
 
-export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: Props) {
+export default function TypstViewer({ source, onReady, onPlayAudio, onWidth, scrollToCloze }: Props) {
   const [ref, width] = useStepWidth();
   const [result, setResult] = useState<State | null>(null);
   // Expanding compiles the source without the width input, so the template lays it out at its
@@ -85,6 +91,16 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth }: P
   useEffect(() => {
     if (done) onReady?.();
   }, [done, onReady]);
+
+  // Also on each recompile, e.g. for a new width or on expanding, since the cloze may have moved
+  const shownSvg = expanded && naturalSource === source ? natural?.svg : done ? result.svg : undefined;
+  useEffect(() => {
+    if (!scrollToCloze || shownSvg === undefined || !ref.current) return;
+    const id = [...ref.current.querySelectorAll('.tsel')].find(el => CARD_ID.test(el.textContent?.trim() ?? ''));
+    // The text's SVG group, since browsers place HTML inside transformed SVG inconsistently
+    const rect = id?.closest('.typst-text')?.getBoundingClientRect();
+    if (rect) scrollClozesIntoView([{ top: rect.top, bottom: rect.bottom }]);
+  }, [scrollToCloze, shownSvg, ref]);
 
   const errorView = (error: string) => (
     <div>
