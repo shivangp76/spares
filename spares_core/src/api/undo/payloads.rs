@@ -225,8 +225,10 @@ pub struct ForgetCardPayload {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RateCardPayload {
-    /// The review the rating wrote. `None` for a rating in a filtered tag that does not
-    /// reschedule ([`Tag::reschedule`](crate::model::Tag::reschedule)), which writes none.
+    /// The review the rating wrote, or for a rating in a filtered tag that does not reschedule
+    /// ([`Tag::reschedule`](crate::model::Tag::reschedule)), its
+    /// [cram](crate::model::ReviewLogKind::Cram). `None` for such a rating from before crams were
+    /// logged, which wrote nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_log_id: Option<i64>,
     pub card: UpdateCardPayload,
@@ -256,7 +258,7 @@ pub struct FilteredTagExit {
 /// Its `id` is not reused on reinsert, since SQLite may have handed it to a newer row.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UnreviewPayload {
-    /// `None` when the rating wrote no review (see `RateCardPayload::review_log_id`).
+    /// `None` when the rating wrote no row (see `RateCardPayload::review_log_id`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_log: Option<ReviewLog>,
     pub card: UpdateCardPayload,

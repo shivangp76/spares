@@ -22,7 +22,9 @@ interface Cell {
   date: Date;
   week: number;
   weekday: number;
+  /** Reviews and crams together */
   count: number;
+  cram: number;
   future: boolean;
 }
 
@@ -54,6 +56,21 @@ function levelColor(level: number): string {
 
 function plural(n: number, word: string): string {
   return `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * Reviews and crams added up per day. A day spent cramming for an exam is a day studied, so it
+ * fills its cell and keeps the streak going like reviews do: 30 reviews and 120 crams count as 150.
+ */
+function addCounts(reviews: Record<string, number>, crams: Record<string, number>): Record<string, number> {
+  const counts = { ...reviews };
+  for (const [key, count] of Object.entries(crams)) counts[key] = (counts[key] ?? 0) + count;
+  return counts;
+}
+
+/** "150 reviews", or "150 reviews (120 crams)" when some of them are crams. */
+function describeCount(count: number, cram: number): string {
+  return cram > 0 ? `${plural(count, 'review')} (${plural(cram, 'cram')})` : plural(count, 'review');
 }
 
 interface Summary {
@@ -107,8 +124,11 @@ function Stat({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** Daily review counts as a scrollable calendar grid, opening centered on today, with streak statistics. */
-export default function ReviewHeatmap({ counts }: { counts: Record<string, number> }) {
+/**
+ * Daily review counts as a scrollable calendar grid, opening centered on today, with streak statistics.
+ * `cramCounts` are added to `counts`, and told apart in the cell titles and the total.
+ */
+export default function ReviewHeatmap({ counts: reviewCounts, cramCounts }: { counts: Record<string, number>; cramCounts: Record<string, number> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Cell | null>(null);
   const [atStart, setAtStart] = useState(false);
@@ -118,6 +138,9 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
   // Just enough future weeks to center today, so centered is as far forward as the grid scrolls
   const futureWeeks = Math.ceil(viewWidth / 2 / STEP);
   const todayKey = dateKey(new Date());
+
+  const counts = useMemo(() => addCounts(reviewCounts, cramCounts), [reviewCounts, cramCounts]);
+  const cramTotal = useMemo(() => Object.values(cramCounts).reduce((sum, n) => sum + n, 0), [cramCounts]);
 
   const { cells, weeks, todayWeek, months, summary, thresholds } = useMemo(() => {
     const today = parseKey(todayKey);
@@ -134,7 +157,7 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
       const date = addDays(start, i);
       const key = dateKey(date);
       const week = Math.floor(i / 7);
-      cells.push({ key, date, week, weekday: date.getDay(), count: counts[key] ?? 0, future: date > today });
+      cells.push({ key, date, week, weekday: date.getDay(), count: counts[key] ?? 0, cram: cramCounts[key] ?? 0, future: date > today });
       if (date.getDate() === 1 && week < weeks - 2) {
         // Months of other years are marked with theirs, e.g. Sep '25, as the grid can span several
         const month = date.toLocaleDateString(undefined, { month: 'short' });
@@ -147,7 +170,7 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
     const average = active.reduce((sum, c) => sum + c.count, 0) / Math.max(1, active.length);
     const thresholds = [0.5, 1, 1.5].map(f => f * average);
     return { cells, weeks, todayWeek, months, summary: summarize(counts, today), thresholds };
-  }, [counts, todayKey, futureWeeks]);
+  }, [counts, cramCounts, todayKey, futureWeeks]);
 
   const updateEnds = useCallback(() => {
     const el = scrollRef.current;
@@ -200,7 +223,7 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
         stroke={c.key === todayKey ? 'var(--text-muted)' : 'none'}
         strokeWidth={1}
       >
-        {!c.future && <title>{`${plural(c.count, 'review')} on ${TITLE_DATE.format(c.date)}`}</title>}
+        {!c.future && <title>{`${describeCount(c.count, c.cram)} on ${TITLE_DATE.format(c.date)}`}</title>}
       </rect>
     ));
   }, [cells, thresholds, todayKey]);
@@ -266,8 +289,8 @@ export default function ReviewHeatmap({ counts }: { counts: Record<string, numbe
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)', marginTop: 6, minHeight: 16 }}>
         <span>
           {selected
-            ? `${plural(selected.count, 'review')} on ${SELECTED_DATE.format(selected.date)}`
-            : summary ? `${plural(summary.total, 'review')} in total` : 'No reviews yet'}
+            ? `${describeCount(selected.count, selected.cram)} on ${SELECTED_DATE.format(selected.date)}`
+            : summary ? `${describeCount(summary.total, cramTotal)} in total` : 'No reviews yet'}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 3 }} aria-hidden>
           Less

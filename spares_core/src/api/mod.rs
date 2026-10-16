@@ -45,6 +45,7 @@ use crate::LibraryError;
 use crate::SchedulerErrorKind;
 use crate::model::CardId;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 
 pub(crate) fn placeholders(rows: usize) -> String {
@@ -124,7 +125,7 @@ where
     Ok(())
 }
 
-/// Fetches a card's review log ordered for replay.
+/// Fetches the rows of a card's review log that replay sees, ordered for replay.
 ///
 /// This is `reviewed_at ASC`, with `id` breaking ties within the same second — required because a
 /// forget and a review can land in the same second, and both `effective_review_logs` and
@@ -132,7 +133,33 @@ where
 /// of a card's review log destined for either of those must go through this helper rather than a
 /// one-off query, so that tie-break can't be silently dropped by a copy-pasted `ORDER BY
 /// reviewed_at ASC` with no second key.
+///
+/// Rows that are only recorded, such as [crams](crate::model::ReviewLogKind::Cram), are left
+/// out: they must not change the card's memory state, nor count as its latest review when an
+/// interval is measured. For example, a card reviewed Good a week ago and crammed an hour ago
+/// still has a week elapsed at its next review. Use [`fetch_review_logs`] to show the whole
+/// history.
 pub(crate) async fn fetch_review_logs_for_replay<'e, E>(
+    db: E,
+    card_id: CardId,
+) -> Result<Vec<ReviewLog>, Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_as(
+        r"SELECT * FROM review_log WHERE card_id = ? AND kind < ?
+          ORDER BY reviewed_at ASC, id ASC",
+    )
+    .bind(card_id)
+    .bind(ReviewLogKind::FIRST_UNREPLAYED)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
+}
+
+/// Like [`fetch_review_logs_for_replay`], but with every row, crams included: for showing a card's
+/// history, or copying it to another card.
+pub(crate) async fn fetch_review_logs<'e, E>(
     db: E,
     card_id: CardId,
 ) -> Result<Vec<ReviewLog>, Error>

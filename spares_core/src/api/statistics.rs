@@ -66,6 +66,18 @@ pub async fn get_statistics(
         .count();
     let cards_studied_on_requested_date_count = cards_studied_on_requested_date_unique.len() as u32;
 
+    // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
+    let (cram_count, cram_seconds): (u32, i64) = sqlx::query_as(
+        r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
+          WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND card_id IS NOT NULL",
+    )
+    .bind(lower_limit.timestamp())
+    .bind(upper_limit.timestamp())
+    .bind(ReviewLogKind::Cram)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+
     // Get cards by state
     let cards_by_state_vec: Vec<(StateId, u32)> =
         sqlx::query_as(r"SELECT state, COUNT(*) as count FROM card GROUP BY state")
@@ -150,6 +162,8 @@ pub async fn get_statistics(
         cards_studied_count: cards_studied_on_requested_date_count,
         recall_duration,
         rate_duration,
+        cram_count,
+        cram_duration: Duration::seconds(cram_seconds),
         card_count_by_state: cards_by_state,
         due_count_by_state: num_cards_due_by_state,
         due_count_by_date: future_due,
@@ -158,18 +172,23 @@ pub async fn get_statistics(
     })
 }
 
-/// Counts the graded reviews on each local date, for a review heatmap.
+/// Counts the graded reviews, and apart from them the crams, on each local date, for a review
+/// heatmap.
 pub async fn get_review_history(db: &SqlitePool) -> Result<ReviewHistoryResponse, Error> {
     // Reviews of since-deleted cards still count, as they were studied all the same
-    let review_count_by_date: Vec<(NaiveDate, u32)> = sqlx::query_as(
-        r"SELECT date(reviewed_at, 'unixepoch', 'localtime') AS day, COUNT(*) FROM review_log
-          WHERE kind = ? GROUP BY day",
-    )
-    .bind(ReviewLogKind::Review)
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
+    let count_by_date = async |kind: ReviewLogKind| -> Result<HashMap<NaiveDate, u32>, Error> {
+        let counts: Vec<(NaiveDate, u32)> = sqlx::query_as(
+            r"SELECT date(reviewed_at, 'unixepoch', 'localtime') AS day, COUNT(*) FROM review_log
+              WHERE kind = ? GROUP BY day",
+        )
+        .bind(kind)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(counts.into_iter().collect())
+    };
     Ok(ReviewHistoryResponse {
-        review_count_by_date: review_count_by_date.into_iter().collect(),
+        review_count_by_date: count_by_date(ReviewLogKind::Review).await?,
+        cram_count_by_date: count_by_date(ReviewLogKind::Cram).await?,
     })
 }

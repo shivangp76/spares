@@ -136,20 +136,28 @@ pub enum SpecialState {
 /// What a `review_log` row records.
 ///
 /// Discriminants are explicit and **must never change**: they are persisted in `review_log.kind`.
-/// `2..=15` are reserved for future kinds that, like `Forget`, change how a scheduler replays a
-/// card — for example `SetMemoryState`, `SchedulerChanged` or `Created`. The column carries a
-/// matching `CHECK (kind BETWEEN 0 AND 15)`.
+/// They fall in two ranges, so that SQL can tell them apart with one comparison (see
+/// [`ReviewLogKind::FIRST_UNREPLAYED`]):
 ///
-/// Only actions a scheduler must *replay* belong in `review_log`. The test is whether replaying
-/// the row changes the card's memory state. Audit-only actions — suspend, bury, set due date,
-/// advance, postpone — do not, and belong in the `event` table (see [`EventType`]) instead.
+/// - `0..=15` are *replayed*: they change how a scheduler reconstructs a card's memory state.
+///   `2..=15` are reserved for future kinds such as `SetMemoryState`, `SchedulerChanged` or
+///   `Created`.
+/// - `16..=31` are only *recorded*: they are part of the card's history, for statistics and the
+///   card's info, but every replay skips them. `17..=31` are reserved.
+///
+/// The column carries a matching `CHECK (kind BETWEEN 0 AND 31)`.
+///
+/// Only actions that are a review, or that a scheduler must replay, belong in `review_log`.
+/// Audit-only actions — suspend, bury, set due date, advance, postpone — belong in the `event`
+/// table (see [`EventType`]) instead.
 ///
 /// A row whose `kind` is not a known variant fails to decode. That is deliberate: a database
 /// written by a newer version should not be silently misread as a stream of plain reviews.
 ///
 /// Unlike Anki's `revlog.type`, this does *not* encode the card's state (that is
 /// [`ReviewLog::previous_state`]) or whether the review happened under a filtered tag (that is
-/// [`ReviewLog::tag_id`]).
+/// [`ReviewLog::tag_id`]). Anki's `Cram` type is the exception, since it changes how the row is
+/// replayed: here it is [`ReviewLogKind::Cram`].
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, sqlx::Type)]
 #[repr(u8)]
 pub enum ReviewLogKind {
@@ -160,6 +168,40 @@ pub enum ReviewLogKind {
     /// The card's memory state was reset to new by [`crate::api::forget_card`]. Replay restarts
     /// its fold here, and the rating and duration columns are all `NULL`.
     Forget = 1,
+    /// A rating in a filtered tag that does not reschedule ([`Tag::reschedule`]), such as an
+    /// `exam-cram` tag studied the night before an exam. It records that the card was studied,
+    /// but not a review the scheduler learns from: the card's due date and memory state were left
+    /// as they were, so replay skips the row.
+    ///
+    /// `rating`, `recall_duration` and `rate_duration` are meaningful, `scheduled_time` is `NULL`
+    /// (the card was given no new interval), `previous_state` is the card's state at the time and
+    /// `tag_id` the filtered tag.
+    ///
+    /// Crams count in statistics and the review heatmap, apart from reviews (see
+    /// [`StatisticsResponse::cram_count`](crate::schema::review::StatisticsResponse::cram_count)
+    /// and [`ReviewHistoryResponse::cram_count_by_date`](crate::schema::review::ReviewHistoryResponse::cram_count_by_date)),
+    /// and show in a card's info. They do not count toward the daily
+    /// limits, lapses or leeches, the optimizer's training set, or `c.rated` in searches.
+    ///
+    /// For example, going twice through the 60 cards of `exam-cram` gives 120 cram rows. Today's
+    /// statistics then show 120 crams next to the scheduled reviews, and the heatmap counts
+    /// today as studied, while `spares card reschedule` gives every card the same due date and
+    /// memory state as before.
+    Cram = 16,
+}
+
+impl ReviewLogKind {
+    /// The first kind that replay skips. Kinds below it change a card's memory state; kinds from
+    /// it on are only recorded.
+    ///
+    /// SQL that fetches rows to replay filters on `kind < FIRST_UNREPLAYED`, so that a new
+    /// recorded-only kind needs no change there.
+    pub const FIRST_UNREPLAYED: u8 = 16;
+
+    /// Whether a scheduler replays rows of this kind (see [`ReviewLogKind::FIRST_UNREPLAYED`]).
+    pub fn is_replayed(self) -> bool {
+        (self as u8) < Self::FIRST_UNREPLAYED
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
@@ -191,9 +233,10 @@ pub struct Tag {
     ///
     /// Set it to `false` to cram, for example before an exam: cards are shown until they are
     /// rated Good twice or Easy once, as in any filtered tag, but their due dates and memory
-    /// states are left as they were, and the ratings are not written to the review log. They do
-    /// not count toward statistics or the daily limits, and the card's next real review is not
-    /// pushed back by having just seen it. Undo still takes a rating back.
+    /// states are left as they were, so the card's next real review is not pushed back by having
+    /// just seen it. Each rating is logged as a [`ReviewLogKind::Cram`], which counts in
+    /// statistics and the heatmap as a cram, but not toward the daily limits, and which no
+    /// replay of the card's history sees. Undo still takes a rating back.
     // Tags kept in undo events from before this field read as rescheduling, as they all did.
     #[serde(default = "reschedule_default")]
     pub reschedule: bool,
@@ -235,11 +278,12 @@ pub struct Parser {
 // }
 
 /// This contains a row for every review ever done, plus a marker row for each action that changes
-/// a card's memory state without being a review (see [`ReviewLogKind`]). Thus, each card has
-/// multiple entries in this table.
+/// a card's memory state without being a review, and a row for each cram (see [`ReviewLogKind`]).
+/// Thus, each card has multiple entries in this table.
 ///
 /// Consumers that count or average over reviews must filter on `kind`; the rating and duration
-/// columns are `NULL` for every non-`Review` row.
+/// columns are `NULL` for every `Forget` row. Consumers that replay a card's history must skip
+/// the kinds that are not [replayed](ReviewLogKind::is_replayed), such as crams.
 #[derive(Clone, Debug, Default, Deserialize, Eq, FromRow, Hash, PartialEq, Serialize)]
 pub struct ReviewLog {
     pub id: i64,
@@ -249,7 +293,7 @@ pub struct ReviewLog {
     /// It is comparable to Anki's `revlog.id` column.
     #[serde(with = "ts_seconds")]
     pub reviewed_at: DateTime<Utc>,
-    /// What the card was recorded as, if this row is a review. `None` for every other
+    /// What the card was recorded as, if this row is a review or a cram. `None` for every other
     /// [`ReviewLogKind`].
     ///
     /// The integer value is in relation to the scheduler specified by `scheduler_id`.
@@ -286,9 +330,10 @@ pub struct ReviewLog {
 }
 
 impl ReviewLog {
-    /// Whether this row is a graded review, as opposed to a marker for some other action that
-    /// affects replay. Use this rather than comparing `kind` inline, so that adding a variant
-    /// surfaces every site that assumed two kinds.
+    /// Whether this row is a graded review that the scheduler learns from, as opposed to a
+    /// marker for some other action that affects replay, or a cram. Use this rather than
+    /// comparing `kind` inline, so that adding a variant surfaces every site that assumed two
+    /// kinds.
     pub fn is_review(&self) -> bool {
         self.kind == ReviewLogKind::Review
     }
@@ -456,5 +501,94 @@ mod tests {
                 .await
                 .unwrap();
         assert!(fk_violations.is_empty(), "{:?}", fk_violations);
+    }
+
+    /// `20261015130000_review_log_cram` rebuilds `review_log` again, now with sync's `usn`, so it
+    /// is tested like the rebuild above: from a database on the previous migration that holds
+    /// reviews, a forget and an orphan.
+    #[sqlx::test(migrations = false)]
+    async fn migration_review_log_cram_preserves_existing_rows(pool: SqlitePool) {
+        const CRAM_MIGRATION: i64 = 20_261_015_130_000;
+        let migrator = Migrator::new(migrator_path()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration() && m.version < CRAM_MIGRATION)
+        {
+            conn.apply(migration).await.unwrap();
+        }
+        // Orphans, so that no card is needed. The forget was synced (usn 7), the reviews not.
+        sqlx::query(
+            r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+               VALUES (1, NULL, 1000, 0, 3, 'fsrs', 86400, 5, 2, 0, '{}', -1),
+                      (2, NULL, 2000, 1, NULL, 'fsrs', NULL, NULL, NULL, 2, '{}', 7),
+                      (3, NULL, 3000, 0, 1, 'fsrs', 600, 9, 4, 0, '{}', -1)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        // Before the migration, a cram is rejected
+        let cram = r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+               VALUES (?, NULL, 4000, 16, ?, 'fsrs', NULL, 5, 2, 2, '{}')";
+        assert!(
+            sqlx::query(cram)
+                .bind(4)
+                .bind(3)
+                .execute(&mut *conn)
+                .await
+                .is_err()
+        );
+        drop(conn);
+
+        migrator.run(&pool).await.unwrap();
+
+        let rows: Vec<(i64, i64, Option<i64>, i64)> =
+            sqlx::query_as(r"SELECT id, kind, rating, usn FROM review_log ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            [(1, 0, Some(3), -1), (2, 1, None, 7), (3, 0, Some(1), -1)],
+            "every row survives with its id, kind and usn"
+        );
+        sqlx::query(cram)
+            .bind(4)
+            .bind(3)
+            .execute(&pool)
+            .await
+            .expect("a cram with a rating is allowed");
+        assert!(
+            sqlx::query(cram)
+                .bind(5)
+                .bind(None::<i64>)
+                .execute(&pool)
+                .await
+                .is_err(),
+            "a cram without a rating is not"
+        );
+        let indexes: i64 = sqlx::query_scalar(
+            r"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_log'
+              AND name LIKE 'idx_%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(indexes, 4, "the indexes are recreated");
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(integrity, "ok");
+    }
+
+    #[test]
+    fn only_kinds_below_first_unreplayed_are_replayed() {
+        assert!(super::ReviewLogKind::Review.is_replayed());
+        assert!(super::ReviewLogKind::Forget.is_replayed());
+        assert!(!super::ReviewLogKind::Cram.is_replayed());
     }
 }
