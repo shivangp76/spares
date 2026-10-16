@@ -57,6 +57,8 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::preset::CardConfigs;
+use crate::api::preset::preset_index;
 use crate::api::queue::queue_order_by;
 use crate::api::review::REVIEW_CARD_COLUMNS;
 use crate::api::review::ReviewCard;
@@ -106,13 +108,17 @@ struct QueueRow {
     #[sqlx(flatten)]
     card: ReviewCard,
     due: DateTime<Utc>,
+    /// The card's preset, if it has limits of its own (see
+    /// [`limited_preset_sql`](crate::api::preset::limited_preset_sql))
+    preset: Option<i64>,
 }
 
 /// The cards a review with `filter` would show next, in order, as of `requested_date`.
 ///
 /// Like [`get_review_card`](crate::api::review::get_review_card), cards are those due by the end
 /// of the day, plus those due on the next `days_ahead` days. New and review cards are capped by
-/// what is left of today's limits, since the client cannot know tomorrow's. Learning cards are
+/// what is left of today's limits, and of their [preset](crate::config::QueuePreset)'s, since the
+/// client cannot know tomorrow's. Learning cards are
 /// included whenever they are due, regardless of the learn ahead limit, with the time the limit
 /// lets them be shown as [`ReviewQueueCard::shown_from`], since the client picks when to show
 /// them.
@@ -130,27 +136,37 @@ pub async fn get_review_queue(
 
     let limits_left = daily_limits_left(db, requested_date).await?;
     let new_cards_left_today = limits_left.new;
-    let Some(ReviewFilterQuery {
-        where_clause,
-        is_filtered_tag,
-        card_due_limit,
-        caps,
-        query_sort,
-        ..
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date, false).await?
+    let Some(review_filter) =
+        build_review_filter_query(db, filter.as_ref(), requested_date, false).await?
     else {
         return Ok(ReviewQueueResponse {
             cards: Vec::new(),
             new_cards_left_today,
         });
     };
+    let (cards_left_by_state, time_estimate) =
+        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?;
+    let ReviewFilterQuery {
+        where_clause,
+        is_filtered_tag,
+        card_due_limit,
+        caps,
+        preset_sql,
+        query_sort,
+        ..
+    } = review_filter;
 
     // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
     // skipped below.
     let queue_config = read_external_config()?.queue;
-    let order_by = queue_order_by(&queue_config, requested_date, caps, &query_sort);
+    let order_by = queue_order_by(
+        &queue_config,
+        requested_date,
+        &caps.showable(&cards_left_by_state),
+        &query_sort,
+    );
     let query_str = formatdoc! {"
-        SELECT {REVIEW_CARD_COLUMNS}, c.due as due
+        SELECT {REVIEW_CARD_COLUMNS}, c.due as due, {preset_sql} as preset
         FROM card c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
@@ -167,37 +183,34 @@ pub async fn get_review_queue(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    let (cards_left_by_state, time_estimate) = get_cards_left_by_state_and_time_estimate(
-        db,
-        &where_clause,
-        card_due_limit,
-        is_filtered_tag,
-        caps,
-    )
-    .await?;
-
-    let mut new_cards_allowed = new_cards_left_today;
-    let mut reviews_allowed = limits_left.reviews;
+    // What is left of the top-level limits, and of each preset's
+    let mut allowed = caps;
     let mut cards = Vec::new();
-    for QueueRow { card, due } in rows {
+    for QueueRow { card, due, preset } in rows {
         if cards.len() >= limit as usize {
             break;
         }
         // Filtered tags have no limits, and learning cards are never held back
-        let allowed = if is_filtered_tag {
-            None
-        } else if card.card_state == NEW_CARD_STATE {
-            Some(&mut new_cards_allowed)
-        } else if card.card_state == review_state() {
-            Some(&mut reviews_allowed)
-        } else {
-            None
-        };
-        if let Some(allowed) = allowed {
-            if *allowed == 0 {
-                continue;
+        let state = card.card_state;
+        let preset = preset_index(preset);
+        let preset_left = preset
+            .and_then(|index| allowed.presets.get(index))
+            .and_then(|left| left.of_state(state));
+        if preset_left == Some(0) || allowed.of_state(state) == Some(0) {
+            continue;
+        }
+        let decrement = |left: &mut Option<u32>| *left = left.map(|left| left - 1);
+        let preset_left = preset.and_then(|index| allowed.presets.get_mut(index));
+        if state == NEW_CARD_STATE {
+            decrement(&mut allowed.new);
+            if let Some(left) = preset_left {
+                decrement(&mut left.new);
             }
-            *allowed -= 1;
+        } else if state == review_state() {
+            decrement(&mut allowed.reviews);
+            if let Some(left) = preset_left {
+                decrement(&mut left.reviews);
+            }
         }
         // Held back like `build_review_filter_query` does with `learn_ahead`, except that the
         // client compares it to its own clock
@@ -445,6 +458,9 @@ async fn insert_review_into_history(
     performed_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
+    // With the steps of the card's preset
+    let configs = CardConfigs::load(db, config, Some(&[card.id])).await?;
+    let card_config = configs.get(card.id);
     let earlier = review_logs
         .into_iter()
         .filter(|review_log| review_log.reviewed_at <= performed_at)
@@ -456,7 +472,7 @@ async fn insert_review_into_history(
             ..Card::new(card.created_at)
         }
     } else {
-        scheduler.compute_memory_state(config, earlier.clone(), card.desired_retention)?
+        scheduler.compute_memory_state(card_config, earlier.clone(), card.desired_retention)?
     };
     let card_then = Card {
         due: memory_state.due,
@@ -467,7 +483,7 @@ async fn insert_review_into_history(
         ..card.clone()
     };
     let (_, review_log) = scheduler.schedule(
-        config,
+        card_config,
         &card_then,
         effective_review_logs(&earlier).last().cloned(),
         submission.rating,
@@ -482,7 +498,7 @@ async fn insert_review_into_history(
     let (card_id, note_id) = (card.id, card.note_id);
     let review_logs = fetch_review_logs_for_replay(db, card.id).await?;
     scheduler
-        .reschedule(db, config, vec![(card, review_logs)], now)
+        .reschedule(db, &configs, vec![(card, review_logs)], now)
         .await?;
     // After the replay, which leaves the special state alone, so a suspension is not undone by it
     if lapses > lapses_before && config.leech.acts_on(lapses) {

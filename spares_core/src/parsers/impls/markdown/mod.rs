@@ -72,7 +72,7 @@ mod cloze_parser;
 /// without counting it as lost (see [`is_content_loss`]).
 const CARD_SEPARATOR: &str = "```{=latex}\n\\hrulefill\n```\n\n```{=html}\n<hr>\n```";
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct MarkdownParserConfig {
     pub defaults_file: Option<String>,

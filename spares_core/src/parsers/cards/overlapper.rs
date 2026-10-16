@@ -5,7 +5,7 @@ use crate::parsers::ClozeData;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeGroupingSettings;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OverlapperConfig {
     pub context_before_item: u32,

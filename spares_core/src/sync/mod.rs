@@ -116,7 +116,7 @@ mod tracking_tests;
 
 /// The `[sync]` table of `config.toml`. Only the machine that syncs uses it, so it is left out of
 /// the copy `spares sync cloud` makes for the server (see [`crate::config::server_config`]).
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SyncConfig {
     /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read

@@ -1,24 +1,75 @@
 //! The order review shows cards in, as configured by [`QueueConfig`].
 
+use std::collections::HashMap;
+
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Local;
 use chrono::Utc;
 use itertools::Itertools;
 
+use crate::api::preset::PresetLimitsLeft;
+use crate::api::preset::preset_sql;
+use crate::api::review::DailyLimitsLeft;
 use crate::config::NewCardOrder;
 use crate::config::NewReviewMix;
 use crate::config::QueueConfig;
+use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::model::NEW_CARD_STATE;
+use crate::model::StateId;
 use crate::schedulers::learning_states;
+use crate::schedulers::review_state;
 
 /// What is left of today's limits, which [`NewReviewMix::Interleaved`] spreads cards over. `None`
 /// for no limit, as when studying a filtered tag.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct QueueCaps {
     pub(crate) new: Option<u32>,
     pub(crate) reviews: Option<u32>,
+    /// What is left of each preset's own limits, by its index in [`QueueConfig::presets`]. Empty
+    /// when no preset has limits, or for a filtered tag.
+    pub(crate) presets: Vec<PresetLimitsLeft>,
+}
+
+impl QueueCaps {
+    /// The caps of what is left of `limits`.
+    pub(crate) fn from_limits(limits: &DailyLimitsLeft) -> Self {
+        Self {
+            new: Some(limits.new),
+            reviews: Some(limits.reviews),
+            presets: limits.presets.clone(),
+        }
+    }
+
+    /// The top-level cap of cards in `state`. Learning and relearning cards are never capped.
+    pub(crate) fn of_state(&self, state: StateId) -> Option<u32> {
+        if state == NEW_CARD_STATE {
+            self.new
+        } else if state == review_state() {
+            self.reviews
+        } else {
+            None
+        }
+    }
+
+    /// The caps to spread cards over, for [`queue_order_by`]: how many new and review cards can
+    /// actually be shown, out of `cards_left_by_state`, the counts [`cap_counts`] let through.
+    ///
+    /// Below the top-level caps when a preset's own limit holds back some of its cards. For
+    /// example, with 20 new cards left today but 5 of them of a preset with 5 left of its limit
+    /// and 15 others, only 20 can be shown either way, while with 30 of that preset and 3
+    /// others, only 8 can, so the new cards are spread over the reviews as 8, not 20.
+    ///
+    /// [`cap_counts`]: crate::api::preset::cap_counts
+    pub(crate) fn showable(&self, cards_left_by_state: &HashMap<StateId, u32>) -> Self {
+        let left = |state: StateId| cards_left_by_state.get(&state).copied().unwrap_or(0);
+        Self {
+            new: self.new.map(|_| left(NEW_CARD_STATE)),
+            reviews: self.reviews.map(|_| left(review_state())),
+            presets: Vec::new(),
+        }
+    }
 }
 
 /// A sort key: a SQL expression over the `c` (card) and `n` (note) aliases, and whether it sorts
@@ -88,6 +139,59 @@ fn new_keys(order: NewCardOrder, now: DateTime<Utc>) -> Vec<Key> {
     }
 }
 
+/// The sort keys of cards in the order each card's preset uses: `keys(order)` for the order of
+/// the card's preset (`preset_order` of it, or `top_level` if it sets none), and `top_level` for
+/// cards of no preset.
+///
+/// Cards are gathered by order, each order's cards together, in the order of the first preset
+/// that uses it, with the top level after the presets. For example, with presets `languages`
+/// (random) and `exam` (no order of its own) and a top-level order by due date, the `languages`
+/// cards come first, in a random order, then the `exam` cards and those of no preset, together,
+/// by due date. With no preset ordering differently from the top level, these are just
+/// `keys(top_level)`.
+fn keys_by_preset<O: Copy + PartialEq>(
+    presets: &indexmap::IndexMap<String, QueuePreset>,
+    top_level: O,
+    preset_order: impl Fn(&QueuePreset) -> Option<O>,
+    keys: impl Fn(O) -> Vec<Key>,
+) -> Vec<Key> {
+    let preset_orders = presets
+        .values()
+        .map(|preset| preset_order(preset).unwrap_or(top_level))
+        .collect::<Vec<_>>();
+    let mut orders: Vec<O> = Vec::new();
+    for order in preset_orders.iter().chain([&top_level]) {
+        if !orders.contains(order) {
+            orders.push(*order);
+        }
+    }
+    if orders.len() == 1 {
+        return keys(top_level);
+    }
+    let position = |order: &O| orders.iter().position(|o| o == order).unwrap();
+    // The index in `orders` of the card's order. The simple `CASE` evaluates the preset once.
+    let whens = preset_orders
+        .iter()
+        .enumerate()
+        .map(|(index, order)| format!("WHEN {index} THEN {}", position(order)))
+        .join(" ");
+    let order_index = format!(
+        "(CASE {} {whens} ELSE {} END)",
+        preset_sql(presets),
+        position(&top_level)
+    );
+    let mut all_keys = vec![asc(order_index.clone())];
+    for (index, order) in orders.iter().enumerate() {
+        all_keys.extend(keys(*order).into_iter().map(|(expr, descending)| {
+            (
+                format!("CASE WHEN {order_index} = {index} THEN {expr} END"),
+                descending,
+            )
+        }));
+    }
+    all_keys
+}
+
 fn render(keys: &[Key]) -> String {
     keys.iter()
         .map(|(expr, descending)| format!("{expr} {}", if *descending { "DESC" } else { "ASC" }))
@@ -101,11 +205,17 @@ fn render(keys: &[Key]) -> String {
 /// `query_sort` is the sort the review's query asks for (see
 /// [`Evaluator::card_order_by`](crate::search::evaluator::Evaluator::card_order_by)). Unless it is
 /// empty, it orders new and review cards together in place of [`QueueConfig::new_order`],
-/// [`QueueConfig::review_order`] and [`QueueConfig::new_review_mix`].
+/// [`QueueConfig::review_order`] and [`QueueConfig::new_review_mix`], and of the orders of
+/// [presets](QueueConfig::presets).
+///
+/// Each card is ordered by its preset's [`QueuePreset::new_order`] or
+/// [`QueuePreset::review_order`], with cards of presets that order differently gathered as
+/// [`QueuePreset::review_order`] describes. `caps` should be [`QueueCaps::showable`], so the new
+/// cards a preset's limit holds back are not counted when spreading them over the reviews.
 pub(crate) fn queue_order_by(
     config: &QueueConfig,
     now: DateTime<Utc>,
-    caps: QueueCaps,
+    caps: &QueueCaps,
     query_sort: &[String],
 ) -> String {
     let now_ts = now.timestamp();
@@ -127,10 +237,23 @@ pub(crate) fn queue_order_by(
             })
             .collect()
     };
-    let mut within_kind = only(&is_new, new_keys(config.new_order, now));
+    let mut within_kind = only(
+        &is_new,
+        keys_by_preset(
+            &config.presets,
+            config.new_order,
+            |preset| preset.new_order,
+            |order| new_keys(order, now),
+        ),
+    );
     within_kind.extend(only(
         &format!("NOT ({is_new})"),
-        review_keys(config.review_order, now),
+        keys_by_preset(
+            &config.presets,
+            config.review_order,
+            |preset| preset.review_order,
+            |order| review_keys(order, now),
+        ),
     ));
     within_kind.push(asc("c.id"));
 
@@ -316,7 +439,7 @@ pub(crate) mod tests {
             WHERE c.special_state IS NULL OR c.special_state = {}
             ORDER BY {}",
             SpecialState::BuriedUntilLaterToday as u8,
-            queue_order_by(config, now, caps, query_sort)
+            queue_order_by(config, now, &caps, query_sort)
         );
         sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
     }
@@ -608,7 +731,8 @@ pub(crate) mod tests {
                 NewReviewMix::Interleaved,
                 QueueCaps {
                     new: Some(1),
-                    reviews: None
+                    reviews: None,
+                    presets: Vec::new(),
                 }
             )
             .await,
@@ -620,7 +744,8 @@ pub(crate) mod tests {
                 NewReviewMix::Interleaved,
                 QueueCaps {
                     new: None,
-                    reviews: Some(3)
+                    reviews: Some(3),
+                    presets: Vec::new(),
                 }
             )
             .await,
@@ -668,19 +793,28 @@ mod daily_limit_tests {
         // Room for 5 cards, of which the reviews due take 3
         assert_eq!(
             left(&limits(10, 5, false)).await,
-            DailyLimitsLeft { new: 2, reviews: 5 }
+            DailyLimitsLeft {
+                new: 2,
+                reviews: 5,
+                presets: Vec::new(),
+            }
         );
         assert_eq!(
             left(&limits(10, 5, true)).await,
             DailyLimitsLeft {
                 new: 10,
-                reviews: 5
+                reviews: 5,
+                presets: Vec::new(),
             }
         );
         // More reviews due than the limit leaves no room for new cards
         assert_eq!(
             left(&limits(10, 2, false)).await,
-            DailyLimitsLeft { new: 0, reviews: 2 }
+            DailyLimitsLeft {
+                new: 0,
+                reviews: 2,
+                presets: Vec::new(),
+            }
         );
 
         // Studying a review card uses up one review, and leaves one fewer due
@@ -688,18 +822,30 @@ mod daily_limit_tests {
         set_card(&pool, ids[0], REVIEW, now + Duration::days(3), 5.0, 5.0).await;
         assert_eq!(
             left(&limits(10, 5, false)).await,
-            DailyLimitsLeft { new: 2, reviews: 4 }
+            DailyLimitsLeft {
+                new: 2,
+                reviews: 4,
+                presets: Vec::new(),
+            }
         );
 
         // Studying a new card uses up a new card and, unless ignored, a review
         add_review(&pool, ids[3], now, NEW).await;
         assert_eq!(
             left(&limits(10, 5, false)).await,
-            DailyLimitsLeft { new: 1, reviews: 3 }
+            DailyLimitsLeft {
+                new: 1,
+                reviews: 3,
+                presets: Vec::new(),
+            }
         );
         assert_eq!(
             left(&limits(10, 5, true)).await,
-            DailyLimitsLeft { new: 9, reviews: 4 }
+            DailyLimitsLeft {
+                new: 9,
+                reviews: 4,
+                presets: Vec::new(),
+            }
         );
     }
 
@@ -715,7 +861,11 @@ mod daily_limit_tests {
             daily_limits_left_with(&pool, &limits(10, 5, false), now)
                 .await
                 .unwrap(),
-            DailyLimitsLeft { new: 5, reviews: 5 }
+            DailyLimitsLeft {
+                new: 5,
+                reviews: 5,
+                presets: Vec::new(),
+            }
         );
     }
 
@@ -723,6 +873,7 @@ mod daily_limit_tests {
     /// estimate shrinks with them.
     #[sqlx::test]
     async fn counts_are_capped_by_the_limits(pool: SqlitePool) {
+        use crate::api::review::ReviewFilterQuery;
         use crate::api::review::get_cards_left_by_state_and_time_estimate;
 
         let now = Utc::now();
@@ -737,7 +888,16 @@ mod daily_limit_tests {
             set_card(&pool, *card, super::tests::LEARNING, now, 1.0, 5.0).await;
         }
         let counts = async |caps: QueueCaps| {
-            get_cards_left_by_state_and_time_estimate(&pool, "c.due <= ?", now, false, caps)
+            let filter = ReviewFilterQuery {
+                where_clause: "c.due <= ?".to_string(),
+                is_filtered_tag: false,
+                card_due_limit: now,
+                caps,
+                preset_sql: "NULL".to_string(),
+                held_back_clause: None,
+                query_sort: Vec::new(),
+            };
+            get_cards_left_by_state_and_time_estimate(&pool, &filter)
                 .await
                 .unwrap()
         };
@@ -751,6 +911,7 @@ mod daily_limit_tests {
         let (by_state, time) = counts(QueueCaps {
             new: Some(0),
             reviews: Some(2),
+            presets: Vec::new(),
         })
         .await;
         assert_eq!(by_state.get(&state(NEW)), None);
@@ -762,6 +923,7 @@ mod daily_limit_tests {
         let (by_state, _) = counts(QueueCaps {
             new: Some(3),
             reviews: Some(100),
+            presets: Vec::new(),
         })
         .await;
         assert_eq!(by_state.get(&state(NEW)), Some(&3));
@@ -1463,5 +1625,415 @@ mod reschedule_tests {
     #[test]
     fn last_review_skips_unreplayed_kinds() {
         assert!(LAST_REVIEW.contains(&format!("rl.kind < {}", ReviewLogKind::FIRST_UNREPLAYED)));
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::NEW;
+    use super::tests::REVIEW;
+    use super::tests::add_review;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::note::create_notes;
+    use crate::api::parser::tests::create_parser_helper;
+    use crate::api::preset::CardConfigs;
+    use crate::api::preset::card_presets;
+    use crate::api::review::DailyLimitsLeft;
+    use crate::api::review::daily_limits_left_with;
+    use crate::api::review::rate_card_with_config;
+    use crate::config::SparesExternalConfig;
+    use crate::model::CardId;
+    use crate::model::SpecialState;
+    use crate::parsers::get_all_parsers;
+    use crate::schedulers::get_scheduler_from_string;
+    use crate::schema::note::CreateNoteRequest;
+    use crate::schema::note::CreateNotesRequest;
+    use crate::schema::review::RatingSubmission;
+
+    /// The example on [`QueuePreset`].
+    const EXAMPLE: &str = r#"
+        [queue]
+        review_order = "due"
+
+        [queue.presets.languages]
+        tags = ["lang"]                  # notes tagged `lang`, or `lang:german`, `lang:french:verbs`...
+        new_cards_daily_limit = 40
+        new_order = "random"
+        review_order = "random"
+        learning_steps = [60, 300, 1800] # 1, 5 and 30 minutes
+
+        [queue.presets.exam]
+        tags = ["math:analysis", "math:algebra"]
+        new_cards_daily_limit = 5
+        review_order = "retrievability"
+        relearning_steps = [600, 3600]
+        bury_new_siblings = true
+    "#;
+
+    fn parse(toml: &str) -> SparesExternalConfig {
+        let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
+        config.validate().unwrap();
+        config
+    }
+
+    fn invalid(toml: &str) -> String {
+        let mut config: SparesExternalConfig = match toml_edit::de::from_str(toml) {
+            Ok(config) => config,
+            Err(error) => return error.to_string(),
+        };
+        config.validate().unwrap_err()
+    }
+
+    /// One note of one card for each list of tags, in order, the `i`th created `i` hours after
+    /// the first, returning their cards.
+    async fn tagged_cards(pool: &SqlitePool, tags: &[&[&str]], now: DateTime<Utc>) -> Vec<CardId> {
+        let parser = create_parser_helper(pool, "markdown").await;
+        for (i, note_tags) in tags.iter().enumerate() {
+            create_notes(
+                pool,
+                CreateNotesRequest {
+                    parser_id: parser.id,
+                    requests: vec![CreateNoteRequest {
+                        data: format!("Note {i}: {{{{answer {i}}}}}"),
+                        keywords: Vec::new(),
+                        tags: note_tags.iter().map(ToString::to_string).collect(),
+                        is_suspended: false,
+                        custom_data: serde_json::Map::new(),
+                    }],
+                },
+                now + Duration::hours(i64::try_from(i).unwrap()),
+                &get_all_parsers(),
+                false,
+            )
+            .await
+            .unwrap();
+        }
+        sqlx::query_scalar(r"SELECT c.id FROM card c JOIN note n ON c.note_id = n.id ORDER BY n.id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn documented_example_parses_in_order() {
+        let config = parse(EXAMPLE);
+        let names = config.queue.presets.keys().collect::<Vec<_>>();
+        assert_eq!(names, ["languages", "exam"], "listed order is priority");
+        let languages = &config.queue.presets["languages"];
+        assert_eq!(languages.new_cards_daily_limit, Some(40));
+        assert_eq!(languages.reviews_daily_limit, None);
+        assert_eq!(
+            languages.learning_steps,
+            Some(vec![
+                Duration::minutes(1),
+                Duration::minutes(5),
+                Duration::minutes(30)
+            ])
+        );
+        assert_eq!(
+            config.queue.presets["exam"].review_order,
+            Some(ReviewOrder::Retrievability)
+        );
+        // Written back as read
+        let written = toml_edit::ser::to_string_pretty(&config).unwrap();
+        assert_eq!(parse(&written).queue.presets, config.queue.presets);
+    }
+
+    #[test]
+    fn invalid_presets_are_rejected() {
+        let error = invalid("[queue.presets.empty]\nnew_cards_daily_limit = 5\n");
+        assert!(error.contains("queue.presets.empty.tags"), "{error}");
+        let error = invalid("[queue.presets.steps]\ntags = [\"a\"]\nlearning_steps = [600, 60]\n");
+        assert!(
+            error.contains("queue.presets.steps.learning_steps"),
+            "{error}"
+        );
+        // A setting presets cannot have, or a typo, is not silently ignored
+        let error =
+            invalid("[queue.presets.mix]\ntags = [\"a\"]\nnew_review_mix = \"new_first\"\n");
+        assert!(error.contains("new_review_mix"), "{error}");
+        let error = invalid("[queue.presets.typo]\ntags = [\"a\"]\nnew_card_daily_limit = 5\n");
+        assert!(error.contains("new_card_daily_limit"), "{error}");
+    }
+
+    /// The first preset listed whose tag the note has, exactly or as a parent, wins.
+    #[sqlx::test]
+    async fn cards_use_the_first_matching_preset(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[
+                &["lang"],
+                &["lang:german"],
+                &["math:analysis:limits"],
+                &["math:analysis", "lang:french"],
+                &["language", "math", "old:lang"],
+                &[],
+            ],
+            now,
+        )
+        .await;
+        let config = parse(EXAMPLE);
+        let presets = card_presets(&pool, &preset_sql(&config.queue.presets))
+            .await
+            .unwrap();
+        let of = |i: usize| presets.get(&ids[i]).copied();
+        assert_eq!(
+            (0..ids.len()).map(of).collect::<Vec<_>>(),
+            [Some(0), Some(0), Some(1), Some(0), None, None]
+        );
+    }
+
+    /// Each preset's limits cap its own cards, and the top-level limits the total.
+    #[sqlx::test]
+    async fn preset_limits_cap_their_cards(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&["lang"], &["lang"], &["lang"], &[], &[], &["exam"]],
+            now - Duration::days(30),
+        )
+        .await;
+        let mut config = parse(
+            r#"
+            new_cards_daily_limit = 4
+            new_cards_ignore_review_limit = true
+
+            [queue.presets.languages]
+            tags = ["lang"]
+            new_cards_daily_limit = 2
+
+            [queue.presets.exam]
+            tags = ["exam"]
+            reviews_daily_limit = 1
+            "#,
+        );
+        let left = async |config: &SparesExternalConfig| {
+            daily_limits_left_with(&pool, config, now).await.unwrap()
+        };
+        assert_eq!(
+            left(&config).await,
+            DailyLimitsLeft {
+                new: 4,
+                reviews: 9999,
+                presets: vec![
+                    PresetLimitsLeft {
+                        new: Some(2),
+                        reviews: None
+                    },
+                    PresetLimitsLeft {
+                        new: None,
+                        reviews: Some(1)
+                    },
+                ],
+            }
+        );
+
+        // Two language cards studied use up its limit, and half the top-level one
+        add_review(&pool, ids[0], now, NEW).await;
+        add_review(&pool, ids[1], now, NEW).await;
+        let limits = left(&config).await;
+        assert_eq!((limits.new, limits.presets[0].new), (2, Some(0)));
+        // So review leaves out the third language card, but not the others
+        let preset = crate::api::preset::limited_preset_sql(&config.queue);
+        let shown: Vec<CardId> = sqlx::query_scalar(&format!(
+            "SELECT c.id FROM card c WHERE c.state = {NEW} AND c.id NOT IN ({}, {}) {}",
+            ids[0],
+            ids[1],
+            crate::api::review::daily_limits_clause(&limits, &preset)
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(shown, ids[3..]);
+        // And it is counted as nothing left to study
+        let counted = crate::api::preset::cap_counts(
+            [
+                (0, Some(0), 1, 0.0),
+                (0, None, 2, 0.0),
+                (0, Some(1), 1, 0.0),
+            ],
+            &QueueCaps::from_limits(&limits),
+        );
+        assert_eq!(
+            counted[&0].0, 2,
+            "the top-level limit caps the other 3 at 2"
+        );
+
+        // Without ignoring the review limit, the exam preset's reviews due leave no room for its
+        // new cards
+        config.new_cards_ignore_review_limit = false;
+        set_card(&pool, ids[5], REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        let limits = left(&config).await;
+        assert_eq!(
+            limits.presets[1],
+            PresetLimitsLeft {
+                new: Some(0),
+                reviews: Some(1)
+            }
+        );
+    }
+
+    /// Cards of presets that order differently come one order after another, each in its own.
+    #[sqlx::test]
+    async fn presets_order_their_cards(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&[], &["lang"], &["exam"], &["lang"], &[]],
+            now - Duration::days(1),
+        )
+        .await;
+        let [other_1, lang_1, exam, lang_2, other_2] = ids[..] else {
+            unreachable!()
+        };
+        let mut config = parse(
+            r#"
+            [queue]
+            new_review_mix = "new_first"
+
+            [queue.presets.languages]
+            tags = ["lang"]
+            new_order = "newest_first"
+
+            [queue.presets.exam]
+            tags = ["exam"]
+            new_cards_daily_limit = 5
+            "#,
+        )
+        .queue;
+        let order = async |config: &QueueConfig| {
+            let query = format!(
+                "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id ORDER BY {}",
+                queue_order_by(config, now, &QueueCaps::default(), &[])
+            );
+            sqlx::query_scalar::<_, CardId>(&query)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        // Languages first, newest first, then the exam and other cards together, in the
+        // top-level order
+        assert_eq!(
+            order(&config).await,
+            [lang_2, lang_1, other_1, exam, other_2]
+        );
+        // A preset ordering like the top level changes nothing
+        config.presets["languages"].new_order = Some(NewCardOrder::Created);
+        assert_eq!(order(&config).await, ids);
+    }
+
+    /// Rating a card uses its preset's steps and sibling burying, and a reschedule replays it
+    /// with them.
+    #[sqlx::test]
+    async fn rating_uses_the_preset_steps(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(&pool, &[&["lang"], &[]], now - Duration::days(1)).await;
+        let config = parse(EXAMPLE);
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        let due_after_good = async |card_id: CardId| -> Duration {
+            rate_card_with_config(
+                &pool,
+                scheduler.as_ref(),
+                &config,
+                RatingSubmission {
+                    card_id,
+                    rating: 3,
+                    recall_duration: Duration::seconds(5),
+                    rate_duration: Duration::seconds(1),
+                    tag_id: None,
+                },
+                now,
+                true,
+            )
+            .await
+            .unwrap();
+            let due: DateTime<Utc> = sqlx::query_scalar(r"SELECT due FROM card WHERE id = ?")
+                .bind(card_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            due - now
+        };
+        // Good on a new card moves it to the second step: 5 minutes for `languages`, the
+        // top-level 10 minutes for the other
+        let lang = due_after_good(ids[0]).await;
+        let other = due_after_good(ids[1]).await;
+        assert!(
+            (lang - Duration::minutes(5)).num_seconds().abs() <= 1,
+            "{lang}"
+        );
+        assert!(
+            (other - Duration::minutes(10)).num_seconds().abs() <= 1,
+            "{other}"
+        );
+
+        let configs = CardConfigs::load(&pool, &config, None).await.unwrap();
+        assert_eq!(configs.get(ids[0]).learning_steps[1], Duration::minutes(5));
+        assert_eq!(configs.get(ids[1]).learning_steps[1], Duration::minutes(10));
+        assert_eq!(
+            configs.base().learning_steps[1],
+            Duration::minutes(10),
+            "placement uses the top level"
+        );
+    }
+
+    #[sqlx::test]
+    async fn rating_buries_siblings_by_preset(pool: SqlitePool) {
+        let now = Utc::now();
+        let parser = create_parser_helper(&pool, "markdown").await;
+        create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{a}} {{b}}".to_string(),
+                    keywords: Vec::new(),
+                    tags: vec!["math:analysis".to_string()],
+                    is_suspended: false,
+                    custom_data: serde_json::Map::new(),
+                }],
+            },
+            now - Duration::days(1),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let ids: Vec<CardId> = sqlx::query_scalar(r#"SELECT id FROM card ORDER BY "order""#)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        // The top level does not bury, but `exam` does
+        let config = parse(EXAMPLE);
+        assert!(!config.queue.bury_new_siblings);
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        rate_card_with_config(
+            &pool,
+            scheduler.as_ref(),
+            &config,
+            RatingSubmission {
+                card_id: ids[0],
+                rating: 3,
+                recall_duration: Duration::seconds(5),
+                rate_duration: Duration::seconds(1),
+                tag_id: None,
+            },
+            now,
+            true,
+        )
+        .await
+        .unwrap();
+        let sibling: Option<SpecialState> =
+            sqlx::query_scalar(r"SELECT special_state FROM card WHERE id = ?")
+                .bind(ids[1])
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(sibling, Some(SpecialState::SchedulerBuried));
     }
 }
