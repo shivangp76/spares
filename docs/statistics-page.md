@@ -1,6 +1,7 @@
 # Plan: Statistics page enhancements
 
-Status: proposed (2026-10-14, updated 2026-10-16)
+Status: implemented (2026-10-16). The definitions are documented on `spares_core::schema::statistics`;
+see [Where the implementation differs](#where-the-implementation-differs) for what changed on the way.
 
 ## Goal
 
@@ -244,3 +245,32 @@ Each phase can be shipped and committed on its own.
   Offline: a cached entry is shown when the fetch fails, the oldest entry is evicted past 10,
   and upgrading the database from version 1 keeps the queues and outbox.
 - CLI: snapshot of the text output at a fixed terminal width.
+
+## Where the implementation differs
+
+- **Young/mature is stored, not windowed.** A `LAG()` window over the review log took 0.4–0.7 s
+  at 500k reviews, and SQLite's per-row floor made any query-time pairing too slow for the all-time
+  true retention row. Migration `20261016120000_review_log_previous_interval` adds
+  `review_log.previous_interval`, kept right by triggers on insert, delete and update (so undo,
+  sync, offline ratings and card deletion need no code of their own), and an index on
+  `(card_id, kind, reviewed_at)` for the triggers' lookups and each card's last review.
+- **The server memory-maps the database** (`mmap_size`), as each pooled connection otherwise read
+  through its own 2 MB page cache and the same query took 50–130 ms depending on the connection.
+- **The query filter** binds the matching ids once as a JSON array read with `json_each(?1)`, rather
+  than a temporary table.
+- **`SrsScheduler::retrievability`** takes the config and returns a function of stability and
+  elapsed days, so the decay is read once rather than per card, and cards are not decoded whole.
+- **The bench** fills its database with SQL instead of `api/tests/fuzz_data.rs`, which is
+  test-only. Results, with 50k cards and 500k reviews: graphs for the last month 110 ms, all time
+  270 ms, half the cards by query 190 ms; today's statistics 60 ms (2.3 s before, from a query per
+  card for the safe advance/postpone counts); the heatmap 200 ms.
+- **`get_statistics`** no longer counts suspended cards as due (review never shows them), and moves
+  buried cards to the day after the requested date rather than the server's today. The daily
+  limits left are still counted in the server's time zone, as review counts them.
+- **`--json`** prints `{statistics, graphs, history}` (each when a section needs it) rather than only
+  the graphs, so it keeps today's figures and the scheduling counts.
+- **Due** stays a section of its own after Today, on the page and in the CLI.
+- **The database upgrade** is tested through `upgradeDatabase` with a stub, since `bun test` has no
+  IndexedDB; the cache's eviction and fallback are tested against an in-memory store.
+
+Left to do: FSRS's `lapses` and `get_leeches` still bind Again directly instead of `is_pass`.
