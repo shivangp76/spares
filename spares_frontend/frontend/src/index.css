@@ -367,6 +367,11 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   padding-bottom: calc(var(--answer-bar-height, 96px) + 24px);
 }
 
+/* Keeps what is scrolled to, e.g. a card's cloze, out from under the pinned bar */
+html:has(.review-answer-bar) {
+  scroll-padding-bottom: calc(var(--answer-bar-height, 96px) + 16px);
+}
+
 /* The typed answer boxes, side by side when there's room, scrolling if there are many */
 .typed-answer-inputs {
   display: grid;

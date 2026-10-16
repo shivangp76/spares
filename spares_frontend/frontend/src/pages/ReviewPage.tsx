@@ -1013,7 +1013,7 @@ export default function ReviewPage() {
               <>
                 {phase === 'front' && card.audio && <AudioBar audio={card.audio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} />
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
                 </div>
               </>
             )}
@@ -1024,7 +1024,7 @@ export default function ReviewPage() {
               {phase === 'back' && card.audio && <AudioBar audio={card.audio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
-                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} onPlayAudio={playAudioClip} />
+                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
               </div>
             </div>
           )}
