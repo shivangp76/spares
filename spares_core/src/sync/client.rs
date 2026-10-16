@@ -90,6 +90,7 @@ use crate::ids::next_id;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NoteId;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::parsers::add_order_to_note_data;
@@ -684,10 +685,13 @@ impl Merger<'_> {
         let base = read_base::<CardRecord>(self.conn, SyncKind::Card, remote.id)
             .await?
             .unwrap_or_else(|| remote.clone());
+        // Crams are left out on both sides: they did not change the card's scheduling, so a cram
+        // on one side must not make its scheduling win over a review on the other.
         let local_latest: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(reviewed_at) FROM review_log WHERE card_id = ? AND usn = -1",
+            "SELECT MAX(reviewed_at) FROM review_log WHERE card_id = ? AND usn = -1 AND kind < ?",
         )
         .bind(remote.id)
+        .bind(ReviewLogKind::FIRST_UNREPLAYED)
         .fetch_one(&mut *self.conn)
         .await
         .map_err(sqlx_error)?;
@@ -695,7 +699,10 @@ impl Merger<'_> {
             .pulled
             .review_logs
             .iter()
-            .filter(|log| log.card_id == Some(remote.id))
+            .filter(|log| {
+                log.card_id == Some(remote.id)
+                    && log.kind < i64::from(ReviewLogKind::FIRST_UNREPLAYED)
+            })
             .map(|log| log.reviewed_at)
             .max();
         let (merged, replay) = merge_card(&base, &local, remote, local_latest, remote_latest);

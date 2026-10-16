@@ -12,7 +12,7 @@ use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
-use crate::api::fetch_review_logs_for_replay;
+use crate::api::fetch_review_logs;
 use crate::api::max_rows_for;
 use crate::api::note::basic::fetch_note_snapshot;
 use crate::api::parser::get_parser_name;
@@ -650,7 +650,8 @@ pub(crate) async fn copy_review_logs_on(
 ) -> Result<(), Error> {
     // Ordered so the copies get ids in the same relative order as the source rows, which
     // `effective_review_logs` relies on to break ties within the same second.
-    let review_logs = fetch_review_logs_for_replay(&mut *conn, src_card_id).await?;
+    // Crams are copied too: they are part of the history the card's statistics show.
+    let review_logs = fetch_review_logs(&mut *conn, src_card_id).await?;
     for dst_card_id in dst_card_ids {
         let ids = next_ids(&mut *conn, IdTable::ReviewLog, review_logs.len()).await?;
         for (log, id) in review_logs.iter().zip(ids) {

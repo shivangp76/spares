@@ -53,6 +53,9 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
   const lapses = reviews.filter(e => e.previous_state === REVIEW_STATE && ratingLabel(e) === 'Again').length;
   const timeTaken = (e: CardReviewEntry) => (e.recall_duration ?? 0) + (e.rate_duration ?? 0);
   const totalTime = reviews.reduce((sum, e) => sum + timeTaken(e), 0);
+  // Ratings in filtered tags that do not reschedule, counted apart since they left the schedule alone
+  const crams = current.entries.filter(e => e.kind === 'Cram');
+  const cramTime = crams.reduce((sum, e) => sum + timeTaken(e), 0);
   const date = (iso: string) => new Date(iso).toLocaleString();
 
   return (
@@ -64,6 +67,8 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
         <div><div style={metaLabel}>Lapses</div>{lapses}</div>
         {reviews.length > 0 && <div><div style={metaLabel}>Average Time</div>{formatDuration(Math.round(totalTime / reviews.length))}</div>}
         <div><div style={metaLabel}>Total Time</div>{formatDuration(totalTime)}</div>
+        {crams.length > 0 && <div><div style={metaLabel}>Crams</div>{crams.length}</div>}
+        {crams.length > 0 && <div><div style={metaLabel}>Cram Time</div>{formatDuration(cramTime)}</div>}
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -84,7 +89,7 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
             {[...current.entries].reverse().map(e => (
               <tr key={e.id}>
                 <td style={td}>{date(e.reviewed_at)}</td>
-                <td style={td}>{e.kind === 'Forget' ? 'Forget' : e.tag_id !== null ? 'Filtered' : STATE_LABELS[e.previous_state] ?? e.previous_state}</td>
+                <td style={td}>{e.kind === 'Forget' ? 'Forget' : e.kind === 'Cram' ? 'Cram' : e.tag_id !== null ? 'Filtered' : STATE_LABELS[e.previous_state] ?? e.previous_state}</td>
                 <td style={td}>{e.rating === null ? '—' : ratingLabel(e) ?? e.rating}</td>
                 <td style={td}>{e.scheduled_time === null ? '—' : formatInterval(e.scheduled_time)}</td>
                 <td style={td}>{e.kind === 'Forget' ? '—' : formatDuration(timeTaken(e))}</td>

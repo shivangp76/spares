@@ -9,6 +9,7 @@ use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
+use crate::api::fetch_review_logs;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::placeholders_2d;
 use crate::api::undo::insert_events;
@@ -51,8 +52,9 @@ pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error
     Ok(CardResponse::new(&card))
 }
 
-/// The card's review log, oldest first, including forget markers. Each entry carries the memory
-/// state the card had after it, replayed with the scheduler's current parameters.
+/// The card's review log, oldest first, including forget markers and crams. Each entry carries the
+/// memory state the card had after it, replayed with the scheduler's current parameters. A cram
+/// leaves the memory state as it was, so it carries the same one as the row before it.
 pub async fn get_card_reviews(
     db: &SqlitePool,
     card_id: CardId,
@@ -62,8 +64,8 @@ pub async fn get_card_reviews(
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    let review_logs = fetch_review_logs_for_replay(db, card_id).await?;
-    // A log of nothing but forget markers has no memory state to replay.
+    let review_logs = fetch_review_logs(db, card_id).await?;
+    // A log of nothing but forget markers and crams has no memory state to replay.
     let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) else {
         return Ok(review_logs
             .into_iter()

@@ -329,8 +329,8 @@ async fn rate_offline(
     let is_latest = review_logs
         .last()
         .is_none_or(|review_log| review_log.reviewed_at <= performed_at);
-    // A rating in a filtered tag that does not reschedule writes no review, so it has no place in
-    // the history to be inserted at.
+    // A rating in a filtered tag that does not reschedule writes a cram, which replay skips, so
+    // there is no history to insert it into: it is logged at `performed_at` whatever came after.
     let reschedules = match submission.tag_id {
         Some(tag_id) => sqlx::query_scalar(r"SELECT reschedule FROM tag WHERE id = ?")
             .bind(tag_id)

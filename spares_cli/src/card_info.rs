@@ -175,6 +175,17 @@ fn format_summary(
         summary.push(("Average Time", format_seconds(average)));
     }
     summary.push(("Total Time", format_seconds(total_time)));
+    // Ratings in filtered tags that do not reschedule, counted apart since they did not change
+    // the card's schedule. Shown only for cards that have some.
+    let crams = entries
+        .iter()
+        .filter(|e| e.kind == ReviewLogKind::Cram)
+        .collect::<Vec<_>>();
+    if !crams.is_empty() {
+        summary.push(("Crams", crams.len().to_string()));
+        let cram_time = crams.iter().map(|e| time_taken(e)).sum::<i64>();
+        summary.push(("Cram Time", format_seconds(cram_time)));
+    }
 
     let mut out = String::new();
     let label_width = summary.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
@@ -201,6 +212,8 @@ fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsBySch
         .map(|e| {
             let kind = if e.kind == ReviewLogKind::Forget {
                 "Forget".to_string()
+            } else if e.kind == ReviewLogKind::Cram {
+                "Cram".to_string()
             } else if e.tag_id.is_some() {
                 "Filtered".to_string()
             } else {
@@ -269,6 +282,7 @@ mod tests {
         previous_state: StateId,
     ) -> CardReviewEntry {
         let is_review = kind == ReviewLogKind::Review;
+        let is_rating = is_review || kind == ReviewLogKind::Cram;
         CardReviewEntry {
             id,
             kind,
@@ -278,9 +292,9 @@ mod tests {
             scheduler_name: "fsrs".to_string(),
             previous_state,
             scheduled_time: is_review.then_some(86400 * 3),
-            recall_duration: is_review.then_some(5),
-            rate_duration: is_review.then_some(2),
-            tag_id: None,
+            recall_duration: is_rating.then_some(5),
+            rate_duration: is_rating.then_some(2),
+            tag_id: (kind == ReviewLogKind::Cram).then_some(1),
             stability: is_review.then_some(3.0),
             difficulty: is_review.then_some(5.5),
         }
@@ -341,6 +355,35 @@ mod tests {
         );
         assert!(rows[2].contains("New") && rows[2].contains("Good"), "{out}");
         assert!(rows[2].contains("3d") && rows[2].contains("5.50"), "{out}");
+    }
+
+    #[test]
+    fn crams_are_listed_but_not_counted_as_reviews() {
+        let entries = [
+            entry(0, ReviewLogKind::Review, Some(3), 0),
+            entry(1, ReviewLogKind::Cram, Some(1), REVIEW_STATE),
+            entry(2, ReviewLogKind::Cram, Some(3), REVIEW_STATE),
+        ];
+        let out = format_card_info(&entries, &ratings());
+        // A cram rated Again is not a lapse
+        assert!(out.contains("Reviews        1\n"), "{out}");
+        assert!(out.contains("Lapses         0\n"), "{out}");
+        assert!(out.contains("Crams          2\n"), "{out}");
+        assert!(out.contains("Cram Time      14s\n"), "{out}");
+        let rows = out
+            .lines()
+            .skip_while(|l| !l.starts_with("Date"))
+            .skip(1)
+            .take_while(|l| !l.is_empty())
+            .collect::<Vec<_>>();
+        assert!(
+            rows[0].contains("Cram") && rows[0].contains("Good"),
+            "{out}"
+        );
+        assert!(
+            rows[1].contains("Cram") && rows[1].contains("Again"),
+            "{out}"
+        );
     }
 
     #[test]
