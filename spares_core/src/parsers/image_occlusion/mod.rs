@@ -82,7 +82,7 @@ mod test;
 const CLOZE_SETTINGS_KEY: &str = "data-cloze-settings";
 const CLOZES_GROUP_ID: &str = "clozes-group";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 #[allow(clippy::struct_field_names)]
 pub struct ImageOcclusionConfig {
@@ -109,7 +109,7 @@ impl Default for ImageOcclusionConfig {
 /// `config.toml`. The editor embedded in the web app gets it from
 /// `GET /api/image-occlusions/editor-config`, and the standalone editor from `spares_frontend`
 /// when it starts. After changing it, reload the web app or restart `spares_frontend`.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ImageOcclusionEditorConfig {
     /// Fill of shapes drawn in the editor. Clozes are recolored when cards are rendered, so this

@@ -30,6 +30,11 @@ use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::note::update_notes;
+use crate::api::preset::CardConfigs;
+use crate::api::preset::PresetLimitsLeft;
+use crate::api::preset::cap_counts;
+use crate::api::preset::limited_preset_sql;
+use crate::api::preset::preset_index;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::queue_order_by;
 use crate::api::tag::create_tag;
@@ -43,6 +48,7 @@ use crate::api::validate_bury_target;
 use crate::config::LeechAction;
 use crate::config::LeechConfig;
 use crate::config::QueueConfig;
+use crate::config::QueuePreset;
 use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
 use crate::config::read_external_config;
@@ -359,10 +365,13 @@ const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 /// What is left of today's limits on `requested_date`'s local day. See
 /// [`SparesExternalConfig::new_cards_daily_limit`] and
 /// [`SparesExternalConfig::reviews_daily_limit`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DailyLimitsLeft {
     pub(crate) new: u32,
     pub(crate) reviews: u32,
+    /// What is left of each [preset](crate::config::QueuePreset)'s own limits, by its index in
+    /// [`QueueConfig::presets`]. Empty when no preset has limits.
+    pub(crate) presets: Vec<PresetLimitsLeft>,
 }
 
 pub(crate) async fn daily_limits_left(
@@ -372,60 +381,167 @@ pub(crate) async fn daily_limits_left(
     daily_limits_left_with(db, &read_external_config()?, requested_date).await
 }
 
+/// See [`DailyLimitsLeft`].
+///
+/// A preset's limits work like the top-level ones, on its own cards: with
+/// `reviews_daily_limit = 100` on a preset whose 80 reviews are due, and
+/// `new_cards_ignore_review_limit` off, at most 20 of its new cards are shown, whatever is left of
+/// the top-level limits. The top-level new card limit only counts the reviews due that the
+/// presets' review limits let through, so a preset holding back its reviews leaves room for new
+/// cards elsewhere.
+#[expect(clippy::too_many_lines)]
 pub(crate) async fn daily_limits_left_with(
     db: &SqlitePool,
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
 ) -> Result<DailyLimitsLeft, Error> {
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    let studied_from = async |state: StateId| -> Result<u32, Error> {
-        sqlx::query_scalar(
-            r"SELECT COUNT(DISTINCT card_id) FROM review_log
-            WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND previous_state = ?",
-        )
-        .bind(lower_limit.timestamp())
-        .bind(upper_limit.timestamp())
-        // Forgetting a card must not use up one of today's cards.
-        .bind(ReviewLogKind::Review)
-        .bind(state)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })
+    // The preset is only needed for the presets' own limits
+    let preset = limited_preset_sql(&config.queue);
+    // `LEFT JOIN`, so that the reviews of a deleted card still count, with no preset
+    let studied: Vec<(Option<i64>, StateId, u32)> = sqlx::query_as(&format!(
+        r"SELECT {preset} AS preset, rl.previous_state, COUNT(DISTINCT rl.card_id)
+        FROM review_log rl LEFT JOIN card c ON c.id = rl.card_id
+        WHERE rl.reviewed_at >= ? AND rl.reviewed_at <= ? AND rl.kind = ?
+        AND rl.previous_state IN (?, ?)
+        GROUP BY 1, 2"
+    ))
+    .bind(lower_limit.timestamp())
+    .bind(upper_limit.timestamp())
+    // Forgetting a card must not use up one of today's cards.
+    .bind(ReviewLogKind::Review)
+    .bind(NEW_CARD_STATE)
+    .bind(review_state())
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let studied_from = |state: StateId, of_preset: Option<Option<usize>>| -> u32 {
+        studied
+            .iter()
+            .filter(|(preset, studied_state, _)| {
+                *studied_state == state
+                    && of_preset.is_none_or(|of_preset| preset_index(*preset) == of_preset)
+            })
+            .map(|(_, _, count)| count)
+            .sum()
     };
-    let new_studied = studied_from(NEW_CARD_STATE).await?;
-    let reviews_studied = studied_from(review_state()).await?;
+    let new_studied = studied_from(NEW_CARD_STATE, None);
+    let reviews_studied = studied_from(review_state(), None);
+    let ignore_review_limit = config.new_cards_ignore_review_limit;
+
+    let reviews_due: Vec<(Option<i64>, u32)> = if ignore_review_limit {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!(
+            r"SELECT {preset} AS preset, COUNT(*) FROM card c
+            WHERE c.state = ? AND c.special_state IS NULL AND c.due <= ?
+            GROUP BY 1"
+        ))
+        .bind(review_state())
+        .bind(upper_limit.timestamp())
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?
+    };
+    let reviews_due_of = |of_preset: Option<usize>| -> u32 {
+        reviews_due
+            .iter()
+            .filter(|(preset, _)| preset_index(*preset) == of_preset)
+            .map(|(_, count)| count)
+            .sum()
+    };
+
+    let has_preset_limits = config.queue.presets.values().any(QueuePreset::has_limits);
+    let presets = if has_preset_limits {
+        config
+            .queue
+            .presets
+            .values()
+            .enumerate()
+            .map(|(index, preset)| {
+                let new_studied = studied_from(NEW_CARD_STATE, Some(Some(index)));
+                let reviews_studied = studied_from(review_state(), Some(Some(index)));
+                let counted = if ignore_review_limit {
+                    reviews_studied
+                } else {
+                    reviews_studied + new_studied
+                };
+                let reviews = preset
+                    .reviews_daily_limit
+                    .map(|limit| limit.saturating_sub(counted));
+                let mut new = preset
+                    .new_cards_daily_limit
+                    .map(|limit| limit.saturating_sub(new_studied));
+                if !ignore_review_limit && let Some(reviews) = reviews {
+                    let room = reviews.saturating_sub(reviews_due_of(Some(index)));
+                    new = Some(new.map_or(room, |new| new.min(room)));
+                }
+                PresetLimitsLeft { new, reviews }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut new = config.new_cards_daily_limit.saturating_sub(new_studied);
-    if config.new_cards_ignore_review_limit {
+    if ignore_review_limit {
         let reviews = config.reviews_daily_limit.saturating_sub(reviews_studied);
-        return Ok(DailyLimitsLeft { new, reviews });
+        return Ok(DailyLimitsLeft {
+            new,
+            reviews,
+            presets,
+        });
     }
     let reviews = config
         .reviews_daily_limit
         .saturating_sub(reviews_studied + new_studied);
-    // New cards only fill the room the reviews due today leave under the review limit
-    let reviews_due: u32 = sqlx::query_scalar(
-        r"SELECT COUNT(*) FROM card WHERE state = ? AND special_state IS NULL AND due <= ?",
-    )
-    .bind(review_state())
-    .bind(upper_limit.timestamp())
-    .fetch_one(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
+    // New cards only fill the room the reviews due today leave under the review limit, counting
+    // only the reviews the presets' own limits let through
+    let reviews_due: u32 = reviews_due
+        .iter()
+        .map(|(preset, count)| {
+            preset_index(*preset)
+                .and_then(|index| presets.get(index))
+                .and_then(|left| left.reviews)
+                .map_or(*count, |left| (*count).min(left))
+        })
+        .sum();
     new = new.min(reviews.saturating_sub(reviews_due));
-    Ok(DailyLimitsLeft { new, reviews })
+    Ok(DailyLimitsLeft {
+        new,
+        reviews,
+        presets,
+    })
 }
 
 /// The conditions that leave out new cards once today's new card limit is used up, and review
 /// cards once the review limit is, each starting with `"\nAND "`. Empty while there is room.
-fn daily_limits_clause(left: DailyLimitsLeft) -> String {
-    [(left.new, NEW_CARD_STATE), (left.reviews, review_state())]
-        .into_iter()
-        .filter(|(left, _)| *left == 0)
-        .fold(String::new(), |mut clause, (_, state)| {
+///
+/// Likewise for each preset's own limits, with `preset`, the SQL of a card's preset (see
+/// [`limited_preset_sql`]): once the `languages` preset's new card limit is used up, its new cards
+/// are left out, while other new cards are still shown.
+pub(crate) fn daily_limits_clause(left: &DailyLimitsLeft, preset: &str) -> String {
+    let mut clause = String::new();
+    for (left, state) in [(left.new, NEW_CARD_STATE), (left.reviews, review_state())] {
+        if left == 0 {
             let _ = write!(clause, "\nAND c.state != {state}");
-            clause
-        })
+        }
+    }
+    for state in [NEW_CARD_STATE, review_state()] {
+        let used_up = left
+            .presets
+            .iter()
+            .positions(|left| left.of_state(state) == Some(0))
+            .join(", ");
+        if !used_up.is_empty() {
+            // A card of no preset is `NULL`, which `IN` would make the whole condition
+            let _ = write!(
+                clause,
+                "\nAND NOT (c.state = {state} AND COALESCE({preset}, -1) IN ({used_up}))"
+            );
+        }
+    }
+    clause
 }
 
 /// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
@@ -435,7 +551,11 @@ async fn review_eligibility_clause(
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let not_new_card_str = daily_limits_clause(daily_limits_left(db, requested_date).await?);
+    let config = read_external_config()?;
+    let not_new_card_str = daily_limits_clause(
+        &daily_limits_left_with(db, &config, requested_date).await?,
+        &limited_preset_sql(&config.queue),
+    );
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     Ok(format!(
         "(c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})",
@@ -547,8 +667,11 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) where_clause: String,
     pub(crate) is_filtered_tag: bool,
     pub(crate) card_due_limit: DateTime<Utc>,
-    /// What is left of today's limits, for [`queue_order_by`]. Filtered tags have no limits.
+    /// What is left of today's limits. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
+    /// The SQL of a card's preset, for the presets' own limits in `caps` (see
+    /// [`limited_preset_sql`]).
+    pub(crate) preset_sql: String,
     /// The learning and relearning cards due later today that match the filter but are held back
     /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit), as a
     /// SQL condition with nothing to bind. `None` for filtered tags, which hold nothing back.
@@ -575,7 +698,8 @@ pub(crate) async fn build_review_filter_query(
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
     let config = read_external_config()?;
     let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
-    let not_new_card_str = daily_limits_clause(limits_left);
+    let preset_sql = limited_preset_sql(&config.queue);
+    let not_new_card_str = daily_limits_clause(&limits_left, &preset_sql);
     let mut query_sort = Vec::new();
     let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         query_sort = Evaluator::new(query).card_order_by()?;
@@ -631,41 +755,48 @@ pub(crate) async fn build_review_filter_query(
     let caps = if is_filtered_tag {
         QueueCaps::default()
     } else {
-        QueueCaps {
-            new: Some(limits_left.new),
-            reviews: Some(limits_left.reviews),
-        }
+        QueueCaps::from_limits(&limits_left)
     };
     Ok(Some(ReviewFilterQuery {
         where_clause,
         is_filtered_tag,
         card_due_limit,
         caps,
+        preset_sql,
         held_back_clause,
         query_sort,
     }))
 }
 
-/// What is left of a review with `where_clause` today: how many cards in each state, and how long
-/// they should take, from each card's average review time (30 seconds for a card never reviewed).
+/// What is left of a review with `filter` today: how many cards in each state, and how long they
+/// should take, from each card's average review time (30 seconds for a card never reviewed).
 ///
-/// New and review cards are capped by `caps`, what is left of today's limits, since the queue
-/// shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due after a
-/// holiday and 50 already done today, reviews show 150 rather than 550, so the count reaches 0
-/// when the day's reviews are done rather than looking endless. With `new_cards_daily_limit = 20`
-/// and 5 new cards done, new shows 15 rather than every new card in the collection. Learning and
-/// relearning cards are never held back, so they are never capped, and filtered tags (whose caps
-/// are `None`) count every card in them.
+/// New and review cards are capped by `filter.caps`, what is left of today's limits, since the
+/// queue shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due
+/// after a holiday and 50 already done today, reviews show 150 rather than 550, so the count
+/// reaches 0 when the day's reviews are done rather than looking endless. With
+/// `new_cards_daily_limit = 20` and 5 new cards done, new shows 15 rather than every new card in
+/// the collection. Learning and relearning cards are never held back, so they are never capped,
+/// and filtered tags (whose caps are `None`) count every card in them.
+///
+/// The cards of a [preset](crate::config::QueuePreset) with limits of its own are capped by those
+/// too, before the total is (see [`cap_counts`]). With 30 new `languages` cards and 10 left of
+/// its limit, and 5 other new cards, new shows 15.
 ///
 /// The time estimate of a capped state is scaled down to the cards counted, by that state's
 /// average time per card: 600 reviews taking 5 hours in all, capped to 150, take 1h15.
 pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
-    where_clause: &str,
-    card_due_limit: DateTime<Utc>,
-    is_filtered_tag: bool,
-    caps: QueueCaps,
+    filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
+    let ReviewFilterQuery {
+        where_clause,
+        is_filtered_tag,
+        card_due_limit,
+        caps,
+        preset_sql,
+        ..
+    } = filter;
     // These are the remaining cards that are due on `requested_date` grouped by state, with the
     // seconds they should take. Note that this is _not_ equivalent to the cards by state in
     // `get_statistics()` because that does not filter by `requested_date`. The cast is necessary
@@ -675,6 +806,7 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
         indoc! {
         "SELECT
             c.state,
+            {} AS preset,
             COUNT(*) as count,
             SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
         FROM card c
@@ -687,8 +819,9 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
             GROUP BY card_id
         ) rl ON rl.card_id = c.id
         WHERE {}
-        GROUP BY c.state"
+        GROUP BY 1, 2"
         },
+        if *is_filtered_tag { "NULL" } else { preset_sql },
         DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS,
         ReviewLogKind::Review as u8,
         where_clause
@@ -697,28 +830,21 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     if !is_filtered_tag {
         query = query.bind(card_due_limit.timestamp());
     }
-    let rows: Vec<(StateId, u32, f64)> = query
+    let rows: Vec<(StateId, Option<i64>, u32, f64)> = query
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    let mut cards_left_by_state = HashMap::new();
-    let mut total_time_seconds = 0.0;
-    for (state, count, time_seconds) in rows {
-        let cap = if state == NEW_CARD_STATE {
-            caps.new
-        } else if state == review_state() {
-            caps.reviews
-        } else {
-            None
-        };
-        let capped = cap.map_or(count, |cap| count.min(cap));
-        if capped == 0 {
-            continue;
-        }
-        cards_left_by_state.insert(state, capped);
-        total_time_seconds += time_seconds * f64::from(capped) / f64::from(count);
-    }
+    let counted = cap_counts(
+        rows.into_iter()
+            .map(|(state, preset, count, time)| (state, preset_index(preset), count, time)),
+        caps,
+    );
+    let total_time_seconds: f64 = counted.values().map(|(_, time)| time).sum();
+    let cards_left_by_state = counted
+        .into_iter()
+        .map(|(state, (count, _))| (state, count))
+        .collect();
     let time_estimate = Duration::seconds(total_time_seconds as i64);
 
     Ok((cards_left_by_state, time_estimate))
@@ -766,20 +892,29 @@ pub async fn get_review_card(
     unbury_cards_and_update_config(db).await?;
 
     // Build the filter query for matching cards
-    let Some(ReviewFilterQuery {
+    let Some(review_filter) =
+        build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+    else {
+        return Ok(None);
+    };
+    let (cards_left_by_state, time_estimate) =
+        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?;
+    let ReviewFilterQuery {
         where_clause,
         is_filtered_tag,
         card_due_limit,
         caps,
         query_sort,
         ..
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
-    else {
-        return Ok(None);
-    };
+    } = review_filter;
 
     let config = read_external_config()?;
-    let order_by = queue_order_by(&config.queue, requested_date, caps, &query_sort);
+    let order_by = queue_order_by(
+        &config.queue,
+        requested_date,
+        &caps.showable(&cards_left_by_state),
+        &query_sort,
+    );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}
         FROM card c
@@ -799,15 +934,6 @@ pub async fn get_review_card(
         .fetch_optional(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-
-    let (cards_left_by_state, time_estimate) = get_cards_left_by_state_and_time_estimate(
-        db,
-        &where_clause,
-        card_due_limit,
-        is_filtered_tag,
-        caps,
-    )
-    .await?;
 
     if let Some(review_card) = review_card_opt {
         let response = review_card_response(
@@ -942,21 +1068,8 @@ pub async fn get_review_card_by_id(
             // Compute cards_left_by_state and time_estimate using the same filter as the review session
             let (cards_left_by_state, time_estimate) =
                 match build_review_filter_query(db, filter, requested_date, true).await? {
-                    Some(ReviewFilterQuery {
-                        where_clause,
-                        is_filtered_tag,
-                        card_due_limit,
-                        caps,
-                        ..
-                    }) => {
-                        get_cards_left_by_state_and_time_estimate(
-                            db,
-                            &where_clause,
-                            card_due_limit,
-                            is_filtered_tag,
-                            caps,
-                        )
-                        .await?
+                    Some(review_filter) => {
+                        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?
                     }
                     // Tag not found — no cards left to review under this filter
                     None => (HashMap::new(), Duration::zero()),
@@ -1043,7 +1156,16 @@ pub async fn rate_card(
     log: bool,
 ) -> Result<Option<i64>, Error> {
     let config = read_external_config()?;
-    rate_card_with_config(db, scheduler, &config, submission, reviewed_at, log).await
+    // Boxed, since the config makes a large future for every caller to carry
+    Box::pin(rate_card_with_config(
+        db,
+        scheduler,
+        &config,
+        submission,
+        reviewed_at,
+        log,
+    ))
+    .await
 }
 
 /// [`rate_card`] with `config` rather than the one in `config.toml`.
@@ -1101,6 +1223,10 @@ pub(crate) async fn rate_card_with_config(
         .await;
     }
     let card = before_card.clone();
+    // With the steps and sibling burying of the card's preset
+    // Boxed, since every caller of rating carries its future
+    let configs = Box::pin(CardConfigs::load(db, config, Some(&[card_id]))).await?;
+    let config = configs.get(card_id);
 
     // Get review logs for this card
     let mut review_logs = fetch_review_logs_for_replay(db, card_id).await?;
@@ -1652,7 +1778,6 @@ pub async fn submit_study_action(
 
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
 
-    let config = read_external_config()?;
     match action {
         StudyAction::Rate(rating_submission) => {
             return rate_card(db, scheduler.as_ref(), rating_submission, at, true)
@@ -1665,6 +1790,7 @@ pub async fn submit_study_action(
                 .map(|event_id| SubmitStudyActionResponse { event_id });
         }
         StudyAction::Advance { count, query } => {
+            let config = read_external_config()?;
             let move_cards_result = scheduler.advance(db, &config, count, query, at).await?;
             if !move_cards_result.card_payloads.is_empty() {
                 insert_events(
@@ -1680,6 +1806,7 @@ pub async fn submit_study_action(
             }
         }
         StudyAction::Postpone { count, query } => {
+            let config = read_external_config()?;
             let move_cards_result = scheduler.postpone(db, &config, count, query, at).await?;
             if !move_cards_result.card_payloads.is_empty() {
                 insert_events(
@@ -1698,7 +1825,8 @@ pub async fn submit_study_action(
     Ok(SubmitStudyActionResponse { event_id: None })
 }
 
-/// Recomputes every card's memory state from its review log and gives it a new due date.
+/// Recomputes every card's memory state from its review log and gives it a new due date, with
+/// the steps of each card's [preset](crate::config::QueuePreset).
 pub(crate) async fn reschedule_all_cards(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
@@ -1729,6 +1857,7 @@ pub(crate) async fn reschedule_all_cards(
         .into_iter()
         .filter_map(|rl| rl.card_id.map(|card_id| (card_id, rl)))
         .into_group_map();
+    let configs = CardConfigs::load(db, config, None).await?;
     let cards_with_review_logs = cards
         .into_iter()
         .map(|card| {
@@ -1740,7 +1869,7 @@ pub(crate) async fn reschedule_all_cards(
         })
         .collect::<Vec<_>>();
     scheduler
-        .reschedule(db, config, cards_with_review_logs, at)
+        .reschedule(db, &configs, cards_with_review_logs, at)
         .await
 }
 

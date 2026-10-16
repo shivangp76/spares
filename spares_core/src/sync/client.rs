@@ -83,6 +83,7 @@ use super::records::read_usn;
 use crate::Error;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::note::create_cards_on;
+use crate::api::preset::CardConfigs;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::config::read_external_config;
 use crate::ids::IdTable;
@@ -739,7 +740,13 @@ impl Merger<'_> {
                 .fetch_one(&mut *self.conn)
                 .await
                 .map_err(sqlx_error)?;
-            let replayed = scheduler.compute_memory_state(&config, logs, card.desired_retention)?;
+            // With the steps of the card's preset
+            let configs = CardConfigs::load(&mut *self.conn, &config, Some(&[card_id])).await?;
+            let replayed = scheduler.compute_memory_state(
+                configs.get(card_id),
+                logs,
+                card.desired_retention,
+            )?;
             sqlx::query(
                 "UPDATE card SET stability = ?, difficulty = ?, state = ?, due = ?, usn = -1
                  WHERE id = ?",
