@@ -172,6 +172,7 @@ pub async fn get_review_queue(
         &where_clause,
         card_due_limit,
         is_filtered_tag,
+        caps,
     )
     .await?;
 

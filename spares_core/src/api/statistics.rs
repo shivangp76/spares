@@ -8,7 +8,7 @@ use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
-use crate::config::read_external_config;
+use crate::api::review::daily_limits_left;
 use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
@@ -17,6 +17,7 @@ use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::review_state;
 use crate::schema::review::ReviewHistoryResponse;
 use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
@@ -60,10 +61,6 @@ pub async fn get_statistics(
         .iter()
         .unique_by(|(card_id, _, _, _)| card_id)
         .collect::<Vec<_>>();
-    let new_cards_studied_on_requested_date = cards_studied_on_requested_date_unique
-        .iter()
-        .filter(|(_, _, _, state)| *state == NEW_CARD_STATE)
-        .count();
     let cards_studied_on_requested_date_count = cards_studied_on_requested_date_unique.len() as u32;
 
     // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
@@ -98,11 +95,24 @@ pub async fn get_statistics(
         .into_iter()
         .map(|card| (card.due.with_timezone(&Local).date_naive(), card))
         .into_group_map();
-    // Move all new cards from dates before `requested_date` to `requested_date`
+    // Cards due before `requested_date` are still due on it, like new cards, which are due from
+    // when they are created. Without this, a review backlog after a holiday would count as
+    // nothing due.
+    let today = requested_date.with_timezone(&Local).date_naive();
+    let overdue_dates = cards_by_due
+        .keys()
+        .filter(|date| **date < today)
+        .copied()
+        .collect::<Vec<_>>();
+    let overdue_cards = overdue_dates
+        .into_iter()
+        .filter_map(|date| cards_by_due.remove(&date))
+        .flatten()
+        .collect::<Vec<_>>();
     cards_by_due
-        .entry(requested_date.with_timezone(&Local).date_naive())
-        .and_modify(|v| v.extend(new_cards.clone()))
-        .or_insert(new_cards);
+        .entry(today)
+        .or_default()
+        .extend(new_cards.into_iter().chain(overdue_cards));
 
     // Move buried cards to the next day
     if let Some(cards_due) = cards_by_due.get_mut(&Utc::now().with_timezone(&Local).date_naive()) {
@@ -136,13 +146,16 @@ pub async fn get_statistics(
         })
         .unwrap_or_default();
 
-    // Decrease new cards by the number of new cards already reviewed on `requested_date`
-    if let Some(new_cards_count) = num_cards_due_by_state.get_mut(&NEW_CARD_STATE) {
-        let config = read_external_config()?;
-        let capped_new_cards = i64::from((*new_cards_count).min(config.new_cards_daily_limit));
-        *new_cards_count =
-            u32::try_from((capped_new_cards - (new_cards_studied_on_requested_date as i64)).max(0))
-                .unwrap();
+    // Cap new and review cards by what is left of today's limits, as review does, so the counts
+    // are what is left to study today. See `get_cards_left_by_state_and_time_estimate`.
+    let limits_left = daily_limits_left(db, requested_date).await?;
+    for (state, left) in [
+        (NEW_CARD_STATE, limits_left.new),
+        (review_state(), limits_left.reviews),
+    ] {
+        if let Some(count) = num_cards_due_by_state.get_mut(&state) {
+            *count = (*count).min(left);
+        }
     }
     num_cards_due_by_state.retain(|_, &mut v| v != 0);
 
