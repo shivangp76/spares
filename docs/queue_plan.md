@@ -10,20 +10,6 @@ it could be built.
 
 ## Gaps in what is done
 
-### Learn ahead limit offline
-
-Offline review shows learning cards due today as soon as nothing else is left, ignoring
-`learn_ahead_limit`.
-
-- **Use case.** Studying on a phone on a train, the offline queue shows a card on a 1 hour step
-  right after its first rating once the other cards are done, which defeats the step.
-- **Example.** With `learn_ahead_limit = 1200` and steps of 1, 10 and 60 minutes, online review
-  waits for a card on its 60 minute step until 20 minutes of it are left. Offline, the same card
-  comes back at once.
-- **How.** Send the limit in `ReviewQueueResponse`, and have `nextOfflineCard` skip learning cards
-  due later than `now + learn_ahead_limit`, returning the time the next one becomes available so
-  the page can wait for it, as online review does.
-
 ### Leech actions for late offline reviews
 
 A review inserted into a card's history (an offline rating placed before a later review of the
