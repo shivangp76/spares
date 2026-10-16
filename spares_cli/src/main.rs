@@ -1,6 +1,7 @@
 mod args;
 mod card;
 mod card_info;
+mod chart;
 mod deploy;
 mod event;
 mod graph;

@@ -31,7 +31,6 @@ use super::bundle::Bundle;
 use super::bundle::REMOTE_DIR;
 use super::bundle::Server;
 use super::bundle::Target;
-use super::local_timezone;
 use super::progress::Progress;
 use super::progress::without_footer;
 use super::repo_dir;
@@ -45,6 +44,7 @@ use super::shell::run;
 use super::shell::warn;
 use super::upload;
 use crate::sync::sync_cloud;
+use crate::utils::local_timezone;
 
 /// Where the local server's own API key is kept, if it has one and `SPARES_API_KEY` is not set
 const LOCAL_KEYCHAIN_SERVICE: &str = "spares-api-key";

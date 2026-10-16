@@ -9,9 +9,11 @@ use colored::Colorize;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
+use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::ReviewHistoryResponse;
 
 use crate::utils::ensure_ok;
+use crate::utils::local_timezone;
 
 /// The most weeks the heatmap shows by default, like the frontend's initial view.
 pub(crate) const DEFAULT_WEEKS: usize = 52;
@@ -32,7 +34,16 @@ pub(crate) async fn print_history(
     client: &Client,
 ) -> Result<(), Error> {
     let url = format!("{}/api/review/history", base_url);
-    let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+    let request = ReviewHistoryRequest {
+        query: None,
+        tz: local_timezone(),
+    };
+    let response = client
+        .get(url)
+        .query(&request)
+        .send()
+        .await
+        .map_err(|e| miette!("{}", e))?;
     let response = ensure_ok(response).await?;
     let history: ReviewHistoryResponse = response.json().await.map_err(|e| miette!("{}", e))?;
     if json {
@@ -66,8 +77,13 @@ fn studied_counts(reviews: &Counts, crams: &Counts) -> Counts {
 /// As many weeks as fit in the terminal, up to [`DEFAULT_WEEKS`].
 fn default_weeks() -> usize {
     terminal_size::terminal_size().map_or(DEFAULT_WEEKS, |(width, _)| {
-        (usize::from(width.0).saturating_sub(LABEL_WIDTH) / CELL_WIDTH).clamp(1, DEFAULT_WEEKS)
+        weeks_fitting(usize::from(width.0))
     })
+}
+
+/// As many weeks as fit in `width` characters, up to [`DEFAULT_WEEKS`].
+pub(crate) fn weeks_fitting(width: usize) -> usize {
+    (width.saturating_sub(LABEL_WIDTH) / CELL_WIDTH).clamp(1, DEFAULT_WEEKS)
 }
 
 #[derive(Debug, PartialEq)]
@@ -184,7 +200,12 @@ fn plural_word(n: u32, word: &str) -> String {
 ///
 /// For example, a day with 30 reviews and 120 crams is shown as 150, and the total line reads
 /// `150 reviews in total, 120 of them crams`.
-fn format_history(reviews: &Counts, crams: &Counts, today: NaiveDate, weeks: usize) -> String {
+pub(crate) fn format_history(
+    reviews: &Counts,
+    crams: &Counts,
+    today: NaiveDate,
+    weeks: usize,
+) -> String {
     let counts = &studied_counts(reviews, crams);
     let weekday = |date: NaiveDate| date.weekday().num_days_from_sunday() as usize;
     // Columns are weeks starting on Sunday, ending with the week of today

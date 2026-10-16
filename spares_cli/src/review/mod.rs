@@ -507,7 +507,7 @@ fn spawn_stats_fetch(
         let request = StatisticsRequest {
             scheduler_name: scheduler_name_clone,
             date: Utc::now(),
-            tz: None,
+            tz: crate::utils::local_timezone(),
         };
         if let Ok(response) = client_clone.post(&url).json(&request).send().await
             && response.status() == StatusCode::OK

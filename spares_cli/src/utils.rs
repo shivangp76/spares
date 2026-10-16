@@ -168,3 +168,13 @@ pub(crate) fn open_file(path: &Path) {
         println!("Failed to open file: {}", e);
     }
 }
+
+/// This machine's time zone, e.g. `America/New_York`. `spares deploy` sets the server to it so
+/// that both count days the same, and statistics ask the server for days in it. `None` if it
+/// cannot be told.
+pub(crate) fn local_timezone() -> Option<String> {
+    let zone = std::fs::read_link("/etc/localtime").ok()?;
+    let zone = zone.to_str()?;
+    zone.split_once("/zoneinfo/")
+        .map(|(_, zone)| zone.to_string())
+}

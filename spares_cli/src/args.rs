@@ -20,6 +20,8 @@ use crate::deploy::DeployArgs;
 use crate::import::ImportArgs;
 use crate::migrate::MigrateArgs;
 use crate::review::ReviewArgs;
+use crate::statistics::Period;
+use crate::statistics::Section;
 use crate::sync::SyncArgs;
 use crate::view::ViewCardArgs;
 use crate::view::ViewNoteArgs;
@@ -496,7 +498,21 @@ pub(crate) struct StatisticsArgs {
     pub(crate) scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
     pub(crate) date: DateTime<Utc>,
-    /// Print the statistics as JSON
+    /// Only the cards matching this search query, and their reviews, e.g. `tag=languages`
+    #[arg(short, long)]
+    pub(crate) query: Option<String>,
+    /// The days the reviews, hourly breakdown, answer buttons and added cards cover, today
+    /// included, or `all`
+    #[arg(short, long, default_value = "30")]
+    pub(crate) period: Period,
+    /// The days the forecast covers, today included
+    #[arg(short, long, default_value_t = 30)]
+    pub(crate) forecast_days: u32,
+    /// Only these sections, in the statistics page's order. Defaults to all of them.
+    #[arg(long = "section", value_enum, num_args = 1..)]
+    pub(crate) sections: Vec<Section>,
+    /// Print the statistics as JSON: `statistics` (today's), `graphs` and `history` (the
+    /// calendar's), each only when a section asked for needs it
     #[arg(long)]
     pub(crate) json: bool,
 }
@@ -696,6 +712,41 @@ mod tests {
         assert!(Cli::try_parse_from(["spares", "card", "reviews"]).is_err());
         assert!(Cli::try_parse_from(["spares", "card", "reviews", "1"]).is_ok());
         assert!(Cli::try_parse_from(["spares", "card", "reviews", "1", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn card_statistics_parses() {
+        let parse = |args: &[&str]| {
+            let mut all = vec!["spares", "card", "stats"];
+            all.extend(args);
+            match Cli::try_parse_from(all).map(|cli| cli.command) {
+                Ok(Commands::Card(CardArgs {
+                    command: CardCommands::Statistics(args),
+                })) => Some(args),
+                _ => None,
+            }
+        };
+        let defaults = parse(&[]).unwrap();
+        assert_eq!(defaults.period, Period(Some(30)));
+        assert_eq!(defaults.forecast_days, 30);
+        assert_eq!(defaults.sections, []);
+        let args = parse(&[
+            "--query",
+            "tag=a",
+            "--period",
+            "all",
+            "--forecast-days",
+            "90",
+            "--section",
+            "retention",
+            "hourly",
+        ])
+        .unwrap();
+        assert_eq!(args.query.as_deref(), Some("tag=a"));
+        assert_eq!(args.period, Period(None));
+        assert_eq!(args.sections, [Section::Retention, Section::Hourly]);
+        assert!(parse(&["--section", "nope"]).is_none());
+        assert!(parse(&["--period", "0"]).is_none());
     }
 
     #[test]
