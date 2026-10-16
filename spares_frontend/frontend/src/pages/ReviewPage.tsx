@@ -29,6 +29,7 @@ import {
   forgetQueuedCard,
   getOfflineQueue,
   nextOfflineCard,
+  nextOfflineCardAvailableAt,
   performStudyAction,
   precompileNextCard,
   refreshQueue,
@@ -306,6 +307,16 @@ export default function ReviewPage() {
         }
         next = await nextOfflineCard(key);
         setOffline(true);
+        if (!next) {
+          // Waits like an online review, trying the server again once the time comes
+          const availableAt = await nextOfflineCardAvailableAt(key);
+          if (availableAt) {
+            setCard(null);
+            setWaitingUntil(availableAt.getTime());
+            setPhase('waiting');
+            return;
+          }
+        }
       }
       if (!next) { setCard(null); setSessionEnd(Date.now()); setPhase('done'); return; }
       setCard(next);

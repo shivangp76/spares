@@ -23,9 +23,14 @@
 //!   suspending a card, need the server.
 //! - A card rated Again offline is not shown again until the rating has been sent, since the
 //!   device does not schedule cards itself.
-//! - Learning and relearning cards due today are shown as soon as nothing else is left, however
-//!   far off their step ends, since the device does not apply
-//!   [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit).
+//! - Learning and relearning cards wait for
+//!   [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit) as they do
+//!   online: once nothing else is left, a card whose step ends within the limit is shown, and
+//!   otherwise the review waits for the next one, showing when it will be. For example, studying
+//!   on a phone on a train with steps of 1, 10 and 60 minutes and the default limit of 20
+//!   minutes, a card on its 60 minute step comes back 40 minutes after it was rated (if nothing
+//!   else is left by then), not right after the other cards are done. The limit is the one the
+//!   server had when the cards were downloaded.
 //! - A rating sent after a later review of the same card, e.g. from another device that synced
 //!   first, is placed at its time in the card's history, which is then replayed. Such a rating
 //!   cannot be undone from the review page, and does not trigger the
@@ -67,6 +72,7 @@ use crate::parsers::Parseable;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::learning_states;
 use crate::schedulers::review_state;
 use crate::schema::review::OfflineActionOutcome;
 use crate::schema::review::OfflineActionResult;
@@ -91,7 +97,9 @@ struct QueueRow {
 /// Like [`get_review_card`](crate::api::review::get_review_card), cards are those due by the end
 /// of the day, plus those due on the next `days_ahead` days. New and review cards are capped by
 /// what is left of today's limits, since the client cannot know tomorrow's. Learning cards are
-/// included whenever they are due, regardless of the learn ahead limit.
+/// included whenever they are due, regardless of the learn ahead limit, with the time the limit
+/// lets them be shown as [`ReviewQueueCard::shown_from`], since the client picks when to show
+/// them.
 pub async fn get_review_queue(
     db: &SqlitePool,
     ReviewQueueRequest {
@@ -123,8 +131,9 @@ pub async fn get_review_queue(
 
     // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
     // skipped below.
+    let queue_config = read_external_config()?.queue;
     let order_by = queue_order_by(
-        &read_external_config()?.queue,
+        &queue_config,
         requested_date,
         caps,
         &query_sort,
@@ -178,6 +187,10 @@ pub async fn get_review_queue(
             }
             *allowed -= 1;
         }
+        // Held back like `build_review_filter_query` does with `learn_ahead`, except that the
+        // client compares it to its own clock
+        let shown_from = (!is_filtered_tag && learning_states().contains(&card.card_state))
+            .then(|| due - queue_config.learn_ahead_limit);
         let card = review_card_response(
             db,
             card,
@@ -186,7 +199,11 @@ pub async fn get_review_queue(
             all_parsers,
         )
         .await?;
-        cards.push(ReviewQueueCard { due, card });
+        cards.push(ReviewQueueCard {
+            due,
+            shown_from,
+            card,
+        });
     }
     Ok(ReviewQueueResponse {
         cards,

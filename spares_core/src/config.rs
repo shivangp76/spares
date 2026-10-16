@@ -414,9 +414,9 @@ pub struct QueueConfig {
     /// learning card due today as soon as nothing else is left, as spares did before this
     /// setting.
     ///
-    /// Filtered tags are not affected: they show every card in them, whenever it is due. Nor is
-    /// offline review (see [`crate::api::offline_review`]), which shows learning cards due today
-    /// as soon as nothing else is left.
+    /// Filtered tags are not affected: they show every card in them, whenever it is due. Offline
+    /// review (see [`crate::api::offline_review`]) applies the limit the server had when the
+    /// cards were downloaded.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
