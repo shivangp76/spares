@@ -23,6 +23,8 @@ import type {
   ReviewQueueRequest,
   ReviewQueueResponse,
   ReviewSnapshotResponse,
+  StatisticsGraphsRequest,
+  StatisticsGraphsResponse,
   StatisticsResponse,
   SubmitStudyActionRequest,
   SubmitStudyActionResponse,
@@ -35,7 +37,7 @@ import type {
   UpdateCardsResponse,
   UpdateTagRequest,
 } from '../types/spares';
-import { clearOfflineQueues } from '../offline/db';
+import { clearOfflineQueues, clearStatisticsEntries } from '../offline/db';
 
 const STORAGE_KEY = 'spares_credentials';
 
@@ -200,6 +202,7 @@ async function clearOfflineCopies(): Promise<void> {
     await caches.delete(RENDER_ASSETS_CACHE);
   }
   await clearOfflineQueues();
+  await clearStatisticsEntries();
 }
 
 /** Throws with the server's `{ message }` (or plain-text body) when present, falling back to the status code. */
@@ -515,11 +518,36 @@ export async function redoEvent(eventId: number | null): Promise<RedoEventRespon
   });
 }
 
+/** The browser's IANA time zone, so the server counts the user's days even when it is elsewhere. */
+export function localTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getStatistics(schedulerName: string, date: Date = new Date()): Promise<StatisticsResponse> {
   return apiFetch('Statistics fetch', '/api/review/statistics', {
     method: 'POST',
-    body: JSON.stringify({ scheduler_name: schedulerName, date: date.toISOString() }),
+    body: JSON.stringify({ scheduler_name: schedulerName, date: date.toISOString(), tz: localTimeZone() }),
   });
+}
+
+/** The statistics page's graphs, narrowed to `query` and `periodDays` (`null` for all time). */
+export async function getStatisticsGraphs(
+  schedulerName: string,
+  { query, periodDays, forecastDays, date = new Date() }: { query: string | null; periodDays: number | null; forecastDays: number; date?: Date },
+): Promise<StatisticsGraphsResponse> {
+  const request: StatisticsGraphsRequest = {
+    scheduler_name: schedulerName,
+    query,
+    period_days: periodDays,
+    forecast_days: forecastDays,
+    date: date.toISOString(),
+    tz: localTimeZone(),
+  };
+  return apiFetch('Statistics graphs fetch', '/api/statistics/graphs', { method: 'POST', body: JSON.stringify(request) });
 }
 
 /** `getStatistics` for today, remembered for `cachedTodayStatistics`. */
@@ -534,10 +562,15 @@ export function cachedTodayStatistics(schedulerName: string): StatisticsResponse
   return todayStatistics.get(schedulerName);
 }
 
-/** The number of reviews on each day, remembered for `cachedReviewHistory`. */
-export async function getReviewHistory(): Promise<ReviewHistoryResponse> {
-  reviewHistory = await apiFetch<ReviewHistoryResponse>('Review history fetch', '/api/review/history');
-  return reviewHistory;
+/** The number of reviews on each day, of the cards matching `query` if given. Without one, remembered for `cachedReviewHistory`. */
+export async function getReviewHistory(query: string | null = null): Promise<ReviewHistoryResponse> {
+  const params = new URLSearchParams();
+  if (query) params.set('query', query);
+  const tz = localTimeZone();
+  if (tz) params.set('tz', tz);
+  const history = await apiFetch<ReviewHistoryResponse>('Review history fetch', `/api/review/history?${params}`);
+  if (!query) reviewHistory = history;
+  return history;
 }
 
 /** The history `getReviewHistory` last returned. */

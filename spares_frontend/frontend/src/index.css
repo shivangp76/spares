@@ -48,6 +48,17 @@
   --tone-gray-fg: light-dark(#344054, #cecfd2);
   --tone-gray-border: light-dark(#d0d5dd, #45464b);
   --tone-gray-bg: light-dark(#f9fafb, #222327);
+
+  /* Statistics charts. Each mode's steps were checked for colour-blind separation between
+     neighbours in a stack, in this order: learning, relearning, young, mature, cram. */
+  --chart-learning: light-dark(#eda100, #c98500);
+  --chart-relearning: light-dark(#e87ba4, #d55181);
+  --chart-young: light-dark(#2a78d6, #3987e5);
+  --chart-mature: light-dark(#008300, #008300);
+  --chart-cram: light-dark(#6250d6, #9085e9);
+  /* Single-series bars, e.g. histograms, and lines */
+  --chart-bar: light-dark(#2a78d6, #3987e5);
+  --chart-line: light-dark(#52514e, #c3c2b7);
 }
 
 :root[data-theme="light"] {
@@ -121,6 +132,13 @@ a:visited {
 }
 
 /* Inline-coloured buttons lose the browser's disabled styling, so dim them here */
+/* A toggle that is on, e.g. the statistics page's period */
+button[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: default !important;
