@@ -28,6 +28,8 @@ use shell::warn;
 use spares_core::config::EnvironmentConfig;
 use spares_core::config::read_external_config;
 
+use crate::utils::local_timezone;
+
 #[derive(Args, Debug)]
 pub(crate) struct DeployArgs {
     #[command(subcommand)]
@@ -233,15 +235,6 @@ fn repo_dir() -> Result<PathBuf, Error> {
         .ok_or_else(|| {
             miette!("Run this in the spares repository, which it builds the server from.")
         })
-}
-
-/// This machine's time zone, e.g. `America/New_York`, which the server is set to so that both count
-/// days the same. `None` if it cannot be told.
-fn local_timezone() -> Option<String> {
-    let zone = std::fs::read_link("/etc/localtime").ok()?;
-    let zone = zone.to_str()?;
-    zone.split_once("/zoneinfo/")
-        .map(|(_, zone)| zone.to_string())
 }
 
 /// Where `spares deploy` keeps what it downloads and the times of its steps

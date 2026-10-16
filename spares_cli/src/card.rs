@@ -10,8 +10,6 @@ use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
 use spares_core::schema::review::OptimizeRequest;
 use spares_core::schema::review::OptimizeResponse;
-use spares_core::schema::review::StatisticsRequest;
-use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::search::QueryReturnItemType;
@@ -25,7 +23,6 @@ use crate::args::PostponeArgs;
 use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
 use crate::args::SpecialStateLocal;
-use crate::args::StatisticsArgs;
 use crate::card_info::fetch_card_reviews;
 use crate::card_info::print_card_info;
 use crate::history::print_history;
@@ -33,7 +30,7 @@ use crate::review::forget_card;
 use crate::review::review_cards;
 use crate::search::search;
 use crate::search::search_cards;
-use crate::statistics::format_statistics;
+use crate::statistics::print_statistics;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::view::view_cards;
@@ -292,31 +289,8 @@ pub(crate) async fn handle(
                 response.json().await.map_err(|e| miette!("{}", e))?;
             println!("{}", serde_json::to_string_pretty(&card_responses).unwrap());
         }
-        CardCommands::Statistics(StatisticsArgs {
-            scheduler_name,
-            date,
-            json,
-        }) => {
-            let request = StatisticsRequest {
-                scheduler_name,
-                date,
-                tz: None,
-            };
-            let url = format!("{}/api/review/statistics", base_url);
-            let response = client
-                .post(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let response: StatisticsResponse =
-                response.json().await.map_err(|e| miette!("{}", e))?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&response).unwrap());
-            } else {
-                print!("{}", format_statistics(&response));
-            }
+        CardCommands::Statistics(args) => {
+            print_statistics(args, base_url, client).await?;
         }
     }
     Ok(())
