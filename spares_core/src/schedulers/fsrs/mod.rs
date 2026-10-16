@@ -24,7 +24,7 @@ use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
 use rand::rngs::ThreadRng;
 use reposition::MoveCardAction;
-use reposition::get_safe_cards;
+use reposition::count_safe_cards;
 use reposition::move_cards;
 use serde_json::Map;
 use serde_json::Number;
@@ -369,29 +369,19 @@ impl SrsScheduler for Fsrs {
         requested_date: DateTime<Utc>,
     ) -> Result<u32, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-        let cards: Vec<Card> = sqlx::query_as(
-            r"SELECT * FROM card
-           WHERE due > ?
-             AND state = ?
-             AND special_state IS NULL
-           ORDER BY card.due ASC",
-        )
-        .bind(card_due_limit.timestamp())
-        .bind(state_to_number(State::Review))
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
         let config = read_external_config()?;
-        let cards_internal = get_safe_cards(
+        count_safe_cards(
             db,
-            &cards,
+            &format!(
+                "c.due > ?1 AND c.state = {} AND c.special_state IS NULL",
+                state_to_number(State::Review)
+            ),
+            card_due_limit.timestamp(),
             &MoveCardAction::Advance,
             card_due_limit,
             decay(&config),
         )
-        .await?;
-        Ok(cards_internal.len() as u32)
+        .await
     }
 
     async fn get_postpone_safe_count(
@@ -400,29 +390,19 @@ impl SrsScheduler for Fsrs {
         requested_date: DateTime<Utc>,
     ) -> Result<u32, Error> {
         let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-        let cards: Vec<Card> = sqlx::query_as(
-            r"SELECT * FROM card
-           WHERE due <= ?
-             AND state = ?
-             AND special_state IS NULL
-           ORDER BY card.due ASC",
-        )
-        .bind(card_due_limit.timestamp())
-        .bind(state_to_number(State::Review))
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
         let config = read_external_config()?;
-        let cards_internal = get_safe_cards(
+        count_safe_cards(
             db,
-            &cards,
+            &format!(
+                "c.due <= ?1 AND c.state = {} AND c.special_state IS NULL",
+                state_to_number(State::Review)
+            ),
+            card_due_limit.timestamp(),
             &MoveCardAction::Postpone,
             card_due_limit,
             decay(&config),
         )
-        .await?;
-        Ok(cards_internal.len() as u32)
+        .await
     }
 
     async fn advance(

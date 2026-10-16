@@ -1,8 +1,10 @@
 use std::cmp;
+use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use itertools::Itertools;
 use rand::RngExt;
 use sqlx::SqlitePool;
 
@@ -15,13 +17,20 @@ use crate::config::SparesExternalConfig;
 use crate::helpers::FractionalDays;
 use crate::helpers::mean;
 use crate::model::Card;
-use crate::model::ReviewLog;
-use crate::model::ReviewLogKind;
+use crate::model::CardId;
 use crate::schedulers::MoveCardsResult;
 
 #[derive(Debug)]
 pub struct CardInternal<'a> {
     card: &'a Card,
+    estimate: Estimate,
+}
+
+/// Where a card in review stands, to tell whether moving it is safe.
+#[derive(Clone, Copy, Debug)]
+struct Estimate {
+    stability: f64,
+    desired_retention: f64,
     // Advance
     current_elapsed_time: Duration,
     scheduled_time: Option<Duration>,
@@ -30,56 +39,169 @@ pub struct CardInternal<'a> {
     approx_retention_after_postpone: f64,
 }
 
+/// A card's last graded review: when, and the interval it gave, in seconds.
+type LastReview = (i64, Option<i64>);
+
 #[derive(Debug, PartialEq)]
 pub enum MoveCardAction {
     Advance,
     Postpone,
 }
 
-pub async fn get_safe_cards<'a>(
+/// How many of the cards in review matching `where_clause` (over `card c`, with `?1` bound to
+/// `bound`) are safe to move. One query, reading only what the estimate needs, so it stays quick
+/// with tens of thousands of cards: statistics show it on every load.
+pub async fn count_safe_cards(
     db: &SqlitePool,
-    cards: &'a [Card],
+    where_clause: &str,
+    bound: i64,
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
     decay: f32,
-) -> Result<Vec<CardInternal<'a>>, Error> {
-    let cards_internal = get_all_cards_internal(db, cards, action, requested_date, decay).await?;
-    let safe_cards = cards_internal
+) -> Result<u32, Error> {
+    let (json,): (String,) = sqlx::query_as(&format!(
+        r"SELECT json_group_array(json_array(c.stability, c.desired_retention, l.reviewed_at,
+                 l.scheduled_time))
+          FROM card c LEFT JOIN review_log l ON l.id = ({LAST_REVIEW_ID})
+          WHERE {where_clause}"
+    ))
+    .bind(bound)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let cards: Vec<(f64, f64, Option<i64>, Option<i64>)> =
+        serde_json::from_str(&json).map_err(|e| Error::Sqlx {
+            source: sqlx::Error::Decode(Box::new(e)),
+        })?;
+    let count = cards
         .into_iter()
-        .filter(|x| is_card_safe(x, action))
-        .collect::<Vec<_>>();
-    Ok(safe_cards)
+        .filter_map(
+            |(stability, desired_retention, reviewed_at, scheduled_time)| {
+                estimate(
+                    stability,
+                    desired_retention,
+                    reviewed_at.map(|at| (at, scheduled_time)),
+                    requested_date,
+                    decay,
+                )
+            },
+        )
+        .filter(|estimate| is_card_safe(estimate, action))
+        .count();
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
-fn is_card_safe(d: &CardInternal, action: &MoveCardAction) -> bool {
+/// The id of the last graded review of `c.id`. Only graded reviews carry a `scheduled_time`,
+/// and a forget marker would anchor the elapsed time on a history the user discarded.
+const LAST_REVIEW_ID: &str =
+    "SELECT rl.id FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = 0
+     ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1";
+
+fn is_card_safe(d: &Estimate, action: &MoveCardAction) -> bool {
     match action {
         MoveCardAction::Advance => {
-            1. - (1. / d.current_retention - 1.) / (1. / d.card.desired_retention - 1.) < 0.13
+            1. - (1. / d.current_retention - 1.) / (1. / d.desired_retention - 1.) < 0.13
         }
         MoveCardAction::Postpone => {
-            (1. / d.approx_retention_after_postpone - 1.) / (1. / d.card.desired_retention - 1.)
-                - 1.
+            (1. / d.approx_retention_after_postpone - 1.) / (1. / d.desired_retention - 1.) - 1.
                 < 0.15
         }
     }
 }
 
-fn card_sort_key(d: &CardInternal, action: &MoveCardAction) -> (f64, f64) {
+fn card_sort_key(d: &Estimate, action: &MoveCardAction) -> (f64, f64) {
     match action {
         // sort by (1 - elapsed_day / scheduled_day)
         // = 1-ln(current retention)/ln(requested retention), -stability (ascending)
         MoveCardAction::Advance => (
-            1. - (1. / d.current_retention - 1.) / (1. / d.card.desired_retention - 1.),
-            -d.card.stability,
+            1. - (1. / d.current_retention - 1.) / (1. / d.desired_retention - 1.),
+            -d.stability,
         ),
         // sort by (elapsed_days / scheduled_days - 1)
         // = ln(current retention)/ln(requested retention)-1, -stability (ascending)
         MoveCardAction::Postpone => (
-            ((1. / d.approx_retention_after_postpone - 1.) / (1. / d.card.desired_retention - 1.)
-                - 1.),
-            -d.card.stability,
+            ((1. / d.approx_retention_after_postpone - 1.) / (1. / d.desired_retention - 1.) - 1.),
+            -d.stability,
         ),
     }
+}
+
+/// `None` if the card was last reviewed after `requested_date` (e.g. statistics for a past date),
+/// so its current schedule did not exist yet at that date and it cannot be moved from there.
+fn estimate(
+    stability: f64,
+    desired_retention: f64,
+    last_review: Option<LastReview>,
+    requested_date: DateTime<Utc>,
+    decay: f32,
+) -> Option<Estimate> {
+    let scheduled_time = last_review
+        .and_then(|(_, scheduled_time)| scheduled_time)
+        .map(Duration::seconds);
+
+    // Advance
+    let current_elapsed_time = last_review.map_or_else(Duration::zero, |(reviewed_at, _)| {
+        requested_date - DateTime::from_timestamp(reviewed_at, 0).unwrap_or_default()
+    });
+    if current_elapsed_time < Duration::zero() {
+        return None;
+    }
+    // Equivalent to `current_retrievability`.
+    let current_retention =
+        retrievability(current_elapsed_time.num_fractional_days(), stability, decay);
+    assert!(
+        !current_retention.is_nan(),
+        "card in review has stability {stability}"
+    );
+
+    // Postpone
+    let approx_elapsed_time_after_postpone =
+        scheduled_time
+            .as_ref()
+            .map_or_else(Duration::zero, |scheduled_time| {
+                Duration::fractional_days(
+                    current_elapsed_time.num_fractional_days()
+                        + scheduled_time.num_fractional_days() * 0.075,
+                )
+            });
+    let approx_retention_after_postpone = retrievability(
+        approx_elapsed_time_after_postpone.num_fractional_days(),
+        stability,
+        decay,
+    );
+    Some(Estimate {
+        stability,
+        desired_retention,
+        current_elapsed_time,
+        scheduled_time,
+        current_retention,
+        approx_retention_after_postpone,
+    })
+}
+
+/// The last graded review of each of `cards` that has one, in one query.
+async fn last_reviews(
+    db: &SqlitePool,
+    cards: &[Card],
+) -> Result<HashMap<CardId, LastReview>, Error> {
+    let ids = format!("[{}]", cards.iter().map(|card| card.id).join(","));
+    let (json,): (String,) = sqlx::query_as(&format!(
+        r"SELECT json_group_array(json_array(c.id, l.reviewed_at, l.scheduled_time))
+          FROM (SELECT value AS id FROM json_each(?)) c
+          JOIN review_log l ON l.id = ({LAST_REVIEW_ID})"
+    ))
+    .bind(ids)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let rows: Vec<(CardId, i64, Option<i64>)> =
+        serde_json::from_str(&json).map_err(|e| Error::Sqlx {
+            source: sqlx::Error::Decode(Box::new(e)),
+        })?;
+    Ok(rows
+        .into_iter()
+        .map(|(card_id, reviewed_at, scheduled_time)| (card_id, (reviewed_at, scheduled_time)))
+        .collect())
 }
 
 async fn get_all_cards_internal<'a>(
@@ -89,78 +211,23 @@ async fn get_all_cards_internal<'a>(
     requested_date: DateTime<Utc>,
     decay: f32,
 ) -> Result<Vec<CardInternal<'a>>, Error> {
-    let mut cards_internal = Vec::new();
-    for card in cards {
-        // Get latest review for this card.
-        // Only graded reviews carry a `scheduled_time`, and a forget marker would anchor the
-        // elapsed time below on a history the user discarded.
-        let review_log_res: Option<ReviewLog> = sqlx::query_as(
-            r"SELECT * FROM review_log WHERE card_id = ? AND kind = ?
-              ORDER BY reviewed_at DESC, id DESC LIMIT 1",
-        )
-        .bind(card.id)
-        .bind(ReviewLogKind::Review)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        // Fix type
-        let scheduled_time = review_log_res
-            .as_ref()
-            .and_then(|r| r.scheduled_time)
-            .map(Duration::seconds);
-
-        // Advance
-        let current_elapsed_time = review_log_res
-            .as_ref()
-            .map_or_else(Duration::zero, |review_log| {
-                requested_date - review_log.reviewed_at
-            });
-        // The card was last reviewed after `requested_date` (e.g. statistics for a past date), so
-        // its current schedule did not exist yet at that date and it cannot be moved from there.
-        if current_elapsed_time < Duration::zero() {
-            continue;
-        }
-        // Equivalent to `current_retrievability`.
-        let current_retention = retrievability(
-            current_elapsed_time.num_fractional_days(),
-            card.stability,
-            decay,
-        );
-        assert!(
-            !current_retention.is_nan(),
-            "card {} in review has stability {}",
-            card.id,
-            card.stability
-        );
-
-        // Postpone
-        let approx_elapsed_time_after_postpone =
-            scheduled_time
-                .as_ref()
-                .map_or_else(Duration::zero, |scheduled_time| {
-                    Duration::fractional_days(
-                        current_elapsed_time.num_fractional_days()
-                            + scheduled_time.num_fractional_days() * 0.075,
-                    )
-                });
-        let approx_retention_after_postpone = retrievability(
-            approx_elapsed_time_after_postpone.num_fractional_days(),
-            card.stability,
-            decay,
-        );
-        cards_internal.push(CardInternal {
-            card,
-            // Advance
-            current_elapsed_time,
-            scheduled_time,
-            current_retention,
-            // Postpone
-            approx_retention_after_postpone,
-        });
-    }
+    let last_reviews = last_reviews(db, cards).await?;
+    let mut cards_internal = cards
+        .iter()
+        .filter_map(|card| {
+            let estimate = estimate(
+                card.stability,
+                card.desired_retention,
+                last_reviews.get(&card.id).copied(),
+                requested_date,
+                decay,
+            )?;
+            Some(CardInternal { card, estimate })
+        })
+        .collect::<Vec<_>>();
     cards_internal.sort_by(|a, b| {
-        let (a_primary, a_secondary) = card_sort_key(a, action);
-        let (b_primary, b_secondary) = card_sort_key(b, action);
+        let (a_primary, a_secondary) = card_sort_key(&a.estimate, action);
+        let (b_primary, b_secondary) = card_sort_key(&b.estimate, action);
         a_primary
             .total_cmp(&b_primary)
             .then(a_secondary.total_cmp(&b_secondary))
@@ -184,7 +251,7 @@ pub async fn move_cards(
     let cards_internal = get_all_cards_internal(db, cards, action, requested_date, decay).await?;
     let (mut safe_cards, not_safe_cards): (Vec<_>, Vec<_>) = cards_internal
         .into_iter()
-        .partition(|x| is_card_safe(x, action));
+        .partition(|x| is_card_safe(&x.estimate, action));
     let cards_internal = if count as usize > safe_cards.len() {
         safe_cards.extend(
             not_safe_cards
@@ -205,12 +272,15 @@ pub async fn move_cards(
     for card_internal in cards_internal.into_iter().take(count as usize) {
         // Set card's due date
         let (new_due, new_scheduled_time) = match action {
-            MoveCardAction::Advance => (requested_date, card_internal.current_elapsed_time),
+            MoveCardAction::Advance => {
+                (requested_date, card_internal.estimate.current_elapsed_time)
+            }
             MoveCardAction::Postpone => {
                 let delay_time = card_internal
+                    .estimate
                     .scheduled_time
                     .map_or_else(Duration::zero, |scheduled_time| {
-                        card_internal.current_elapsed_time - scheduled_time
+                        card_internal.estimate.current_elapsed_time - scheduled_time
                     });
                 let mut rng = rand::rng();
                 let rand_float: f64 = rng.random();
@@ -219,6 +289,7 @@ pub async fn move_cards(
                         config.minimum_interval,
                         Duration::fractional_days(
                             card_internal
+                                .estimate
                                 .scheduled_time
                                 .unwrap_or_else(Duration::zero)
                                 .num_fractional_days()
@@ -256,6 +327,7 @@ pub async fn move_cards(
 
         let prev_target_retention = retrievability(
             card_internal
+                .estimate
                 .scheduled_time
                 .unwrap_or_else(Duration::zero)
                 .num_fractional_days(),
@@ -357,7 +429,7 @@ mod tests {
         .unwrap();
         assert_eq!(cards_internal.len(), 1);
 
-        let elapsed = cards_internal[0].current_elapsed_time;
+        let elapsed = cards_internal[0].estimate.current_elapsed_time;
         let expected_from_newer = now - newer;
         let would_be_from_older = now - older;
         assert_eq!(

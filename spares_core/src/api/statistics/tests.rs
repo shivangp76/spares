@@ -857,3 +857,53 @@ async fn statistics_queries_use_the_indexes(pool: SqlitePool) {
         "{previous}"
     );
 }
+
+#[sqlx::test]
+async fn todays_statistics_agree_with_the_forecast(pool: SqlitePool) {
+    use crate::api::statistics::get_statistics;
+    use crate::schema::review::StatisticsRequest;
+
+    collection(&pool).await;
+    let statistics = get_statistics(
+        &pool,
+        StatisticsRequest {
+            scheduler_name: "fsrs".to_string(),
+            date: now(),
+            tz: Some("UTC".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    // c5, buried, tomorrow; c1 in 5 days; c2 in 40. c4 is suspended, so never due.
+    assert_eq!(
+        statistics.due_count_by_date,
+        HashMap::from([(date(1), 1), (date(5), 1), (date(40), 1)])
+    );
+    let forecast = graphs(&pool, &config(21), request(None, None))
+        .await
+        .forecast;
+    for day in &forecast[1..] {
+        assert_eq!(
+            statistics
+                .due_count_by_date
+                .get(&day.date)
+                .copied()
+                .unwrap_or_default(),
+            day.learning + day.review,
+            "{}",
+            day.date
+        );
+    }
+    // c6 is new and c3 learning. Nothing in review is due today: c4 is suspended and c5 buried.
+    assert_eq!(
+        statistics.due_count_by_state,
+        HashMap::from([(NEW, 1), (LEARNING, 1)])
+    );
+    // c2 and c3 were reviewed today, the orphan does not count as a card studied
+    assert_eq!(statistics.cards_studied_count, 2);
+    assert_eq!(
+        statistics.recall_duration,
+        Duration::seconds(3 * REVIEW_SECONDS)
+    );
+    assert_eq!(statistics.cram_count, 2);
+}

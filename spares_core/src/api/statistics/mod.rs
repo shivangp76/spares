@@ -5,26 +5,22 @@ mod tests;
 
 use std::collections::HashMap;
 
+use chrono::Days;
 use chrono::Duration;
-use chrono::Local;
-use chrono::Utc;
 use graphs::CardFilter;
+use graphs::due_by_day;
 pub use graphs::get_statistics_graphs;
-use itertools::Itertools;
 use local_time::Zone;
 use local_time::date_of_day_number;
+use local_time::day_number;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::preset::cap_counts;
-use crate::api::preset::card_presets;
 use crate::api::preset::limited_preset_sql;
 use crate::api::queue::QueueCaps;
 use crate::api::review::daily_limits_left_with;
 use crate::config::read_external_config;
-use crate::helpers::get_start_end_local_date;
-use crate::model::Card;
-use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -35,7 +31,6 @@ use crate::schema::review::ReviewHistoryResponse;
 use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
 
-#[allow(clippy::cast_possible_wrap)]
 #[expect(clippy::too_many_lines)]
 pub async fn get_statistics(
     db: &SqlitePool,
@@ -44,152 +39,126 @@ pub async fn get_statistics(
     let StatisticsRequest {
         scheduler_name,
         date: requested_date,
-        tz: _,
+        tz,
     } = request;
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
+    let zone = Zone::parse(tz.as_deref())?;
+    let today = zone.date(requested_date);
+    let today_start = zone.start_of(today).timestamp();
+    let tomorrow_start = zone.start_of(today + Days::new(1)).timestamp();
 
-    // Get cards reviewed on `requested_date`
-    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
-    // Only graded reviews count as study. The `kind` filter is also load-bearing for decoding:
-    // the duration columns are NULL on every other kind and would not fit the `i64`s below.
-    // `card_id IS NOT NULL` likewise excludes orphaned rows, whose card has been deleted.
-    let cards_studied_on_requested_date: Vec<(CardId, i64, i64, StateId)> = sqlx::query_as(
-        r"SELECT card_id, recall_duration, rate_duration, previous_state FROM review_log
-          WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND card_id IS NOT NULL",
-    )
-    .bind(lower_limit.timestamp())
-    .bind(upper_limit.timestamp())
-    .bind(ReviewLogKind::Review)
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-    let recall_duration = cards_studied_on_requested_date
-        .iter()
-        .map(|(_, recall_duration, _, _)| Duration::seconds(*recall_duration))
-        .sum();
-    let rate_duration = cards_studied_on_requested_date
-        .iter()
-        .map(|(_, _, rate_duration, _)| Duration::seconds(*rate_duration))
-        .sum();
-    let cards_studied_on_requested_date_unique = cards_studied_on_requested_date
-        .iter()
-        .unique_by(|(card_id, _, _, _)| card_id)
-        .collect::<Vec<_>>();
-    let cards_studied_on_requested_date_count = cards_studied_on_requested_date_unique.len() as u32;
-
+    // Only graded reviews count as study, crams apart. `card_id IS NOT NULL` excludes orphaned
+    // rows, whose card has been deleted.
+    let studied = async {
+        sqlx::query_as::<_, (u32, i64, i64)>(&format!(
+            r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM(recall_duration), 0),
+                     COALESCE(SUM(rate_duration), 0)
+              FROM review_log
+              WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
+                AND kind = {review} AND card_id IS NOT NULL",
+            review = ReviewLogKind::Review as u8,
+        ))
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+    };
     // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
-    let (cram_count, cram_seconds): (u32, i64) = sqlx::query_as(
-        r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
-          WHERE reviewed_at >= ? AND reviewed_at <= ? AND kind = ? AND card_id IS NOT NULL",
-    )
-    .bind(lower_limit.timestamp())
-    .bind(upper_limit.timestamp())
-    .bind(ReviewLogKind::Cram)
-    .fetch_one(db)
-    .await
-    .map_err(|e| Error::Sqlx { source: e })?;
-
-    // Get cards by state
-    let cards_by_state_vec: Vec<(StateId, u32)> =
-        sqlx::query_as(r"SELECT state, COUNT(*) as count FROM card GROUP BY state")
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-    let cards_by_state = cards_by_state_vec.into_iter().collect::<HashMap<_, _>>();
-
-    // Get all cards
-    let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
+    let crams = async {
+        sqlx::query_as::<_, (u32, i64)>(&format!(
+            r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
+              WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
+                AND kind = {cram} AND card_id IS NOT NULL",
+            cram = ReviewLogKind::Cram as u8,
+        ))
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+    };
+    let cards_by_state = async {
+        sqlx::query_as::<_, (StateId, u32)>(
+            r"SELECT state, COUNT(*) as count FROM card GROUP BY state",
+        )
         .fetch_all(db)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let (new_cards, not_new_cards): (Vec<_>, Vec<_>) = cards
-        .into_iter()
-        .partition(|card| card.state == NEW_CARD_STATE);
-    let mut cards_by_due = not_new_cards
-        .into_iter()
-        .map(|card| (card.due.with_timezone(&Local).date_naive(), card))
-        .into_group_map();
-    // Cards due before `requested_date` are still due on it, like new cards, which are due from
-    // when they are created. Without this, a review backlog after a holiday would count as
-    // nothing due.
-    let today = requested_date.with_timezone(&Local).date_naive();
-    let overdue_dates = cards_by_due
-        .keys()
-        .filter(|date| **date < today)
-        .copied()
-        .collect::<Vec<_>>();
-    let overdue_cards = overdue_dates
-        .into_iter()
-        .filter_map(|date| cards_by_due.remove(&date))
-        .flatten()
-        .collect::<Vec<_>>();
-    cards_by_due
-        .entry(today)
-        .or_default()
-        .extend(new_cards.into_iter().chain(overdue_cards));
-
-    // Move buried cards to the next day
-    if let Some(cards_due) = cards_by_due.get_mut(&Utc::now().with_timezone(&Local).date_naive()) {
-        let (buried_cards, not_buried_cards): (Vec<_>, Vec<_>) =
-            cards_due.clone().into_iter().partition(|card| {
-                card.special_state == Some(SpecialState::UserBuried)
-                    || card.special_state == Some(SpecialState::SchedulerBuried)
-            });
-        *cards_due = not_buried_cards;
-        cards_by_due
-            .entry(
-                (requested_date + Duration::days(1))
-                    .with_timezone(&Local)
-                    .date_naive(),
-            )
-            .and_modify(|v| v.extend(buried_cards.clone()))
-            .or_insert(buried_cards);
-    }
+        .map_err(|e| Error::Sqlx { source: e })
+    };
 
     // Cap new and review cards by what is left of today's limits, and of their presets', as
     // review does, so the counts are what is left to study today. See
     // `get_cards_left_by_state_and_time_estimate`.
     let config = read_external_config()?;
-    let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
-    let presets = card_presets(db, &limited_preset_sql(&config.queue)).await?;
-    let num_cards_due_by_state = cards_by_due
-        .get(&requested_date.with_timezone(&Local).date_naive())
-        .map(|cards| {
+    let due_today = async {
+        let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
+        // New cards are due from when they are created, and cards due before today are still
+        // due, so a review backlog after a holiday is not counted as nothing due. Cards buried by
+        // the user or the scheduler count tomorrow instead, and suspended cards not at all, as
+        // review shows neither.
+        let due_day = zone.clock(today_start, tomorrow_start).day("c.due");
+        let counts: Vec<(StateId, Option<i64>, u32)> = sqlx::query_as(&format!(
+            r"SELECT c.state, {preset} AS preset, COUNT(*) FROM card c
+              WHERE (c.state = {NEW_CARD_STATE} OR {due_day} <= {today_number})
+                AND (c.special_state IS NULL OR c.special_state = {later_today})
+              GROUP BY c.state, preset",
+            preset = limited_preset_sql(&config.queue),
+            today_number = day_number(today),
+            later_today = SpecialState::BuriedUntilLaterToday as u8,
+        ))
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        Ok::<_, Error>(
             cap_counts(
-                cards
-                    .iter()
-                    .counts_by(|card| (card.state, presets.get(&card.id).copied()))
-                    .into_iter()
-                    .map(|((state, preset), count)| (state, preset, count as u32, 0.0)),
+                counts.into_iter().map(|(state, preset, count)| {
+                    (
+                        state,
+                        preset.and_then(|p| usize::try_from(p).ok()),
+                        count,
+                        0.0,
+                    )
+                }),
                 &QueueCaps::from_limits(&limits_left),
             )
             .into_iter()
             .map(|(state, (count, _))| (state, count))
-            .collect::<HashMap<_, _>>()
-        })
-        .unwrap_or_default();
-
-    let future_due = cards_by_due
-        .into_iter()
-        .filter(|(date, cards)| {
-            !cards.is_empty() && *date > requested_date.with_timezone(&Local).date_naive()
-        })
-        .map(|(date, cards)| (date, cards.len() as u32))
-        .collect::<HashMap<_, _>>();
-
-    let advance_safe_count = scheduler.get_advance_safe_count(db, requested_date).await?;
-    let postpone_safe_count = scheduler
-        .get_postpone_safe_count(db, requested_date)
-        .await?;
+            .collect::<HashMap<_, _>>(),
+        )
+    };
+    let due_later = async {
+        let due = due_by_day(db, zone, &CardFilter::All, today, None).await?;
+        Ok::<_, Error>(
+            due.into_iter()
+                .filter(|(day, _)| *day > day_number(today))
+                .map(|(day, (learning, review))| (date_of_day_number(day), learning + review))
+                .filter(|(_, count)| *count > 0)
+                .collect::<HashMap<_, _>>(),
+        )
+    };
+    let (
+        (cards_studied_count, recall_seconds, rate_seconds),
+        (cram_count, cram_seconds),
+        cards_by_state,
+        due_count_by_state,
+        due_count_by_date,
+        advance_safe_count,
+        postpone_safe_count,
+    ) = futures::try_join!(
+        studied,
+        crams,
+        cards_by_state,
+        due_today,
+        due_later,
+        scheduler.get_advance_safe_count(db, requested_date),
+        scheduler.get_postpone_safe_count(db, requested_date),
+    )?;
     Ok(StatisticsResponse {
-        cards_studied_count: cards_studied_on_requested_date_count,
-        recall_duration,
-        rate_duration,
+        cards_studied_count,
+        recall_duration: Duration::seconds(recall_seconds),
+        rate_duration: Duration::seconds(rate_seconds),
         cram_count,
         cram_duration: Duration::seconds(cram_seconds),
-        card_count_by_state: cards_by_state,
-        due_count_by_state: num_cards_due_by_state,
-        due_count_by_date: future_due,
+        card_count_by_state: cards_by_state.into_iter().collect(),
+        due_count_by_state,
+        due_count_by_date,
         advance_safe_count,
         postpone_safe_count,
     })

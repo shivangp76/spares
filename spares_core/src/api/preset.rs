@@ -85,8 +85,8 @@ pub(crate) fn limited_preset_sql(queue: &QueueConfig) -> String {
     }
 }
 
-/// The preset of each card that uses one, from `preset`, the SQL of a card's preset (such as
-/// [`preset_sql`]). Empty, without a query, if `preset` is `NULL`.
+/// [`card_presets_where`] of every card.
+#[cfg(test)]
 pub(crate) async fn card_presets<'e, E>(
     db: E,
     preset: &str,
@@ -97,7 +97,9 @@ where
     card_presets_where(db, preset, "").await
 }
 
-/// [`card_presets`] of the cards matching `card_filter`, a condition starting with `AND `.
+/// The preset of each card matching `card_filter` (a condition starting with `AND `) that uses
+/// one, from `preset`, the SQL of a card's preset (such as [`preset_sql`]). Empty, without a
+/// query, if `preset` is `NULL`.
 async fn card_presets_where<'e, E>(
     db: E,
     preset: &str,
