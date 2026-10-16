@@ -649,9 +649,11 @@ pub mod review {
         /// clients fetch from the render assets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub audio: Option<CardAudio>,
-        /// The number of cards left in each state for the relevant query. Every due card is
-        /// counted, not just those today's limits leave room for: new or review cards drop to 0
-        /// once their limit is used up, but are not capped at what is left of it.
+        /// The number of cards left in each state for the relevant query, as many as today's
+        /// limits leave room for. With `reviews_daily_limit = 200`, 600 reviews due and 50
+        /// already done today, reviews show 150, not 550. Learning and relearning cards, and the
+        /// cards of a filtered tag, are not limited, so every one due is counted. A state with
+        /// nothing left is left out. `time_estimate` is for the cards counted.
         pub cards_left_by_state: HashMap<StateId, u32>,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
@@ -890,6 +892,11 @@ pub mod review {
         #[serde(default)]
         pub cram_duration: Duration,
         pub card_count_by_state: HashMap<StateId, u32>,
+        /// The cards due on the date by state, overdue ones included, with new and review cards
+        /// capped by what is left of the date's limits, like
+        /// [`GetReviewCardResponse::cards_left_by_state`]. For example, with the default limit of
+        /// 20 new cards, 5 studied on the date and 300 new cards in the collection, new shows
+        /// 15. Cards buried by the user or the scheduler count on the next day instead.
         pub due_count_by_state: HashMap<StateId, u32>,
         pub due_count_by_date: HashMap<NaiveDate, u32>,
         pub advance_safe_count: u32,

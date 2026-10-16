@@ -718,6 +718,91 @@ mod daily_limit_tests {
             DailyLimitsLeft { new: 5, reviews: 5 }
         );
     }
+
+    /// The counts of what is left show no more than today's limits leave room for, and the time
+    /// estimate shrinks with them.
+    #[sqlx::test]
+    async fn counts_are_capped_by_the_limits(pool: SqlitePool) {
+        use crate::api::review::get_cards_left_by_state_and_time_estimate;
+
+        let now = Utc::now();
+        let state = |s: i64| crate::model::StateId::try_from(s).unwrap();
+        // Six reviews overdue, two learning cards and four new cards, never reviewed, so 30
+        // seconds each
+        let ids = create_cards(&pool, 12, now - Duration::days(30)).await;
+        for card in &ids[..6] {
+            set_card(&pool, *card, REVIEW, now - Duration::days(10), 5.0, 5.0).await;
+        }
+        for card in &ids[6..8] {
+            set_card(&pool, *card, super::tests::LEARNING, now, 1.0, 5.0).await;
+        }
+        let counts = async |caps: QueueCaps| {
+            get_cards_left_by_state_and_time_estimate(&pool, "c.due <= ?", now, false, caps)
+                .await
+                .unwrap()
+        };
+
+        let (by_state, time) = counts(QueueCaps::default()).await;
+        assert_eq!(by_state.get(&state(NEW)), Some(&4));
+        assert_eq!(by_state.get(&state(REVIEW)), Some(&6));
+        assert_eq!(time, Duration::seconds(12 * 30));
+
+        // Learning cards are never capped, and a used up limit drops its state
+        let (by_state, time) = counts(QueueCaps {
+            new: Some(0),
+            reviews: Some(2),
+        })
+        .await;
+        assert_eq!(by_state.get(&state(NEW)), None);
+        assert_eq!(by_state.get(&state(REVIEW)), Some(&2));
+        assert_eq!(by_state.get(&state(super::tests::LEARNING)), Some(&2));
+        assert_eq!(time, Duration::seconds(4 * 30));
+
+        // A cap above the count leaves it as is
+        let (by_state, _) = counts(QueueCaps {
+            new: Some(3),
+            reviews: Some(100),
+        })
+        .await;
+        assert_eq!(by_state.get(&state(NEW)), Some(&3));
+        assert_eq!(by_state.get(&state(REVIEW)), Some(&6));
+    }
+
+    /// The statistics' cards due today count overdue reviews, and are capped like the review
+    /// counts, with the default limit of 20 new cards.
+    #[sqlx::test]
+    async fn statistics_due_counts_are_capped(pool: SqlitePool) {
+        use crate::api::statistics::get_statistics;
+        use crate::schema::review::StatisticsRequest;
+
+        let now = Utc::now();
+        let state = |s: i64| crate::model::StateId::try_from(s).unwrap();
+        let ids = create_cards(&pool, 30, now - Duration::days(30)).await;
+        for card in &ids[..3] {
+            set_card(&pool, *card, REVIEW, now - Duration::days(10), 5.0, 5.0).await;
+        }
+        let due = async || {
+            get_statistics(
+                &pool,
+                StatisticsRequest {
+                    scheduler_name: "fsrs".to_string(),
+                    date: now,
+                },
+            )
+            .await
+            .unwrap()
+            .due_count_by_state
+        };
+        let by_state = due().await;
+        assert_eq!(by_state.get(&state(NEW)), Some(&20));
+        assert_eq!(by_state.get(&state(REVIEW)), Some(&3));
+
+        // Five new cards studied today leave 15 of the 20
+        for card in &ids[3..8] {
+            add_review(&pool, *card, now, NEW).await;
+        }
+        assert_eq!(due().await.get(&state(NEW)), Some(&15));
+    }
 }
 
 #[cfg(test)]
