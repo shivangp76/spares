@@ -25,7 +25,7 @@ interface Props {
 }
 
 export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio, onTypstWidth, scrollToCloze }: Props) {
-  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} />;
+  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} scrollToCloze={scrollToCloze} />;
   if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} scrollToCloze={scrollToCloze} />;
   return <RenderedFile path={path} version={version} onReady={onReady} />;
 }
