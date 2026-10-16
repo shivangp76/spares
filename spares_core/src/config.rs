@@ -543,8 +543,9 @@ pub struct LeechConfig {
     ///
     /// It is done on the lapse that reaches [`Self::lapses_threshold`], and again every half of
     /// it after (every 4 lapses with the default of 8), in case the card was let back in without
-    /// being fixed. Undoing the rating undoes it too. It is not done for an offline rating that
-    /// is placed before a later review of the card (see [`crate::api::offline_review`]).
+    /// being fixed. Undoing the rating undoes it too. An offline rating placed before a later
+    /// review of the card, which cannot be undone, gets it as an undo event of its own (see
+    /// [`crate::api::offline_review`]).
     pub action: LeechAction,
     /// The tag [`LeechAction::Tag`] and [`LeechAction::Suspend`] add to a leech's note, so you can
     /// find the notes to fix with `tag=leech`. Tags belong to notes, so the note's other cards

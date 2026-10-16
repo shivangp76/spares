@@ -1244,6 +1244,7 @@ pub(crate) async fn rate_card_with_config(
                 &config.leech,
                 before_card.note_id,
                 reviewed_at,
+                true,
                 Some(event_id),
             ))
             .await?;
@@ -1256,6 +1257,7 @@ pub(crate) async fn rate_card_with_config(
             &config.leech,
             before_card.note_id,
             reviewed_at,
+            false,
             None,
         ))
         .await?;
@@ -1376,15 +1378,17 @@ async fn rate_card_without_rescheduling(
     Ok(Some(*event_ids.first().unwrap()))
 }
 
-/// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech. With
-/// `rating_event`, the rating that made it one, the tag's events join that rating's group, so
-/// undoing the rating untags the note too.
-async fn tag_leech(
+/// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech, recording an
+/// undo event if `log`. With `group_with`, the event that made it one (the rating, or the
+/// suspension of a card an inserted offline review made a leech), the tag's events join that
+/// event's group, so undoing it untags the note too.
+pub(crate) async fn tag_leech(
     db: &SqlitePool,
     leech: &LeechConfig,
     note_id: NoteId,
     at: DateTime<Utc>,
-    rating_event: Option<i64>,
+    log: bool,
+    group_with: Option<i64>,
 ) -> Result<(), Error> {
     let response = update_notes(
         db,
@@ -1401,11 +1405,11 @@ async fn tag_leech(
         },
         at,
         &get_all_parsers(),
-        rating_event.is_some(),
+        log,
     )
     .await?;
-    if let (Some(rating_event), Some(tag_event)) = (rating_event, response.event_id) {
-        join_event_group(db, rating_event, tag_event).await?;
+    if let (Some(leader), Some(tag_event)) = (group_with, response.event_id) {
+        join_event_group(db, leader, tag_event).await?;
     }
     Ok(())
 }
