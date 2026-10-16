@@ -1,6 +1,8 @@
-// What the app keeps in IndexedDB to review offline: the review queues downloaded while online,
-// and the actions performed offline that are yet to be sent to the server.
+// What the app keeps in IndexedDB to work offline: the review queues downloaded while online, the
+// actions performed offline that are yet to be sent to the server, and the statistics last
+// fetched (see `statistics.ts`).
 import type { OfflineStudyAction, ReviewFilter, ReviewQueueCard } from '../types/spares';
+import type { CachedStatistics } from './statistics';
 
 /** The cards a review would show next, downloaded to review offline. */
 export interface OfflineQueue {
@@ -27,18 +29,32 @@ export interface PendingAction extends OfflineStudyAction {
 }
 
 const DB_NAME = 'spares-offline';
+const DB_VERSION = 2;
 const QUEUES = 'queues';
 const OUTBOX = 'outbox';
+const STATISTICS = 'statistics';
+
+/**
+ * Brings a database at `oldVersion` (0 when new) up to `DB_VERSION`, adding the stores each version
+ * added. Stores of earlier versions are left as they are, so upgrading keeps the downloaded queues
+ * and the actions waiting to be sent.
+ */
+export function upgradeDatabase(db: Pick<IDBDatabase, 'createObjectStore'>, oldVersion: number): void {
+  if (oldVersion < 1) {
+    db.createObjectStore(QUEUES, { keyPath: 'key' });
+    db.createObjectStore(OUTBOX, { keyPath: 'client_id' });
+  }
+  if (oldVersion < 2) {
+    db.createObjectStore(STATISTICS, { keyPath: 'key' });
+  }
+}
 
 let opened: Promise<IDBDatabase> | null = null;
 
 function open(): Promise<IDBDatabase> {
   opened ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(QUEUES, { keyPath: 'key' });
-      request.result.createObjectStore(OUTBOX, { keyPath: 'client_id' });
-    };
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = event => upgradeDatabase(request.result, event.oldVersion);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -112,4 +128,27 @@ export async function deletePendingActions(clientIds: string[]): Promise<void> {
   const transaction = (await open()).transaction(OUTBOX, 'readwrite');
   for (const id of clientIds) transaction.objectStore(OUTBOX).delete(id);
   await complete(transaction);
+}
+
+export async function getStatisticsEntry(key: string): Promise<CachedStatistics | undefined> {
+  return run<CachedStatistics | undefined>(STATISTICS, 'readonly', store => store.get(key));
+}
+
+export async function listStatisticsEntries(): Promise<CachedStatistics[]> {
+  return run<CachedStatistics[]>(STATISTICS, 'readonly', store => store.getAll());
+}
+
+export async function putStatisticsEntry(entry: CachedStatistics): Promise<void> {
+  await run(STATISTICS, 'readwrite', store => store.put(entry));
+}
+
+export async function deleteStatisticsEntries(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  const transaction = (await open()).transaction(STATISTICS, 'readwrite');
+  for (const key of keys) transaction.objectStore(STATISTICS).delete(key);
+  await complete(transaction);
+}
+
+export async function clearStatisticsEntries(): Promise<void> {
+  await run(STATISTICS, 'readwrite', store => store.clear());
 }

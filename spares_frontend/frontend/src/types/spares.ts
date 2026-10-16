@@ -302,6 +302,121 @@ export interface StatisticsResponse {
   postpone_safe_count: number;
 }
 
+/** `POST /api/statistics/graphs`. Days and hours are local to `tz`. */
+export interface StatisticsGraphsRequest {
+  scheduler_name: string;
+  /** Only the cards matching this search query; `null` is every card. */
+  query: string | null;
+  /** The days the reviews, hourly breakdown, answer buttons and added cards cover, today included; `null` is all time. */
+  period_days: number | null;
+  forecast_days: number;
+  date: string;
+  /** An IANA time zone, e.g. `Europe/Berlin`. */
+  tz: string | null;
+}
+
+export interface TodayStats {
+  reviews: number;
+  passed: number;
+  seconds: number;
+  learning: number;
+  relearning: number;
+  young: number;
+  mature: number;
+  crams: number;
+  crams_passed: number;
+  cram_seconds: number;
+}
+
+export interface ForecastDay { date: string; learning: number; review: number }
+
+export interface ReviewDay {
+  date: string;
+  learning: number;
+  relearning: number;
+  young: number;
+  mature: number;
+  cram: number;
+  seconds: number;
+}
+
+export interface ReviewsSummary {
+  reviews: number;
+  crams: number;
+  seconds: number;
+  days_studied: number;
+  days: number;
+  daily_average: number;
+}
+
+export interface PassFail { passed: number; failed: number }
+
+export interface RetentionRow {
+  label: string;
+  /** `null` for all time. */
+  days: number | null;
+  young: PassFail;
+  mature: PassFail;
+}
+
+export interface AnswerGroup {
+  /** `[rating id, count]` per rating of `AnswerButtons.ratings`, in its order. */
+  counts: [number, number][];
+  passed: number;
+  total: number;
+}
+
+export interface AnswerButtons {
+  ratings: Rating[];
+  learning: AnswerGroup;
+  young: AnswerGroup;
+  mature: AnswerGroup;
+}
+
+export interface HourStats { reviews: number; passed: number; crams: number; crams_passed: number }
+
+export interface CardCounts {
+  /** Cards neither suspended nor buried, by state id. */
+  by_state: Record<string, number>;
+  young: number;
+  mature: number;
+  suspended: number;
+  buried: number;
+  total: number;
+}
+
+/** Bucket `i` holds the values from `edges[i]` to `edges[i + 1]`; the last bucket can be wider, holding the tail. */
+export interface Histogram { edges: number[]; counts: number[]; mean: number | null }
+
+export interface Distributions {
+  interval: Histogram;
+  stability: Histogram;
+  difficulty: Histogram;
+  /** `null` if the scheduler has no forgetting curve. */
+  retrievability: Histogram | null;
+  total_knowledge: number | null;
+}
+
+export interface StatisticsGraphsResponse {
+  mature_threshold_days: number;
+  /** The local date of the request's `date`. */
+  date: string;
+  period_start: string;
+  today: TodayStats;
+  forecast: ForecastDay[];
+  /** Only days with reviews or crams. */
+  reviews: ReviewDay[];
+  reviews_summary: ReviewsSummary;
+  true_retention: RetentionRow[];
+  answer_buttons: AnswerButtons;
+  /** By local hour, 0 to 23. */
+  hourly: HourStats[];
+  card_counts: CardCounts;
+  /** Only days with cards added. */
+  added: { date: string; cards: number }[];
+  distributions: Distributions;
+}
+
 export interface ReviewHistoryResponse {
   // Keyed by local `YYYY-MM-DD`, only dates with reviews
   review_count_by_date: Record<string, number>;
