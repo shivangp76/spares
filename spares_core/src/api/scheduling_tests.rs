@@ -12,9 +12,14 @@ use crate::api::card::get_leeches;
 use crate::api::note::create_notes;
 use crate::api::offline_review::get_review_queue;
 use crate::api::offline_review::sync_offline_actions;
+use crate::api::offline_review::sync_offline_actions_with_config;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::review::submit_study_action;
 use crate::api::scheduler::reschedule_scheduler;
+use crate::api::undo::undo_event;
+use crate::config::LeechAction;
+use crate::config::LeechConfig;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
@@ -36,6 +41,7 @@ use crate::schema::review::ReviewQueueRequest;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SyncOfflineActionsRequest;
+use crate::schema::undo::UndoEventRequest;
 
 const LEARNING: u32 = 1;
 const REVIEW: u32 = 2;
@@ -558,6 +564,88 @@ async fn offline_review_synced_after_a_later_review_is_replayed_in_order(pool: S
     assert_same_memory_state(
         &fetch_card(&pool, out_of_order).await,
         &fetch_card(&pool, in_order).await,
+    );
+}
+
+async fn note_tags(pool: &SqlitePool, card_id: CardId) -> Vec<String> {
+    sqlx::query_scalar(
+        r"SELECT t.name FROM tag t JOIN note_tag nt ON nt.tag_id = t.id
+        JOIN card c ON c.note_id = nt.note_id WHERE c.id = ?",
+    )
+    .bind(card_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The example on [`crate::api::offline_review`], with a threshold of 2 lapses.
+#[sqlx::test]
+async fn offline_lapse_inserted_into_the_history_triggers_the_leech_action(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = whole_seconds(Utc::now());
+    let config = SparesExternalConfig {
+        leech: LeechConfig {
+            lapses_threshold: 2,
+            action: LeechAction::Suspend,
+            ..LeechConfig::default()
+        },
+        ..SparesExternalConfig::default()
+    };
+    graduate(&pool, card_id, now, &[60, 59]).await;
+    // The first lapse, relearned
+    let lapsed_at = now - Duration::days(40);
+    rate(&pool, card_id, AGAIN, lapsed_at).await;
+    rate(&pool, card_id, GOOD, lapsed_at + Duration::hours(1)).await;
+    rate(&pool, card_id, GOOD, lapsed_at + Duration::days(1)).await;
+    // The laptop reviews the card after the phone's lapse, and syncs first
+    rate(&pool, card_id, GOOD, now - Duration::days(1)).await;
+
+    let outcomes = sync_offline_actions_with_config(
+        &pool,
+        &config,
+        SyncOfflineActionsRequest {
+            scheduler_name: "fsrs".to_string(),
+            actions: vec![offline_rating(
+                "phone",
+                card_id,
+                AGAIN,
+                now - Duration::days(10),
+            )],
+        },
+        now,
+    )
+    .await
+    .unwrap()
+    .results;
+    assert!(
+        matches!(
+            outcomes[0].outcome,
+            OfflineActionOutcome::Applied { event_id: None }
+        ),
+        "the inserted rating still has no undo event: {outcomes:?}"
+    );
+    assert_eq!(
+        fetch_card(&pool, card_id).await.special_state,
+        Some(SpecialState::Suspended),
+    );
+    assert_eq!(note_tags(&pool, card_id).await, ["leech"]);
+
+    // The leech action is the latest event, and undoing its group takes all of it back
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fetch_card(&pool, card_id).await.special_state, None);
+    assert_eq!(note_tags(&pool, card_id).await, Vec::<String>::new());
+    assert_eq!(
+        review_times(&pool, card_id).await.len(),
+        7,
+        "the inserted rating is kept"
     );
 }
 
