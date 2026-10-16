@@ -8,22 +8,6 @@ code: the settings on `QueueConfig`, `LeechConfig` and `SparesExternalConfig` in
 Each improvement below says what is missing, when it matters (use case), a small example, and how
 it could be built.
 
-## Gaps in what is done
-
-### Cap the counts by the limits
-
-`cards_left_by_state` and the statistics' cards due today count every due card, not just the ones
-today's new and review limits allow.
-
-- **Use case.** With a backlog after a holiday, the review page says 600 reviews left while the
-  daily limit is 200, so the count never reaches 0 and the session looks endless.
-- **Example.** `reviews_daily_limit = 200`, 600 reviews due, 50 already done today: the count
-  would show 150 instead of 550. With `new_cards_daily_limit = 20` and 5 new cards done, new shows
-  15 instead of every new card in the collection.
-- **How.** Apply the same `daily_limits_left` the queue uses: `min(due, left of limit)` per state,
-  including the new cards held back by the review limit unless `new_cards_ignore_review_limit` is
-  set. The uncapped count could still be shown alongside, like "150 (600 due)".
-
 ## Queue presets per tag
 
 Anki's deck presets give each deck its own limits, steps and order. spares has one global
