@@ -1,59 +1,14 @@
 # Card queue plan
 
 Work left to bring spares' card queue up to Anki's, and beyond. What is done is documented on the
-code: the settings on `QueueConfig`, `LeechConfig` and `SparesExternalConfig` in
+code: the settings on `QueueConfig`, `QueuePreset`, `LeechConfig` and `SparesExternalConfig` in
 `spares_core::config`, and the rest where it is implemented (`cargo doc --workspace --no-deps
 --document-private-items --open`).
 
 Each improvement below says what is missing, when it matters (use case), a small example, and how
 it could be built.
 
-## Queue presets per tag
-
-Anki's deck presets give each deck its own limits, steps and order. spares has one global
-`config.toml`, but tags can play the role of decks.
-
-- **Use case.** Vocabulary does well with many new cards a day and a random order, while a math
-  course wants few new cards, in the order the notes were written, with longer steps. Today both
-  share one set of settings, so one of them is always set wrong.
-- **Example.**
-
-  ```toml
-  [queue.presets.languages]
-  tags = ["lang"]               # notes with `lang` or a `lang:` child tag
-  new_cards_daily_limit = 40
-  review_order = "random"
-  learning_steps = [60, 300, 1800]
-
-  [queue.presets.exam]
-  tags = ["math:analysis"]
-  review_order = "retrievability"
-  ```
-
-  A note tagged `lang:german` gets 40 new cards a day and a random order; one tagged
-  `math:analysis` uses the top-level limits with retrievability order; one tagged both is in
-  `languages`, since it is listed first.
-
-- **What a preset can set.** Any of the queue settings (orders, mix, learn ahead, sibling
-  burying), the daily limits, learning and relearning steps, and possibly desired retention.
-  FSRS parameters stay global, since they are fitted to the whole review log.
-- **Which preset applies.** A card has a preset through its note's tags, and a note can have
-  several tags. A simple rule: the first preset listed in `config.toml` whose tags match wins, so
-  the order of the presets is the priority. Cards with no match use the top-level settings.
-- **Limits.** As in Anki v3, a preset's limits cap that preset's cards, and the top-level limits
-  still cap the total. With a top-level limit of 50 new cards and `languages` at 40, a day can
-  have 40 language cards and 10 others, but not 40 and 20. `daily_limits_left` would count today's
-  reviews per preset, by joining `review_log` to the cards' tags, or by recording the preset in
-  `review_log.custom_data` at rating time so that retagging a note does not rewrite history.
-- **Order.** `queue_order_by` currently takes one `QueueConfig`. With presets, each card's sort
-  keys come from its preset (a `CASE` over the preset), or, simpler, the session's preset is the
-  one matching the review query's tag, and mixed sessions use the top-level order.
-- **Scheduling.** `rate_card` would look up the card's preset for its steps before calling the
-  scheduler, and `spares card reschedule` would do the same per card.
-- **When.** Wait until the queue settings have been used for a while, so the settings presets copy
-  have settled.
-
-### Interleave by tag
+## Interleave by tag
 
 Round robin across a session's tags, so a review is not 40 calculus cards in a row, then 40
 chemistry ones. Interleaving helps tell similar concepts apart.
@@ -75,7 +30,7 @@ chemistry ones. Interleaving helps tell similar concepts apart.
 - It should come after the review order within each group, so the order still decides which cards
   of a group come first.
 
-### Prerequisite-aware order
+## Prerequisite-aware order
 
 Show a note's cards only after the notes it links to (`note_link`) are known, extending the
 "older notes first" rule to the links spares already has.
