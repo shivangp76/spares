@@ -6,6 +6,7 @@ pub mod image_occlusion;
 pub mod note;
 pub mod offline_review;
 pub mod parser;
+pub(crate) mod preset;
 pub(crate) mod queue;
 pub mod review;
 pub mod scheduler;

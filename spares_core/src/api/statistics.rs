@@ -8,7 +8,12 @@ use itertools::Itertools;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
-use crate::api::review::daily_limits_left;
+use crate::api::preset::cap_counts;
+use crate::api::preset::card_presets;
+use crate::api::preset::limited_preset_sql;
+use crate::api::queue::QueueCaps;
+use crate::api::review::daily_limits_left_with;
+use crate::config::read_external_config;
 use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
@@ -17,7 +22,6 @@ use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
-use crate::schedulers::review_state;
 use crate::schema::review::ReviewHistoryResponse;
 use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
@@ -132,32 +136,28 @@ pub async fn get_statistics(
             .or_insert(buried_cards);
     }
 
-    // Group cards due on `requested_date` by state
-    let mut num_cards_due_by_state = cards_by_due
+    // Cap new and review cards by what is left of today's limits, and of their presets', as
+    // review does, so the counts are what is left to study today. See
+    // `get_cards_left_by_state_and_time_estimate`.
+    let config = read_external_config()?;
+    let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
+    let presets = card_presets(db, &limited_preset_sql(&config.queue)).await?;
+    let num_cards_due_by_state = cards_by_due
         .get(&requested_date.with_timezone(&Local).date_naive())
         .map(|cards| {
-            cards
-                .iter()
-                .map(|card| (card.state, card))
-                .into_group_map()
-                .into_iter()
-                .map(|(state, cards)| (state, cards.len() as u32))
-                .collect::<HashMap<_, _>>()
+            cap_counts(
+                cards
+                    .iter()
+                    .counts_by(|card| (card.state, presets.get(&card.id).copied()))
+                    .into_iter()
+                    .map(|((state, preset), count)| (state, preset, count as u32, 0.0)),
+                &QueueCaps::from_limits(&limits_left),
+            )
+            .into_iter()
+            .map(|(state, (count, _))| (state, count))
+            .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
-
-    // Cap new and review cards by what is left of today's limits, as review does, so the counts
-    // are what is left to study today. See `get_cards_left_by_state_and_time_estimate`.
-    let limits_left = daily_limits_left(db, requested_date).await?;
-    for (state, left) in [
-        (NEW_CARD_STATE, limits_left.new),
-        (review_state(), limits_left.reviews),
-    ] {
-        if let Some(count) = num_cards_due_by_state.get_mut(&state) {
-            *count = (*count).min(left);
-        }
-    }
-    num_cards_due_by_state.retain(|_, &mut v| v != 0);
 
     let future_due = cards_by_due
         .into_iter()

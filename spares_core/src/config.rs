@@ -22,6 +22,7 @@
 //! templates, [`get_config_dir`]), `SPARES_DATA_DIR` (database, and note and card text files,
 //! [`get_data_dir`]), and `DATABASE_URL` (the database alone, [`get_env_config`]).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::create_dir_all;
@@ -38,6 +39,7 @@ use chrono::Weekday;
 use etcetera::AppStrategy;
 use etcetera::AppStrategyArgs;
 use etcetera::choose_app_strategy;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -315,7 +317,7 @@ impl Default for SparesInternalConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EasyDaysConfig {
     /// Deprecated: use [`SparesExternalConfig::load_balance`]. `false` is read as
@@ -389,8 +391,11 @@ impl Default for EasyDaysConfig {
 /// new_review_mix = "interleaved"
 /// learn_ahead_limit = 1200
 /// ```
+///
+/// The cards of notes with some tags can have orders, limits and steps of their own, through
+/// [`Self::presets`]. See [`QueuePreset`].
 #[serde_with::serde_as]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
@@ -437,6 +442,12 @@ pub struct QueueConfig {
     /// to begin with; this handles the ones that are anyway, such as after a backlog. Learning
     /// and relearning siblings are never buried, since that would break their steps.
     pub bury_review_siblings: bool,
+    /// Settings for the cards of notes with some tags, in place of the top-level ones, by name:
+    /// `[queue.presets.<name>]`. Empty by default. See [`QueuePreset`].
+    ///
+    /// The order they are listed in is their priority: a card whose note matches several presets
+    /// uses the first.
+    pub presets: IndexMap<String, QueuePreset>,
 }
 
 impl Default for QueueConfig {
@@ -448,7 +459,131 @@ impl Default for QueueConfig {
             learn_ahead_limit: Duration::minutes(20),
             bury_new_siblings: false,
             bury_review_siblings: false,
+            presets: IndexMap::new(),
         }
+    }
+}
+
+/// A `[queue.presets.<name>]` table of `config.toml`: settings for the cards of notes with some
+/// tags, like a deck preset in Anki, where tags play the role of decks. See
+/// [`QueueConfig::presets`].
+///
+/// Subjects often want different settings. Vocabulary does well with many new cards a day in a
+/// random order, while a math course wants few new cards, in the order the notes were written,
+/// with longer steps. With one set of settings, one of them is always set wrong:
+///
+/// ```toml
+/// [queue]
+/// review_order = "due"
+///
+/// [queue.presets.languages]
+/// tags = ["lang"]                  # notes tagged `lang`, or `lang:german`, `lang:french:verbs`...
+/// new_cards_daily_limit = 40
+/// new_order = "random"
+/// review_order = "random"
+/// learning_steps = [60, 300, 1800] # 1, 5 and 30 minutes
+///
+/// [queue.presets.exam]
+/// tags = ["math:analysis", "math:algebra"]
+/// new_cards_daily_limit = 5
+/// review_order = "retrievability"
+/// relearning_steps = [600, 3600]
+/// bury_new_siblings = true
+/// ```
+///
+/// A note tagged `lang:german` gets up to 40 new cards a day, in a random order, with steps of 1,
+/// 5 and 30 minutes. One tagged `math:analysis` gets 5 new cards a day and its reviews by
+/// retrievability. One tagged both uses `languages`, since it is listed first. Notes matching no
+/// preset use the top-level settings.
+///
+/// # Which preset a card uses
+///
+/// A card uses the first preset, in the order of `config.toml`, one of whose [`Self::tags`] its
+/// note has, either exactly or as a parent: `lang` matches the tags `lang` and `lang:german` but
+/// not `language` or `old:lang`. Only the note's own tags count, not the filtered tags its cards
+/// are in. Changing a note's tags changes its cards' preset right away, for the counts of what was
+/// studied today too (see [`Self::new_cards_daily_limit`]).
+///
+/// # What a preset can set
+///
+/// Each setting left out is taken from the top level. A preset can set:
+///
+/// - Its own daily limits, [`Self::new_cards_daily_limit`] and [`Self::reviews_daily_limit`].
+/// - The order of its cards, [`Self::new_order`] and [`Self::review_order`].
+/// - Its steps, [`Self::learning_steps`] and [`Self::relearning_steps`].
+/// - Sibling burying, [`Self::bury_new_siblings`] and [`Self::bury_review_siblings`].
+///
+/// Everything else stays global. The FSRS parameters are fitted to the whole review log, so
+/// there is one set of them. [`QueueConfig::new_review_mix`] and
+/// [`QueueConfig::learn_ahead_limit`] shape a whole review session, which can mix the cards of
+/// several presets. A setting a preset cannot set, or a misspelled one, is an error rather than
+/// silently ignored.
+#[serde_with::serde_as]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct QueuePreset {
+    /// The tags whose notes use this preset, along with their child tags. Must not be empty.
+    pub tags: Vec<String>,
+    /// The most new cards of this preset to study each day. Like
+    /// [`SparesExternalConfig::new_cards_daily_limit`], which still caps the total.
+    ///
+    /// For example, with a top-level limit of 50 and 40 here, a day can have 40 new cards of this
+    /// preset and 10 others, or 50 others, but not 40 and 20. The cards studied today count
+    /// toward the preset their note matches now, so retagging a note moves its reviews of today
+    /// to its new preset.
+    pub new_cards_daily_limit: Option<u32>,
+    /// The most review cards of this preset to study each day. Like
+    /// [`SparesExternalConfig::reviews_daily_limit`], which still caps the total, and with
+    /// [`SparesExternalConfig::new_cards_ignore_review_limit`] applying to it the same way: unless
+    /// that is set, this preset's new cards count toward it too, and only fill the room this
+    /// preset's reviews due today leave under it.
+    pub reviews_daily_limit: Option<u32>,
+    /// The order of this preset's review cards, in place of [`QueueConfig::review_order`].
+    ///
+    /// In a review mixing presets that order cards differently, cards are gathered by order: the
+    /// cards of the first preset listed come first (with those of any later preset that orders
+    /// them the same way, top level included), then those of the next preset with another order,
+    /// and so on. To study one preset in its own order, review its tag, as in `spares card review
+    /// -q 'tag=lang'`.
+    pub review_order: Option<ReviewOrder>,
+    /// The order of this preset's new cards, in place of [`QueueConfig::new_order`]. Cards of
+    /// presets with different orders are gathered as for [`Self::review_order`].
+    pub new_order: Option<NewCardOrder>,
+    /// This preset's learning steps, in seconds, in place of
+    /// [`SparesExternalConfig::learning_steps`]. The same rules apply.
+    ///
+    /// They are used when a card is rated, and when its history is replayed, as by `spares card
+    /// reschedule`, by a sync, or by an offline review inserted into the history. A card that
+    /// changes preset in the middle of its steps continues on the new preset's steps.
+    #[serde_as(as = "Option<Vec<serde_with::DurationSeconds<i64>>>")]
+    pub learning_steps: Option<Vec<Duration>>,
+    /// This preset's relearning steps, in seconds, in place of
+    /// [`SparesExternalConfig::relearning_steps`]. See [`Self::learning_steps`]. `spares card
+    /// optimize` still assumes the top-level number of relearning steps.
+    #[serde_as(as = "Option<Vec<serde_with::DurationSeconds<i64>>>")]
+    pub relearning_steps: Option<Vec<Duration>>,
+    /// Whether rating a card of this preset buries the new cards of its note, in place of
+    /// [`QueueConfig::bury_new_siblings`]. Siblings are cards of the same note, so they always
+    /// share the preset.
+    pub bury_new_siblings: Option<bool>,
+    /// Whether rating a card of this preset buries its note's review cards due today, in place
+    /// of [`QueueConfig::bury_review_siblings`].
+    pub bury_review_siblings: Option<bool>,
+}
+
+impl QueuePreset {
+    /// Whether this preset sets anything that changes how its cards are scheduled or buried, as
+    /// [`SparesExternalConfig::for_preset`] applies.
+    fn changes_rating(&self) -> bool {
+        self.learning_steps.is_some()
+            || self.relearning_steps.is_some()
+            || self.bury_new_siblings.is_some()
+            || self.bury_review_siblings.is_some()
+    }
+
+    /// Whether this preset has a daily limit of its own.
+    pub(crate) fn has_limits(&self) -> bool {
+        self.new_cards_daily_limit.is_some() || self.reviews_daily_limit.is_some()
     }
 }
 
@@ -534,7 +669,7 @@ pub enum NewReviewMix {
 /// action = "suspend"
 /// tag_name = "leech"
 /// ```
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LeechConfig {
     /// The number of lapses at which a card becomes a leech. Defaults to 8.
@@ -588,14 +723,14 @@ impl LeechConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ParserConfig {
     pub markdown: MarkdownParserConfig,
 }
 
 #[serde_with::serde_as]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -612,6 +747,9 @@ pub struct SparesExternalConfig {
     ///
     /// Unless [`Self::new_cards_ignore_review_limit`] is set, new cards are also held back by
     /// [`Self::reviews_daily_limit`].
+    ///
+    /// A [preset](QueuePreset::new_cards_daily_limit) can have a limit of its own for its cards,
+    /// within this one.
     pub new_cards_daily_limit: u32,
     /// The most review cards to study each day. A card counts once it is rated while in review,
     /// that is, after it graduated from its learning steps. Cards in learning or relearning steps
@@ -627,6 +765,9 @@ pub struct SparesExternalConfig {
     /// and not to filtered tags, which show every card in them. A query with `limit` (a review
     /// snapshot) leaves out review cards once the limit is reached, but is otherwise limited by
     /// its own `limit`s.
+    ///
+    /// A [preset](QueuePreset::reviews_daily_limit) can have a limit of its own for its cards,
+    /// within this one.
     pub reviews_daily_limit: u32,
     /// Whether new cards may be studied regardless of [`Self::reviews_daily_limit`]. Defaults to
     /// `false`, as in Anki: new cards then count toward the review limit too, and are only shown
@@ -637,11 +778,12 @@ pub struct SparesExternalConfig {
     pub flagged_tag_name: String,
     /// Delays between the same-day reviews of a new card before it graduates to review, in
     /// seconds. Each must be shorter than a day, in increasing order. Empty to graduate on the
-    /// first answer.
+    /// first answer. A [preset](QueuePreset::learning_steps) can have its own.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub learning_steps: Vec<Duration>,
     /// Like [`Self::learning_steps`], for a card in review that was forgotten. Empty to keep it
-    /// in review with a short interval instead.
+    /// in review with a short interval instead. A [preset](QueuePreset::relearning_steps) can
+    /// have its own.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub relearning_steps: Vec<Duration>,
     /// The FSRS model's parameters: 21 for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5, so
@@ -710,21 +852,26 @@ impl Default for SparesExternalConfig {
 
 impl SparesExternalConfig {
     pub(crate) fn validate(&mut self) -> Result<(), String> {
-        for (name, steps) in [
-            ("learning_steps", &self.learning_steps),
-            ("relearning_steps", &self.relearning_steps),
-        ] {
-            if steps
-                .iter()
-                .any(|step| *step <= Duration::zero() || *step >= Duration::days(1))
-            {
+        validate_steps("learning_steps", &self.learning_steps)?;
+        validate_steps("relearning_steps", &self.relearning_steps)?;
+        for (name, preset) in &self.queue.presets {
+            let key = |setting: &str| format!("queue.presets.{name}.{setting}");
+            if preset.tags.is_empty() {
                 return Err(format!(
-                    "Each of `{name}` must be longer than 0 seconds and shorter than a day. \
-                     Longer intervals are FSRS's to choose."
+                    "`{}` must list at least one tag, or the preset applies to no card.",
+                    key("tags")
                 ));
             }
-            if !steps.is_sorted_by(|a, b| a < b) {
-                return Err(format!("`{name}` must be in increasing order."));
+            if preset.tags.iter().any(|tag| tag.trim().is_empty()) {
+                return Err(format!("`{}` must not have empty tags.", key("tags")));
+            }
+            for (setting, steps) in [
+                ("learning_steps", &preset.learning_steps),
+                ("relearning_steps", &preset.relearning_steps),
+            ] {
+                if let Some(steps) = steps {
+                    validate_steps(&key(setting), steps)?;
+                }
             }
         }
         if self.queue.learn_ahead_limit < Duration::zero() {
@@ -786,6 +933,52 @@ impl SparesExternalConfig {
             });
         Ok(())
     }
+}
+
+impl SparesExternalConfig {
+    /// The settings a card of the preset at index `preset` of [`QueueConfig::presets`] is rated
+    /// with: these, with the preset's steps and sibling burying in place of the top-level ones.
+    /// Borrowed when nothing changes, as for `None` (a card matching no preset).
+    pub(crate) fn for_preset(&self, preset: Option<usize>) -> Cow<'_, Self> {
+        let Some(preset) = preset
+            .and_then(|index| self.queue.presets.get_index(index))
+            .map(|(_, preset)| preset)
+            .filter(|preset| preset.changes_rating())
+        else {
+            return Cow::Borrowed(self);
+        };
+        let mut config = self.clone();
+        if let Some(steps) = &preset.learning_steps {
+            config.learning_steps.clone_from(steps);
+        }
+        if let Some(steps) = &preset.relearning_steps {
+            config.relearning_steps.clone_from(steps);
+        }
+        if let Some(bury) = preset.bury_new_siblings {
+            config.queue.bury_new_siblings = bury;
+        }
+        if let Some(bury) = preset.bury_review_siblings {
+            config.queue.bury_review_siblings = bury;
+        }
+        Cow::Owned(config)
+    }
+}
+
+/// Checks `steps`, the value of `name`, as [`SparesExternalConfig::learning_steps`] describes.
+fn validate_steps(name: &str, steps: &[Duration]) -> Result<(), String> {
+    if steps
+        .iter()
+        .any(|step| *step <= Duration::zero() || *step >= Duration::days(1))
+    {
+        return Err(format!(
+            "Each of `{name}` must be longer than 0 seconds and shorter than a day. Longer \
+             intervals are FSRS's to choose."
+        ));
+    }
+    if !steps.is_sorted_by(|a, b| a < b) {
+        return Err(format!("`{name}` must be in increasing order."));
+    }
+    Ok(())
 }
 
 pub(crate) async fn read_internal_config(pool: &SqlitePool) -> Result<SparesInternalConfig, Error> {

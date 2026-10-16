@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
+use crate::api::preset::CardConfigs;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::config::SparesExternalConfig;
 use crate::model::Card;
@@ -174,13 +175,16 @@ pub trait SrsScheduler: Send + Sync {
 
     /// Recomputes each card's memory state from its log and gives it a new due date.
     ///
+    /// Each card is replayed with its own settings from `configs`, which hold the steps of its
+    /// [preset](crate::config::QueuePreset), and placed with the top-level ones.
+    ///
     /// Cards are placed one at a time, earliest due first, and each placement sees the due
     /// dates already given to the cards before it. That is what spreads the workload and keeps
     /// siblings apart, so the result depends on the order.
     async fn reschedule(
         &self,
         db: &SqlitePool,
-        config: &SparesExternalConfig,
+        configs: &CardConfigs<'_>,
         mut cards_with_review_logs: Vec<(Card, Vec<ReviewLog>)>,
         at: DateTime<Utc>,
     ) -> Result<(), Error> {
@@ -194,8 +198,11 @@ pub trait SrsScheduler: Send + Sync {
         // a reschedule is meant to replace.
         cards_with_review_logs.iter_mut().try_for_each(
             |(card, review_logs)| -> Result<(), Error> {
-                let new_card =
-                    self.compute_memory_state(config, review_logs.clone(), card.desired_retention)?;
+                let new_card = self.compute_memory_state(
+                    configs.get(card.id),
+                    review_logs.clone(),
+                    card.desired_retention,
+                )?;
                 card.stability = new_card.stability;
                 card.difficulty = new_card.difficulty;
                 card.state = new_card.state;
@@ -210,9 +217,9 @@ pub trait SrsScheduler: Send + Sync {
         // `ThreadRng` is not `Send`, and this future is held across awaits.
         let mut rng = StdRng::from_rng(&mut rand::rng());
         for (card, review_logs) in &mut cards_with_review_logs {
-            let candidates = self.due_candidates(config, card, review_logs, at);
+            let candidates = self.due_candidates(configs.get(card.id), card, review_logs, at);
             if !candidates.is_empty() {
-                card.due = context.place(config, card, &candidates, &mut rng);
+                card.due = context.place(configs.base(), card, &candidates, &mut rng);
             }
             context.update(card);
 

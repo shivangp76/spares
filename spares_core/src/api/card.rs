@@ -12,6 +12,7 @@ use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::placeholders_2d;
+use crate::api::preset::CardConfigs;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::Transition;
@@ -74,8 +75,13 @@ pub async fn get_card_reviews(
     };
     let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
     let config = read_external_config()?;
-    let history =
-        scheduler.memory_state_history(&config, review_logs.clone(), card.desired_retention)?;
+    // With the steps of the card's preset, as it was rated with
+    let configs = CardConfigs::load(db, &config, Some(&[card_id])).await?;
+    let history = scheduler.memory_state_history(
+        configs.get(card_id),
+        review_logs.clone(),
+        card.desired_retention,
+    )?;
     Ok(review_logs
         .into_iter()
         .zip(history)
@@ -225,9 +231,10 @@ pub async fn update_cards(
                 let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
 
                 let config = read_external_config()?;
+                let configs = CardConfigs::load(db, &config, Some(&[updated_card.id])).await?;
                 // Reschedule card
                 scheduler
-                    .reschedule(db, &config, vec![(updated_card.clone(), review_logs)], at)
+                    .reschedule(db, &configs, vec![(updated_card.clone(), review_logs)], at)
                     .await?;
             }
         }
