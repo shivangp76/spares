@@ -799,6 +799,15 @@ pub mod review {
     pub struct ReviewQueueCard {
         /// When the card becomes due, so a client knows which cards to show on which day.
         pub due: DateTime<Utc>,
+        /// The earliest a client may show the card, for a learning or relearning card held back
+        /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit):
+        /// its `due` minus the limit. `None` for other cards, and for every card of a filtered
+        /// tag, which holds nothing back.
+        ///
+        /// For example, with the default limit of 20 minutes, a card rated at 12:00 onto a 1
+        /// hour step is due at 13:00 and has `shown_from` 12:40. Offline review shows it once
+        /// nothing else is left and it is 12:40, as online review does, rather than at once.
+        pub shown_from: Option<DateTime<Utc>>,
         /// `cards_left_by_state` and `time_estimate` are for the whole queue as it was fetched.
         #[serde(flatten)]
         pub card: GetReviewCardResponse,

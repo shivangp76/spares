@@ -116,6 +116,9 @@ export interface ReviewQueueRequest {
 
 export interface ReviewQueueCard extends GetReviewCardResponse {
   due: string; // ISO 8601
+  // The earliest the card may be shown, for a learning card held back by the learn ahead limit
+  // (ISO 8601). Missing from queues downloaded before it was added.
+  shown_from?: string | null;
 }
 
 export interface ReviewQueueResponse {

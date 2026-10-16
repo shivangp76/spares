@@ -17,7 +17,7 @@ import {
   pruneOfflineFiles,
   syncOfflineActions,
 } from '../api/client';
-import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter } from '../types/spares';
+import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter, ReviewQueueCard } from '../types/spares';
 import { lastReviewWidth, widthInputs } from '../typst/width';
 import { backPath, backWebPath } from '../utils';
 import {
@@ -330,23 +330,59 @@ function endOfToday(now: Date): Date {
   return end;
 }
 
+/** The cards of `cards` due today, which is what is left to review. */
+function dueToday(cards: ReviewQueueCard[], now: Date): ReviewQueueCard[] {
+  const limit = endOfToday(now).getTime();
+  return cards.filter(card => new Date(card.due).getTime() < limit);
+}
+
+/**
+ * Whether `card` can be shown at `now`. A learning card whose step ends further off than the
+ * server's learn ahead limit is held back until it is within it, as in an online review.
+ *
+ * For example, with the default limit of 20 minutes, a card rated at 12:00 onto a 1 hour step has
+ * `shown_from` 12:40. Before then it is skipped, even once it is the only card left.
+ */
+function isShownAt(card: ReviewQueueCard, now: Date): boolean {
+  return card.shown_from == null || Date.parse(card.shown_from) <= now.getTime();
+}
+
 /**
  * The next card to review from the queue for `key`, with the counts of what is left, or `null` if
- * nothing in it is due today.
+ * nothing in it can be shown now. See `nextOfflineCardAvailableAt` for whether one can later today.
+ *
+ * Learning cards come after the others in the queue, so one within the learn ahead limit is only
+ * shown once nothing else is left.
  */
 export async function nextOfflineCard(key: string, now: Date = new Date()): Promise<GetReviewCardResponse | null> {
   const queue = await getOfflineQueue(key);
   if (!queue) return null;
-  const limit = endOfToday(now).getTime();
-  const due = queue.cards.filter(card => new Date(card.due).getTime() < limit);
-  if (due.length === 0) return null;
+  const due = dueToday(queue.cards, now);
+  const next = due.find(card => isShownAt(card, now));
+  if (!next) return null;
+  // Held back cards count, as in an online review's counts
   const cardsLeftByState: Record<string, number> = {};
   for (const card of due) cardsLeftByState[card.card_state] = (cardsLeftByState[card.card_state] ?? 0) + 1;
   return {
-    ...due[0],
+    ...next,
     cards_left_by_state: cardsLeftByState,
     time_estimate: Math.round(due.length * queue.secondsPerCard),
   };
+}
+
+/**
+ * When the queue for `key` can next show a card, once `nextOfflineCard` has nothing to show now:
+ * the earliest time a learning card held back by the learn ahead limit comes within it. `null` if
+ * no such card is due later today, so the review is done for the day. Like the server's
+ * `nextReviewAvailableAt`, for the review page to wait with.
+ */
+export async function nextOfflineCardAvailableAt(key: string, now: Date = new Date()): Promise<Date | null> {
+  const queue = await getOfflineQueue(key);
+  if (!queue) return null;
+  const times = dueToday(queue.cards, now)
+    .filter(card => !isShownAt(card, now))
+    .map(card => Date.parse(card.shown_from!));
+  return times.length === 0 ? null : new Date(Math.min(...times));
 }
 
 /**
@@ -366,5 +402,6 @@ export async function precompileNextCard(key: string): Promise<void> {
 export async function returnToQueue(key: string, card: GetReviewCardResponse): Promise<void> {
   const queue = await getQueue(key);
   if (!queue || queue.cards.some(c => c.card_id === card.card_id)) return;
-  await putQueue({ ...queue, cards: [{ ...card, due: new Date(0).toISOString() }, ...queue.cards] });
+  // Shown next, whatever its step, since it was being shown when the rating was undone
+  await putQueue({ ...queue, cards: [{ ...card, due: new Date(0).toISOString(), shown_from: null }, ...queue.cards] });
 }
