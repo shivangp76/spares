@@ -250,10 +250,11 @@ pub trait SrsScheduler: Send + Sync {
 
     /// Replays a card's log to reconstruct the memory state it should currently have.
     ///
-    /// `review_logs` must be ordered by `reviewed_at ASC, id ASC` and must include every
+    /// `review_logs` must be ordered by `reviewed_at ASC, id ASC` and must include every replayed
     /// [`ReviewLogKind`], not just reviews: a [`ReviewLogKind::Forget`] row is what tells the
     /// replay to start over, and dropping it would reconstruct the state the card would have had
-    /// if it had never been forgotten.
+    /// if it had never been forgotten. Rows that are not replayed, such as
+    /// [`ReviewLogKind::Cram`], are skipped.
     ///
     /// `desired_retention` is the card's current desired retention. It does not affect the
     /// memory state, but it does decide the due date of the returned card.
@@ -275,7 +276,8 @@ pub trait SrsScheduler: Send + Sync {
 
     /// Like [`SrsScheduler::compute_memory_state`], but returns the card as it stood after each
     /// row of `review_logs`, in the same order. The last element is what
-    /// [`SrsScheduler::compute_memory_state`] returns.
+    /// [`SrsScheduler::compute_memory_state`] returns. After a row that is not replayed, the card
+    /// is as it was after the row before.
     ///
     /// The replay uses the current `config`, so after the scheduler's parameters change these
     /// can differ from what the card actually had at the time.
@@ -342,6 +344,10 @@ pub trait SrsScheduler: Send + Sync {
                     card = new_card;
                     previous_review_log = Some(new_review_log);
                 }
+                // Recorded for statistics only. Not even `previous_review_log` moves: the next
+                // review's elapsed time is measured from the last real review, as cramming a card
+                // the night before must not make it look like it was just reviewed.
+                ReviewLogKind::Cram => {}
             }
             history.push(card.clone());
         }
@@ -358,6 +364,9 @@ pub trait SrsScheduler: Send + Sync {
 /// Use this wherever an interval is derived from the log (elapsed time, the anchor for a new due
 /// date, the `previous_review_log` handed to [`SrsScheduler::schedule`]). Do *not* use it when
 /// feeding [`SrsScheduler::compute_memory_state`], which needs the forget markers themselves.
+///
+/// `review_logs` must hold replayed rows only, as `fetch_review_logs_for_replay` returns them:
+/// otherwise a [`ReviewLogKind::Cram`] could be taken for the card's latest review.
 pub fn effective_review_logs(review_logs: &[ReviewLog]) -> &[ReviewLog] {
     match review_logs
         .iter()
@@ -594,6 +603,45 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    fn cram_at(day: i64, rating: RatingId) -> ReviewLog {
+        ReviewLog {
+            kind: ReviewLogKind::Cram,
+            scheduled_time: None,
+            tag_id: Some(1),
+            ..review_at(day, rating)
+        }
+    }
+
+    #[test]
+    fn crams_do_not_change_the_memory_state() {
+        let scheduler = scheduler();
+        let config = SparesExternalConfig::default();
+        let reviews = vec![review_at(0, 3), review_at(10, 3)];
+        // Crammed the day before the second review, rated Again then Good. Were the crams
+        // replayed, the Again would be a lapse, and the review a day after it a short interval.
+        let with_crams = vec![
+            review_at(0, 3),
+            cram_at(9, 1),
+            cram_at(9, 3),
+            review_at(10, 3),
+        ];
+        let expected = scheduler
+            .compute_memory_state(&config, reviews, DEFAULT_DESIRED_RETENTION)
+            .unwrap();
+        let history = scheduler
+            .memory_state_history(&config, with_crams, DEFAULT_DESIRED_RETENTION)
+            .unwrap();
+        let memory = |card: &Card| (card.stability, card.difficulty, card.state, card.due);
+        assert_eq!(history.len(), 4, "one card per row, crams included");
+        assert_eq!(
+            memory(&history[1]),
+            memory(&history[0]),
+            "a cram leaves the card as it was"
+        );
+        assert_eq!(memory(&history[2]), memory(&history[0]));
+        assert_eq!(memory(history.last().unwrap()), memory(&expected));
     }
 
     #[test]

@@ -160,6 +160,13 @@ export default function StatisticsPage() {
             <Tile value={formatDuration(statistics.recall_duration)} label="Recall time" />
             <Tile value={formatDuration(statistics.rate_duration)} label="Rate time" />
             <Tile value={formatDuration(statistics.recall_duration + statistics.rate_duration)} label="Total time" />
+            {/* Ratings in filtered tags that do not reschedule, apart from the reviews; only on days with some */}
+            {statistics.cram_count > 0 && (
+              <>
+                <Tile value={statistics.cram_count} label="Crams" />
+                <Tile value={formatDuration(statistics.cram_duration)} label="Cram time" />
+              </>
+            )}
           </div>
 
           <div style={sectionTitle}>Due</div>

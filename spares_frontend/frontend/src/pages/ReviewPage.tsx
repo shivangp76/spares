@@ -863,6 +863,7 @@ export default function ReviewPage() {
           <div>Cards studied: {statistics.cards_studied_count}</div>
           <div>Recall time: {formatDuration(statistics.recall_duration)}</div>
           <div>Rate time: {formatDuration(statistics.rate_duration)}</div>
+          {statistics.cram_count > 0 && <div>Crams: {statistics.cram_count} ({formatDuration(statistics.cram_duration)})</div>}
         </>
       )}
     </div>
@@ -933,7 +934,7 @@ export default function ReviewPage() {
           )}
           {history && (
             <div style={{ marginTop: 40 }}>
-              <ReviewHeatmap counts={history.review_count_by_date} />
+              <ReviewHeatmap counts={history.review_count_by_date} cramCounts={history.cram_count_by_date} />
             </div>
           )}
         </div>

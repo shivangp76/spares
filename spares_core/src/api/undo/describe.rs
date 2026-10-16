@@ -132,7 +132,7 @@ async fn describe(
         EventType::RateCard => {
             let p: RateCardPayload = serde_json::from_value(payload).unwrap();
             let card = format!("Rate card {}", p.card.card_id);
-            // A rating that wrote no review binds NULL, which matches nothing
+            // A rating that wrote no row binds NULL, which matches nothing
             let review_log = match review_log {
                 Some(review_log) => Some(review_log),
                 None => sqlx::query_as(r"SELECT * FROM review_log WHERE id = ?")

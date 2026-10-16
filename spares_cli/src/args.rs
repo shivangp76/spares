@@ -138,7 +138,8 @@ pub(crate) enum TagCommands {
         #[arg(short, long, default_value_t = DEFAULT_TAG_AUTO_DELETE)]
         auto_delete: bool,
         /// For a filtered tag, whether rating its cards while studying it reschedules them. Pass
-        /// `--reschedule false` to cram without changing when cards are next due.
+        /// `--reschedule false` to cram without changing when cards are next due: the ratings
+        /// count as crams in `spares card stats` and `spares card history`, apart from reviews.
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         reschedule: bool,
     },

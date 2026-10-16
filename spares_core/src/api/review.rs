@@ -1083,6 +1083,7 @@ pub(crate) async fn rate_card_with_config(
             before_card,
             rating,
             recall_duration,
+            rate_duration,
             reviewed_at,
             log,
         )
@@ -1264,16 +1265,18 @@ pub(crate) async fn rate_card_with_config(
 }
 
 /// Rates `before_card` while studying `filtered_tag`, a tag that does not reschedule
-/// ([`Tag::reschedule`]): only the card's progress through the tag changes, and nothing is written
-/// to the review log.
+/// ([`Tag::reschedule`]): only the card's progress through the tag changes, and the rating is
+/// logged as a [`ReviewLogKind::Cram`].
 ///
-/// The rating is left out of the review log, rather than logged as its own kind of row, because
-/// everything that replays a card's history (rating, `spares card reschedule`, the optimizer, sync)
-/// treats a row with a rating as a review that changed the card's memory state, and
-/// `review_log`'s `CHECK ((kind = 0) = (rating IS NOT NULL))` only allows a rating on such rows.
-/// Logging crams would mean rebuilding the table and teaching every replay to skip them. The cost
-/// is that crams are missing from statistics and the review heatmap. The undo event still records
-/// the rating, with no `review_log_id` (see [`RateCardPayload::review_log_id`]).
+/// The cram row is what makes the rating count in statistics and the review heatmap. Every replay
+/// of the card's history (rating, `spares card reschedule`, the optimizer, sync, offline reviews
+/// inserted into the history) skips it, so the card keeps its memory state and due date, as if
+/// the rating had never happened. The undo event records the row in
+/// [`RateCardPayload::review_log_id`], so undo deletes it.
+///
+/// For example, rating a card Good in an `exam-cram` tag while its next review is in 10 days
+/// leaves it due in 10 days, writes a cram with rating Good, `previous_state` the card's state
+/// and no `scheduled_time`, and moves the card one Good closer to leaving the tag.
 #[expect(clippy::too_many_arguments)]
 async fn rate_card_without_rescheduling(
     db: &SqlitePool,
@@ -1282,6 +1285,7 @@ async fn rate_card_without_rescheduling(
     before_card: Card,
     rating: RatingId,
     recall_duration: Duration,
+    rate_duration: Duration,
     reviewed_at: DateTime<Utc>,
     log: bool,
 ) -> Result<Option<i64>, Error> {
@@ -1304,6 +1308,21 @@ async fn rate_card_without_rescheduling(
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+    let cram = ReviewLog {
+        card_id: Some(before_card.id),
+        reviewed_at,
+        kind: ReviewLogKind::Cram,
+        rating: Some(rating),
+        scheduler_name: scheduler.get_scheduler_name().to_string(),
+        scheduled_time: None,
+        recall_duration: Some(recall_duration.num_seconds()),
+        rate_duration: Some(rate_duration.num_seconds()),
+        previous_state: before_card.state,
+        ..ReviewLog::new()
+    };
+    let review_log_id = insert_review(db, &cram, Some(filtered_tag.id)).await?;
+    // Written after the cram, since deleting an emptied tag first would leave the cram
+    // referencing a missing tag.
     let left_tag = if finished {
         let deleted = leave_filtered_tag(
             db,
@@ -1323,7 +1342,7 @@ async fn rate_card_without_rescheduling(
         return Ok(None);
     }
     let payload = RateCardPayload {
-        review_log_id: None,
+        review_log_id: Some(review_log_id),
         card: UpdateCardPayload {
             card_id: before_card.id,
             order: None,
@@ -1502,7 +1521,8 @@ pub(crate) async fn rejoin_filtered_tag(
     Ok(())
 }
 
-/// Adds `review_log`, a review produced by [`SrsScheduler::schedule`], to the review log.
+/// Adds `review_log` to the review log: a review produced by [`SrsScheduler::schedule`], or a
+/// cram built by [`rate_card_without_rescheduling`]. Its `id` and `tag_id` are ignored.
 pub(crate) async fn insert_review(
     db: &SqlitePool,
     review_log: &ReviewLog,
@@ -1513,7 +1533,7 @@ pub(crate) async fn insert_review(
         .bind(id)
         .bind(review_log.card_id)
         .bind(review_log.reviewed_at.timestamp())
-        .bind(ReviewLogKind::Review)
+        .bind(review_log.kind)
         .bind(review_log.rating)
         .bind(&review_log.scheduler_name)
         .bind(review_log.scheduled_time)
@@ -1680,11 +1700,13 @@ pub(crate) async fn reschedule_all_cards(
     // table rather than building an `IN` list. Orphaned rows (deleted cards) are excluded up front
     // rather than in Rust: there is nothing to reschedule for them, and on a long-lived database
     // they only grow in number. Forget markers are kept for the cards that remain:
-    // `compute_memory_state` needs them to know where to restart replay.
+    // `compute_memory_state` needs them to know where to restart replay. Crams are left out, like
+    // `fetch_review_logs_for_replay` does, so placement does not measure intervals from them.
     let all_review_logs: Vec<ReviewLog> = sqlx::query_as(
-        r"SELECT * FROM review_log WHERE card_id IS NOT NULL
+        r"SELECT * FROM review_log WHERE card_id IS NOT NULL AND kind < ?
           ORDER BY card_id, reviewed_at ASC, id ASC",
     )
+    .bind(ReviewLogKind::FIRST_UNREPLAYED)
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;

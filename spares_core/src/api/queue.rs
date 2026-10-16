@@ -46,7 +46,13 @@ fn daily_hash(id_expr: &str, now: DateTime<Utc>) -> String {
 
 /// When the card was last reviewed. `review_log(card_id, reviewed_at)` is indexed, so this is a
 /// lookup per card.
-const LAST_REVIEW: &str = "(SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id)";
+///
+/// Crams are not reviews here: a card crammed yesterday but last reviewed a month ago has the
+/// retrievability of a month, which is what decides how urgent its review is. The `16` is
+/// [`ReviewLogKind::FIRST_UNREPLAYED`](crate::model::ReviewLogKind::FIRST_UNREPLAYED), written out
+/// since a `const` cannot be formatted.
+const LAST_REVIEW: &str =
+    "(SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind < 16)";
 
 fn review_keys(order: ReviewOrder, now: DateTime<Utc>) -> Vec<Key> {
     let now_ts = now.timestamp();
@@ -1123,14 +1129,23 @@ mod reschedule_tests {
     use super::tests::create_cards;
     use super::tests::set_card;
     use super::*;
+    use crate::api::fetch_review_logs_for_replay;
     use crate::api::review::rate_card;
+    use crate::api::review::reschedule_all_cards;
+    use crate::api::statistics::get_review_history;
+    use crate::api::statistics::get_statistics;
     use crate::api::tag::create_tag;
     use crate::api::undo::undo_event;
+    use crate::config::SparesExternalConfig;
     use crate::model::Card;
     use crate::model::CardId;
+    use crate::model::ReviewLog;
+    use crate::model::ReviewLogKind;
     use crate::model::TagId;
     use crate::schedulers::get_scheduler_from_string;
+    use crate::schedulers::review_state;
     use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StatisticsRequest;
     use crate::schema::tag::CreateTagRequest;
     use crate::schema::undo::UndoEventRequest;
 
@@ -1210,15 +1225,31 @@ mod reschedule_tests {
             in_tag(&pool, card_id, tag.id).await,
             "one Good is not enough to leave"
         );
-        let reviews: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM review_log")
-            .fetch_one(&pool)
+        // The rating is logged as a cram, under the tag, with no interval
+        let logs: Vec<ReviewLog> = sqlx::query_as(r"SELECT * FROM review_log")
+            .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(reviews, 0);
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].kind, ReviewLogKind::Cram);
+        assert_eq!(
+            (logs[0].rating, logs[0].tag_id, logs[0].scheduled_time),
+            (Some(GOOD), Some(tag.id), None)
+        );
+        assert_eq!(logs[0].previous_state, review_state());
+        assert!(
+            fetch_review_logs_for_replay(&pool, card_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "replay does not see crams"
+        );
 
-        // Easy finishes the card's run through the tag, and undo puts it back
+        // Easy finishes the card's run through the tag, and undo puts it back and deletes its
+        // cram
         let event = rate(&pool, card_id, tag.id, EASY).await;
         assert!(!in_tag(&pool, card_id, tag.id).await);
+        assert_eq!(cram_count(&pool).await, 2);
         undo_event(
             &pool,
             UndoEventRequest {
@@ -1230,5 +1261,105 @@ mod reschedule_tests {
         .unwrap();
         assert!(in_tag(&pool, card_id, tag.id).await);
         assert_eq!(card(&pool, card_id).await.custom_data, after.custom_data);
+        assert_eq!(cram_count(&pool).await, 1);
+    }
+
+    async fn cram_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar(r"SELECT COUNT(*) FROM review_log WHERE kind = ?")
+            .bind(ReviewLogKind::Cram)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn cram_tag(pool: &SqlitePool) -> TagId {
+        create_tag(
+            pool,
+            CreateTagRequest {
+                name: "exam-cram".to_string(),
+                description: String::new(),
+                query: Some("c.id>0".to_string()),
+                auto_delete: false,
+                reschedule: false,
+            },
+            false,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// The example of `ReviewLogKind::Cram`: crams count in the statistics and the heatmap,
+    /// apart from reviews, but a reschedule replays the card as if they never happened.
+    #[sqlx::test]
+    async fn crams_count_in_statistics_but_not_in_replay(pool: SqlitePool) {
+        let now = Utc::now();
+        let card_id = create_cards(&pool, 1, now - Duration::days(30)).await[0];
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        // Learned a week ago, then crammed today, Again (which would be a lapse) and Good
+        for reviewed_at in [now - Duration::days(8), now - Duration::days(7)] {
+            rate_card(
+                &pool,
+                scheduler.as_ref(),
+                RatingSubmission {
+                    card_id,
+                    rating: GOOD,
+                    recall_duration: Duration::seconds(5),
+                    rate_duration: Duration::seconds(1),
+                    tag_id: None,
+                },
+                reviewed_at,
+                false,
+            )
+            .await
+            .unwrap();
+        }
+        let learned = card(&pool, card_id).await;
+        assert_eq!(learned.state, review_state());
+        let tag_id = cram_tag(&pool).await;
+        rate(&pool, card_id, tag_id, 1).await;
+        rate(&pool, card_id, tag_id, GOOD).await;
+
+        let statistics = get_statistics(
+            &pool,
+            StatisticsRequest {
+                scheduler_name: "fsrs".to_string(),
+                date: now,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(statistics.cards_studied_count, 0, "no review today");
+        assert_eq!(statistics.cram_count, 2);
+        assert_eq!(statistics.cram_duration, Duration::seconds(12));
+        let history = get_review_history(&pool).await.unwrap();
+        let today = now.with_timezone(&Local).date_naive();
+        assert_eq!(history.cram_count_by_date.get(&today), Some(&2));
+        assert_eq!(history.review_count_by_date.values().sum::<u32>(), 2);
+
+        // Neither the cram rated Again nor a reschedule changes the card
+        assert_eq!(scheduler.lapses(&pool, card_id).await.unwrap(), 0);
+        reschedule_all_cards(
+            &pool,
+            scheduler.as_ref(),
+            &SparesExternalConfig::default(),
+            now,
+        )
+        .await
+        .unwrap();
+        let rescheduled = card(&pool, card_id).await;
+        assert_eq!(
+            (
+                rescheduled.stability,
+                rescheduled.difficulty,
+                rescheduled.state
+            ),
+            (learned.stability, learned.difficulty, learned.state)
+        );
+    }
+
+    #[test]
+    fn last_review_skips_unreplayed_kinds() {
+        assert!(LAST_REVIEW.contains(&format!("rl.kind < {}", ReviewLogKind::FIRST_UNREPLAYED)));
     }
 }

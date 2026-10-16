@@ -43,9 +43,24 @@ pub(crate) async fn print_history(
     let today = Local::now().date_naive();
     print!(
         "{}",
-        format_history(&history.review_count_by_date, today, weeks)
+        format_history(
+            &history.review_count_by_date,
+            &history.cram_count_by_date,
+            today,
+            weeks
+        )
     );
     Ok(())
+}
+
+/// Reviews and crams added up per day. A day spent cramming for an exam is a day studied, so it
+/// fills its cell and keeps the streak going like reviews do.
+fn studied_counts(reviews: &Counts, crams: &Counts) -> Counts {
+    let mut counts = reviews.clone();
+    for (date, count) in crams {
+        *counts.entry(*date).or_default() += count;
+    }
+    counts
 }
 
 /// As many weeks as fit in the terminal, up to [`DEFAULT_WEEKS`].
@@ -158,10 +173,19 @@ fn glyph(level: usize) -> String {
 }
 
 fn plural(n: u32, word: &str) -> String {
-    format!("{} {}{}", n, word, if n == 1 { "" } else { "s" })
+    format!("{} {}", n, plural_word(n, word))
 }
 
-fn format_history(counts: &Counts, today: NaiveDate, weeks: usize) -> String {
+fn plural_word(n: u32, word: &str) -> String {
+    format!("{}{}", word, if n == 1 { "" } else { "s" })
+}
+
+/// The heatmap of `reviews` and `crams` together, ending at `today`, followed by its summary.
+///
+/// For example, a day with 30 reviews and 120 crams is shown as 150, and the total line reads
+/// `150 reviews in total, 120 of them crams`.
+fn format_history(reviews: &Counts, crams: &Counts, today: NaiveDate, weeks: usize) -> String {
+    let counts = &studied_counts(reviews, crams);
     let weekday = |date: NaiveDate| date.weekday().num_days_from_sunday() as usize;
     // Columns are weeks starting on Sunday, ending with the week of today
     let this_week = today - Days::new(weekday(today) as u64);
@@ -212,11 +236,22 @@ fn format_history(counts: &Counts, today: NaiveDate, weeks: usize) -> String {
         .map(glyph)
         .collect::<Vec<_>>()
         .join(" ");
+    let cram_total = crams.values().sum::<u32>();
+    let of_them_crams = if cram_total > 0 {
+        format!(
+            ", {} of them {}",
+            cram_total,
+            plural_word(cram_total, "cram")
+        )
+    } else {
+        String::new()
+    };
     writeln!(
         out,
-        "\nLess {} More    {} in total\n",
+        "\nLess {} More    {} in total{}\n",
         legend,
-        plural(summary.total, "review")
+        plural(summary.total, "review"),
+        of_them_crams
     )
     .unwrap();
     for (label, value) in [
@@ -303,7 +338,7 @@ mod tests {
         colored::control::set_override(false);
         // A Sunday
         let today = date("2026-10-04");
-        let out = format_history(&counts(&[("2026-10-04", 3)]), today, 6);
+        let out = format_history(&counts(&[("2026-10-04", 3)]), &Counts::new(), today, 6);
         let lines = out.lines().collect::<Vec<_>>();
         // 6 weeks back from the week of today starts on 2026-08-30, so September and October
         // start in the 1st and 5th columns
@@ -319,7 +354,24 @@ mod tests {
     #[test]
     fn grid_without_reviews() {
         colored::control::set_override(false);
-        let out = format_history(&Counts::new(), date("2026-10-04"), 2);
+        let out = format_history(&Counts::new(), &Counts::new(), date("2026-10-04"), 2);
         assert!(out.ends_with("\nNo reviews yet.\n"), "{out}");
+    }
+
+    #[test]
+    fn crams_fill_the_grid_and_the_streak() {
+        colored::control::set_override(false);
+        // A Sunday. Only crams yesterday, as the night before an exam.
+        let today = date("2026-10-04");
+        let reviews = counts(&[("2026-10-02", 2), ("2026-10-04", 1)]);
+        let crams = counts(&[("2026-10-03", 120), ("2026-10-04", 3)]);
+        let out = format_history(&reviews, &crams, today, 2);
+        // Saturday is at the highest level, rather than empty
+        assert!(out.contains("\nSa █\n"), "{out}");
+        assert!(
+            out.contains("126 reviews in total, 123 of them crams"),
+            "{out}"
+        );
+        assert!(out.contains("Current streak  3 days\n"), "{out}");
     }
 }

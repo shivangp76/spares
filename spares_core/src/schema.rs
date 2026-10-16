@@ -861,11 +861,25 @@ pub mod review {
     #[serde_with::serde_as]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct StatisticsResponse {
+        /// Distinct cards reviewed on the date. Crams are counted apart, in `cram_count`.
         pub cards_studied_count: u32,
+        /// Time spent on the date's reviews, crams excluded.
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub recall_duration: Duration,
+        /// See `recall_duration`.
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub rate_duration: Duration,
+        /// Ratings on the date in filtered tags that do not reschedule
+        /// ([`ReviewLogKind::Cram`](crate::model::ReviewLogKind::Cram)), counting each rating, so
+        /// a card crammed twice counts twice. For example, going twice through the 60 cards of
+        /// an `exam-cram` tag gives 120, while `cards_studied_count` stays 0.
+        // Defaulted, so responses cached by clients before crams were logged still decode.
+        #[serde(default)]
+        pub cram_count: u32,
+        /// Time spent on those crams, recalling and rating together.
+        #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+        #[serde(default)]
+        pub cram_duration: Duration,
         pub card_count_by_state: HashMap<StateId, u32>,
         pub due_count_by_state: HashMap<StateId, u32>,
         pub due_count_by_date: HashMap<NaiveDate, u32>,
@@ -877,6 +891,12 @@ pub mod review {
     pub struct ReviewHistoryResponse {
         /// The number of graded reviews on each local date that has any.
         pub review_count_by_date: HashMap<NaiveDate, u32>,
+        /// The number of crams
+        /// ([`ReviewLogKind::Cram`](crate::model::ReviewLogKind::Cram)) on each local date that
+        /// has any. A heatmap adds them to the reviews, so a day spent cramming counts as a day
+        /// studied, and can show them apart.
+        #[serde(default)]
+        pub cram_count_by_date: HashMap<NaiveDate, u32>,
     }
 
     /// Config values that review clients need to offer the same actions as the CLI.

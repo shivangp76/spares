@@ -48,28 +48,34 @@ fn write_state_section(out: &mut String, title: &str, counts: &HashMap<StateId, 
 /// The statistics as the frontend's statistics page shows them.
 pub(crate) fn format_statistics(statistics: &StatisticsResponse) -> String {
     let mut out = String::new();
-    write_section(
-        &mut out,
-        "Studied",
-        &[
-            (
-                "Cards studied".to_string(),
-                statistics.cards_studied_count.to_string(),
-            ),
-            (
-                "Recall time".to_string(),
-                format_duration(statistics.recall_duration),
-            ),
-            (
-                "Rate time".to_string(),
-                format_duration(statistics.rate_duration),
-            ),
-            (
-                "Total time".to_string(),
-                format_duration(statistics.recall_duration + statistics.rate_duration),
-            ),
-        ],
-    );
+    let mut studied = vec![
+        (
+            "Cards studied".to_string(),
+            statistics.cards_studied_count.to_string(),
+        ),
+        (
+            "Recall time".to_string(),
+            format_duration(statistics.recall_duration),
+        ),
+        (
+            "Rate time".to_string(),
+            format_duration(statistics.rate_duration),
+        ),
+        (
+            "Total time".to_string(),
+            format_duration(statistics.recall_duration + statistics.rate_duration),
+        ),
+    ];
+    // Ratings in filtered tags that do not reschedule, apart from the reviews above. Shown only
+    // on days with some, e.g. "Crams  120" after going twice through a 60 card `exam-cram` tag.
+    if statistics.cram_count > 0 {
+        studied.push(("Crams".to_string(), statistics.cram_count.to_string()));
+        studied.push((
+            "Cram time".to_string(),
+            format_duration(statistics.cram_duration),
+        ));
+    }
+    write_section(&mut out, "Studied", &studied);
     write_state_section(
         &mut out,
         "Due",
@@ -138,6 +144,8 @@ mod tests {
             cards_studied_count: 12,
             recall_duration: Duration::seconds(90),
             rate_duration: Duration::seconds(30),
+            cram_count: 0,
+            cram_duration: Duration::zero(),
             card_count_by_state: HashMap::from([(2, 30), (0, 10), (3, 0)]),
             due_count_by_state: HashMap::new(),
             due_count_by_date: HashMap::from([
@@ -176,6 +184,32 @@ Total   40
 2026-10-06   1  ██
 ";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn crams_are_shown_apart() {
+        let out = format_statistics(&StatisticsResponse {
+            cards_studied_count: 0,
+            recall_duration: Duration::zero(),
+            rate_duration: Duration::zero(),
+            cram_count: 120,
+            cram_duration: Duration::minutes(50),
+            ..statistics()
+        });
+        assert!(
+            out.starts_with(
+                "\
+--- Studied ---
+Cards studied  0
+Recall time    0s
+Rate time      0s
+Total time     0s
+Crams          120
+Cram time      50m 0s
+"
+            ),
+            "{out}"
+        );
     }
 
     #[test]

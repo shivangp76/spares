@@ -241,7 +241,8 @@ export interface ForgetCardResponse {
 /** One row of a card's review log, with the memory state the card had after it. */
 export interface CardReviewEntry {
   id: number;
-  kind: 'Review' | 'Forget';
+  /** `Cram` is a rating in a filtered tag that does not reschedule, which left the card's schedule alone. */
+  kind: 'Review' | 'Forget' | 'Cram';
   reviewed_at: string;
   /** Relative to `scheduler_name`. */
   rating: number | null;
@@ -251,7 +252,7 @@ export interface CardReviewEntry {
   recall_duration: number | null; // seconds
   rate_duration: number | null;   // seconds
   tag_id: number | null;
-  /** Replayed with the scheduler's current parameters. `null` after a forget. */
+  /** Replayed with the scheduler's current parameters. `null` after a forget. A cram keeps the one before it. */
   stability: number | null;
   difficulty: number | null;
 }
@@ -283,9 +284,14 @@ export const STATE_LABELS: Record<number, string> = {
 };
 
 export interface StatisticsResponse {
+  /** Distinct cards reviewed, crams excluded. */
   cards_studied_count: number;
   recall_duration: number;
   rate_duration: number;
+  /** Ratings in filtered tags that do not reschedule, each rating counted, e.g. 120 after going twice through 60 cards. */
+  cram_count: number;
+  /** Seconds spent on those crams, recalling and rating together. */
+  cram_duration: number;
   card_count_by_state: Record<string, number>;
   due_count_by_state: Record<string, number>;
   due_count_by_date: Record<string, number>;
@@ -296,6 +302,8 @@ export interface StatisticsResponse {
 export interface ReviewHistoryResponse {
   // Keyed by local `YYYY-MM-DD`, only dates with reviews
   review_count_by_date: Record<string, number>;
+  // Likewise for crams, which the heatmap adds to the reviews
+  cram_count_by_date: Record<string, number>;
 }
 
 export interface NoteResponse {
