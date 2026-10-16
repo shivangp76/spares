@@ -10,22 +10,6 @@ it could be built.
 
 ## Gaps in what is done
 
-### Log cram reviews
-
-A rating in a filtered tag with `reschedule = false` writes no `review_log` row, so it is missing
-from statistics and the heatmap (see `rate_card_without_rescheduling`).
-
-- **Use case.** Cramming the night before an exam is real study time. Today an hour of cramming
-  leaves the heatmap blank for that day and the statistics show no reviews, so they understate how
-  much was studied.
-- **Example.** A filtered tag `exam-cram` with `reschedule = false` holds 60 cards. Going through
-  them twice gives 120 ratings, and `spares card stats` for today shows 0 reviews. With this, it
-  would show 120 cram reviews, counted apart from the scheduled ones.
-- **How.** A new `ReviewLogKind` (say `Cram`), a rebuild of `review_log` for its `CHECK`, and every
-  replay of reviews (FSRS optimizing, `spares card reschedule`, offline insertion) taught to skip
-  that kind, since these ratings must not change a card's memory state. Statistics would count
-  them as their own series.
-
 ### Learn ahead limit offline
 
 Offline review shows learning cards due today as soon as nothing else is left, ignoring
