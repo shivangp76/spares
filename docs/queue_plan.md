@@ -10,21 +10,6 @@ it could be built.
 
 ## Gaps in what is done
 
-### Leech actions for late offline reviews
-
-A review inserted into a card's history (an offline rating placed before a later review of the
-card) does not go through `rate_card`, so it never tags or suspends.
-
-- **Use case.** Reviewing on two devices, one of them offline. The offline device's lapse is
-  synced after the other device already reviewed the card, so it is inserted into the history,
-  and the lapse that makes the card a leech is never acted on.
-- **Example.** `lapses_threshold = 8`, `action = "suspend"`. A card has 7 lapses. An offline Again
-  is synced late and inserted before a later online Good: the card now has 8 lapses, but it is not
-  suspended or tagged `leech`, and `spares card leeches` lists it while review keeps showing it.
-- **How.** After replaying the history, compare the lapse count before and after the insertion,
-  and if it crossed the threshold (or a later multiple of half of it), apply `LeechConfig::action`
-  as `rate_card` would. Undo of the inserted review should undo it too.
-
 ### Cap the counts by the limits
 
 `cards_left_by_state` and the statistics' cards due today count every due card, not just the ones
