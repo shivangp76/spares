@@ -3,6 +3,7 @@
 //! checking `HEAD` until git has moved `main` (or the push has been rolled back).
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -32,6 +33,7 @@ use super::lock::exclusive_guard;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
+use super::note_file::is_warning;
 use super::note_file::parse_note_file;
 use super::note_file::same_note;
 use super::paths::enabled;
@@ -500,6 +502,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         .filter_map(|p| p.split_once('/').map(|(dir, _)| dir))
         .collect();
     let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut pushed: Vec<PushedNote> = Vec::new();
     let mut readme_changed = false;
     let mut tokens = nul_split(&raw);
@@ -572,11 +575,21 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             ));
             continue;
         }
-        if let Err(problems) = parse_note_file(parser.as_ref(), &new_blob, id, false) {
-            for problem in problems {
-                errors.push(format!("{path}: {problem}"));
+        match parse_note_file(parser.as_ref(), &new_blob, id, false) {
+            Ok(parsed) => warnings.extend(
+                parsed
+                    .settings
+                    .errors_and_warnings
+                    .iter()
+                    .filter(|e| is_warning(e))
+                    .map(|e| format!("{path}: {e}")),
+            ),
+            Err(problems) => {
+                for problem in problems {
+                    errors.push(format!("{path}: {problem}"));
+                }
+                continue;
             }
-            continue;
         }
         pushed.push(PushedNote {
             rel: PathBuf::from(&path),
@@ -725,11 +738,17 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         )));
     }
 
-    let message = if ids.is_empty() {
+    let mut message = if ids.is_empty() {
         "no notes changed".to_string()
     } else {
         format!("imported {} into spares", describe_ids(&ids))
     };
+    if !warnings.is_empty() {
+        message.push_str(" with warnings:");
+        for warning in &warnings {
+            let _ = write!(message, "\n  - {warning}");
+        }
+    }
     Ok(Outcome::Accepted { journal, message })
 }
 

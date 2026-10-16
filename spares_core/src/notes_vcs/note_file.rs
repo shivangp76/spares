@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
+use crate::CardErrorKind;
 use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::adapters::impls::spares::SparesAdapter;
@@ -109,8 +110,7 @@ pub fn db_note_fields(row: &RenderNoteData) -> NoteFields {
 /// Parses `contents` as the file of note `expected_id`. Errors list every problem, and include
 /// anything the import would silently skip or misinterpret: no note or several notes, missing note
 /// data, a note that would be created (`action: add`) or deleted (`action: delete`), a note id
-/// that differs from the file name, and parse errors. Warnings (e.g. `TODO` in the data) are
-/// allowed.
+/// that differs from the file name, and parse errors. Warnings (see [`is_warning`]) are allowed.
 pub fn parse_note_file(
     parser: &dyn Parseable,
     contents: &str,
@@ -146,7 +146,7 @@ pub fn parse_note_file(
     let mut errors: Vec<String> = settings
         .errors_and_warnings
         .iter()
-        .filter(|e| !matches!(e, LibraryError::Note(NoteErrorKind::SettingsWarning { .. })))
+        .filter(|e| !is_warning(e))
         .map(ToString::to_string)
         .collect();
     match settings.action {
@@ -179,6 +179,16 @@ pub fn parse_note_file(
     } else {
         Err(errors)
     }
+}
+
+/// Whether `error` is only a warning, which does not stop a note file from being imported: e.g.
+/// `TODO` in the data, or a note without cards.
+pub fn is_warning(error: &LibraryError) -> bool {
+    matches!(
+        error,
+        LibraryError::Note(NoteErrorKind::SettingsWarning { .. })
+            | LibraryError::Card(CardErrorKind::NotFound { .. })
+    )
 }
 
 /// The note's fields as a file would set them, or `None` if the file does not parse as that note.
