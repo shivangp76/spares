@@ -723,6 +723,37 @@ impl LeechConfig {
     }
 }
 
+/// The `[statistics]` table of `config.toml`. It changes only how statistics are shown, not how
+/// cards are scheduled, so changing it needs no `spares card reschedule`: every past review is
+/// counted again under it the next time statistics load.
+///
+/// ```toml
+/// [statistics]
+/// mature_threshold_days = 21
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct StatisticsConfig {
+    /// The interval, in whole days, from which a card is mature rather than young. Defaults to
+    /// 21, as in Anki.
+    ///
+    /// A review is mature when the card's interval going into it, the interval its previous
+    /// review gave it, was at least this long; a card is mature when the time from its last
+    /// review to its due date is. With `mature_threshold_days = 7`, a card reviewed on Monday and
+    /// given an interval of 7 days is mature, and so is its review the next Monday. Statistics
+    /// split Reviews, True retention, Answer buttons and Card counts by it, and label their
+    /// columns with it, e.g. "Mature (≥ 7 days)".
+    pub mature_threshold_days: u32,
+}
+
+impl Default for StatisticsConfig {
+    fn default() -> Self {
+        Self {
+            mature_threshold_days: 21,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ParserConfig {
@@ -801,6 +832,7 @@ pub struct SparesExternalConfig {
     /// The order review shows cards in. See [`QueueConfig`].
     pub queue: QueueConfig,
     pub leech: LeechConfig,
+    pub statistics: StatisticsConfig,
     pub parser: ParserConfig,
     pub image_occlusion: ImageOcclusionConfig,
     pub overlapper: OverlapperConfig,
@@ -834,6 +866,7 @@ impl Default for SparesExternalConfig {
             easy_days: EasyDaysConfig::default(),
             queue: QueueConfig::default(),
             leech: LeechConfig::default(),
+            statistics: StatisticsConfig::default(),
             parser: ParserConfig::default(),
             image_occlusion: ImageOcclusionConfig::default(),
             overlapper: OverlapperConfig::default(),
@@ -1345,6 +1378,17 @@ mod tests {
         "#});
         assert_eq!(config.leech.action, LeechAction::Suspend);
         assert_eq!(config.leech.tag_name, "leech");
+    }
+
+    /// The example on [`StatisticsConfig`].
+    #[test]
+    fn documented_statistics_example_parses() {
+        let config = parse(indoc::indoc! {r"
+            [statistics]
+            mature_threshold_days = 7
+        "});
+        assert_eq!(config.statistics.mature_threshold_days, 7);
+        assert_eq!(parse("").statistics.mature_threshold_days, 21);
     }
 
     /// The example on [`QueueConfig`].

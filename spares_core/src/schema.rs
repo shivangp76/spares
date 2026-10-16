@@ -689,7 +689,7 @@ pub mod review {
         pub card_back: String,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
     pub struct Rating {
         pub id: RatingId,
         pub description: String,
@@ -867,6 +867,12 @@ pub mod review {
     pub struct StatisticsRequest {
         pub scheduler_name: String,
         pub date: DateTime<Utc>,
+        /// The IANA time zone to tell days apart in, e.g. `Europe/Berlin`. `None` is the server's
+        /// own. Web clients send the browser's zone and the CLI the computer's, so a day is the
+        /// user's day even when the server is elsewhere. The daily limits left are still counted
+        /// in the server's zone, as review counts them.
+        #[serde(default)]
+        pub tz: Option<String>,
     }
 
     #[serde_with::serde_as]
@@ -903,6 +909,19 @@ pub mod review {
         pub postpone_safe_count: u32,
     }
 
+    /// The query string of `GET /api/review/history`. Both are optional, so a request without
+    /// any counts every review in the server's time zone, as before they existed.
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct ReviewHistoryRequest {
+        /// Only reviews of the cards matching this search query. Orphaned reviews, whose card was
+        /// deleted, match no query, so they count only without one.
+        #[serde(default)]
+        pub query: Option<String>,
+        /// See [`StatisticsRequest::tz`].
+        #[serde(default)]
+        pub tz: Option<String>,
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ReviewHistoryResponse {
         /// The number of graded reviews on each local date that has any.
@@ -922,6 +941,248 @@ pub mod review {
         pub flagged_tag_name: String,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub set_card_due_date_duration: Duration,
+    }
+}
+
+pub mod statistics {
+    //! `POST /api/statistics/graphs`: the statistics page's graphs, like Anki's statistics screen.
+    //!
+    //! Definitions used throughout, computed in `api::statistics::graphs`:
+    //!
+    //! - **Reviews** are the `review_log` rows of kind
+    //!   [`Review`](crate::model::ReviewLogKind::Review). Forgets are never counted. Orphaned
+    //!   reviews, whose card was deleted, count in totals without a query, but in no per-card
+    //!   figure.
+    //! - **Crams** ([`Cram`](crate::model::ReviewLogKind::Cram)) count in [`TodayStats`],
+    //!   [`ReviewDay`], [`HourStats`] and the review heatmap, always apart from reviews, with a %
+    //!   correct of their own. They are left out of true retention, answer buttons, young/mature
+    //!   and last review times, since the scheduler did not learn from them. Going twice through a
+    //!   60 card tag adds 120 ratings, mostly Good the second time, which would swamp the reviews'
+    //!   % correct.
+    //! - **Passed** means rated with a rating the scheduler counts as remembered
+    //!   ([`SrsScheduler::is_pass`](crate::schedulers::SrsScheduler::is_pass)): Hard, Good or Easy
+    //!   with FSRS.
+    //! - **Learning, relearning, young and mature** classify a review by the card's state before
+    //!   it. Reviews of new and learning cards are learning, of relearning cards relearning, and of
+    //!   review cards young or mature: mature when the interval going into the review (see
+    //!   `review_log.previous_interval`) was at least
+    //!   [`StatisticsConfig::mature_threshold_days`](crate::config::StatisticsConfig::mature_threshold_days).
+    //!   A card is mature when the time from its last review to its due date is.
+    //! - **Days and hours** are local to [`StatisticsGraphsRequest::tz`].
+    use std::collections::HashMap;
+
+    use chrono::DateTime;
+    use chrono::NaiveDate;
+    use chrono::Utc;
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    use crate::model::RatingId;
+    use crate::model::StateId;
+    use crate::schema::review::Rating;
+
+    fn default_forecast_days() -> u32 {
+        30
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct StatisticsGraphsRequest {
+        pub scheduler_name: String,
+        /// Only the cards matching this search query, and their reviews. `None` is every card.
+        #[serde(default)]
+        pub query: Option<String>,
+        /// The days the reviews, hourly breakdown, answer buttons and added cards cover: the date
+        /// and the `period_days - 1` days before it. `None` is all time.
+        #[serde(default)]
+        pub period_days: Option<u32>,
+        /// The days the forecast covers, the date included. Defaults to 30, and is at most
+        /// [`MAX_FORECAST_DAYS`].
+        #[serde(default = "default_forecast_days")]
+        pub forecast_days: u32,
+        /// "Now": the day statistics are for. Reviews after it are left out.
+        pub date: DateTime<Utc>,
+        /// See [`StatisticsRequest::tz`](crate::schema::review::StatisticsRequest::tz).
+        #[serde(default)]
+        pub tz: Option<String>,
+    }
+
+    /// The most days [`StatisticsGraphsRequest::forecast_days`] can ask for, ten years.
+    pub const MAX_FORECAST_DAYS: u32 = 3650;
+
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct StatisticsGraphsResponse {
+        /// The [`StatisticsConfig::mature_threshold_days`](crate::config::StatisticsConfig::mature_threshold_days)
+        /// young and mature were told apart by, for labels such as "Mature (≥ 21 days)".
+        pub mature_threshold_days: u32,
+        /// The local date of [`StatisticsGraphsRequest::date`].
+        pub date: NaiveDate,
+        /// The first day of the period. With `period_days: None`, the day of the earliest review
+        /// or card, or `date` if there are none.
+        pub period_start: NaiveDate,
+        pub today: TodayStats,
+        /// One entry per day from `date`, `forecast_days` in all.
+        pub forecast: Vec<ForecastDay>,
+        /// The days of the period with reviews or crams, in order. Days without any are left out.
+        pub reviews: Vec<ReviewDay>,
+        pub reviews_summary: ReviewsSummary,
+        /// Today, yesterday, the last 7 days, the last 30 days, the last year and all time, in
+        /// that order.
+        pub true_retention: Vec<RetentionRow>,
+        pub answer_buttons: AnswerButtons,
+        /// Indexed by local hour, 0 to 23, over the period.
+        pub hourly: [HourStats; 24],
+        pub card_counts: CardCounts,
+        /// The days of the period with cards added, in order.
+        pub added: Vec<AddedDay>,
+        pub distributions: Distributions,
+    }
+
+    /// The reviews and crams on [`StatisticsGraphsRequest::date`].
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct TodayStats {
+        /// Every rating counts, so a card failed and then passed counts twice. Crams excluded.
+        pub reviews: u32,
+        /// The reviews passed. `passed / reviews` is the % correct.
+        pub passed: u32,
+        /// Spent recalling and rating the reviews. `seconds / reviews` is the time per card.
+        pub seconds: i64,
+        /// `reviews` split by the card's state before the review.
+        pub learning: u32,
+        pub relearning: u32,
+        pub young: u32,
+        pub mature: u32,
+        pub crams: u32,
+        pub crams_passed: u32,
+        pub cram_seconds: i64,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct ForecastDay {
+        pub date: NaiveDate,
+        /// Learning and relearning cards due on the day.
+        pub learning: u32,
+        pub review: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct ReviewDay {
+        pub date: NaiveDate,
+        pub learning: u32,
+        pub relearning: u32,
+        pub young: u32,
+        pub mature: u32,
+        pub cram: u32,
+        /// Spent on the day's reviews and crams together.
+        pub seconds: i64,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct ReviewsSummary {
+        /// Reviews over the period, crams excluded.
+        pub reviews: u32,
+        pub crams: u32,
+        /// Spent on reviews and crams.
+        pub seconds: i64,
+        /// The days of the period with a review or a cram.
+        pub days_studied: u32,
+        /// The days in the period, today included.
+        pub days: u32,
+        /// Reviews and crams per day of the period, days without any included.
+        pub daily_average: f64,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct PassFail {
+        pub passed: u32,
+        pub failed: u32,
+    }
+
+    /// Anki's true retention: of the reviews of cards in the review state over a span of days,
+    /// how many were passed. Learning and relearning steps are left out, since they are
+    /// reviewed again within minutes.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct RetentionRow {
+        /// E.g. "Last 7 days".
+        pub label: String,
+        /// The local days covered, today included, or `None` for all time. Yesterday is 1.
+        pub days: Option<u32>,
+        pub young: PassFail,
+        pub mature: PassFail,
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct AnswerButtons {
+        /// The scheduler's ratings, worst first, to label the counts with.
+        pub ratings: Vec<Rating>,
+        /// Reviews of new, learning and relearning cards.
+        pub learning: AnswerGroup,
+        pub young: AnswerGroup,
+        pub mature: AnswerGroup,
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct AnswerGroup {
+        /// One per rating of [`AnswerButtons::ratings`], in the same order, zeros included.
+        pub counts: Vec<(RatingId, u32)>,
+        pub passed: u32,
+        pub total: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct HourStats {
+        pub reviews: u32,
+        pub passed: u32,
+        pub crams: u32,
+        pub crams_passed: u32,
+    }
+
+    /// Every card matching the query once. Suspended and buried cards are counted apart from the
+    /// states, so `by_state`, `suspended` and `buried` add up to `total`.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct CardCounts {
+        /// Cards neither suspended nor buried, by state.
+        pub by_state: HashMap<StateId, u32>,
+        /// The review state of `by_state`, split. Cards without a review to measure their
+        /// interval from count as young.
+        pub young: u32,
+        pub mature: u32,
+        pub suspended: u32,
+        /// Buried by the user or the scheduler, or until later today.
+        pub buried: u32,
+        pub total: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct AddedDay {
+        pub date: NaiveDate,
+        pub cards: u32,
+    }
+
+    /// Histograms over the cards matching the query that are not new.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct Distributions {
+        /// In days, from each card's last review to its due date.
+        pub interval: Histogram,
+        /// In days.
+        pub stability: Histogram,
+        pub difficulty: Histogram,
+        /// From 0 to 1, now. `None` if the scheduler has no forgetting curve
+        /// ([`SrsScheduler::retrievability`](crate::schedulers::SrsScheduler::retrievability)).
+        pub retrievability: Option<Histogram>,
+        /// The sum of every card's retrievability: how many of them you would recall now.
+        pub total_knowledge: Option<f64>,
+    }
+
+    /// Cards counted into buckets: bucket `i` holds the values from `edges[i]` up to
+    /// `edges[i + 1]`, the last bucket including its upper edge. Long tails are folded into the
+    /// last bucket, so it can be wider than the rest.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct Histogram {
+        /// One more than `counts`, ascending. Empty when there are no values.
+        pub edges: Vec<f64>,
+        pub counts: Vec<u32>,
+        /// The mean of every value, `None` when there are none.
+        pub mean: Option<f64>,
     }
 }
 

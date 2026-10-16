@@ -949,6 +949,7 @@ mod daily_limit_tests {
                 StatisticsRequest {
                     scheduler_name: "fsrs".to_string(),
                     date: now,
+                    tz: None,
                 },
             )
             .await
@@ -1409,6 +1410,7 @@ mod reschedule_tests {
     use crate::schedulers::get_scheduler_from_string;
     use crate::schedulers::review_state;
     use crate::schema::review::RatingSubmission;
+    use crate::schema::review::ReviewHistoryRequest;
     use crate::schema::review::StatisticsRequest;
     use crate::schema::tag::CreateTagRequest;
     use crate::schema::undo::UndoEventRequest;
@@ -1589,6 +1591,7 @@ mod reschedule_tests {
             StatisticsRequest {
                 scheduler_name: "fsrs".to_string(),
                 date: now,
+                tz: None,
             },
         )
         .await
@@ -1596,7 +1599,9 @@ mod reschedule_tests {
         assert_eq!(statistics.cards_studied_count, 0, "no review today");
         assert_eq!(statistics.cram_count, 2);
         assert_eq!(statistics.cram_duration, Duration::seconds(12));
-        let history = get_review_history(&pool).await.unwrap();
+        let history = get_review_history(&pool, ReviewHistoryRequest::default())
+            .await
+            .unwrap();
         let today = now.with_timezone(&Local).date_naive();
         assert_eq!(history.cram_count_by_date.get(&today), Some(&2));
         assert_eq!(history.review_count_by_date.values().sum::<u32>(), 2);

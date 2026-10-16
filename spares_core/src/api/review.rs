@@ -2064,6 +2064,7 @@ mod tests {
         let request = StatisticsRequest {
             scheduler_name: "fsrs".to_string(),
             date: now,
+            tz: None,
         };
         let statistics_res = get_statistics(&pool, request).await;
         assert!(statistics_res.is_ok());

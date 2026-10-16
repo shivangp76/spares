@@ -40,6 +40,7 @@ use utils::model;
 use utils::number_to_rating;
 use utils::number_to_state;
 use utils::rating_to_number;
+use utils::retrievability;
 use utils::state_to_number;
 
 use crate::Error;
@@ -56,6 +57,7 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::StateId;
 use crate::schedulers::MoveCardsResult;
+use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schema::review::OptimizeResponse;
@@ -74,6 +76,11 @@ pub(crate) fn learning_states() -> [StateId; 2] {
 /// The state of cards that graduated from their learning steps.
 pub(crate) fn review_state() -> StateId {
     state_to_number(State::Review)
+}
+
+/// The state of cards that lapsed and are back in their relearning steps.
+pub(crate) fn relearning_state() -> StateId {
+    state_to_number(State::Relearning)
 }
 
 /// The interval, in days, after which a card with `stability` is expected to fall to
@@ -113,6 +120,13 @@ impl SrsScheduler for Fsrs {
                     .collect::<Vec<_>>()
             })
             .clone()
+    }
+
+    fn retrievability(&self, config: &SparesExternalConfig) -> Option<RetrievabilityFn> {
+        let decay = decay(config);
+        Some(Box::new(move |stability, elapsed_days| {
+            retrievability(elapsed_days.max(0.0), stability, decay)
+        }))
     }
 
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {

@@ -300,6 +300,7 @@ pub(crate) async fn handle(
             let request = StatisticsRequest {
                 scheduler_name,
                 date,
+                tz: None,
             };
             let url = format!("{}/api/review/statistics", base_url);
             let response = client

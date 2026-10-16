@@ -54,7 +54,11 @@ async fn start_server(args: Args) -> Result<(), String> {
     let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
         .map_err(|e| format!("{:?}", e))?
         .create_if_missing(true)
-        .with_regexp();
+        .with_regexp()
+        // Reads go through memory shared by every connection, rather than through each
+        // connection's own page cache of 2 MB, so the statistics' queries over the whole review
+        // log run at the same speed on whichever connection they get.
+        .pragma("mmap_size", "268435456");
     let pool = SqlitePoolOptions::new()
         .max_lifetime(None)
         .idle_timeout(None)
