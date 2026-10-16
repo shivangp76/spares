@@ -399,6 +399,25 @@ async fn test_push_imports(pool: SqlitePool) {
 }
 
 #[sqlx::test]
+async fn test_push_note_without_cards_warns(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let clone = clone();
+    commit_edit(&clone, ids[0], |s| {
+        s.replace("First {{[o:1] Cloze here }}", "First, without clozes")
+    });
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(
+        pushed.receive.message.contains("No cards found."),
+        "{}",
+        pushed.receive.message
+    );
+    assert_eq!(pushed.receive.imported, vec![ids[0]]);
+    assert_eq!(note_data(&pool, ids[0]).await, "First, without clozes");
+}
+
+#[sqlx::test]
 async fn test_push_normalizes(pool: SqlitePool) {
     let _guard = setup().await;
     let ids = init(&pool).await;
