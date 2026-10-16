@@ -646,47 +646,36 @@ pub(crate) async fn build_review_filter_query(
     }))
 }
 
+/// What is left of a review with `where_clause` today: how many cards in each state, and how long
+/// they should take, from each card's average review time (30 seconds for a card never reviewed).
+///
+/// New and review cards are capped by `caps`, what is left of today's limits, since the queue
+/// shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due after a
+/// holiday and 50 already done today, reviews show 150 rather than 550, so the count reaches 0
+/// when the day's reviews are done rather than looking endless. With `new_cards_daily_limit = 20`
+/// and 5 new cards done, new shows 15 rather than every new card in the collection. Learning and
+/// relearning cards are never held back, so they are never capped, and filtered tags (whose caps
+/// are `None`) count every card in them.
+///
+/// The time estimate of a capped state is scaled down to the cards counted, by that state's
+/// average time per card: 600 reviews taking 5 hours in all, capped to 150, take 1h15.
 pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     where_clause: &str,
     card_due_limit: DateTime<Utc>,
     is_filtered_tag: bool,
+    caps: QueueCaps,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
-    // Get count of cards by state with the same filters
-    // These are the remaining cards that are due on `requested_date` grouped by state. Note that
-    // this is _not_ equivalent to the cards by state in `get_statistics()` because that does not
-    // filter by `requested_date`.
-    let count_query_str = format!(
+    // These are the remaining cards that are due on `requested_date` grouped by state, with the
+    // seconds they should take. Note that this is _not_ equivalent to the cards by state in
+    // `get_statistics()` because that does not filter by `requested_date`. The cast is necessary
+    // since the SUM function returns a different type depending on whether the arguments are all
+    // null or not.
+    let query_str = format!(
         indoc! {
         "SELECT
             c.state,
-            COUNT(*) as count
-        FROM card c
-        JOIN note n ON c.note_id = n.id
-        JOIN parser p ON n.parser_id = p.id
-        WHERE {}
-        GROUP BY c.state"
-        },
-        where_clause
-    );
-    let mut count_query = sqlx::query_as(&count_query_str);
-    if !is_filtered_tag {
-        count_query = count_query.bind(card_due_limit.timestamp());
-    }
-    let cards_by_state_vec: Vec<(StateId, u32)> = count_query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let cards_left_by_state = cards_by_state_vec
-        .into_iter()
-        .collect::<HashMap<StateId, u32>>();
-
-    // Calculate time estimate
-    // The cast is necassary since the SUM function returns a different type depending on whether
-    // the arguments are all null or not.
-    let time_estimate_query_str = format!(
-        indoc! {
-        "SELECT
+            COUNT(*) as count,
             SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
         FROM card c
         JOIN note n ON c.note_id = n.id
@@ -697,20 +686,39 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
             WHERE kind = {}
             GROUP BY card_id
         ) rl ON rl.card_id = c.id
-        WHERE {}"
+        WHERE {}
+        GROUP BY c.state"
         },
         DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS,
         ReviewLogKind::Review as u8,
         where_clause
     );
-    let mut time_estimate_query = sqlx::query_scalar(&time_estimate_query_str);
+    let mut query = sqlx::query_as(&query_str);
     if !is_filtered_tag {
-        time_estimate_query = time_estimate_query.bind(card_due_limit.timestamp());
+        query = query.bind(card_due_limit.timestamp());
     }
-    let total_time_seconds: f64 = time_estimate_query
-        .fetch_one(db)
+    let rows: Vec<(StateId, u32, f64)> = query
+        .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+
+    let mut cards_left_by_state = HashMap::new();
+    let mut total_time_seconds = 0.0;
+    for (state, count, time_seconds) in rows {
+        let cap = if state == NEW_CARD_STATE {
+            caps.new
+        } else if state == review_state() {
+            caps.reviews
+        } else {
+            None
+        };
+        let capped = cap.map_or(count, |cap| count.min(cap));
+        if capped == 0 {
+            continue;
+        }
+        cards_left_by_state.insert(state, capped);
+        total_time_seconds += time_seconds * f64::from(capped) / f64::from(count);
+    }
     let time_estimate = Duration::seconds(total_time_seconds as i64);
 
     Ok((cards_left_by_state, time_estimate))
@@ -797,6 +805,7 @@ pub async fn get_review_card(
         &where_clause,
         card_due_limit,
         is_filtered_tag,
+        caps,
     )
     .await?;
 
@@ -937,6 +946,7 @@ pub async fn get_review_card_by_id(
                         where_clause,
                         is_filtered_tag,
                         card_due_limit,
+                        caps,
                         ..
                     }) => {
                         get_cards_left_by_state_and_time_estimate(
@@ -944,6 +954,7 @@ pub async fn get_review_card_by_id(
                             &where_clause,
                             card_due_limit,
                             is_filtered_tag,
+                            caps,
                         )
                         .await?
                     }
