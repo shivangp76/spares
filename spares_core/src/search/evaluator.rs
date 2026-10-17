@@ -1372,7 +1372,7 @@ fn validate_field_value_types(
         | (FieldType::Boolean, FieldType::Boolean) => Ok(()),
         _ => {
             let value = match value {
-                TokenTree::Atom(Atom::String(s)) => s.to_string(),
+                TokenTree::Atom(Atom::String(s) | Atom::Word(s)) => s.to_string(),
                 value => value.to_string(),
             };
             let example = if matches!(field_type, FieldType::Boolean) {
@@ -1494,7 +1494,7 @@ fn evaluate_field_value(
         _ => None,
     };
     if matches!(field_type, FieldType::DateTime)
-        && let TokenTree::Atom(Atom::String(s)) = &trees[1]
+        && let TokenTree::Atom(Atom::String(s) | Atom::Word(s)) = &trees[1]
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
@@ -1512,7 +1512,7 @@ fn evaluate_field_value(
     // day and how many months it lasts.
     let month_or_year = match &trees[1] {
         _ if !matches!(field_type, FieldType::DateTime) => None,
-        TokenTree::Atom(Atom::String(s))
+        TokenTree::Atom(Atom::String(s) | Atom::Word(s))
             if s.len() == 7
                 && s.char_indices()
                     .all(|(i, c)| if i == 4 { c == '-' } else { c.is_ascii_digit() }) =>
@@ -1713,9 +1713,18 @@ fn evaluate_field_value(
                         .params
                         .push(format!("REGEXP {}", sql_string(&value_param)));
                 } else {
-                    value_context
-                        .params
-                        .push(format!("REGEXP {}", sql_string(&text_regex(&value_param))));
+                    // A value without quotes, like a word or a date, searches the text for words
+                    // starting with it, so `cat` finds `cats` but not `concatenate`. In quotes,
+                    // it can be anywhere.
+                    let word_start = !matches!(trees[1], TokenTree::Atom(Atom::String(_)))
+                        && matches!(
+                            field,
+                            Field::Note(NoteField::Data) | Field::Card(CardField::Cloze)
+                        );
+                    value_context.params.push(format!(
+                        "REGEXP {}",
+                        sql_string(&text_regex(&value_param, word_start))
+                    ));
                 }
             }
         }
@@ -1807,11 +1816,15 @@ const ACCENTED_LETTERS: [(char, &str); 19] = [
     ('z', "źżž"),
 ];
 
-/// A regex that finds `text` anywhere, ignoring case and accents in any script, so `cafe` and
-/// `CAFÉ` both find `Café`. An accent written as its own combining character is ignored too. It
-/// only uses what both SQLite's `REGEXP` (the `regex` crate) and `fancy_regex` support.
-fn text_regex(text: &str) -> String {
+/// A regex that finds `text` anywhere, or with `word_start` only at the start of a word, ignoring
+/// case and accents in any script, so `cafe` and `CAFÉ` both find `Café`. An accent written as its
+/// own combining character is ignored too. It only uses what both SQLite's `REGEXP` (the `regex`
+/// crate) and `fancy_regex` support.
+fn text_regex(text: &str, word_start: bool) -> String {
     let mut pattern = String::from("(?i)");
+    if word_start && text.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        pattern.push_str("\\b");
+    }
     for c in text.chars() {
         let lower = c.to_lowercase().next().unwrap_or(c);
         let accented = ACCENTED_LETTERS
@@ -1957,7 +1970,12 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
                     }
                     TokenTree::Atom(Atom::String(s)) => {
                         vec![ClozePattern {
-                            regex: get_or_compile_regex(&text_regex(s)).ok(),
+                            regex: get_or_compile_regex(&text_regex(s, false)).ok(),
+                        }]
+                    }
+                    TokenTree::Atom(Atom::Word(s)) => {
+                        vec![ClozePattern {
+                            regex: get_or_compile_regex(&text_regex(s, true)).ok(),
                         }]
                     }
                     _ => vec![],
@@ -1979,7 +1997,7 @@ impl Evaluate for Atom<'_> {
                 context.params.push((*field).to_string());
                 Ok(())
             }
-            Atom::String(s) => {
+            Atom::String(s) | Atom::Word(s) => {
                 context.value_type = Some(FieldType::String);
                 context.params.push(s.to_string());
                 Ok(())
@@ -2036,15 +2054,20 @@ impl Evaluate for Atom<'_> {
 mod tests {
     use super::*;
 
-    /// `expected` with each `text(x)` replaced by the SQL string of the regex that `~x` searches
-    /// with, so expected queries stay readable.
+    /// `expected` with each `text(x)` replaced by the SQL string of the regex that `~"x"` searches
+    /// with, and each `text(word x)` by the one for `~x`, so expected queries stay readable.
     fn expand_text(expected: &str) -> String {
         let mut out = String::new();
         let mut rest = expected;
         while let Some(start) = rest.find("text(") {
-            let end = start + rest[start..].find(')').expect("`text(` is closed");
+            let end = start + rest[start..].find(')').expect("`text(word ` is closed");
             out.push_str(&rest[..start]);
-            out.push_str(&sql_string(&text_regex(&rest[start + "text(".len()..end])));
+            let inner = &rest[start + "text(".len()..end];
+            let (text, word_start) = match inner.strip_prefix("word ") {
+                Some(word) => (word, true),
+                None => (inner, false),
+            };
+            out.push_str(&sql_string(&text_regex(text, word_start)));
             rest = &rest[end + 1..];
         }
         out.push_str(rest);
@@ -2086,7 +2109,7 @@ mod tests {
             // Only data search - no joins needed
             (
                 "dog",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC",
             ),
             // Card count
             (
@@ -2095,7 +2118,7 @@ mod tests {
             ),
             (
                 "dog c.count>=2",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data REGEXP text(dog) AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data REGEXP text(word dog) AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
             ),
             // Tag search - needs tag joins and special field matching syntax
             (
@@ -2153,11 +2176,11 @@ mod tests {
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
             ),
             // Custom data - no joins needed
             (
@@ -2194,15 +2217,15 @@ mod tests {
             // Negated groups
             (
                 "-(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data REGEXP text(dog) OR n.data REGEXP text(cat))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data REGEXP text(word dog) OR n.data REGEXP text(word cat))) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math or dog)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data REGEXP text(dog))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data REGEXP text(word dog))) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math and data~foo)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data REGEXP text(foo))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data REGEXP text(word foo))) ORDER BY n.id ASC",
             ),
             (
                 "tag=math and -(data~re:\"20[0-9][0-9]-(fall|winter)-[0-9]+\" or data~re:\"fall[0-9][0-9]-sol[0-9]-[0-9]+\")",
@@ -2211,7 +2234,7 @@ mod tests {
             // Values are quoted and LIKE wildcards are matched literally.
             (
                 r#""don't" snake_case "100%" re:"it's""#,
-                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data REGEXP text(don't) AND n.data REGEXP text(snake_case)) AND n.data REGEXP text(100%)) AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
+                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data REGEXP text(don't) AND n.data REGEXP text(word snake_case)) AND n.data REGEXP text(100%)) AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
             ),
             (
                 "parser_name=name",
@@ -2224,7 +2247,7 @@ mod tests {
             // Words that start with a keyword, numbers and bare boolean fields
             (
                 "orbit 2024 c.user_buried",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(orbit) AND n.data REGEXP text(2024)) AND c.special_state = 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word orbit) AND n.data REGEXP text(word 2024)) AND c.special_state = 2) ORDER BY n.id ASC",
             ),
             // Card states by name
             (
@@ -2234,12 +2257,12 @@ mod tests {
             // `!=` and `not` negate
             (
                 "c.state!=0 not dog",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data REGEXP text(dog))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data REGEXP text(word dog))) ORDER BY n.id ASC",
             ),
             // `and` binds tighter than `or`
             (
                 "a or b c",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(a) OR (n.data REGEXP text(b) AND n.data REGEXP text(c))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word a) OR (n.data REGEXP text(word b) AND n.data REGEXP text(word c))) ORDER BY n.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2438,7 +2461,7 @@ mod tests {
             // Against text, a date is text.
             (
                 "data~2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(2026-10-17) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word 2026-10-17) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "-created_at>=now-12h",
@@ -2447,11 +2470,11 @@ mod tests {
             // `today` and `now` are still words when the field isn't a date.
             (
                 "today",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(today) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word today) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "data~now",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(now) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word now) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "keyword=today-5d",
@@ -2460,7 +2483,7 @@ mod tests {
             // `note` followed by a group is not a reference.
             (
                 "note(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(note) AND (n.data REGEXP text(dog) OR n.data REGEXP text(cat))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word note) AND (n.data REGEXP text(word dog) OR n.data REGEXP text(word cat))) ORDER BY n.id ASC".to_string(),
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2648,6 +2671,12 @@ mod tests {
         assert_eq!(search("\"100%\"").await, ["c"]);
         assert_eq!(search("orbit").await, ["c"]);
         assert_eq!(search("1000").await, ["d"]);
+        // A word finds words that start with it, and quoted text finds it anywhere.
+        assert_eq!(search("bit").await, ["d"]);
+        assert_eq!(search("\"bit\"").await, ["c", "d"]);
+        assert_eq!(search("snake").await, ["a", "b"]);
+        assert_eq!(search("case").await, Vec::<String>::new());
+        assert_eq!(search("data~\"case\"").await, ["a", "b"]);
         // Case and accents are ignored, in the query and in the note.
         exec(&format!(
             "UPDATE note SET data = 'Ça Fait Été, ﬁn' WHERE id = {}",
@@ -2893,7 +2922,7 @@ mod tests {
             // Limit combined with WHERE clause
             (
                 "dog limit=5",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC LIMIT 5",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC LIMIT 5",
             ),
             // Limit combined with ORDER BY
             (
@@ -2929,7 +2958,7 @@ mod tests {
                 "(dog limit=5) or (c.state=0 limit=3)",
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
             // A limited branch next to an unlimited one, note output orders by id by default
@@ -2937,8 +2966,8 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 "(dog limit=5) or cat",
                 EvaluatorReturnItemType::NoteIds,
                 "SELECT DISTINCT n.id FROM note n WHERE (\
-n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC LIMIT 5) OR \
-n.data REGEXP text(cat)) ORDER BY n.id ASC",
+n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC LIMIT 5) OR \
+n.data REGEXP text(word cat)) ORDER BY n.id ASC",
             ),
             // A sort inside a limited branch picks which items the limit keeps, and a global
             // limit still caps the whole result
@@ -2946,8 +2975,8 @@ n.data REGEXP text(cat)) ORDER BY n.id ASC",
                 "(dog sort_by_desc=c.stability limit=2) or (cat limit=1) limit=10",
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.stability DESC, c.id ASC LIMIT 2) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(cat) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 10",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) ORDER BY c.stability DESC, c.id ASC LIMIT 2) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word cat) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 10",
             ),
             // Limited groups can nest
             (
@@ -2955,8 +2984,8 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
-n.data REGEXP text(cat)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
+n.data REGEXP text(word cat)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
@@ -2996,8 +3025,8 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
             query_str,
             expand_text(
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
-n.data REGEXP text(cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC"
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+n.data REGEXP text(word cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC"
             )
         );
 
@@ -3009,7 +3038,7 @@ n.data REGEXP text(cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC
         assert_eq!(
             query_str,
             expand_text(
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data REGEXP text(dog) AND (c.due <= 100) ORDER BY n.id ASC"
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data REGEXP text(word dog) AND (c.due <= 100) ORDER BY n.id ASC"
             )
         );
     }
@@ -3158,6 +3187,12 @@ n.data REGEXP text(cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC
         assert!(patterns[0].matches("a proof of X"));
         assert!(patterns[0].matches("a PRÖOF of X"));
         assert!(!patterns[0].matches("a lemma"));
+
+        // Without quotes, it is the start of a word.
+        let tree = Parser::new("c.cloze~roof").parse_expression().unwrap();
+        let patterns = extract_cloze_patterns(&tree);
+        assert!(patterns[0].matches("a roofer"));
+        assert!(!patterns[0].matches("a proof"));
 
         let tree = Evaluator::new(r#"c.cloze~re:"^#cl\[""#)
             .parser

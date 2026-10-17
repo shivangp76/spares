@@ -16,6 +16,7 @@ use crate::search::Token;
 use crate::search::TokenKind;
 use crate::search::TokenTree;
 use crate::search::lexer::Lexer;
+use crate::search::lexer::is_quote;
 
 fn parse_date(date_str: &str) -> Result<Atom<'static>, Error> {
     // A day (YYYY-MM-DD), in local time
@@ -99,10 +100,19 @@ impl<'de> Parser<'de> {
         };
         let mut lhs = match lhs {
             // atoms
+            // The lexer leaves the quotes out of a string's span.
             Token {
                 kind: TokenKind::String,
                 span,
-            } => TokenTree::Atom(Atom::String(Token::unescape(&self.whole[span]))),
+            } if self.whole[..span.start].ends_with(is_quote)
+                && self.whole[span.end..].starts_with(is_quote) =>
+            {
+                TokenTree::Atom(Atom::String(Token::unescape(&self.whole[span])))
+            }
+            Token {
+                kind: TokenKind::String,
+                span,
+            } => TokenTree::Atom(Atom::Word(Cow::Borrowed(&self.whole[span]))),
             Token {
                 kind: TokenKind::Integer(n),
                 ..
@@ -452,7 +462,7 @@ mod tests {
                                 Op::Tilde,
                                 vec![
                                     TokenTree::Atom(Atom::Field(Cow::Borrowed(""))),
-                                    TokenTree::Atom(Atom::String(Cow::Borrowed("dog"))),
+                                    TokenTree::Atom(Atom::Word(Cow::Borrowed("dog"))),
                                 ]
                             ),
                             TokenTree::Cons(
@@ -470,7 +480,7 @@ mod tests {
                             Op::Equal,
                             vec![
                                 TokenTree::Atom(Atom::Field(Cow::Borrowed("c.special_state"))),
-                                TokenTree::Atom(Atom::String(Cow::Borrowed("scheduler_buried"))),
+                                TokenTree::Atom(Atom::Word(Cow::Borrowed("scheduler_buried"))),
                             ]
                         )]
                     )
@@ -497,7 +507,7 @@ mod tests {
                             Op::Equal,
                             vec![
                                 TokenTree::Atom(Atom::Field(Cow::Borrowed("tag"))),
-                                TokenTree::Atom(Atom::String(Cow::Borrowed("how-a-car-works"))),
+                                TokenTree::Atom(Atom::Word(Cow::Borrowed("how-a-car-works"))),
                             ]
                         ),]
                     ),
@@ -505,7 +515,7 @@ mod tests {
                         Op::Equal,
                         vec![
                             TokenTree::Atom(Atom::Field(Cow::Borrowed("parser_name"))),
-                            TokenTree::Atom(Atom::String(Cow::Borrowed("markdown"))),
+                            TokenTree::Atom(Atom::Word(Cow::Borrowed("markdown"))),
                         ]
                     ),
                 ]
@@ -516,17 +526,11 @@ mod tests {
     #[test]
     fn and_binds_tighter_than_or() {
         let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
-        assert_eq!(
-            parse("a or b c"),
-            r#"(or (~  "a") (and (~  "b") (~  "c")))"#
-        );
-        assert_eq!(
-            parse("a b or c"),
-            r#"(or (and (~  "a") (~  "b")) (~  "c"))"#
-        );
+        assert_eq!(parse("a or b c"), "(or (~  a) (and (~  b) (~  c)))");
+        assert_eq!(parse("a b or c"), "(or (and (~  a) (~  b)) (~  c))");
         assert_eq!(
             parse("-a or b and c"),
-            r#"(or (not (~  "a")) (and (~  "b") (~  "c")))"#
+            "(or (not (~  a)) (and (~  b) (~  c)))"
         );
     }
 
@@ -544,11 +548,11 @@ mod tests {
         let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
         assert_eq!(
             parse("(a limit=2) or (b limit=1) limit=10"),
-            r#"(and (or (group (and (~  "a") (= limit 2))) (group (and (~  "b") (= limit 1)))) (= limit 10))"#
+            "(and (or (group (and (~  a) (= limit 2))) (group (and (~  b) (= limit 1)))) (= limit 10))"
         );
         assert_eq!(
             parse("a or b sort_by_asc=c.due"),
-            r#"(and (or (~  "a") (~  "b")) (= sort_by_asc "c.due"))"#
+            "(and (or (~  a) (~  b)) (= sort_by_asc c.due))"
         );
         assert_eq!(parse("limit=5"), "(= limit 5)");
         assert_eq!(parse("-limit=5"), "(not (= limit 5))");

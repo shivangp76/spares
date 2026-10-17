@@ -85,9 +85,15 @@
 //!   - Example: `tag=math` finds the tags `math` and `math:algebra`, but not `physics:math` or
 //!     `mathematics`.
 //!
+//! **Words and quoted text in the note's text:**
+//! - A value without quotes, like `data~cat`, finds words that start with it: `cat`, `cats` and
+//!   `Catalan`, but not `concatenate`. Quoted, as in `data~"cat"`, it is found anywhere, and
+//!   `data~"black cat"` finds that phrase. This applies to `data` and `c.cloze`. For other fields,
+//!   like `tag~math`, the value is found anywhere either way.
+//!
 //! #### Default Field
 //! - If no field is specified, `data~` is used by default, so a bare word searches the note's
-//!   text.
+//!   text for words starting with it.
 //!   - Example: `-dog` or `-"dog"` finds notes not containing `dog`.
 //!   - Example: `"-dog"` finds notes containing `-dog`. This follows the quoting rule for non-alphanumeric characters like `-`.
 //!
@@ -288,8 +294,11 @@
 //!
 //! ## Examples
 //!
-//! **Search for notes containing "dog"**
+//! **Search for notes with a word starting with "dog", like "dog" or "dogs"**
 //! - `dog`
+//!
+//! **Search for notes containing "dog" anywhere, as in "hotdog"**
+//! - `"dog"`
 //!
 //! **Search for notes containing "multiword \"query" with an escaped quote inside**
 //! - `"multiword \"query"`
@@ -325,7 +334,7 @@
 //! - `tag=math sort_by_desc=created_at limit=10`
 //!
 //! ### Equivalences
-//! - `dog` is equivalent to `data~dog` and `data~"dog"`.
+//! - `dog` is equivalent to `data~dog`, and `"dog"` to `data~"dog"`.
 //! - `-cat -mouse` is equivalent to `-(cat or mouse)` (De Morgan's Laws).
 //! - `dog cat` is equivalent to `dog and cat`. A space between terms implies an `and` operator unless part of a quoted string.
 //!
@@ -544,7 +553,10 @@ pub(crate) enum Atom<'de> {
     // Field identifiers
     Field(Cow<'de, str>),
     // Literals
+    /// Text written in quotes, like `"dog"`.
     String(Cow<'de, str>),
+    /// Text written without quotes, like `dog`, which `data~` matches as the start of a word.
+    Word(Cow<'de, str>),
     Integer(i64),
     Float(f64),
     Boolean(bool),
@@ -561,7 +573,7 @@ pub(crate) enum Atom<'de> {
 impl fmt::Display for Atom<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Atom::Field(s) => write!(f, "{s}"),
+            Atom::Field(s) | Atom::Word(s) => write!(f, "{s}"),
             Atom::String(s) => write!(f, "\"{s}\""),
             Atom::Integer(n) => write!(f, "{n}"),
             Atom::Float(n) => write!(f, "{n}"),
