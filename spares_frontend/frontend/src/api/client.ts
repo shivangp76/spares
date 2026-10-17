@@ -24,6 +24,7 @@ import type {
   ReviewQueueRequest,
   ReviewQueueResponse,
   ReviewSnapshotResponse,
+  SavedSearch,
   SearchField,
   SearchPage,
   StatisticsGraphsRequest,
@@ -726,6 +727,19 @@ export async function getLeeches(schedulerName: string): Promise<CardResponse[]>
 /** Unburies all buried cards, or only those matching `query`. */
 export async function unburyCards(query: string | null): Promise<void> {
   await apiSend('Unbury', '/api/cards/unbury', { method: 'POST', body: JSON.stringify({ query }) });
+}
+
+export async function listSavedSearches(): Promise<SavedSearch[]> {
+  return apiFetch('Saved searches fetch', '/api/saved-searches');
+}
+
+/** Saves `query` as `name`, replacing the search saved with that name. */
+export async function saveSearch(name: string, query: string): Promise<SavedSearch> {
+  return apiFetch('Save search', '/api/saved-searches', { method: 'PUT', body: JSON.stringify({ name, query }) });
+}
+
+export async function deleteSavedSearch(name: string): Promise<void> {
+  await apiSend('Delete saved search', `/api/saved-searches/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 let searchFields: Promise<SearchField[]> | null = null;

@@ -528,3 +528,9 @@ export interface SearchPage<T> {
   total: number;
   items: T[];
 }
+
+/** A search saved by name on the server, shared with `spares saved-search`. */
+export interface SavedSearch {
+  name: string;
+  query: string;
+}

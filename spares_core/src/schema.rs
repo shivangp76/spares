@@ -1272,3 +1272,15 @@ pub mod undo {
         pub latest_event_id: i64,
     }
 }
+
+pub mod saved_search {
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    /// A search saved by name. See [`crate::api::saved_search`].
+    #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, sqlx::FromRow)]
+    pub struct SavedSearch {
+        pub name: String,
+        pub query: String,
+    }
+}

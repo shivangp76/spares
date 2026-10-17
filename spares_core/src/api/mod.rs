@@ -9,6 +9,7 @@ pub mod parser;
 pub(crate) mod preset;
 pub(crate) mod queue;
 pub mod review;
+pub mod saved_search;
 pub mod scheduler;
 #[cfg(test)]
 mod scheduling_tests;

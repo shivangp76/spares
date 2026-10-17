@@ -75,6 +75,10 @@ use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::submit_study_action_handler;
 use crate::handlers::review::sync_offline_actions_handler;
+use crate::handlers::saved_search::delete_saved_search_handler;
+use crate::handlers::saved_search::get_saved_search_handler;
+use crate::handlers::saved_search::list_saved_searches_handler;
+use crate::handlers::saved_search::save_search_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
@@ -211,6 +215,7 @@ fn offline_review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/sync", post(sync_offline_actions_handler))
 }
 
+#[allow(clippy::too_many_lines, reason = "one line per route")]
 pub(crate) fn create_router(
     app_state: Arc<AppState>,
     files_dir: PathBuf,
@@ -245,6 +250,13 @@ pub(crate) fn create_router(
         .route("/api/notes/search", post(search_notes_handler))
         .route("/api/notes/search/page", post(search_page_handler))
         .route("/api/search/fields", get(search_fields_handler))
+        .route("/api/saved-searches", get(list_saved_searches_handler))
+        .route("/api/saved-searches", put(save_search_handler))
+        .route("/api/saved-searches/{name}", get(get_saved_search_handler))
+        .route(
+            "/api/saved-searches/{name}",
+            delete(delete_saved_search_handler),
+        )
         .route("/api/notes/export", post(export_notes_handler))
         .route("/api/notes/search/keyword", post(search_keyword_handler))
         .route(

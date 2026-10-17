@@ -4,6 +4,7 @@ import { ApiError, cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { useSavedSearches } from '../hooks/useSavedSearches';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
@@ -99,6 +100,15 @@ export default function NotesPage() {
     setSearchCount(n => n + 1);
   }
 
+  const { saved: savedSearches, save: saveSavedSearch, remove: removeSavedSearch, error: savedSearchError } = useSavedSearches();
+
+  function handleSaveSearch() {
+    const q = query.trim();
+    if (!q) return;
+    const name = window.prompt('Save this search as:', savedSearches.find(s => s.query === q)?.name ?? '');
+    if (name?.trim()) void saveSavedSearch(name.trim(), q);
+  }
+
   function handleClear() {
     setSearchParams(prev => withPage(withSearch(prev, null), null));
   }
@@ -157,7 +167,7 @@ export default function NotesPage() {
       <div className="split">
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
         <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
-          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
+          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.length > 0 ? 8 : 16 }}>
             <SearchInput
               value={query}
               onChange={setQuery}
@@ -166,9 +176,19 @@ export default function NotesPage() {
               error={searchError}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
+            <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
             <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); setHasDraft(true); }} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
           </div>
+          <RecentSearches
+            heading="Saved"
+            recent={savedSearches}
+            label={s => s.name}
+            itemTitle={s => s.query}
+            onSelect={s => handleSearch(s.query)}
+            onRemove={s => { if (window.confirm(`Delete the saved search "${s.name}"?`)) void removeSavedSearch(s); }}
+          />
+          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{savedSearchError}</div>}
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (

@@ -77,6 +77,13 @@ pub(crate) enum Commands {
     Keyword(KeywordArgs),
     #[command(arg_required_else_help = true)]
     Event(EventArgs),
+    /// Save searches by name, which `spares note search --saved` and `spares card search --saved`
+    /// run, and the web app lists on its notes and cards pages
+    ///
+    /// They are kept by the server, so the web app sees the ones saved here when it uses the same
+    /// server. They are not synced.
+    #[command(arg_required_else_help = true)]
+    SavedSearch(SavedSearchArgs),
     /// Deploy spares to a VPS as the sync server, and set up this machine to sync with it
     ///
     /// spares is built here, from the checkout of the spares repository this runs in (or else the
@@ -604,6 +611,22 @@ pub(crate) struct RedoArgs {
 }
 
 #[derive(Args, Debug)]
+pub(crate) struct SavedSearchArgs {
+    #[command(subcommand)]
+    pub(crate) command: SavedSearchCommands,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SavedSearchCommands {
+    /// List the saved searches, one per line, as `name<TAB>query`
+    List,
+    /// Save a search, replacing the one with the same name
+    Save { name: String, query: String },
+    /// Delete a saved search
+    Delete { name: String },
+}
+
+#[derive(Args, Debug)]
 pub(crate) struct KeywordArgs {
     #[command(subcommand)]
     pub(crate) command: KeywordCommands,
@@ -654,8 +677,11 @@ pub(crate) struct SearchArgs {
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
     /// The query, like `tag=math c.due<=today`. `--fields` lists the fields it can use.
-    #[arg(required_unless_present = "fields")]
+    #[arg(required_unless_present_any = ["fields", "saved"])]
     pub(crate) query: Option<String>,
+    /// Run the search saved under this name (see `spares saved-search`) in place of a query
+    #[arg(long, conflicts_with_all = ["query", "fields"])]
+    pub(crate) saved: Option<String>,
     /// List the fields a query can use, with the kind of value each holds and an example
     #[arg(long, conflicts_with = "query")]
     pub(crate) fields: bool,

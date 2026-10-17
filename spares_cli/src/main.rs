@@ -15,6 +15,7 @@ mod note;
 mod notes_vcs;
 mod parser;
 mod review;
+mod saved_search;
 mod search;
 mod statistics;
 mod sync;
@@ -91,6 +92,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Link(link_args) => link::handle(link_args, &base_url, &client).await,
         Commands::Keyword(keyword_args) => keyword::handle(keyword_args, &base_url, &client).await,
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
+        Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
         Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &env_config).await,
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)

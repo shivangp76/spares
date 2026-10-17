@@ -5,6 +5,10 @@
 //! query was parsed, with `and` and `or` grouped as they apply, and the SQL it runs, without
 //! searching. A card state in the SQL is followed by its name, as in `c.state = 2 /* review */`.
 //!
+//! `spares saved-search save <name> '<query>'` saves a query by name, and `spares note search --saved
+//! <name>` (or `spares card search --saved`) runs it. The web app's notes and cards pages list the
+//! same saved searches, and save new ones. See [`crate::api::saved_search`].
+//!
 //! | Field               | Type     |
 //! |---------------------|----------|
 //! | id                  | i64      |

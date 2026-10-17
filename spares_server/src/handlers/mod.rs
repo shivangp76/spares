@@ -25,6 +25,7 @@ pub(crate) mod notes_vcs;
 pub(crate) mod parser;
 pub(crate) mod render_asset;
 pub(crate) mod review;
+pub(crate) mod saved_search;
 pub(crate) mod scheduler;
 pub(crate) mod sync;
 pub(crate) mod tag;
