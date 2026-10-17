@@ -1,5 +1,7 @@
 //! # Searching
 //!
+//! `spares note search --fields` lists the fields with their kind and an example.
+//!
 //! | Field               | Type     |
 //! |---------------------|----------|
 //! | id                  | i64      |
@@ -443,6 +445,24 @@ pub fn query_has_limit(query: &str) -> bool {
     parser::Parser::new(query)
         .parse_expression()
         .is_ok_and(|tree| evaluator::tree_has_limit(&tree))
+}
+
+/// A field that queries can use, as listed by `spares note search --fields`.
+#[derive(Debug, Clone, Serialize)]
+pub struct FieldInfo {
+    /// The name, as written in a query, like `c.due`.
+    pub name: &'static str,
+    /// The kind of value it holds, like `date`.
+    pub kind: &'static str,
+    /// A query that uses it, like `c.due<=today`.
+    pub example: &'static str,
+    /// What it matches.
+    pub about: &'static str,
+}
+
+/// Every field that queries can use, in the order they are documented.
+pub fn fields() -> Vec<FieldInfo> {
+    evaluator::field_infos()
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]

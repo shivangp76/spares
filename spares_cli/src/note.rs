@@ -22,6 +22,7 @@ use crate::args::NoteArgs;
 use crate::args::NoteCommands;
 use crate::args::SearchArgs;
 use crate::graph::chart;
+use crate::search::print_fields;
 use crate::search::search;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
@@ -172,7 +173,13 @@ pub(crate) async fn handle(
         NoteCommands::Search(SearchArgs {
             query,
             output_format,
+            fields: _,
         }) => {
+            // Clap requires a query unless `--fields` is given.
+            let Some(query) = query else {
+                print_fields();
+                return Ok(());
+            };
             search(
                 query,
                 QueryReturnItemType::Notes,

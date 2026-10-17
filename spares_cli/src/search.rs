@@ -10,12 +10,36 @@ use spares_core::parsers::get_output_raw_dir;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::note::SearchNotesRequest;
 use spares_core::schema::note::SearchNotesResponse;
+use spares_core::search::FieldInfo;
 use spares_core::search::QueryReturnItemType;
 
 use crate::args::OutputFormat;
 use crate::utils::compute_note_raw_path;
 use crate::utils::compute_note_rendered_path;
 use crate::utils::ensure_ok;
+
+/// Prints the fields a query can use, one per line, in aligned columns.
+pub(crate) fn print_fields() {
+    let fields = spares_core::search::fields();
+    let width = |column: fn(&FieldInfo) -> &str| {
+        fields
+            .iter()
+            .map(|field| column(field).chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let (name_width, kind_width, example_width) = (
+        width(|field| field.name),
+        width(|field| field.kind),
+        width(|field| field.example),
+    );
+    for field in &fields {
+        println!(
+            "{:name_width$}  {:kind_width$}  {:example_width$}  {}",
+            field.name, field.kind, field.example, field.about
+        );
+    }
+}
 
 async fn search_notes(
     query: String,

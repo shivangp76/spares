@@ -653,7 +653,12 @@ pub(crate) enum OutputFormat {
 pub(crate) struct SearchArgs {
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
-    pub(crate) query: String,
+    /// The query, like `tag=math c.due<=today`. `--fields` lists the fields it can use.
+    #[arg(required_unless_present = "fields")]
+    pub(crate) query: Option<String>,
+    /// List the fields a query can use, with the kind of value each holds and an example
+    #[arg(long, conflicts_with = "query")]
+    pub(crate) fields: bool,
 }
 
 impl NotesSelectorLocal {

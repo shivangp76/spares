@@ -28,6 +28,7 @@ use crate::card_info::print_card_info;
 use crate::history::print_history;
 use crate::review::forget_card;
 use crate::review::review_cards;
+use crate::search::print_fields;
 use crate::search::search;
 use crate::search::search_cards;
 use crate::statistics::print_statistics;
@@ -145,7 +146,13 @@ pub(crate) async fn handle(
         CardCommands::Search(SearchArgs {
             query,
             output_format,
+            fields: _,
         }) => {
+            // Clap requires a query unless `--fields` is given.
+            let Some(query) = query else {
+                print_fields();
+                return Ok(());
+            };
             search(
                 query,
                 QueryReturnItemType::Cards,

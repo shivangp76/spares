@@ -436,7 +436,8 @@ enum CardField {
 }
 
 /// A field as written in a query, with an example and what it matches. Every field is here, so
-/// errors and `spares note search --fields` list them from this table.
+/// errors and `spares note search --fields` list them from this table, and the tests check that
+/// each one parses.
 pub(crate) struct FieldDoc {
     pub(crate) name: &'static str,
     pub(crate) example: &'static str,
@@ -648,7 +649,7 @@ impl Field {
                     )
                 } else {
                     miette!(
-                        help = format!("The fields are {}", all.join(", ")),
+                        help = "`spares note search --fields` lists the fields",
                         "Unknown field `{f}`: did you mean {}?",
                         or_list(&similar),
                     )
@@ -761,6 +762,26 @@ impl Field {
                 }
             },
             Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => String::new(),
+        }
+    }
+
+    /// The kind of value the field holds, as listed by `spares note search --fields`.
+    fn kind_name(&self) -> &'static str {
+        match self {
+            Field::Note(NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote) => {
+                "note id"
+            }
+            Field::Card(CardField::State) => "card state",
+            Field::SortAsc(_) | Field::SortDesc(_) => "field",
+            _ => match self.get_field_type() {
+                FieldType::Integer => "whole number",
+                FieldType::Float => "number",
+                FieldType::String => "text",
+                FieldType::DateTime => "date",
+                FieldType::Json => "JSON",
+                FieldType::Boolean => "true or false",
+                FieldType::Regex => "regex",
+            },
         }
     }
 
@@ -1297,6 +1318,19 @@ fn validate_field_value_types(
             ))
         }
     }
+}
+
+/// The fields that queries can use, with the kind of value each holds, from [`FIELDS`].
+pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
+    FIELDS
+        .iter()
+        .map(|doc| crate::search::FieldInfo {
+            name: doc.name,
+            kind: Field::from_str(&[doc.name]).map_or("", |field| field.kind_name()),
+            example: doc.example,
+            about: doc.about,
+        })
+        .collect()
 }
 
 /// The example of the field written `field_name` in [`FIELDS`], if it has one.
