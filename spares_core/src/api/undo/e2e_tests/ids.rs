@@ -3,7 +3,6 @@
 
 use chrono::Utc;
 use serde_json::Map;
-use sqlx::SqlitePool;
 
 use super::create_card_helper;
 use crate::api::card::forget_card;
@@ -26,7 +25,12 @@ use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::UndoEventRequest;
 
 #[sqlx::test]
-async fn e2e_synced_tables_only_get_helper_ids(pool: SqlitePool) {
+async fn e2e_synced_tables_only_get_helper_ids(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    // Its filtered tag searches text, which needs `REGEXP`.
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
     let card_id = create_card_helper(&pool).await;
     submit_study_action(
         &pool,

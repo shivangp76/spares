@@ -68,8 +68,9 @@
 //! #### Tilde Operator (`~`)
 //!
 //! **With a normal String**:
-//! - `field~"value"`: Searches if `field` contains `value` (case insensitive for ASCII letters).
-//!   Every character is matched literally, including `%` and `_`.
+//! - `field~"value"`: Searches if `field` contains `value`, ignoring case and accents in any
+//!   script, so `cafe` and `CAFÉ` both find `Café`. Every other character is matched literally,
+//!   including `%`, `_` and `.`.
 //!   - Example: `tag~"math test"` finds notes with tags containing `math test`.
 //!
 //! **With a Regex String**:

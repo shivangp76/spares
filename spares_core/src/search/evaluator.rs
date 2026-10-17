@@ -1713,10 +1713,9 @@ fn evaluate_field_value(
                         .params
                         .push(format!("REGEXP {}", sql_string(&value_param)));
                 } else {
-                    value_context.params.push(format!(
-                        "LIKE {}",
-                        like_pattern(&format!("%{}%", escape_like(&value_param)))
-                    ));
+                    value_context
+                        .params
+                        .push(format!("REGEXP {}", sql_string(&text_regex(&value_param))));
                 }
             }
         }
@@ -1771,22 +1770,66 @@ pub(crate) fn waiting_on_links_condition(queue: &QueueConfig, value_str: &str) -
 
 /// A pattern extracted from a `c.cloze ~ ...` condition for in-memory matching.
 struct ClozePattern {
-    is_regex: bool,
-    value: String,
+    /// The regex written, or the one [`text_regex`] makes for text. `None` when it is invalid.
     regex: Option<Arc<fancy_regex::Regex>>,
 }
 
 impl ClozePattern {
     fn matches(&self, text: &str) -> bool {
-        if self.is_regex {
-            self.regex
-                .as_ref()
-                .and_then(|re| re.is_match(text).ok())
-                .unwrap_or(false)
+        self.regex
+            .as_ref()
+            .and_then(|re| re.is_match(text).ok())
+            .unwrap_or(false)
+    }
+}
+
+/// Base letters and the accented letters that `~` finds them with, so `cafe` finds `café`.
+/// Upper case letters are matched by ignoring case.
+const ACCENTED_LETTERS: [(char, &str); 19] = [
+    ('a', "àáâãäåāăą"),
+    ('c', "çćĉċč"),
+    ('d', "ďđ"),
+    ('e', "èéêëēĕėęě"),
+    ('g', "ĝğġģ"),
+    ('h', "ĥħ"),
+    ('i', "ìíîïĩīĭįı"),
+    ('j', "ĵ"),
+    ('k', "ķ"),
+    ('l', "ĺļľŀł"),
+    ('n', "ñńņňŉ"),
+    ('o', "òóôõöøōŏő"),
+    ('r', "ŕŗř"),
+    ('s', "śŝşšș"),
+    ('t', "ţťŧț"),
+    ('u', "ùúûüũūŭůűų"),
+    ('w', "ŵ"),
+    ('y', "ýÿŷ"),
+    ('z', "źżž"),
+];
+
+/// A regex that finds `text` anywhere, ignoring case and accents in any script, so `cafe` and
+/// `CAFÉ` both find `Café`. An accent written as its own combining character is ignored too. It
+/// only uses what both SQLite's `REGEXP` (the `regex` crate) and `fancy_regex` support.
+fn text_regex(text: &str) -> String {
+    let mut pattern = String::from("(?i)");
+    for c in text.chars() {
+        let lower = c.to_lowercase().next().unwrap_or(c);
+        let accented = ACCENTED_LETTERS
+            .iter()
+            .find(|(base, variants)| *base == lower || variants.contains(lower));
+        if let Some((base, variants)) = accented {
+            let _ = write!(pattern, "[{base}{variants}]\\p{{M}}*");
+        } else if c.is_alphanumeric() {
+            pattern.push(c);
+            pattern.push_str("\\p{M}*");
         } else {
-            text.to_lowercase().contains(&self.value.to_lowercase())
+            if "\\.+*?()|[]{}^$#&-~".contains(c) {
+                pattern.push('\\');
+            }
+            pattern.push(c);
         }
     }
+    pattern
 }
 
 /// Converts a `TokenTree` to Disjunctive Normal Form (a `Vec` of conjunctions).
@@ -1909,16 +1952,12 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
                 return match &children[1] {
                     TokenTree::Atom(Atom::Regex(r)) => {
                         vec![ClozePattern {
-                            is_regex: true,
-                            value: r.to_string(),
                             regex: get_or_compile_regex(r).ok(),
                         }]
                     }
                     TokenTree::Atom(Atom::String(s)) => {
                         vec![ClozePattern {
-                            is_regex: false,
-                            value: s.to_string(),
-                            regex: None,
+                            regex: get_or_compile_regex(&text_regex(s)).ok(),
                         }]
                     }
                     _ => vec![],
@@ -1997,6 +2036,21 @@ impl Evaluate for Atom<'_> {
 mod tests {
     use super::*;
 
+    /// `expected` with each `text(x)` replaced by the SQL string of the regex that `~x` searches
+    /// with, so expected queries stay readable.
+    fn expand_text(expected: &str) -> String {
+        let mut out = String::new();
+        let mut rest = expected;
+        while let Some(start) = rest.find("text(") {
+            let end = start + rest[start..].find(')').expect("`text(` is closed");
+            out.push_str(&rest[..start]);
+            out.push_str(&sql_string(&text_regex(&rest[start + "text(".len()..end])));
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     #[test]
     fn card_order_by_is_the_top_level_sort() {
         let order = |query| Evaluator::new(query).card_order_by().unwrap();
@@ -2032,7 +2086,7 @@ mod tests {
             // Only data search - no joins needed
             (
                 "dog",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC",
             ),
             // Card count
             (
@@ -2041,7 +2095,7 @@ mod tests {
             ),
             (
                 "dog c.count>=2",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data LIKE '%dog%' AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data REGEXP text(dog) AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
             ),
             // Tag search - needs tag joins and special field matching syntax
             (
@@ -2099,11 +2153,11 @@ mod tests {
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
             ),
             // Custom data - no joins needed
             (
@@ -2140,15 +2194,15 @@ mod tests {
             // Negated groups
             (
                 "-(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data LIKE '%dog%' OR n.data LIKE '%cat%')) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data REGEXP text(dog) OR n.data REGEXP text(cat))) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math or dog)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data LIKE '%dog%')) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data REGEXP text(dog))) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math and data~foo)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data LIKE '%foo%')) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data REGEXP text(foo))) ORDER BY n.id ASC",
             ),
             (
                 "tag=math and -(data~re:\"20[0-9][0-9]-(fall|winter)-[0-9]+\" or data~re:\"fall[0-9][0-9]-sol[0-9]-[0-9]+\")",
@@ -2157,7 +2211,7 @@ mod tests {
             // Values are quoted and LIKE wildcards are matched literally.
             (
                 r#""don't" snake_case "100%" re:"it's""#,
-                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data LIKE '%don''t%' AND n.data LIKE '%snake\_case%' ESCAPE '\') AND n.data LIKE '%100\%%' ESCAPE '\') AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
+                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data REGEXP text(don't) AND n.data REGEXP text(snake_case)) AND n.data REGEXP text(100%)) AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
             ),
             (
                 "parser_name=name",
@@ -2170,7 +2224,7 @@ mod tests {
             // Words that start with a keyword, numbers and bare boolean fields
             (
                 "orbit 2024 c.user_buried",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(orbit) AND n.data REGEXP text(2024)) AND c.special_state = 2) ORDER BY n.id ASC",
             ),
             // Card states by name
             (
@@ -2180,12 +2234,12 @@ mod tests {
             // `!=` and `not` negate
             (
                 "c.state!=0 not dog",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data LIKE '%dog%')) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data REGEXP text(dog))) ORDER BY n.id ASC",
             ),
             // `and` binds tighter than `or`
             (
                 "a or b c",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%a%' OR (n.data LIKE '%b%' AND n.data LIKE '%c%')) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(a) OR (n.data REGEXP text(b) AND n.data REGEXP text(c))) ORDER BY n.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2193,7 +2247,12 @@ mod tests {
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2302,6 +2361,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "test data is long")]
     fn test_relative_dates() {
         let gir = "(SELECT created_at FROM note WHERE id = 76967537148)";
         let today =
@@ -2378,7 +2438,7 @@ mod tests {
             // Against text, a date is text.
             (
                 "data~2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%2026-10-17%' ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(2026-10-17) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "-created_at>=now-12h",
@@ -2387,11 +2447,11 @@ mod tests {
             // `today` and `now` are still words when the field isn't a date.
             (
                 "today",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%today%' ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(today) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "data~now",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%now%' ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(now) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "keyword=today-5d",
@@ -2400,14 +2460,19 @@ mod tests {
             // `note` followed by a group is not a reference.
             (
                 "note(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%note%' AND (n.data LIKE '%dog%' OR n.data LIKE '%cat%')) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(note) AND (n.data REGEXP text(dog) OR n.data REGEXP text(cat))) ORDER BY n.id ASC".to_string(),
             ),
         ];
         for (input, expected_sql) in inputs {
             let query_str = Evaluator::new(input)
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(&expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2506,7 +2571,12 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn searches_text_tags_and_days(pool: SqlitePool) {
+    async fn searches_text_tags_and_days(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        // Text searches need `REGEXP`.
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
         let exec = async |sql: &str| {
             sqlx::query(sql).execute(&pool).await.unwrap();
         };
@@ -2578,6 +2648,22 @@ mod tests {
         assert_eq!(search("\"100%\"").await, ["c"]);
         assert_eq!(search("orbit").await, ["c"]);
         assert_eq!(search("1000").await, ["d"]);
+        // Case and accents are ignored, in the query and in the note.
+        exec(&format!(
+            "UPDATE note SET data = 'Ça Fait Été, ﬁn' WHERE id = {}",
+            "d".parse::<NoteId>().unwrap().packed()
+        ))
+        .await;
+        assert_eq!(search("\"CA FAIT\"").await, ["d"]);
+        assert_eq!(search("\"fait ete\"").await, ["d"]);
+        assert_eq!(search("ÉTÉ").await, ["d"]);
+        exec(&format!(
+            "UPDATE note SET data = 'cafe\u{301} Straße ΣΊΣΥΦΟΣ' WHERE id = {}",
+            "d".parse::<NoteId>().unwrap().packed()
+        ))
+        .await;
+        assert_eq!(search("café").await, ["d"]);
+        assert_eq!(search("straße σίσυφος").await, ["d"]);
         assert_eq!(search("tag=math").await, ["a", "b"]);
         assert_eq!(search("tag=mathx").await, ["d"]);
         assert_eq!(search("-tag=math").await, ["c", "d"]);
@@ -2748,7 +2834,12 @@ mod tests {
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2782,7 +2873,12 @@ mod tests {
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2797,7 +2893,7 @@ mod tests {
             // Limit combined with WHERE clause
             (
                 "dog limit=5",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC LIMIT 5",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC LIMIT 5",
             ),
             // Limit combined with ORDER BY
             (
@@ -2816,7 +2912,12 @@ mod tests {
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::NoteIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2828,7 +2929,7 @@ mod tests {
                 "(dog limit=5) or (c.state=0 limit=3)",
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
             // A limited branch next to an unlimited one, note output orders by id by default
@@ -2836,8 +2937,8 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 "(dog limit=5) or cat",
                 EvaluatorReturnItemType::NoteIds,
                 "SELECT DISTINCT n.id FROM note n WHERE (\
-n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC LIMIT 5) OR \
-n.data LIKE '%cat%') ORDER BY n.id ASC",
+n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(dog) ORDER BY n.id ASC LIMIT 5) OR \
+n.data REGEXP text(cat)) ORDER BY n.id ASC",
             ),
             // A sort inside a limited branch picks which items the limit keeps, and a global
             // limit still caps the whole result
@@ -2845,8 +2946,8 @@ n.data LIKE '%cat%') ORDER BY n.id ASC",
                 "(dog sort_by_desc=c.stability limit=2) or (cat limit=1) limit=10",
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.stability DESC, c.id ASC LIMIT 2) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%cat%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 10",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.stability DESC, c.id ASC LIMIT 2) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(cat) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 10",
             ),
             // Limited groups can nest
             (
@@ -2854,14 +2955,19 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
-n.data LIKE '%cat%') ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
+n.data REGEXP text(cat)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
         for (input, output_type, expected_sql) in inputs {
             let query_str = Evaluator::new(input).evaluate(output_type).unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -2888,9 +2994,11 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
             .unwrap();
         assert_eq!(
             query_str,
-            "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
-n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC"
+            expand_text(
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(dog) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
+n.data REGEXP text(cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC"
+            )
         );
 
         // Note output needs the card join for a card-level scope.
@@ -2900,7 +3008,9 @@ n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.
             .unwrap();
         assert_eq!(
             query_str,
-            "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100) ORDER BY n.id ASC"
+            expand_text(
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data REGEXP text(dog) AND (c.due <= 100) ORDER BY n.id ASC"
+            )
         );
     }
 
@@ -3013,7 +3123,12 @@ n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.
             let query_str = evaluator
                 .evaluate(EvaluatorReturnItemType::CardIds)
                 .unwrap();
-            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+            assert_eq!(
+                query_str,
+                expand_text(expected_sql),
+                "Failed for input: {}",
+                input
+            );
         }
     }
 
@@ -3040,9 +3155,8 @@ n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.
             .unwrap();
         let patterns = extract_cloze_patterns(&tree);
         assert_eq!(patterns.len(), 1);
-        assert!(!patterns[0].is_regex);
-        assert_eq!(patterns[0].value, "proof");
         assert!(patterns[0].matches("a proof of X"));
+        assert!(patterns[0].matches("a PRÖOF of X"));
         assert!(!patterns[0].matches("a lemma"));
 
         let tree = Evaluator::new(r#"c.cloze~re:"^#cl\[""#)
@@ -3051,7 +3165,6 @@ n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.
             .unwrap();
         let patterns = extract_cloze_patterns(&tree);
         assert_eq!(patterns.len(), 1);
-        assert!(patterns[0].is_regex);
         assert!(patterns[0].matches("#cl[hidden]"));
         assert!(!patterns[0].matches("not a cloze"));
     }

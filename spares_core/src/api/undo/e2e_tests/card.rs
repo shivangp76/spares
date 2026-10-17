@@ -743,7 +743,12 @@ async fn tag_exists(pool: &SqlitePool, tag_id: TagId) -> bool {
 }
 
 #[sqlx::test]
-async fn e2e_undo_rate_card_restores_filtered_tag_membership(pool: SqlitePool) {
+async fn e2e_undo_rate_card_restores_filtered_tag_membership(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    // Its filtered tag searches text, which needs `REGEXP`.
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
     let card_id = create_card_helper(&pool).await;
     let tag_id = graduate_from_filtered_tag(&pool, card_id, false).await;
 
@@ -778,7 +783,12 @@ async fn e2e_undo_rate_card_restores_filtered_tag_membership(pool: SqlitePool) {
 }
 
 #[sqlx::test]
-async fn e2e_undo_rate_card_restores_auto_deleted_filtered_tag(pool: SqlitePool) {
+async fn e2e_undo_rate_card_restores_auto_deleted_filtered_tag(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    // Its filtered tag searches text, which needs `REGEXP`.
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
     let card_id = create_card_helper(&pool).await;
     let tag_id = graduate_from_filtered_tag(&pool, card_id, true).await;
     assert!(

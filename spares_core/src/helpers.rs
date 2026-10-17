@@ -29,6 +29,19 @@ pub(crate) async fn run_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send
 /// pattern string. The cache is process-wide, so repeated parses of the same
 /// pattern (e.g. per-file during a library import, or per-card during search)
 /// reuse the already-compiled regex.
+/// The pool of a `#[sqlx::test]` that takes pool and connect options, with SQLite's `REGEXP` as the
+/// server's pool has it. Text searches use it, so a test that searches text needs this pool.
+#[cfg(test)]
+pub(crate) async fn pool_with_regexp(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) -> sqlx::SqlitePool {
+    pool_options
+        .connect_with(options.with_regexp())
+        .await
+        .unwrap()
+}
+
 pub fn get_or_compile_regex(pattern: &str) -> Result<Arc<fancy_regex::Regex>, fancy_regex::Error> {
     type Cache = Mutex<HashMap<String, Arc<fancy_regex::Regex>>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();

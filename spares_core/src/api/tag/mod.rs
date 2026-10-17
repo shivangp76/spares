@@ -889,7 +889,12 @@ pub(crate) mod tests {
     }
 
     #[sqlx::test]
-    async fn tag_timestamps_bump_on_update_and_rebuild_only(pool: SqlitePool) {
+    async fn tag_timestamps_bump_on_update_and_rebuild_only(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        // Its filtered tag searches text, which needs `REGEXP`.
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
         let tag = create_tag(
             &pool,
             CreateTagRequest {
