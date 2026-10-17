@@ -129,17 +129,16 @@ impl Iterator for Lexer<'_> {
                 Err(e) => return Some(Err(e)),
             },
             Some(ch) if char::is_alphanumeric(ch) || ch == '.' || ch == '_' => {
-                self.s
-                    .eat_while(|c| char::is_alphanumeric(c) || c == '.' || c == '_' || c == '-');
-
-                let token_kind = match self.s.peek() {
-                    Some('=' | '>' | '<' | '~' | ':') => TokenKind::Field,
-                    _ => TokenKind::String,
+                self.s.eat_while(is_word_char);
+                let kind = match self.eat_reference(cursor_start) {
+                    Ok(true) => TokenKind::RelativeDate,
+                    Ok(false) if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':')) => {
+                        TokenKind::Field
+                    }
+                    Ok(false) => TokenKind::String,
+                    Err(e) => return Some(Err(e)),
                 };
-                Ok(Token {
-                    kind: token_kind,
-                    span: (cursor_start..self.s.cursor()),
-                })
+                just(kind, self.s.cursor())
             }
             Some(e) => {
                 return Some(Err(SingleTokenError {
@@ -162,6 +161,11 @@ impl Iterator for Lexer<'_> {
             }
         }
     }
+}
+
+/// Whether `c` can continue an unquoted word. `+` is allowed for offsets like `today+3d`.
+fn is_word_char(c: char) -> bool {
+    char::is_alphanumeric(c) || c == '.' || c == '_' || c == '-' || c == '+'
 }
 
 /// Whether `c` delimits a string. Curly double quotes are accepted since phone keyboards insert them in place of `"`.
@@ -211,6 +215,26 @@ impl Lexer<'_> {
                 };
             }
         }
+    }
+
+    /// After the word starting at `start`, consumes the rest of a reference like
+    /// `note[gir].created_at-5d` or `card[12].due`, returning whether there was one. `[` is not
+    /// allowed anywhere else, so this can't change the meaning of another query. The parser
+    /// validates the reference.
+    fn eat_reference(&mut self, start: usize) -> Result<bool, Error> {
+        if !(matches!(self.s.from(start), "note" | "card") && self.s.eat_if('[')) {
+            return Ok(false);
+        }
+        self.s.eat_until(']');
+        if !self.s.eat_if(']') {
+            return Err(miette::miette! {
+                labels = vec![LabeledSpan::at(start..self.s.cursor(), "this reference")],
+                "Missing `]` after the id",
+            }
+            .with_source_code(self.s.string().to_string()));
+        }
+        self.s.eat_while(is_word_char);
+        Ok(true)
     }
 
     /// Whether the input after `prefix` starts with a quote character.
@@ -466,6 +490,46 @@ mod tests {
                 (TokenKind::String, "suspended"),
                 (TokenKind::RightParen, ")"),
             ]
+        );
+    }
+
+    #[test]
+    fn test_relative_dates() {
+        let input = "created_at>=note[gir].created_at-5d c.due<=today+3d note(dog)";
+        let lexer = Lexer::new(input);
+        let tokens = lexer
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.kind, &input[t.span]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tokens,
+            vec![
+                (TokenKind::Field, "created_at"),
+                (TokenKind::GreaterThanEqual, ">="),
+                (TokenKind::RelativeDate, "note[gir].created_at-5d"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "c.due"),
+                (TokenKind::LessThanEqual, "<="),
+                (TokenKind::String, "today+3d"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "note"),
+                (TokenKind::And, ""),
+                (TokenKind::LeftParen, "("),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "dog"),
+                (TokenKind::RightParen, ")"),
+            ]
+        );
+        assert!(
+            Lexer::new("created_at>=note[gir")
+                .collect::<Result<Vec<_>, _>>()
+                .is_err()
         );
     }
 

@@ -105,6 +105,30 @@
 //! - `<`
 //! - `<=`
 //!
+//! #### Relative dates
+//!
+//! In place of a fixed date, a date field can be compared against a date that is worked out when
+//! the query runs:
+//! - Another note's timestamp: `note[<id>].created_at` or `note[<id>].updated_at`, where `<id>` is
+//!   the note's letters.
+//! - A card's timestamp: `card[<id>].created_at`, `card[<id>].updated_at` or `card[<id>].due`.
+//! - `today`: the start of the current day, in local time.
+//! - `now`.
+//!
+//! Each can be followed by one or more offsets, written with no spaces: `+` or `-`, a number, and a
+//! unit of `m` (minutes), `h` (hours), `d` (days) or `w` (weeks), as in `-5d` or `+1w-12h`. Days
+//! and weeks are calendar days in local time, so `today-1d` is the start of yesterday even across
+//! a daylight saving change. Minutes and hours are exact.
+//!
+//! A query that refers to a note or card that doesn't exist is an error. `today` and `now` are only
+//! dates when compared against a date field, so `today` and `data~now` still search for the words.
+//!
+//! **Examples:**
+//! - `created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d`: notes created in
+//!   the 5 days up to note `gir`.
+//! - `c.due<=today+3d`: cards due by the start of the day 3 days from now.
+//! - `updated_at>=now-12h`: notes edited in the last 12 hours.
+//!
 //! ### JSON
 //!
 //! JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The query result must be a boolean, number, or string. Use corresponding operators to filter results.
@@ -255,6 +279,9 @@ use serde::Serialize;
 pub(crate) mod evaluator;
 pub(crate) mod lexer;
 mod parser;
+mod relative_date;
+
+use relative_date::RelativeDate;
 
 /// Design note: There is no need to store the token's value here. Value parsing
 /// is done in the parser, and the value is stored in the Abstract Syntax Tree.
@@ -292,6 +319,9 @@ pub(crate) enum TokenKind {
     True,
     False,
     Date,
+    /// A date resolved when the query runs, like `note[gir].created_at-5d`. See
+    /// [`RelativeDate`].
+    RelativeDate,
     Regex,
     // Operators
     And,
@@ -370,6 +400,7 @@ pub(crate) enum Atom<'de> {
     Float(f64),
     Boolean(bool),
     DateTime(DateTime<Utc>),
+    RelativeDate(RelativeDate),
     Regex(Cow<'de, str>),
     Nil,
 }
@@ -383,6 +414,7 @@ impl fmt::Display for Atom<'_> {
             Atom::Float(n) => write!(f, "{n}"),
             Atom::Boolean(b) => write!(f, "{b:?}"),
             Atom::DateTime(d) => write!(f, "{d:?}"),
+            Atom::RelativeDate(d) => write!(f, "{d}"),
             Atom::Regex(s) => write!(f, "re:\"{s}\""),
             Atom::Nil => write!(f, "nil"),
         }

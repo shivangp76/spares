@@ -11,6 +11,7 @@ use miette::miette;
 
 use crate::search::Atom;
 use crate::search::Op;
+use crate::search::RelativeDate;
 use crate::search::Token;
 use crate::search::TokenKind;
 use crate::search::TokenTree;
@@ -91,6 +92,18 @@ impl<'de> Parser<'de> {
                 span,
                 ..
             } => TokenTree::Atom(Atom::DateTime(parse_date(&self.whole[span])?)),
+            Token {
+                kind: TokenKind::RelativeDate,
+                span,
+            } => TokenTree::Atom(Atom::RelativeDate(
+                RelativeDate::parse(&self.whole[span.clone()]).map_err(|e| {
+                    miette::miette! {
+                        labels = vec![LabeledSpan::at(span, "this date")],
+                        "{e}",
+                    }
+                    .with_source_code(self.whole.to_string())
+                })?,
+            )),
             Token {
                 kind: TokenKind::Regex,
                 span,
