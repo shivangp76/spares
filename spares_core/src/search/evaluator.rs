@@ -21,8 +21,10 @@ use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
 use crate::search::Atom;
 use crate::search::Op;
+use crate::search::RelativeDate;
 use crate::search::TokenTree;
 use crate::search::parser::Parser;
+use crate::search::relative_date::Anchor;
 
 pub(crate) struct Evaluator<'de> {
     // whole: &'de str,
@@ -47,6 +49,7 @@ impl<'de> Evaluator<'de> {
         self
     }
 
+    #[cfg(test)]
     fn evaluate(self, internal_output_type: EvaluatorReturnItemType) -> Result<String, Report> {
         let token_tree = self.parser.parse_expression()?;
         Self::build_query_from_tree(
@@ -92,6 +95,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        check_references_exist(&token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
             EvaluatorReturnItemType::Notes,
@@ -112,9 +116,18 @@ impl<'de> Evaluator<'de> {
     }
 
     pub(crate) async fn get_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, crate::Error> {
-        let query_str = self
-            .evaluate(EvaluatorReturnItemType::NoteIds)
+        let token_tree = self
+            .parser
+            .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        check_references_exist(&token_tree, db).await?;
+        let query_str = Self::build_query_from_tree(
+            &token_tree,
+            EvaluatorReturnItemType::NoteIds,
+            false,
+            self.scope.as_deref(),
+        )
+        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
         info!("{}", query_str);
         let note_ids: Vec<NoteId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
@@ -139,6 +152,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        check_references_exist(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             return Self::get_cards_cloze_path(&token_tree, self.scope.as_deref(), db).await;
@@ -182,6 +196,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        check_references_exist(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             return Ok(
@@ -1102,6 +1117,24 @@ fn evaluate_field_value(
         .value_type
         .ok_or_else(|| miette!("Missing value"))?;
 
+    // `today` and `now` are ordinary words unless compared against a date field, so `data~today`
+    // still searches for the word.
+    let mut is_relative_date = matches!(trees[1], TokenTree::Atom(Atom::RelativeDate(_)));
+    if matches!(field_type, FieldType::DateTime)
+        && let TokenTree::Atom(Atom::String(s)) = &trees[1]
+        && RelativeDate::starts_with_word_anchor(s)
+    {
+        value_context.params = vec![RelativeDate::parse(s)?.to_sql()];
+        value_type = FieldType::DateTime;
+        is_relative_date = true;
+    }
+    if is_relative_date && matches!(op, Op::Tilde) {
+        return Err(miette!(
+            "A relative date cannot be used with operator `{}`. Compare it with `=`, `<`, `<=`, `>` or `>=`.",
+            op
+        ));
+    }
+
     // Note ids are written as letters and stored packed, which keeps their order, so a letter id
     // becomes its packed integer and is then compared like any integer. Numbers are rejected, so
     // that an old query like `id>100` cannot silently change meaning.
@@ -1299,6 +1332,44 @@ fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
     }
 }
 
+/// Fails if the query refers to a note or card that doesn't exist, as in `note[gir].created_at`.
+/// Comparing against a missing item would otherwise match nothing, with no hint why.
+async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result<(), crate::Error> {
+    fn collect<'a>(tree: &'a TokenTree, dates: &mut Vec<&'a RelativeDate>) {
+        match tree {
+            TokenTree::Atom(Atom::RelativeDate(date)) => dates.push(date),
+            TokenTree::Atom(_) => {}
+            TokenTree::Cons(_, children) => {
+                for child in children {
+                    collect(child, dates);
+                }
+            }
+        }
+    }
+    let mut dates = Vec::new();
+    collect(tree, &mut dates);
+    for date in dates {
+        let (table, id, shown_id) = match date.anchor {
+            Anchor::Note(id, _) => ("note", id.packed(), id.to_string()),
+            Anchor::Card(id, _) => ("card", id, id.to_string()),
+            Anchor::Today | Anchor::Now => continue,
+        };
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = ?)"
+        ))
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::Error::Sqlx { source: e })?;
+        if !exists {
+            return Err(crate::Error::Library(LibraryError::Search(format!(
+                "`{date}` refers to {table} `{shown_id}`, which doesn't exist"
+            ))));
+        }
+    }
+    Ok(())
+}
+
 /// Returns true if the token tree contains a `limit` field anywhere.
 pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
     match tree {
@@ -1386,6 +1457,11 @@ impl Evaluate for Atom<'_> {
             Atom::DateTime(d) => {
                 context.value_type = Some(FieldType::DateTime);
                 context.params.push(d.timestamp().to_string());
+                Ok(())
+            }
+            Atom::RelativeDate(d) => {
+                context.value_type = Some(FieldType::DateTime);
+                context.params.push(d.to_sql());
                 Ok(())
             }
             Atom::Regex(r) => {
@@ -1600,6 +1676,156 @@ mod tests {
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_relative_dates() {
+        let gir = "(SELECT created_at FROM note WHERE id = 76967537148)";
+        let today = "CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER)";
+        let inputs = [
+            (
+                "created_at<=note[gir].created_at",
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at <= {gir}"),
+            ),
+            (
+                "created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d",
+                format!(
+                    "SELECT DISTINCT n.id FROM note n WHERE (n.created_at <= {gir} AND n.created_at >= CAST(strftime('%s', {gir}, 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER))"
+                ),
+            ),
+            (
+                "updated_at>note[gir].updated_at",
+                "SELECT DISTINCT n.id FROM note n WHERE n.updated_at > (SELECT updated_at FROM note WHERE id = 76967537148)".to_string(),
+            ),
+            (
+                "c.due<=card[12].due",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= (SELECT due FROM card WHERE id = 12)".to_string(),
+            ),
+            (
+                "created_at>=today",
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at >= {today}"),
+            ),
+            (
+                "c.due<=today+3d",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', 'utc') AS INTEGER)".to_string(),
+            ),
+            (
+                "-created_at>=now-12h",
+                "SELECT DISTINCT n.id FROM note n WHERE NOT (n.created_at >= CAST(strftime('%s', 'now', '-12 hours') AS INTEGER))".to_string(),
+            ),
+            // `today` and `now` are still words when the field isn't a date.
+            (
+                "today",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%today%'".to_string(),
+            ),
+            (
+                "data~now",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%now%'".to_string(),
+            ),
+            (
+                "keyword=today-5d",
+                "SELECT DISTINCT n.id FROM note n WHERE EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = \"today-5d\")".to_string(),
+            ),
+            // `note` followed by a group is not a reference.
+            (
+                "note(dog or cat)",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%note%' AND (n.data LIKE '%dog%' OR n.data LIKE '%cat%'))".to_string(),
+            ),
+        ];
+        for (input, expected_sql) in inputs {
+            let query_str = Evaluator::new(input)
+                .evaluate(EvaluatorReturnItemType::NoteIds)
+                .unwrap();
+            assert_eq!(query_str, expected_sql, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_relative_date_errors() {
+        let inputs = [
+            // Not a date field
+            "c.stability>=note[gir].created_at",
+            "id=note[gir].created_at",
+            // A date can't be searched for as text
+            "created_at~note[gir].created_at",
+            "created_at~today",
+            // Malformed references and offsets
+            "created_at>=note[gir",
+            "created_at>=note[gir].due",
+            "created_at>=note[12].created_at",
+            "created_at>=card[gir].due",
+            "created_at>=today-5",
+            "created_at>=today-5y",
+            "created_at>=nowish",
+        ];
+        for input in inputs {
+            let query_str_res = Evaluator::new(input).evaluate(EvaluatorReturnItemType::NoteIds);
+            assert!(
+                query_str_res.is_err(),
+                "Expected error for input: {}",
+                input
+            );
+        }
+    }
+
+    #[sqlx::test]
+    async fn relative_dates_select_by_another_notes_timestamp(pool: SqlitePool) {
+        let now = chrono::Utc::now().timestamp();
+        let day = 24 * 60 * 60;
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // `d` is the reference note. `b` and `c` were created in the 5 days before it, `a` before
+        // that and `e` after it.
+        let notes = [
+            ("a", now - 20 * day),
+            ("b", now - 14 * day),
+            ("c", now - 10 * day - 60),
+            ("d", now - 10 * day),
+            ("e", now - 60),
+        ];
+        for (letters, created_at) in notes {
+            sqlx::query(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', ?, ?, '{}', 1)",
+            )
+            .bind(letters.parse::<NoteId>().unwrap())
+            .bind(created_at)
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await?
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>();
+            ids.sort();
+            Ok::<_, crate::Error>(ids)
+        };
+
+        assert_eq!(
+            search("created_at<=note[d].created_at and created_at>=note[d].created_at-5d")
+                .await
+                .unwrap(),
+            ["b", "c", "d"]
+        );
+        assert_eq!(
+            search("created_at>note[d].created_at").await.unwrap(),
+            ["e"]
+        );
+        // `e` was created a minute ago, so it is after the start of yesterday at any time of day.
+        assert_eq!(search("created_at>=today-1d").await.unwrap(), ["e"]);
+        assert_eq!(search("created_at<now-15d").await.unwrap(), ["a"]);
+
+        let error = search("created_at<=note[z].created_at").await.unwrap_err();
+        assert!(
+            error.to_string().contains("note `z`, which doesn't exist"),
+            "{error}"
+        );
     }
 
     #[test]
