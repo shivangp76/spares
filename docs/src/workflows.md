@@ -57,30 +57,23 @@ spares note edit --tags-to-remove tag1 tag2 --files aaa.tex aab.tex
 
 ## Getting notes created `n` days before a note
 
-You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may be a theorem that depends on a definition introduced a few days earlier in class. This utility allows you to find all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
+You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may be a theorem that depends on a definition introduced a few days earlier in class. A relative date in the query finds all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
 
 ```sh
-# Get notes created $NUM_DAYS days before the note with id $ID, where $NUM_DAYS defaults to 5: `get_notes_before $ID $NUM_DAYS`
+# Notes created in the 5 days up to note `gir`
+spares note search 'created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d'
+# The same, only for notes tagged `measure-theory`
+spares note search 'tag=measure-theory created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d'
+```
+
+As a shell function, `get_notes_before $ID $NUM_DAYS`, where `$NUM_DAYS` defaults to 5:
+```sh
 get_notes_before() {
-  local note_id=$1
-  local days_before=${2:-5}
-
-  # Get the creation date of the input note
-  local note_date=$(spares note get "$note_id" | jq -r '.created_at')
-
-  # Check if we successfully got a date
-  if [[ -z "$note_date" || "$note_date" == "null" ]]; then
-    echo "Error: Could not retrieve note $note_id or it has no creation date" >&2
-    return 1
-  fi
-
-  # Calculate the date N days before
-  local start_date=$(date -j -v-${days_before}d -f "%Y-%m-%dT%H:%M:%SZ" "$note_date" "+%Y-%m-%dT%H:%M:%SZ")
-
-  # Search for notes in the date range
-  spares note search "created_at<=$note_date and created_at>=$start_date"
+  spares note search "created_at<=note[$1].created_at and created_at>=note[$1].created_at-${2:-5}d"
 }
 ```
+
+See "Relative dates" in the search syntax reference (`spares_core/src/search/mod.rs`) for other relative dates, such as `today-1w` and `now-12h`.
 
 ## Visualizations
 
