@@ -595,6 +595,7 @@ fn period_days(graphs: &StatisticsGraphsResponse) -> Vec<NaiveDate> {
         .collect()
 }
 
+#[expect(clippy::too_many_lines)]
 fn write_reviews(out: &mut String, graphs: &StatisticsGraphsResponse, width: usize) {
     let summary = &graphs.reviews_summary;
     write_title(
