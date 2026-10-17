@@ -23,6 +23,7 @@ import type {
   ReviewQueueRequest,
   ReviewQueueResponse,
   ReviewSnapshotResponse,
+  SearchField,
   StatisticsGraphsRequest,
   StatisticsGraphsResponse,
   StatisticsResponse,
@@ -205,19 +206,33 @@ async function clearOfflineCopies(): Promise<void> {
   await clearStatisticsEntries();
 }
 
+/** An error the server returned. `span` is where in a search query the problem is, if it is one. */
+export class ApiError extends Error {
+  span: [number, number] | null;
+
+  constructor(message: string, span: [number, number] | null = null) {
+    super(message);
+    this.span = span;
+  }
+}
+
 /** Throws with the server's `{ message }` (or plain-text body) when present, falling back to the status code. */
 async function throwIfNotOk(res: Response, label: string): Promise<void> {
   if (res.ok) return;
   let message = `${label} failed: ${res.status}`;
+  let span: [number, number] | null = null;
   const text = await res.text().catch(() => '');
   try {
-    const body = JSON.parse(text) as { message?: unknown };
+    const body = JSON.parse(text) as { message?: unknown; span?: unknown };
     if (typeof body.message === 'string') message = `${label} failed: ${body.message}`;
+    if (Array.isArray(body.span) && body.span.length === 2 && body.span.every(n => typeof n === 'number')) {
+      span = body.span as [number, number];
+    }
   } catch {
     // Not JSON, e.g. a request the server rejected before reaching a handler
     if (text) message = `${label} failed: ${text}`;
   }
-  throw new Error(message);
+  throw new ApiError(message, span);
 }
 
 async function apiFetch<T>(label: string, path: string, init: RequestInit = {}): Promise<T> {
@@ -693,7 +708,23 @@ export async function unburyCards(query: string | null): Promise<void> {
   await apiSend('Unbury', '/api/cards/unbury', { method: 'POST', body: JSON.stringify({ query }) });
 }
 
+let searchFields: Promise<SearchField[]> | null = null;
+
+/** The fields a search query can use, fetched once. */
+export function getSearchFields(): Promise<SearchField[]> {
+  searchFields ??= apiFetch<SearchField[]>('Search fields fetch', '/api/search/fields').catch(e => {
+    searchFields = null;
+    throw e;
+  });
+  return searchFields;
+}
+
 // Tags
+
+/** The name of every tag, for completing them in a search. */
+export async function listTagNames(): Promise<string[]> {
+  return (await listTags(1, 1_000_000)).map(t => t.name);
+}
 
 export async function listTags(page: number, limit: number): Promise<TagResponse[]> {
   return apiFetch('Tags fetch', `/api/tags?${pageQuery(page, limit)}`);

@@ -279,6 +279,37 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   background: rgb(0 0 0 / 0.4);
 }
 
+/* The search box's Syntax popup, styled like the keybindings one */
+.keybindings-help.search-help {
+  width: min(640px, calc(100% - 32px));
+}
+
+.search-help td:first-child button {
+  padding: 2px 6px;
+  font-size: 12px;
+  text-align: left;
+}
+
+/* The link at the right end of a search box that opens the search syntax */
+.search-syntax-link {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.search-syntax-link:hover {
+  color: var(--text);
+}
+
 .audio-recorder {
   padding: 0;
   border: 1px solid var(--border);
@@ -477,7 +508,7 @@ html:has(.review-answer-bar) {
     flex-wrap: wrap;
   }
 
-  .search-row > input {
+  .search-row > input, .search-row > .search-input {
     flex-basis: 100% !important;
     max-width: none !important;
   }

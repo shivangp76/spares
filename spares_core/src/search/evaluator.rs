@@ -1548,11 +1548,15 @@ fn sortable_fields() -> Vec<&'static str> {
 pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
     FIELDS
         .iter()
-        .map(|doc| crate::search::FieldInfo {
-            name: doc.name,
-            kind: Field::from_str(doc.name).map_or("", |field| field.kind_name()),
-            example: doc.example,
-            about: doc.about,
+        .map(|doc| {
+            let field = Field::from_str(doc.name);
+            crate::search::FieldInfo {
+                name: doc.name,
+                kind: field.as_ref().map_or("", Field::kind_name),
+                example: doc.example,
+                about: doc.about,
+                sortable: field.is_ok_and(|field| Field::to_order_by_expr(&field).is_ok()),
+            }
         })
         .collect()
 }

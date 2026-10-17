@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { cachedCardsPage, listCards, searchCards } from '../api/client';
+import { ApiError, cachedCardsPage, listCards, searchCards } from '../api/client';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
+import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -30,6 +31,7 @@ export default function CardsPage() {
   const searchQuery = searchParams.get('q');
   const [query, setQuery] = useState(searchQuery ?? '');
   const [searchResults, setSearchResults] = useState<CardResponse[] | null>(null);
+  const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   // The list being stepped through, which is the table unless a card was opened from the leeches
   const [browse, setBrowse] = useState<{ cards: CardResponse[]; index: number } | null>(null);
 
@@ -68,8 +70,12 @@ export default function CardsPage() {
     setError(null);
     let cancelled = false;
     searchCards(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setBrowse(null); setError(null); } })
-      .catch(e => { if (!cancelled) setError(String(e)); })
+      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setBrowse(null); setError(null); setSearchError(null); } })
+      .catch(e => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setSearchError(e instanceof ApiError && e.span ? { query: searchQuery, span: e.span } : null);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [credentials, searchQuery, searchCount, saveRecentSearch]);
@@ -118,13 +124,12 @@ export default function CardsPage() {
           </details>
 
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
-            <input
-              type="text"
+            <SearchInput
               value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              onChange={setQuery}
+              onSubmit={handleSearch}
               placeholder="Search cards, e.g. tag=a c.state=review"
-              style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
+              error={searchError}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}

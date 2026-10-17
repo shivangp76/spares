@@ -506,3 +506,12 @@ export interface NoteRenderResponse {
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_source?: string;
 }
+
+/** A field a search query can use, from `/api/search/fields`. */
+export interface SearchField {
+  name: string;
+  kind: string;
+  example: string;
+  about: string;
+  sortable: boolean;
+}

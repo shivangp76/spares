@@ -42,6 +42,7 @@ import CardRenderer from '../components/CardRenderer';
 import KeybindingsHelp, { type Keybinding } from '../components/KeybindingsHelp';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
+import SearchInput from '../components/SearchInput';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
 import AudioBar from '../components/AudioBar';
 import ReviewHeatmap from '../components/ReviewHeatmap';
@@ -73,6 +74,7 @@ function formatWait(ms: number): string {
 
 type Phase = 'landing' | 'loading' | 'front' | 'back' | 'waiting' | 'done' | 'summary' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
+const filterInputStyle: React.CSSProperties = { padding: '8px 12px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 
 const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] = [
   { mode: 'query', label: 'Query', placeholder: 'Filter cards due today, e.g. (tag=a limit=5) or tag=b…' },
@@ -918,15 +920,27 @@ export default function ReviewPage() {
             ))}
           </div>
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <input
-              ref={filterInputRef}
-              type={filterMode === 'tagId' ? 'number' : 'text'}
-              placeholder={FILTER_MODES.find(m => m.mode === filterMode)?.placeholder}
-              value={filterInput}
-              onChange={e => setFilterInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
-              style={{ flex: 1, padding: '8px 12px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 }}
-            />
+            {filterMode === 'query' ? (
+              <SearchInput
+                ref={filterInputRef}
+                placeholder={FILTER_MODES.find(m => m.mode === filterMode)?.placeholder}
+                value={filterInput}
+                onChange={setFilterInput}
+                onSubmit={input => startReview(filterMode, input)}
+                style={{ maxWidth: 'none' }}
+                inputStyle={filterInputStyle}
+              />
+            ) : (
+              <input
+                ref={filterInputRef}
+                type={filterMode === 'tagId' ? 'number' : 'text'}
+                placeholder={FILTER_MODES.find(m => m.mode === filterMode)?.placeholder}
+                value={filterInput}
+                onChange={e => setFilterInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') startReview(filterMode, filterInput); }}
+                style={{ flex: 1, ...filterInputStyle }}
+              />
+            )}
             <button onClick={() => startReview(filterMode, filterInput)} className="touch-target" style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
               Start Review
             </button>

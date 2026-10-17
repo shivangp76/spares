@@ -574,6 +574,8 @@ pub struct FieldInfo {
     pub example: &'static str,
     /// What it matches.
     pub about: &'static str,
+    /// Whether `sort_by_asc` and `sort_by_desc` can sort by it.
+    pub sortable: bool,
 }
 
 /// Every field that queries can use, in the order they are documented.

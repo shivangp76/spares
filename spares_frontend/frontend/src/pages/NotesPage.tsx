@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
+import { ApiError, cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
+import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
@@ -27,6 +28,7 @@ export default function NotesPage() {
   const searchQuery = searchParams.get('q');
   const [query, setQuery] = useState(searchQuery ?? '');
   const [searchResults, setSearchResults] = useState<NoteResponse[] | null>(null);
+  const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
   // The new note form stays mounted, hidden, while other notes are viewed, so its unsaved
@@ -69,8 +71,12 @@ export default function NotesPage() {
     setError(null);
     let cancelled = false;
     searchNotes(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setError(null); } })
-      .catch(e => { if (!cancelled) setError(String(e)); })
+      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setError(null); setSearchError(null); } })
+      .catch(e => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setSearchError(e instanceof ApiError && e.span ? { query: searchQuery, span: e.span } : null);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [credentials, searchQuery, searchCount, saveRecentSearch]);
@@ -137,13 +143,12 @@ export default function NotesPage() {
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
         <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length > 0 ? 8 : 16 }}>
-            <input
-              type="text"
+            <SearchInput
               value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              onChange={setQuery}
+              onSubmit={handleSearch}
               placeholder="Search notes…"
-              style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
+              error={searchError}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
