@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::Utc;
 use log::info;
 use miette::Error;
 use miette::Report;
@@ -10,7 +11,11 @@ use sqlx::Sqlite;
 use sqlx::SqlitePool;
 
 use crate::LibraryError;
+use crate::api::queue::waiting_on_links;
+use crate::config::QueueConfig;
+use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
+use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::Note;
@@ -354,6 +359,7 @@ enum CardField {
     Suspended,
     UserBuried,
     SchedulerBuried,
+    WaitingOnLinks,
     State,
     CustomData(String),
     Rated,
@@ -423,6 +429,7 @@ impl Field {
             "c.suspended" => Ok(Field::Card(CardField::Suspended)),
             "c.user_buried" => Ok(Field::Card(CardField::UserBuried)),
             "c.scheduler_buried" => Ok(Field::Card(CardField::SchedulerBuried)),
+            "c.waiting_on_links" => Ok(Field::Card(CardField::WaitingOnLinks)),
             "c.state" => Ok(Field::Card(CardField::State)),
             "c.custom_data" => {
                 // if input.len() != 2 {
@@ -520,6 +527,9 @@ impl Field {
                         "c.special_state = 3".to_string()
                     }
                 }
+                CardField::WaitingOnLinks => {
+                    unreachable!("needs the config, see `waiting_on_links_sql`")
+                }
                 CardField::State => with_op("c.state"),
                 CardField::CustomData(json_path) => {
                     format!("json_extract(c.custom_data, '{}') {}", json_path, value_str)
@@ -567,9 +577,10 @@ impl Field {
                     FieldType::Float
                 }
                 // CardField::SpecialState => {
-                CardField::Suspended | CardField::UserBuried | CardField::SchedulerBuried => {
-                    FieldType::Boolean
-                }
+                CardField::Suspended
+                | CardField::UserBuried
+                | CardField::SchedulerBuried
+                | CardField::WaitingOnLinks => FieldType::Boolean,
                 CardField::CustomData(_) => FieldType::Json,
                 CardField::Cloze => FieldType::String,
             },
@@ -628,6 +639,7 @@ impl Field {
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
+                | CardField::WaitingOnLinks
                 | CardField::CustomData(_)
                 | CardField::Cloze => Err(miette!("Cannot sort by field `{:?}`", field)),
             },
@@ -1258,9 +1270,33 @@ fn evaluate_field_value(
     // - Numbers cannot use containment operator
     validate_field_operator_types(&field, &field_type, op)?;
 
-    let sql_condition = field.to_sql_str(&value_str);
+    let sql_condition = if matches!(field, Field::Card(CardField::WaitingOnLinks)) {
+        waiting_on_links_sql(&value_str)?
+    } else {
+        field.to_sql_str(&value_str)
+    };
     context.add_where_clause(sql_condition);
     Ok(())
+}
+
+/// The SQL of `c.waiting_on_links` compared with `value_str`, with the `[queue]` settings of
+/// `config.toml`. See [`waiting_on_links_condition`].
+fn waiting_on_links_sql(value_str: &str) -> Result<String, Error> {
+    let queue = read_external_config().map_err(|e| miette!("{e}"))?.queue;
+    Ok(waiting_on_links_condition(&queue, value_str))
+}
+
+/// The SQL of `c.waiting_on_links` compared with `value_str`: the cards that
+/// [`QueueConfig::new_after_linked_notes`] and [`QueueConfig::reviews_after_linked_notes`] hold
+/// back today, so `true` matches nothing while both are off.
+pub(crate) fn waiting_on_links_condition(queue: &QueueConfig, value_str: &str) -> String {
+    let (_, card_due_limit) = get_start_end_local_date(&Utc::now());
+    let waiting = waiting_on_links(queue, card_due_limit, None).unwrap_or_else(|| "0".to_string());
+    if value_str.contains("false") {
+        format!("NOT {waiting}")
+    } else {
+        waiting
+    }
 }
 
 /// A pattern extracted from a `c.cloze ~ ...` condition for in-memory matching.

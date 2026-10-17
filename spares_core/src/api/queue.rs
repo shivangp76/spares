@@ -324,6 +324,18 @@ pub(crate) fn linked_notes_clause(
     card_due_limit: DateTime<Utc>,
     query_card_ids: Option<&str>,
 ) -> String {
+    waiting_on_links(config, card_due_limit, query_card_ids)
+        .map(|waiting| format!("\nAND NOT {waiting}"))
+        .unwrap_or_default()
+}
+
+/// The cards [`linked_notes_clause`] holds back, as an `EXISTS` condition. `None` when both
+/// settings are off.
+pub(crate) fn waiting_on_links(
+    config: &QueueConfig,
+    card_due_limit: DateTime<Utc>,
+    query_card_ids: Option<&str>,
+) -> Option<String> {
     let review = review_state();
     let [learning, relearning] = learning_states();
     let mut holds = Vec::new();
@@ -339,15 +351,14 @@ pub(crate) fn linked_notes_clause(
         ));
     }
     if holds.is_empty() {
-        return String::new();
+        return None;
     }
     let in_query = query_card_ids
-        .map(|ids| format!("\n        AND lc.id IN ({ids})"))
+        .map(|ids| format!(" AND lc.id IN ({ids})"))
         .unwrap_or_default();
     // Only older notes hold newer ones back, which is a strict order, so there are no cycles
-    formatdoc! {"
-
-        AND NOT EXISTS (
+    Some(formatdoc! {"
+        EXISTS (
             SELECT 1 FROM note_link nl
             JOIN note ln ON ln.id = nl.linked_note_id
             JOIN card lc ON lc.note_id = ln.id
@@ -360,8 +371,8 @@ pub(crate) fn linked_notes_clause(
         max_score = config.linked_note_max_score,
         scheduler_buried = SpecialState::SchedulerBuried as u8,
         buried_until_later_today = SpecialState::BuriedUntilLaterToday as u8,
-        holds = holds.join("\n                    OR "),
-    }
+        holds = holds.join(" OR "),
+    })
 }
 
 #[cfg(test)]
@@ -1550,6 +1561,49 @@ mod linked_note_tests {
             by_state,
             HashMap::from([(state(NEW), 2), (state(RELEARNING), 1)])
         );
+    }
+
+    #[sqlx::test]
+    async fn search_lists_the_cards_waiting(pool: SqlitePool) {
+        use crate::search::evaluator::Evaluator;
+        use crate::search::evaluator::waiting_on_links_condition;
+
+        let now = Utc::now();
+        let [a, b, c] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        link(&pool, c, Some(a), 4.5).await;
+        let matching = async |config: &QueueConfig, value: &str| -> Vec<CardId> {
+            sqlx::query_scalar(&format!(
+                "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
+                waiting_on_links_condition(config, value)
+            ))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let on = holding(true, false);
+        assert_eq!(matching(&on, "= true").await, [b]);
+        assert_eq!(matching(&on, "= false").await, [a, c]);
+        // Only what review holds back: reviews do not wait with just new cards on
+        set_card(&pool, a, RELEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        set_card(&pool, b, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        assert_eq!(matching(&on, "= true").await, Vec::<CardId>::new());
+        assert_eq!(matching(&holding(false, true), "= true").await, [b]);
+
+        // The settings are off by default, so the search matches nothing
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query).get_card_ids(&pool).await.unwrap();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(
+            search("c.waiting_on_links=true").await,
+            Vec::<CardId>::new()
+        );
+        assert_eq!(search("c.waiting_on_links=false").await, [a, b, c]);
+        assert_eq!(search("-c.waiting_on_links=true").await, [a, b, c]);
     }
 
     #[test]

@@ -116,9 +116,10 @@ waits:
 
 ## Visibility (separate commit)
 
-A search field, such as `c.waiting_on_links`, in `search/evaluator.rs` next to
-`c.scheduler_buried`, built from the same clause, so `spares card list` can show why a card is not
-coming up.
+Done: `c.waiting_on_links`, in `search/evaluator.rs` next to `c.scheduler_buried`, built from
+the same `EXISTS` (`waiting_on_links` in `api/queue.rs`), so `spares card search
+'c.waiting_on_links=true'` shows why a card is not coming up. It follows the settings, so it
+matches nothing while both are off. It does not scope to a query, since a search has none.
 
 ## Tests
 
@@ -142,5 +143,5 @@ In the `api/queue.rs` tests, with `create_notes` and `note_link` rows inserted d
 1. ~~Settings with rustdoc.~~ Done.
 2. ~~`linked_notes_clause` and its wiring.~~ Done.
 3. ~~Tests.~~ Done.
-4. The search field.
+4. ~~The search field.~~ Done.
 5. Remove "Prerequisite-aware order" from `queue_plan.md` and this file once implemented.

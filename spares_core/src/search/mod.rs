@@ -20,6 +20,7 @@
 //! | c.suspended         | bool     |
 //! | `c.user_buried`       | bool     |
 //! | `c.scheduler_buried`  | bool     |
+//! | `c.waiting_on_links`  | bool     |
 //! | c.state             | u32      |
 //! | `c.custom_data`       | Json     |
 //! | `linked_to_note`      | i64      |
@@ -28,6 +29,11 @@
 //! | c.rated             | u32      |
 //! | c.count             | u32      |
 //! | c.cloze             | String   |
+//!
+//! `c.waiting_on_links` matches the cards that `new_after_linked_notes` and
+//! `reviews_after_linked_notes` (see `QueueConfig` in `spares_core::config`) hold back today, so
+//! `spares card search 'c.waiting_on_links=true'` shows why a card is not coming up. It matches
+//! nothing while both are off.
 //!
 //! `c.rated` matches against graded reviews only. Forgetting a card is recorded in the review log too,
 //! but it carries no rating, so it never makes a card match `c.rated`. Neither does a cram (a

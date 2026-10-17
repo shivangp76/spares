@@ -474,6 +474,9 @@ pub struct QueueConfig {
     /// notes are rendered with linked notes, so a new note holds nothing back until then, and a
     /// sync does not match them. The count of new cards can go up during a session, as the notes
     /// they wait for are learned.
+    ///
+    /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
+    /// back before studying with it, turn it on and run one.
     pub new_after_linked_notes: bool,
     /// Whether a review card waits while a card of an older note its note links to is
     /// relearning and due today. Defaults to `false`. See [`Self::new_after_linked_notes`],
