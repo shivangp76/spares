@@ -53,6 +53,19 @@ export function getCredentials(): Credentials {
   return JSON.parse(raw) as Credentials;
 }
 
+/**
+ * The schedulers of the server at `serverUrl`, asked for with `apiKey`, to check both before they
+ * are saved. Throws `NetworkError` if the server can't be reached, and an `ApiError` saying so if it
+ * rejects the key.
+ */
+export async function getSchedulerNames({ serverUrl, apiKey }: Omit<Credentials, 'schedulerName'>): Promise<string[]> {
+  const label = 'Log in';
+  const res = await send(label, `${serverUrl}/api/schedulers`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (res.status === 401) throw new ApiError('The server rejected this API key.');
+  await throwIfNotOk(res, label);
+  return res.json() as Promise<string[]>;
+}
+
 export function saveCredentials(creds: Credentials): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
   clearCaches();
@@ -810,6 +823,11 @@ export async function listParsers(page: number, limit: number): Promise<ParserRe
 /** How notes are written for the parser, with the cards each example makes, fetched once. */
 export function getParserSyntax(id: number): Promise<SyntaxExample[]> {
   return memoize(`parserSyntax:${id}`, () => apiFetch('Parser syntax fetch', `/api/parsers/${id}/syntax`));
+}
+
+/** The names of the parsers spares has, which a parser here must have to be used. */
+export function getKnownParserNames(): Promise<string[]> {
+  return memoize('knownParsers', () => apiFetch('Parser names fetch', '/api/parsers/known'));
 }
 
 export async function createParser(name: string): Promise<ParserResponse> {

@@ -533,6 +533,14 @@ pub fn get_all_parsers() -> Vec<fn() -> Box<dyn Parseable>> {
     all_parsers
 }
 
+/// The names of the parsers spares has, which a parser in the database must have to be used.
+pub fn parser_names() -> Vec<&'static str> {
+    get_all_parsers()
+        .iter()
+        .map(|parser| parser().get_parser_name())
+        .collect()
+}
+
 pub fn find_parser(
     parser_str: &str,
     all_parsers: &[fn() -> Box<dyn Parseable>],

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { PAGE_HELP, headingAnchor } from './pages';
+import { LOGIN_DOCS, PAGE_HELP, headingAnchor, type DocLink } from './pages';
 
 const ROOT = join(import.meta.dir, '../../../..');
 
@@ -20,11 +20,13 @@ const FIELDS = [...readFileSync(join(ROOT, 'spares_core/src/search/evaluator.rs'
 const code = (text: string) => [...text.matchAll(/`([^`]*)`/g)].map(m => m[1]);
 
 test('the manual has every linked section', () => {
-  for (const [path, help] of Object.entries(PAGE_HELP)) {
-    for (const link of help.docs) {
-      expect(existsSync(join(ROOT, 'docs/src', link.file)), `${path}: ${link.file}`).toBe(true);
-      if (link.heading) expect(anchors(link.file), `${path}: ${link.heading}`).toContain(headingAnchor(link.heading));
-    }
+  const links: [string, DocLink][] = [
+    ...Object.entries(PAGE_HELP).flatMap(([path, help]) => help.docs.map(link => [path, link] as [string, DocLink])),
+    ['/login', LOGIN_DOCS],
+  ];
+  for (const [path, link] of links) {
+    expect(existsSync(join(ROOT, 'docs/src', link.file)), `${path}: ${link.file}`).toBe(true);
+    if (link.heading) expect(anchors(link.file), `${path}: ${link.heading}`).toContain(headingAnchor(link.heading));
   }
 });
 
@@ -55,6 +57,15 @@ test('the fields whose descriptions explain values exist', () => {
     [...readFileSync(join(import.meta.dir, '..', file), 'utf8').matchAll(/\babout\('([^']+)'\)/g)].map(m => m[1]));
   expect(named).toContain('c.stability');
   for (const name of named) expect(FIELDS).toContain(name);
+});
+
+test('the environment variables the pages name are ones the server reads', () => {
+  const rust = ['spares_core/src/config.rs', 'spares_server/src/main.rs'].map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
+  const sources = readdirSync(join(import.meta.dir, '..'), { recursive: true, encoding: 'utf8' }).filter(f => f.endsWith('.tsx'));
+  const named = sources.flatMap(file =>
+    [...readFileSync(join(import.meta.dir, '..', file), 'utf8').matchAll(/<code>(SPARES_[A-Z_]+)<\/code>/g)].map(m => m[1]));
+  expect(named).toContain('SPARES_API_KEY');
+  for (const name of named) expect(rust).toContain(`"${name}"`);
 });
 
 test('headingAnchor', () => {

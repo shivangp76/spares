@@ -60,6 +60,7 @@ use crate::handlers::parser::create_parser_handler;
 use crate::handlers::parser::delete_parser_handler;
 use crate::handlers::parser::get_parser_handler;
 use crate::handlers::parser::get_parser_syntax_handler;
+use crate::handlers::parser::list_known_parsers_handler;
 use crate::handlers::parser::list_parsers_handler;
 use crate::handlers::parser::update_parser_handler;
 use crate::handlers::render_asset::get_render_asset_handler;
@@ -83,6 +84,7 @@ use crate::handlers::saved_search::list_saved_searches_handler;
 use crate::handlers::saved_search::save_search_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
+use crate::handlers::scheduler::list_schedulers_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 use crate::handlers::sync::SYNC_BODY_LIMIT;
@@ -231,6 +233,7 @@ pub(crate) fn create_router(
         .route("/api/parsers/{id}", patch(update_parser_handler))
         .route("/api/parsers/{id}", delete(delete_parser_handler))
         .route("/api/parsers", get(list_parsers_handler))
+        .route("/api/parsers/known", get(list_known_parsers_handler))
         // Tag
         .route("/api/tags", post(create_tag_handler))
         .route("/api/tags/{id}", get(get_tag_handler))
@@ -289,6 +292,7 @@ pub(crate) fn create_router(
         .route("/api/cards/unbury", post(unbury_cards_handler))
         .merge(review_routes())
         // Scheduler
+        .route("/api/schedulers", get(list_schedulers_handler))
         .route(
             "/api/scheduler/{name}/ratings",
             get(get_scheduler_ratings_handler),

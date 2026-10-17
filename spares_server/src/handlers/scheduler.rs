@@ -21,6 +21,11 @@ pub(crate) struct ScoreQuery {
     pub score: f64,
 }
 
+/// The names of the schedulers, the default first. The web app checks the one it logs in with.
+pub(crate) async fn list_schedulers_handler() -> impl IntoResponse {
+    Json(spares_core::schedulers::scheduler_names())
+}
+
 pub(crate) async fn get_scheduler_ratings_handler(
     Path(name): Path<String>,
     axum::extract::State(_data): axum::extract::State<Arc<AppState>>,

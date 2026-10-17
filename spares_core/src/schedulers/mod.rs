@@ -418,6 +418,14 @@ fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
     all_schedulers
 }
 
+/// The names of the schedulers cards can be rated with, the default first.
+pub fn scheduler_names() -> Vec<&'static str> {
+    get_all_schedulers()
+        .iter()
+        .map(|scheduler| scheduler().get_scheduler_name())
+        .collect()
+}
+
 /// The scheduler to attribute an action to when no review log names one, such as forgetting a
 /// card that has never been reviewed.
 pub fn get_default_scheduler_name() -> &'static str {

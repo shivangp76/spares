@@ -38,6 +38,11 @@ pub(crate) async fn get_parser_handler(
     Ok(Json(parser_res))
 }
 
+/// The names of the parsers spares has, which a parser here must have to be used.
+pub(crate) async fn list_known_parsers_handler() -> impl IntoResponse {
+    Json(spares_core::parsers::parser_names())
+}
+
 /// The examples of how notes are written for the parser, for the web app's note editor.
 pub(crate) async fn get_parser_syntax_handler(
     Path(id): Path<i64>,

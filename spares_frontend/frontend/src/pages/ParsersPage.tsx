@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createParser, deleteParser, listParsers, updateParser } from '../api/client';
+import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import type { ParserResponse } from '../types/spares';
@@ -20,11 +20,17 @@ export default function ParsersPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
+  // The parsers spares has code for. Null until fetched, or if that failed, so no parser is flagged.
+  const [known, setKnown] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     listParsers(1, PARSERS_LIMIT).then(setParsers, e => setError(errorMessage(e)));
+    getKnownParserNames().then(setKnown, () => {});
   }, [credentials, navigate]);
+
+  // The known parsers not added yet, which are the ones worth adding
+  const addable = known?.filter(name => !parsers?.some(p => p.name === name)) ?? [];
 
   async function run(action: () => Promise<string>) {
     try {
@@ -76,9 +82,11 @@ export default function ParsersPage() {
           value={newName}
           onChange={e => setNewName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') add(); }}
-          placeholder="New parser name, e.g. markdown"
+          placeholder={addable.length > 0 ? `New parser, e.g. ${addable[0]}` : 'New parser name'}
+          list="known-parsers"
           style={{ ...input, flex: 1, maxWidth: 300 }}
         />
+        <datalist id="known-parsers">{addable.map(name => <option key={name} value={name} />)}</datalist>
         <button onClick={add} disabled={!newName.trim()} className="touch-target-small">Add</button>
       </div>
 
@@ -110,7 +118,16 @@ export default function ParsersPage() {
                         aria-label="Parser name"
                         style={input}
                       />
-                    ) : parser.name}
+                    ) : (
+                      <>
+                        {parser.name}
+                        {known && !known.includes(parser.name) && (
+                          <div style={{ fontSize: 12, color: 'var(--warning)' }}>
+                            spares has no parser by this name, so notes can't be written for it. Its parsers are {known.join(', ')}.
+                          </div>
+                        )}
+                      </>
+                    )}
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
                     <span style={{ display: 'inline-flex', gap: 4 }}>
@@ -128,7 +145,11 @@ export default function ParsersPage() {
                 </tr>
               ))}
               {parsers.length === 0 && (
-                <tr><td colSpan={3} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No parsers</td></tr>
+                <tr>
+                  <td colSpan={3} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                    No parsers{addable.length > 0 && `. Add one of ${addable.join(', ')} to write notes in it.`}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
