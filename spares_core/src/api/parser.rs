@@ -9,12 +9,17 @@ use crate::api::undo::payloads::CreateParserPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateParserPayload;
+use crate::config::read_external_config;
 use crate::ids::IdTable;
 use crate::ids::next_id_in;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::Parser;
 use crate::notes_vcs;
+use crate::parsers::find_parser;
+use crate::parsers::get_all_parsers;
+use crate::parsers::syntax::SyntaxExample;
+use crate::parsers::syntax::syntax_examples;
 use crate::schema::FilterOptions;
 use crate::schema::parser::CreateParserRequest;
 use crate::schema::parser::ParserResponse;
@@ -250,6 +255,18 @@ pub async fn list_parsers(
         .map(ParserResponse::new)
         .collect::<Vec<ParserResponse>>();
     Ok(responses)
+}
+
+/// How notes are written for the parser `id`, with the cards each example makes (see
+/// [`crate::parsers::syntax`]).
+pub async fn get_parser_syntax(db: &SqlitePool, id: i64) -> Result<Vec<SyntaxExample>, Error> {
+    let name = get_parser_name(db, id).await?;
+    let parser = find_parser(&name, &get_all_parsers())?;
+    let external_config = read_external_config().ok();
+    syntax_examples(
+        parser.as_ref(),
+        external_config.as_ref().map(|c| &c.overlapper),
+    )
 }
 
 #[cfg(test)]

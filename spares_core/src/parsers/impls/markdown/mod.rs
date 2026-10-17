@@ -364,6 +364,10 @@ impl Parseable for MarkdownParser {
         Some(format!("[listen]({})", file_path.display()))
     }
 
+    fn construct_linked_note(&self, keyword: &str) -> Option<String> {
+        Some(format!("[{keyword}][li]"))
+    }
+
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
         if is_test_mode() {
             return get_cache_dir();

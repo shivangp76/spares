@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { createNotes, listParsers, renderNote } from '../api/client';
-import { useEditorSetup } from '../hooks/useEditorSetup';
+import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
+import { useParserSyntax } from '../hooks/useParserSyntax';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
-import { errorMessage, formatNoteId, insertBlock, insertInline } from '../utils';
+import { errorMessage, formatNoteId, insertBlock, insertInline, insertSource } from '../utils';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
+import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13, background: 'var(--bg)' };
@@ -30,6 +32,8 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const [isSuspended, setIsSuspended] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The first example shows what to write while the data is empty
+  const firstExample = useParserSyntax(parserId).examples?.[0]?.source;
 
   useEffect(() => {
     listParsers(1, PARSERS_LIMIT)
@@ -85,11 +89,12 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
           <div style={{ display: 'flex', gap: 6 }}>
+            <NoteSyntaxButton parserId={parserId} tips={EDITOR_TIPS} onInsert={source => setData(insertSource(dataEditorRef.current?.view, data, source))} />
             <InsertAudioButton parserId={parserId} onInsert={snippet => setData(insertInline(dataEditorRef.current?.view, data, snippet))} />
             <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
           </div>
         </div>
-        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} extensions={editor.dataExtensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
+        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} placeholder={firstExample && `e.g. ${firstExample}`} extensions={editor.dataExtensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
       </div>
 
       <div className="form-grid">

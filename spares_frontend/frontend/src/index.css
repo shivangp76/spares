@@ -620,3 +620,33 @@ html:has(.review-answer-bar) {
 .heatmap-scroll::-webkit-scrollbar {
   display: none;
 }
+
+/* An example in the note syntax popup: what to write, and the cards it makes */
+.syntax-example {
+  padding: 10px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.syntax-example pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.syntax-example-cards {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.syntax-example-front {
+  white-space: pre-wrap;
+}
+
+.syntax-example-answer {
+  color: var(--tone-blue-fg);
+}

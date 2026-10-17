@@ -7,9 +7,9 @@ use typst_syntax::parse;
 use crate::parsers::ClozeMatch;
 
 const CLOZE_FUNC_NAME: &str = "cl";
-const LINKED_NOTE_FUNC_NAME: &str = "lin";
+pub(super) const LINKED_NOTE_FUNC_NAME: &str = "lin";
 const SETTINGS_FUNC_NAME: &str = "se";
-const KEYWORD_FUNC_NAME: &str = "key";
+pub(super) const KEYWORD_FUNC_NAME: &str = "key";
 
 /// A stateful iterator over parsed Typst source that yields clozes,
 /// linked-note refs, settings blocks, and keyword blocks one at a time.

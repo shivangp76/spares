@@ -4,9 +4,9 @@ use unscanny::Scanner;
 
 use crate::parsers::ClozeMatch;
 
-const LINKED_NOTE_CMD: &str = "li";
+pub(super) const LINKED_NOTE_CMD: &str = "li";
 const SETTINGS_CMD: &str = "se";
-const KEYWORD_CMD: &str = "key";
+pub(super) const KEYWORD_CMD: &str = "key";
 
 enum ClMarker {
     Begin {

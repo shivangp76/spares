@@ -5,6 +5,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+use data_parser::KEYWORD_FUNC_NAME;
+use data_parser::LINKED_NOTE_FUNC_NAME;
 use data_parser::TypstDataParser;
 use indoc::indoc;
 use log::warn;
@@ -333,6 +335,14 @@ impl Parseable for TypstParser {
         // Not `std.link`, which `audio_refs` would only partly match. Words, not an emoji, which a
         // font may not have.
         Some(format!("#link(\"{}\")[listen]", file_path.display()))
+    }
+
+    fn construct_linked_note(&self, keyword: &str) -> Option<String> {
+        Some(format!("#{LINKED_NOTE_FUNC_NAME}[{keyword}]"))
+    }
+
+    fn construct_keyword(&self, keyword: &str) -> Option<String> {
+        Some(format!("#{KEYWORD_FUNC_NAME}[{keyword}]"))
     }
 
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {

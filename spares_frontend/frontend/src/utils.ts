@@ -164,6 +164,12 @@ export function insertInline(view: EditorView | undefined, value: string, text: 
   return view.state.doc.toString();
 }
 
+/** Inserts an example of a note's syntax: on lines of its own if it has several, else at the
+    cursor. Returns the editor's new contents, as `insertBlock` and `insertInline` do. */
+export function insertSource(view: EditorView | undefined, value: string, source: string): string {
+  return source.includes('\n') ? insertBlock(view, value, source) : insertInline(view, value, source);
+}
+
 /** Extensions of the images cards can show, as the server accepts them. */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
 const IMAGE_TYPE_EXTENSIONS: Record<string, string> = {

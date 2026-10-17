@@ -507,6 +507,21 @@ export interface NoteRenderResponse {
   browser_source?: string;
 }
 
+/** One way of writing something in a note, from `/api/parsers/{id}/syntax`. */
+export interface SyntaxExample {
+  title: string;
+  /** What it does. Text in backticks is code. */
+  about: string;
+  source: string;
+  cards: CardPreview[];
+}
+
+/** A card of a `SyntaxExample`, as plain text: its front, with blanks or hints for what it hides. */
+export interface CardPreview {
+  front: string;
+  answers: string[];
+}
+
 /** A field a search query can use, from `/api/search/fields`. */
 export interface SearchField {
   name: string;

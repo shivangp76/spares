@@ -10,8 +10,8 @@ import type {
   ImageOcclusionData,
   ImageOcclusionEditorConfig,
   MatchedKeywordResponse,
-  NoteMatch,
   NoteLink,
+  NoteMatch,
   NoteRenderResponse,
   NoteResponse,
   NotesSelector,
@@ -34,6 +34,7 @@ import type {
   SubmitStudyActionResponse,
   SyncOfflineActionsRequest,
   SyncOfflineActionsResponse,
+  SyntaxExample,
   TagResponse,
   UndoEventResponse,
   UnmatchedKeywordResponse,
@@ -792,6 +793,11 @@ export async function rebuildTag(id: number): Promise<void> {
 
 export async function listParsers(page: number, limit: number): Promise<ParserResponse[]> {
   return apiFetch('Parsers fetch', `/api/parsers?${pageQuery(page, limit)}`);
+}
+
+/** How notes are written for the parser, with the cards each example makes, fetched once. */
+export function getParserSyntax(id: number): Promise<SyntaxExample[]> {
+  return memoize(`parserSyntax:${id}`, () => apiFetch('Parser syntax fetch', `/api/parsers/${id}/syntax`));
 }
 
 export async function createParser(name: string): Promise<ParserResponse> {

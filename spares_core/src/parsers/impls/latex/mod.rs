@@ -47,6 +47,8 @@ use std::process::Command;
 use std::process::Output;
 use std::sync::LazyLock;
 
+use data_parser::KEYWORD_CMD;
+use data_parser::LINKED_NOTE_CMD;
 use data_parser::LatexDataParser;
 use log::warn;
 
@@ -186,6 +188,14 @@ impl Parseable for LatexParserNote {
         output_type: ConstructImageOcclusionType,
     ) -> String {
         construct_image_occlusion(self, image_occlusion_data, output_type)
+    }
+
+    fn construct_linked_note(&self, keyword: &str) -> Option<String> {
+        Some(format!("\\{LINKED_NOTE_CMD}{{{keyword}}}"))
+    }
+
+    fn construct_keyword(&self, keyword: &str) -> Option<String> {
+        Some(format!("\\{KEYWORD_CMD}{{{keyword}}}"))
     }
 
     fn construct_image(&self, file_path: &Path) -> String {

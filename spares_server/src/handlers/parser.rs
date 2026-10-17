@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use spares_core::api::parser::create_parser;
 use spares_core::api::parser::delete_parser;
 use spares_core::api::parser::get_parser;
+use spares_core::api::parser::get_parser_syntax;
 use spares_core::api::parser::list_parsers;
 use spares_core::api::parser::update_parser;
 use spares_core::notes_vcs::run_exclusive;
@@ -35,6 +36,17 @@ pub(crate) async fn get_parser_handler(
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let parser_res = get_parser(&data.db, id).await.map_err(error_to_response)?;
     Ok(Json(parser_res))
+}
+
+/// The examples of how notes are written for the parser, for the web app's note editor.
+pub(crate) async fn get_parser_syntax_handler(
+    Path(id): Path<i64>,
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let examples = get_parser_syntax(&data.db, id)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(examples))
 }
 
 pub(crate) async fn update_parser_handler(

@@ -35,6 +35,7 @@ pub(crate) mod image_occlusion;
 pub(crate) mod impls;
 mod notes;
 mod settings;
+pub mod syntax;
 pub mod typed_answer;
 
 pub use cards::*;
@@ -188,6 +189,18 @@ pub trait Parseable: Send + Sync {
     /// Links to the audio clip at `file_path`, an absolute path, where it is inserted into a note,
     /// so it is found by [`Self::audio_refs`]. `None` if the parser has no audio clips.
     fn construct_audio(&self, _file_path: &Path) -> Option<String> {
+        None
+    }
+
+    /// A link to the note with the keyword `keyword`, as [`Self::get_linked_notes`] finds it. `None`
+    /// if the parser has no linked notes. Used for the examples of [`syntax::syntax_examples`].
+    fn construct_linked_note(&self, _keyword: &str) -> Option<String> {
+        None
+    }
+
+    /// `keyword` written in a note's text so it is also one of the note's keywords, as
+    /// [`Self::get_embedded_keywords`] finds it. `None` if the parser has no embedded keywords.
+    fn construct_keyword(&self, _keyword: &str) -> Option<String> {
         None
     }
 

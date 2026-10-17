@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { Vim } from '@replit/codemirror-vim';
 import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
-import { useEditorSetup } from '../hooks/useEditorSetup';
+import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, insertBlock, insertInline, isLiveNote } from '../utils';
+import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, insertBlock, insertInline, insertSource, isLiveNote } from '../utils';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
+import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -19,6 +21,7 @@ const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fon
 // `:w` saves the note being edited. Ex commands are global, so the editor reaches its note's
 // NoteDetail through a DOM event.
 const VIM_WRITE_EVENT = 'spares-vim-write';
+const VIM_WRITE_TIP = 'With Vim keybindings, :w saves the note.';
 Vim.defineEx('write', 'w', cm => {
   cm.cm6.dom.dispatchEvent(new Event(VIM_WRITE_EVENT, { bubbles: true }));
 });
@@ -36,6 +39,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
   const editor = useEditorSetup(note.parser_name, live ? null : note.parser_id);
+  const vimEnabled = useVimKeybindings();
   const [dataContent, setDataContent] = useState(note.data);
   // The editor's data as last saved, so edits made since can be told apart
   const [savedData, setSavedData] = useState(note.data);
@@ -155,6 +159,11 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           <div style={fieldLabel}>Data</div>
           {!live && (
             <div style={{ display: 'flex', gap: 6 }}>
+              <NoteSyntaxButton
+                parserId={note.parser_id}
+                tips={vimEnabled ? [...VIM_WRITE_TIP] : EDITOR_TIPS}
+                onInsert={source => setDataContent(insertSource(dataEditorRef.current?.view, dataContent, source))}
+              />
               <InsertAudioButton
                 parserId={note.parser_id}
                 onInsert={snippet => setDataContent(insertInline(dataEditorRef.current?.view, dataContent, snippet))}

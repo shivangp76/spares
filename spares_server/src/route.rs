@@ -58,6 +58,7 @@ use crate::handlers::notes_vcs::notes_vcs_status_handler;
 use crate::handlers::parser::create_parser_handler;
 use crate::handlers::parser::delete_parser_handler;
 use crate::handlers::parser::get_parser_handler;
+use crate::handlers::parser::get_parser_syntax_handler;
 use crate::handlers::parser::list_parsers_handler;
 use crate::handlers::parser::update_parser_handler;
 use crate::handlers::render_asset::get_render_asset_handler;
@@ -225,6 +226,7 @@ pub(crate) fn create_router(
         // Parser
         .route("/api/parsers", post(create_parser_handler))
         .route("/api/parsers/{id}", get(get_parser_handler))
+        .route("/api/parsers/{id}/syntax", get(get_parser_syntax_handler))
         .route("/api/parsers/{id}", patch(update_parser_handler))
         .route("/api/parsers/{id}", delete(delete_parser_handler))
         .route("/api/parsers", get(list_parsers_handler))

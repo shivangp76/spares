@@ -6,6 +6,9 @@ import { clozeHighlighting, loadLanguage, type NoteSyntax, noteSyntax } from '..
 import { useVimKeybindings } from '../preferences';
 import { useMediaQuery } from './useMediaQuery';
 
+/** What the note editors do beyond typing, for their Syntax popup. */
+export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded and inserted at that spot.'];
+
 /** CodeMirror extensions and line numbers for the note editors, following the Vim setting. On
     phones, lines wrap instead of scrolling sideways, and line numbers are left out to give the
     text the width. `dataExtensions`, for the note's data, also highlight the syntax of the note's
