@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import type { EventSummary } from '../types/spares';
 import { RedoIcon, UndoIcon } from './Icons';
+import { errorMessage } from '../utils';
 
 export interface ActionOutcome {
   message: string;
@@ -48,7 +49,7 @@ export default function ActionResult({ outcome, onReverted }: { outcome: ActionO
       setUndone(!undone);
       onReverted?.();
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     } finally {
       setBusy(false);
     }

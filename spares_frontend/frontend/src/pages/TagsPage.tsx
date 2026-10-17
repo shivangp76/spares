@@ -4,7 +4,7 @@ import { createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/cl
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
-import { td, th } from '../utils';
+import { errorMessage, td, th } from '../utils';
 
 const PAGE_SIZE = 500;
 const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
@@ -131,7 +131,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
         onSaved(await createTag({ name, description, query: newQuery, auto_delete: autoDelete, reschedule }));
       }
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -165,7 +165,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
         <button onClick={save} disabled={saving} className="touch-target-small">{saving ? 'Saving…' : tag ? 'Save' : 'Create'}</button>
         <button onClick={onCancel} disabled={saving} className="touch-target-small">Cancel</button>
-        {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
+        {error && <span style={{ color: 'var(--error)', fontSize: 13, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{error}</span>}
       </div>
     </div>
   );
@@ -184,7 +184,7 @@ export default function TagsPage() {
   const [editing, setEditing] = useState<{ tag: TagResponse | null } | null>(null);
 
   const load = useCallback(() => {
-    listAllTags().then(setTags, e => setError(String(e)));
+    listAllTags().then(setTags, e => setError(errorMessage(e)));
   }, []);
 
   useEffect(() => {
@@ -199,7 +199,7 @@ export default function TagsPage() {
       setTags(prev => prev?.filter(t => t.id !== tag.id) ?? prev);
       setStatus(`Tag \`${tag.name}\` deleted.`);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -208,7 +208,7 @@ export default function TagsPage() {
       await rebuildTag(tag.id);
       setStatus(`Filtered tag \`${tag.name}\` rebuilt.`);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -252,7 +252,7 @@ export default function TagsPage() {
 
       {editing && <TagForm key={editing.tag?.id ?? 'new'} tag={editing.tag} onSaved={onSaved} onCancel={() => setEditing(null)} />}
       {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
-      {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
+      {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
       {!tags && !error && <div>Loading…</div>}
 
       {tags && view === 'tree' && (

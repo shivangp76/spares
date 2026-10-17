@@ -11,7 +11,7 @@ import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
-import { formatNoteId, td, th, withPage, withSearch } from '../utils';
+import { errorMessage, formatNoteId, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 
@@ -55,7 +55,7 @@ export default function CardsPage() {
         // Prefetch the next page so Next shows it straight away
         if (data.length === PAGE_SIZE) listCards(page + 1, PAGE_SIZE).catch(() => {});
       })
-      .catch(e => { if (!cancelled) setError(String(e)); })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [credentials, navigate, page, searchQuery]);
@@ -84,7 +84,7 @@ export default function CardsPage() {
       })
       .catch(e => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
         setSearchError(e instanceof ApiError && e.span ? { query: searchQuery, span: e.span } : null);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -166,7 +166,7 @@ export default function CardsPage() {
             onSelect={s => handleSearch(s.query)}
             onRemove={s => { if (window.confirm(`Delete the saved search "${s.name}"?`)) void removeSavedSearch(s); }}
           />
-          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{savedSearchError}</div>}
+          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{savedSearchError}</div>}
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (
@@ -175,7 +175,7 @@ export default function CardsPage() {
             </div>
           )}
 
-          {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
+          {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {loading && <div>Loading…</div>}
 
           {!loading && (

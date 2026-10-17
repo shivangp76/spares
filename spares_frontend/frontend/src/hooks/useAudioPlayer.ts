@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchRenderAsset } from '../api/client';
 import { audioMimeType } from '../audio';
+import { errorMessage } from '../utils';
 
 // Object URLs of fetched clips, so replaying does not fetch again. The oldest are revoked.
 const MAX_CACHED_CLIPS = 32;
@@ -75,7 +76,7 @@ export function useAudioPlayer(): AudioPlayer {
           setBlocked(paths.slice(index));
           return;
         }
-        setError(String(e instanceof Error ? e.message : e));
+        setError(errorMessage(e));
         playFrom(index + 1);
       }
     };

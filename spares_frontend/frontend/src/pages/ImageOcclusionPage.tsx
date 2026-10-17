@@ -6,7 +6,7 @@ import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { ParserResponse } from '../types/spares';
-import { sectionLabel } from '../utils';
+import { errorMessage, sectionLabel } from '../utils';
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
@@ -29,7 +29,7 @@ export default function ImageOcclusionPage() {
     if (!credentials) { navigate('/login'); return; }
     listParsers(1, PARSERS_LIMIT).then(
       list => { setParsers(list); setParserId(id => id ?? list[0]?.id ?? null); },
-      e => setError(String(e)),
+      e => setError(errorMessage(e)),
     );
   }, [credentials, navigate]);
 
@@ -39,7 +39,7 @@ export default function ImageOcclusionPage() {
       setCopied(index);
       setTimeout(() => setCopied(c => (c === index ? null : c)), 2000);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 

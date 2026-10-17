@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { uploadAudio } from '../api/client';
 import { canRecordAudio, recordingFile, recordingMimeType } from '../audioRecording';
+import { errorMessage } from '../utils';
 
 type State = 'idle' | 'starting' | 'recording' | 'recorded' | 'uploading';
 
@@ -63,7 +64,7 @@ export default function AudioRecorder({ parserId, onInserted, onClose }: {
     } catch (e) {
       setError(e instanceof DOMException && e.name === 'NotAllowedError'
         ? 'Microphone access was denied. Allow it in the browser\'s site settings.'
-        : `Could not use the microphone: ${String(e)}`);
+        : `Could not use the microphone: ${errorMessage(e)}`);
       setState(recording ? 'recorded' : 'idle');
       return;
     }
@@ -98,7 +99,7 @@ export default function AudioRecorder({ parserId, onInserted, onClose }: {
       const { snippet } = await uploadAudio(parserId, await recordingFile(recording));
       onInserted(snippet);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setState('recorded');
     }
   }

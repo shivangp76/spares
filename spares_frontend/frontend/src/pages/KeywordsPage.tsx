@@ -8,7 +8,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
-import { formatNoteId, td, th } from '../utils';
+import { errorMessage, formatNoteId, td, th } from '../utils';
 
 type Tab = 'all' | 'search' | 'unmatched' | 'duplicate' | 'links';
 
@@ -42,10 +42,10 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    listKeywords().then(setKeywords, e => setError(String(e)));
+    listKeywords().then(setKeywords, e => setError(errorMessage(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
   if (!keywords) return <div>Loading…</div>;
 
   const needle = filter.trim().toLowerCase();
@@ -101,7 +101,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
       setResults({ keyword: k, matches: await searchKeyword(k) });
       saveRecent(k);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -118,7 +118,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
         <button onClick={() => search()} className="touch-target-small">Search</button>
       </div>
       <RecentSearches recent={recent} onSelect={search} onRemove={removeRecent} style={{ marginBottom: 12 }} />
-      {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)' }}>{error}</div>}
       {results && (results.matches.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>No matching keyword found for “{results.keyword}”.</p>
       ) : (
@@ -151,10 +151,10 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getUnmatchedKeywords().then(setRows, e => setError(String(e)));
+    getUnmatchedKeywords().then(setRows, e => setError(errorMessage(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
@@ -183,10 +183,10 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getDuplicateKeywords().then(setRows, e => setError(String(e)));
+    getDuplicateKeywords().then(setRows, e => setError(errorMessage(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>Error: {error}</div>;
+  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
@@ -226,7 +226,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
     try {
       setLinks({ threshold: t, links: await getNoteLinks(t) });
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -247,7 +247,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
         </label>
         <button onClick={load}>List</button>
       </div>
-      {error && <div style={{ color: 'var(--error)' }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)' }}>{error}</div>}
       {links && (
         <div className="table-scroll">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
@@ -298,7 +298,7 @@ export default function KeywordsPage() {
     try {
       setPanelNote(await getNote(id));
     } catch (e) {
-      setNoteError(String(e));
+      setNoteError(errorMessage(e));
     }
   }
 

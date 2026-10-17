@@ -6,7 +6,7 @@ import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, formatNoteId, insertBlock, insertInline, isLiveNote } from '../utils';
+import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, insertBlock, insertInline, isLiveNote } from '../utils';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
@@ -56,7 +56,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     let cancelled = false;
     getNoteRender(note.id).then(
       result => { if (!cancelled) setRender({ version: renderVersion, result }); },
-      (e: unknown) => { if (!cancelled) setRender({ version: renderVersion, error: String(e) }); },
+      (e: unknown) => { if (!cancelled) setRender({ version: renderVersion, error: errorMessage(e) }); },
     );
     return () => { cancelled = true; };
   }, [note.id, renderVersion]);
@@ -65,7 +65,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     let cancelled = false;
     listNoteImageOcclusions(note.id).then(
       list => { if (!cancelled) { setImageOcclusions(list); setImageOcclusionsError(null); } },
-      (e: unknown) => { if (!cancelled) setImageOcclusionsError(String(e)); },
+      (e: unknown) => { if (!cancelled) setImageOcclusionsError(errorMessage(e)); },
     );
     return () => { cancelled = true; };
   }, [note.id, savedData]);
@@ -87,7 +87,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     try {
       await renderNote(note.id);
     } catch (e) {
-      renderError = String(e);
+      renderError = errorMessage(e);
     }
     onNoteUpdated(updated);
     setRenderVersion(v => v + 1);
@@ -125,7 +125,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (e) {
-      setSaveError(String(e));
+      setSaveError(errorMessage(e));
       setSaveStatus('error');
     }
   }

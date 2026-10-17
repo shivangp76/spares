@@ -11,7 +11,7 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, formatNoteId, highlightPreview, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
@@ -57,7 +57,7 @@ export default function NotesPage() {
         // Prefetch the next page so Next shows it straight away
         if (data.length === PAGE_SIZE) listNotes(page + 1, PAGE_SIZE).catch(() => {});
       })
-      .catch(e => { if (!cancelled) setError(String(e)); })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [credentials, navigate, page, searchQuery]);
@@ -86,7 +86,7 @@ export default function NotesPage() {
       })
       .catch(e => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
         setSearchError(e instanceof ApiError && e.span ? { query: searchQuery, span: e.span } : null);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -132,7 +132,7 @@ export default function NotesPage() {
     try {
       selectNote(await getNote(noteId));
     } catch (e) {
-      setPaneStatus(String(e));
+      setPaneStatus(errorMessage(e));
     }
   }
 
@@ -148,7 +148,7 @@ export default function NotesPage() {
       setSelectedNote(null);
       setPaneStatus(`Note ${id} deleted.`);
     } catch (e) {
-      setPaneStatus(String(e));
+      setPaneStatus(errorMessage(e));
     }
   }
 
@@ -188,7 +188,7 @@ export default function NotesPage() {
             onSelect={s => handleSearch(s.query)}
             onRemove={s => { if (window.confirm(`Delete the saved search "${s.name}"?`)) void removeSavedSearch(s); }}
           />
-          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{savedSearchError}</div>}
+          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{savedSearchError}</div>}
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (
@@ -197,7 +197,7 @@ export default function NotesPage() {
             </div>
           )}
 
-          {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
+          {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {loading && <div>Loading…</div>}
 
           {!loading && (

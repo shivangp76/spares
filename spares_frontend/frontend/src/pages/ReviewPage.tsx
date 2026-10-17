@@ -63,7 +63,7 @@ import {
   type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { backPath, backWebPath, formatDuration, formatNoteId, sectionLabel } from '../utils';
+import { backPath, backWebPath, errorMessage, formatDuration, formatNoteId, sectionLabel } from '../utils';
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -303,7 +303,7 @@ export default function ReviewPage() {
         if (!isNetworkError(e)) throw e;
         const key = sessionKey.current;
         if (!(await getOfflineQueue(key))) {
-          setError(`${String(e)}. No cards were downloaded for this filter to review offline.`);
+          setError(`${errorMessage(e)}. No cards were downloaded for this filter to review offline.`);
           setPhase('error');
           return;
         }
@@ -328,7 +328,7 @@ export default function ReviewPage() {
       syncStopwatch();
       setPhase('front');
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
       setPhase('error');
     }
   }, [syncStopwatch]);
@@ -409,7 +409,7 @@ export default function ReviewPage() {
         info = queue.sessionInfo;
       }
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
       setPhase('error');
       return;
     }
@@ -480,7 +480,7 @@ export default function ReviewPage() {
       setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}${res.sent ? '' : ' · Saved offline, sent once the server can be reached'}`);
       loadCard(activeFilter);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
       setPhase('error');
     }
   }
@@ -499,7 +499,7 @@ export default function ReviewPage() {
       await forgetQueuedCard(cardId);
       loadCard(activeFilter);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -594,7 +594,7 @@ export default function ReviewPage() {
       setLastUndo(null);
       setStatus(`Note tagged \`${config.flagged_tag_name}\`.`);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -647,7 +647,7 @@ export default function ReviewPage() {
       // The next card will be the one that was just undone
       loadCard(activeFilter);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -673,7 +673,7 @@ export default function ReviewPage() {
       // The redone action moved the card on again
       loadCard(activeFilter);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -694,7 +694,7 @@ export default function ReviewPage() {
     try {
       setPanelNote(await getNote(noteId));
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     } finally {
       setNoteLoading(false);
     }
@@ -780,7 +780,7 @@ export default function ReviewPage() {
         loadCard(activeFilter);
       }
     } catch (e) {
-      setStatus(`Failed to refresh card after sync: ${String(e)}`);
+      setStatus(`Failed to refresh card after sync: ${errorMessage(e)}`);
     }
   }
 
@@ -798,7 +798,7 @@ export default function ReviewPage() {
       const notes = await searchNotes(`linked_to_keyword="${keyword}"`);
       setKeywordResults({ keyword, notes });
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -993,9 +993,10 @@ export default function ReviewPage() {
       )}
 
       {phase === 'error' && (
-        <div style={{ color: 'var(--error)' }}>
-          Error: {error}
-          <button onClick={() => (card || sessionStarted ? loadCard(activeFilter) : setPhase('landing'))} style={{ marginLeft: 12 }}>Retry</button>
+        <div>
+          {/* Kept as written, since a query error marks the problem on the line below the query */}
+          <pre style={{ color: 'var(--error)', marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>
+          <button onClick={() => (card || sessionStarted ? loadCard(activeFilter) : setPhase('landing'))}>Retry</button>
           <button onClick={() => setPhase('landing')} style={{ marginLeft: 8 }}>Back</button>
         </div>
       )}

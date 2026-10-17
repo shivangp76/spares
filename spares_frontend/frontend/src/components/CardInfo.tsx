@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getCardReviews, getSchedulerRatings } from '../api/client';
 import { STATE_LABELS, type CardReviewEntry, type Rating } from '../types/spares';
-import { formatDuration, formatInterval, td, th } from '../utils';
+import { errorMessage, formatDuration, formatInterval, td, th } from '../utils';
 
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 };
 const REVIEW_STATE = 2;
@@ -22,7 +22,7 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
     let cancelled = false;
     getCardReviews(cardId).then(
       entries => { if (!cancelled) setLoaded({ cardId, version, entries }); },
-      (e: unknown) => { if (!cancelled) setLoaded({ cardId, version, error: String(e) }); },
+      (e: unknown) => { if (!cancelled) setLoaded({ cardId, version, error: errorMessage(e) }); },
     );
     return () => { cancelled = true; };
   }, [cardId, version]);

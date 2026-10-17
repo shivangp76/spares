@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createImageOcclusion, fetchImageOcclusionFile, getImageOcclusionEditorConfig } from '../api/client';
 import type { ImageOcclusionData, ImageOcclusionEditorConfig } from '../types/spares';
+import { errorMessage } from '../utils';
 
 /** Set on the editor's window by the `ext-spares` svgedit extension when it is embedded. */
 interface SparesBridge {
@@ -71,7 +72,7 @@ export default function ImageOcclusionEditor(props: Props) {
     let cancelled = false;
     getImageOcclusionEditorConfig()
       .then(c => { if (!cancelled) setConfig(c); })
-      .catch(e => { if (!cancelled) setError(String(e)); });
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); });
     return () => { cancelled = true; };
   }, []);
 
@@ -116,7 +117,7 @@ export default function ImageOcclusionEditor(props: Props) {
       const { width, height } = await imageSize(imageUrl);
       await bridge.load({ imageUrl, width, height, svg: await svgBlob.text(), title: fileName(occlusion.clozes_filepath) });
       if (!cancelled) setLoaded(true);
-    })().catch(e => { if (!cancelled) setError(String(e)); });
+    })().catch(e => { if (!cancelled) setError(errorMessage(e)); });
     return () => { cancelled = true; };
   }, [bridge, occlusion]);
 
@@ -132,7 +133,7 @@ export default function ImageOcclusionEditor(props: Props) {
       setImage(file);
       setLoaded(true);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -168,7 +169,7 @@ export default function ImageOcclusionEditor(props: Props) {
         await props.onSave(svg);
       }
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }

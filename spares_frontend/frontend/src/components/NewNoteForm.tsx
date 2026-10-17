@@ -4,7 +4,7 @@ import { createNotes, listParsers, renderNote } from '../api/client';
 import { useEditorSetup } from '../hooks/useEditorSetup';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
-import { formatNoteId, insertBlock, insertInline } from '../utils';
+import { errorMessage, formatNoteId, insertBlock, insertInline } from '../utils';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 
@@ -34,7 +34,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   useEffect(() => {
     listParsers(1, PARSERS_LIMIT)
       .then(list => { setParsers(list); setParserId(list[0]?.id ?? null); })
-      .catch(e => setError(String(e)));
+      .catch(e => setError(errorMessage(e)));
   }, []);
 
   async function create() {
@@ -54,11 +54,11 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         await renderNote(note.id);
       } catch (e) {
         // The note exists, so still hand it over
-        window.alert(`Note ${formatNoteId(note.id)} created, but ${String(e)}`);
+        window.alert(`Note ${formatNoteId(note.id)} created, but ${errorMessage(e)}`);
       }
       onCreated(note);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }

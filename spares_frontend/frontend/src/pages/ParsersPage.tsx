@@ -4,7 +4,7 @@ import { createParser, deleteParser, listParsers, updateParser } from '../api/cl
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import type { ParserResponse } from '../types/spares';
-import { td, th } from '../utils';
+import { errorMessage, td, th } from '../utils';
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
@@ -23,14 +23,14 @@ export default function ParsersPage() {
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
-    listParsers(1, PARSERS_LIMIT).then(setParsers, e => setError(String(e)));
+    listParsers(1, PARSERS_LIMIT).then(setParsers, e => setError(errorMessage(e)));
   }, [credentials, navigate]);
 
   async function run(action: () => Promise<string>) {
     try {
       setStatus(await action());
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errorMessage(e));
     }
   }
 
@@ -83,7 +83,7 @@ export default function ParsersPage() {
       </div>
 
       {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
-      {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>{error}</div>}
       {!parsers && !error && <div>Loading…</div>}
 
       {parsers && (

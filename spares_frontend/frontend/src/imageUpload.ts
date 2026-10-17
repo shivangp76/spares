@@ -1,6 +1,6 @@
 import { Decoration, type DecorationSet, EditorView, type Extension, StateEffect, StateField, ViewPlugin, WidgetType } from '@uiw/react-codemirror';
 import { uploadImage, uploadImageUrl } from './api/client';
-import { draggedImageUrl, imageUploadName } from './utils';
+import { draggedImageUrl, errorMessage, imageUploadName } from './utils';
 
 class UploadingWidget extends WidgetType {
   constructor(readonly count: number) { super(); }
@@ -78,7 +78,7 @@ async function insertImages(view: EditorView, images: ImageUpload[], pos: number
   view.dispatch({ effects: addUpload.of({ id, pos, count: images.length }) });
   const results = await Promise.allSettled(images.map(upload => upload()));
   const snippets = results.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
-  const errors = results.flatMap(r => (r.status === 'rejected' ? [String(r.reason)] : []));
+  const errors = results.flatMap(r => (r.status === 'rejected' ? [errorMessage(r.reason)] : []));
 
   // The editor may have been closed while uploading
   if (!view.dom.isConnected) return;

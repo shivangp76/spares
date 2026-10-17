@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getSyncStatus, runSync, type SyncStatus } from '../api/client';
-import { formatNoteId } from '../utils';
+import { errorMessage, formatNoteId } from '../utils';
 
 /** How long ago `unixSeconds` was, e.g. `5 min ago`. */
 function ago(unixSeconds: number): string {
@@ -38,7 +38,7 @@ export default function SyncButton({ onStatus }: { onStatus: (message: string) =
         ? `Already in sync.${conflicts}`
         : `Synced: received ${report.pulled} changes, sent ${report.pushed}.${conflicts}`);
     } catch (e) {
-      const message = String(e);
+      const message = errorMessage(e);
       onStatus(message.includes('full sync')
         ? `${message} Run \`spares sync cloud\` to choose which side to keep.`
         : message);

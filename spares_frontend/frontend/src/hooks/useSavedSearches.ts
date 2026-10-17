@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { deleteSavedSearch, listSavedSearches, saveSearch } from '../api/client';
 import type { SavedSearch } from '../types/spares';
+import { errorMessage } from '../utils';
 
 /** The searches saved on the server, which `spares saved-search` shares, and saving and deleting them. */
 export function useSavedSearches() {
@@ -18,7 +19,7 @@ export function useSavedSearches() {
       setSaved(prev => [...prev.filter(s => s.name !== search.name), search].sort((a, b) => a.name.localeCompare(b.name)));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     }
   }, []);
 
@@ -28,7 +29,7 @@ export function useSavedSearches() {
       setSaved(prev => prev.filter(s => s.name !== search.name));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     }
   }, []);
 

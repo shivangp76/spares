@@ -30,7 +30,7 @@ import {
   type StatisticsGraphsResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { formatDuration, td, th } from '../utils';
+import { errorMessage, formatDuration, td, th } from '../utils';
 
 const sectionTitle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', margin: '32px 0 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const tile: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 6, padding: '12px 20px', textAlign: 'center', minWidth: 96 };
@@ -109,7 +109,7 @@ function ScheduleForm({ kind, safeCount, disabled, onDone }: { kind: 'Advance' |
       const eventId = await run(credentials.schedulerName, n, query.trim() || null);
       onDone({ message: `${kind === 'Advance' ? 'Advanced' : 'Postponed'} ${n} cards.`, eventIds: eventId === null ? [] : [eventId] });
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setRunning(false);
     }
@@ -136,7 +136,7 @@ function ScheduleForm({ kind, safeCount, disabled, onDone }: { kind: 'Advance' |
         style={{ ...input, flex: 1, minWidth: 160 }}
       />
       <button onClick={run} disabled={running || disabled} title={disabled ? OFFLINE_HINT : undefined} className="touch-target-small" style={{ minWidth: 90 }}>{running ? '…' : kind}</button>
-      {error && <span style={{ color: 'var(--error)', fontSize: 13 }}>{error}</span>}
+      {error && <span style={{ color: 'var(--error)', fontSize: 13, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{error}</span>}
     </div>
   );
 }
@@ -501,7 +501,7 @@ export default function StatisticsPage() {
           setError(null);
         } else {
           setOfflineEntry(null);
-          setError(String(failure.reason));
+          setError(errorMessage(failure.reason));
           setStatistics(null);
           setGraphs(null);
           const views = isNetworkError(failure.reason)
@@ -572,7 +572,7 @@ export default function StatisticsPage() {
         </div>
       )}
 
-      {error && !loading && <div style={{ color: 'var(--error)', marginTop: 16 }}>Error: {error}</div>}
+      {error && !loading && <div style={{ color: 'var(--error)', marginTop: 16, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{error}</div>}
       {otherViews && !loading && (
         otherViews.length > 0 ? (
           <div style={{ marginTop: 12, fontSize: 14 }}>

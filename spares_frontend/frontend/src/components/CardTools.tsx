@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { forgetCard, getLeeches, searchCards, unburyCards, updateCards } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type CardResponse, type CardsSelector, type SpecialStateUpdate, type UpdateCardsRequest } from '../types/spares';
-import { formatNoteId, sectionLabel, td, th } from '../utils';
+import { errorMessage, formatNoteId, sectionLabel, td, th } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 
 type SelectorMode = 'query' | 'ids';
@@ -87,7 +87,7 @@ export default function CardTools({ onOpenCard }: {
       const result = await action();
       if (result) setOutcome(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: result }));
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -246,7 +246,7 @@ export default function CardTools({ onOpenCard }: {
         ))}
       </div>
 
-      {error && <pre style={{ color: 'var(--error)', fontSize: 13, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
+      {error && <pre style={{ color: 'var(--error)', fontSize: 13, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} />}
     </div>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
-import { backPath, backWebPath, formatNoteId, sectionLabel } from '../utils';
+import { backPath, backWebPath, errorMessage, formatNoteId, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
@@ -38,7 +38,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
     let cancelled = false;
     getReviewCardById(card.id).then(
       result => { if (!cancelled) setReview({ cardId: card.id, version, result }); },
-      (e: unknown) => { if (!cancelled) setReview({ cardId: card.id, version, error: String(e) }); },
+      (e: unknown) => { if (!cancelled) setReview({ cardId: card.id, version, error: errorMessage(e) }); },
     );
     return () => { cancelled = true; };
   }, [card.id, version]);
@@ -51,7 +51,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
       const result = await action();
       setOutcome(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: result }));
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -79,7 +79,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
       onCardChanged(await getCard(card.id));
       setInfoVersion(v => v + 1);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -87,7 +87,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
     try {
       setPanelNote(await getNote(noteId));
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -198,7 +198,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         )}
       </details>
 
-      {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
+      {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onReverted={refreshCard} />}
 
       {panelNote && (

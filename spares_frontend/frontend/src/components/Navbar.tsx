@@ -4,6 +4,7 @@ import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import { RedoIcon, UndoIcon } from './Icons';
 import OfflineIndicator from './OfflineIndicator';
 import SyncButton from './SyncButton';
+import { errorMessage } from '../utils';
 
 interface NavbarProps {
   onLogout: () => void;
@@ -42,7 +43,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
       setUndoStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.');
       setLastUndoId(res?.undo_event_ids[0] ?? null);
     } catch (e) {
-      setUndoStatus(String(e));
+      setUndoStatus(errorMessage(e));
     }
   }
 
@@ -54,7 +55,7 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
       setLastUndoId(null);
       setUndoStatus(res ? describeReverted('Redone', res.redone_events) : 'No undo to redo.');
     } catch (e) {
-      setUndoStatus(String(e));
+      setUndoStatus(errorMessage(e));
     }
   }
 

@@ -219,7 +219,10 @@ export class ApiError extends Error {
   }
 }
 
-/** Throws with the server's `{ message }` (or plain-text body) when present, falling back to the status code. */
+/**
+ * Throws with the server's `{ message }` (or plain-text body) when present, falling back to the
+ * status code. The server's message is shown as it is, since it already says what went wrong.
+ */
 async function throwIfNotOk(res: Response, label: string): Promise<void> {
   if (res.ok) return;
   let message = `${label} failed: ${res.status}`;
@@ -227,13 +230,13 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
   const text = await res.text().catch(() => '');
   try {
     const body = JSON.parse(text) as { message?: unknown; span?: unknown };
-    if (typeof body.message === 'string') message = `${label} failed: ${body.message}`;
+    if (typeof body.message === 'string') message = body.message;
     if (Array.isArray(body.span) && body.span.length === 2 && body.span.every(n => typeof n === 'number')) {
       span = body.span as [number, number];
     }
   } catch {
     // Not JSON, e.g. a request the server rejected before reaching a handler
-    if (text) message = `${label} failed: ${text}`;
+    if (text) message = text;
   }
   throw new ApiError(message, span);
 }

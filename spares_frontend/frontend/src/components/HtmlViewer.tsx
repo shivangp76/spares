@@ -3,7 +3,7 @@ import { fetchFile } from '../api/client';
 import { audioLinkPath } from '../audio';
 import { scrollClozesIntoView } from '../clozeScroll';
 import { useResolvedTheme } from '../theme';
-import { parseNoteId } from '../utils';
+import { errorMessage, parseNoteId } from '../utils';
 
 interface Props {
   path: string;
@@ -49,7 +49,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     fetchFile(path)
       .then(blob => blob.text())
       .then(html => { if (!cancelled) setLoaded({ key, html }); })
-      .catch(e => { if (!cancelled) setLoaded({ key, error: String(e) }); });
+      .catch(e => { if (!cancelled) setLoaded({ key, error: errorMessage(e) }); });
     return () => { cancelled = true; };
   }, [key, path]);
 

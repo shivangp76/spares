@@ -3,6 +3,7 @@ import { audioLinkPath } from '../audio';
 import { scrollClozesIntoView } from '../clozeScroll';
 import { setTypstThemePreference, useTypstTheme } from '../theme';
 import { widthInputs } from '../typst/width';
+import { errorMessage } from '../utils';
 
 interface Props {
   source: string;
@@ -71,7 +72,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth, scr
     // Loaded lazily since the compiler is large and only needed for Typst cards.
     import('../typst/compiler').then(({ compileTypst }) => compileTypst(source, widthInputs(width))).then(
       svg => { if (!cancelled) setResult({ source, width, svg }); },
-      (e: unknown) => { if (!cancelled) setResult({ source, width, error: String(e) }); },
+      (e: unknown) => { if (!cancelled) setResult({ source, width, error: errorMessage(e) }); },
     );
     return () => { cancelled = true; };
   }, [source, width]);
@@ -82,7 +83,7 @@ export default function TypstViewer({ source, onReady, onPlayAudio, onWidth, scr
     let cancelled = false;
     import('../typst/compiler').then(({ compileTypst }) => compileTypst(source)).then(
       svg => { if (!cancelled) setNatural({ source, svg }); },
-      (e: unknown) => { if (!cancelled) setNatural({ source, error: String(e) }); },
+      (e: unknown) => { if (!cancelled) setNatural({ source, error: errorMessage(e) }); },
     );
     return () => { cancelled = true; };
   }, [source, expanded, naturalSource]);

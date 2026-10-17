@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchFile } from '../api/client';
+import { errorMessage } from '../utils';
 
 interface Loaded { key: string; url: string | null; error: string | null }
 
@@ -20,7 +21,7 @@ export function useAuthedFileUrl(path: string, version?: number): { url: string 
         objectUrl = URL.createObjectURL(blob);
         setLoaded({ key, url: objectUrl, error: null });
       })
-      .catch(e => { if (!cancelled) setLoaded({ key, url: null, error: String(e) }); });
+      .catch(e => { if (!cancelled) setLoaded({ key, url: null, error: errorMessage(e) }); });
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);

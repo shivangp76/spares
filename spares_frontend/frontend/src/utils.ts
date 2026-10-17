@@ -1,6 +1,11 @@
 import type { EditorView } from '@uiw/react-codemirror';
 import type { GetReviewCardResponse } from './types/spares';
 
+/** What to show for something thrown, without the `Error: ` that `String(e)` puts before an error's message. */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** The tag sync puts on notes that need a look (see `spares sync conflicts`). */
 export const SYNC_CONFLICT_TAG = 'sync-conflict';
 
