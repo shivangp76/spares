@@ -35,6 +35,9 @@
 //! | Tag and parser fields | Three-way per field; the newer change wins a tag conflict. |
 //! | Both sides have a tag with the same name | The local tag is folded into the server's (notes, cards, review logs, filtered-tag scheduler data) and deleted. |
 //! | Both sides have a parser with the same name | Sync stops with a message. |
+//! | Saved search deleted on one side, changed on the other | Kept, and sent back. |
+//! | Saved search name and query | Three-way per field; the newer change wins a conflict. |
+//! | Both sides have a saved search with the same name | One is left, under the server's id, with the newer query. |
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -49,9 +52,11 @@ use super::SyncKind;
 use super::apply::Applied;
 use super::apply::delete_row;
 use super::apply::insert_grave;
+use super::apply::insert_saved_search;
 use super::apply::mark_dirty;
 use super::apply::release_live_keys;
 use super::apply::remove_grave;
+use super::apply::remove_saved_searches;
 use super::apply::row_exists;
 use super::apply::upsert_card;
 use super::apply::upsert_note;
@@ -72,12 +77,14 @@ use super::records::ConflictSide;
 use super::records::Grave;
 use super::records::NoteRecord;
 use super::records::ParserRecord;
+use super::records::SavedSearchRecord;
 use super::records::TagRecord;
 use super::records::has_grave;
 use super::records::read_base;
 use super::records::read_card;
 use super::records::read_note;
 use super::records::read_parser;
+use super::records::read_saved_search;
 use super::records::read_tag;
 use super::records::read_usn;
 use crate::Error;
@@ -172,6 +179,7 @@ pub async fn merge_pulled(
     for record in &pulled.tags {
         merger.merge_tag(record).await?;
     }
+    merger.merge_saved_searches().await?;
     for grave in pulled.graves.iter().filter(|g| g.kind == SyncKind::Note) {
         merger
             .apply_note_grave(NoteId::from_packed(grave.oid))
@@ -246,6 +254,83 @@ impl Merger<'_> {
         .await?;
         let usn = self.usn_for(&merged, remote);
         upsert_parser(self.conn, &merged, usn).await
+    }
+
+    /// Merges the saved searches the server sent, after its deletes of them, so that a search can
+    /// take the name of one deleted over there.
+    async fn merge_saved_searches(&mut self) -> Result<(), Error> {
+        let pulled = self.pulled;
+        for grave in pulled
+            .graves
+            .iter()
+            .filter(|g| g.kind == SyncKind::SavedSearch)
+        {
+            // Changed here: the search is kept, and sent back.
+            if !self.is_dirty(SyncKind::SavedSearch, grave.oid).await? {
+                delete_row(self.conn, SyncKind::SavedSearch, grave.oid).await?;
+            }
+        }
+        let mut merged = Vec::with_capacity(pulled.saved_searches.len());
+        for remote in &pulled.saved_searches {
+            merged.push(match read_saved_search(self.conn, remote.id).await? {
+                Some(local) if self.is_dirty(SyncKind::SavedSearch, remote.id).await? => {
+                    let base = read_base(self.conn, SyncKind::SavedSearch, remote.id)
+                        .await?
+                        .unwrap_or_else(|| remote.clone());
+                    let prefer = if remote.updated_at > local.updated_at {
+                        Side::Remote
+                    } else {
+                        Side::Local
+                    };
+                    SavedSearchRecord {
+                        id: remote.id,
+                        name: merge3_or(&base.name, &local.name, &remote.name, prefer),
+                        query: merge3_or(&base.query, &local.query, &remote.query, prefer),
+                        created_at: local.created_at.min(remote.created_at),
+                        updated_at: local.updated_at.max(remote.updated_at),
+                    }
+                }
+                _ => remote.clone(),
+            });
+        }
+        remove_saved_searches(self.conn, &merged).await?;
+        for (mut record, remote) in merged.into_iter().zip(&pulled.saved_searches) {
+            remove_grave(
+                self.conn,
+                Grave {
+                    kind: SyncKind::SavedSearch,
+                    oid: record.id,
+                },
+            )
+            .await?;
+            // Both sides saved a search under this name. Names are unique, so the one here is
+            // folded into the server's, and the newer query is kept.
+            let clash: Option<SavedSearchRecord> = sqlx::query_as(
+                "SELECT id, name, query, created_at, updated_at FROM saved_search
+                 WHERE name = ? AND id != ?",
+            )
+            .bind(&record.name)
+            .bind(record.id)
+            .fetch_optional(&mut *self.conn)
+            .await
+            .map_err(sqlx_error)?;
+            if let Some(other) = clash {
+                if other.updated_at > record.updated_at {
+                    record.query = other.query;
+                }
+                record.created_at = record.created_at.min(other.created_at);
+                record.updated_at = record.updated_at.max(other.updated_at);
+                let grave = Grave {
+                    kind: SyncKind::SavedSearch,
+                    oid: other.id,
+                };
+                delete_row(self.conn, grave.kind, grave.oid).await?;
+                insert_grave(self.conn, grave, -1).await?;
+            }
+            let usn = self.usn_for(&record, remote);
+            insert_saved_search(self.conn, &record, usn).await?;
+        }
+        Ok(())
     }
 
     async fn merge_tag(&mut self, remote: &TagRecord) -> Result<(), Error> {

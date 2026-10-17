@@ -555,10 +555,17 @@ pub enum IdTable {
     ReviewLog,
     Tag,
     Parser,
+    SavedSearch,
 }
 
 impl IdTable {
-    pub const ALL: [Self; 4] = [Self::Card, Self::ReviewLog, Self::Tag, Self::Parser];
+    pub const ALL: [Self; 5] = [
+        Self::Card,
+        Self::ReviewLog,
+        Self::Tag,
+        Self::Parser,
+        Self::SavedSearch,
+    ];
 
     /// The table's name, which is also its `id_counter.tbl` key.
     pub const fn name(self) -> &'static str {
@@ -567,6 +574,7 @@ impl IdTable {
             Self::ReviewLog => "review_log",
             Self::Tag => "tag",
             Self::Parser => "parser",
+            Self::SavedSearch => "saved_search",
         }
     }
 }

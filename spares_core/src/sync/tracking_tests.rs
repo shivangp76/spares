@@ -1,4 +1,5 @@
-//! Tests of the change-tracking triggers in migration `20261014130000_sync`.
+//! Tests of the change-tracking triggers in migration `20261014130000_sync` (and
+//! `20261017140000_saved_search_sync` for saved searches).
 
 use chrono::Utc;
 use serde_json::Map;
@@ -54,7 +55,7 @@ async fn create_note(pool: &SqlitePool, data: &str, tags: &[&str]) -> NoteId {
 async fn stamp_all(pool: &SqlitePool, usn: i64) {
     let mut tx = pool.begin().await.unwrap();
     set_applying(&mut tx, true).await.unwrap();
-    for table in ["parser", "tag", "note", "card", "review_log"] {
+    for table in super::USN_TABLES {
         sqlx::query(&format!("UPDATE {table} SET usn = ?"))
             .bind(usn)
             .execute(&mut *tx)
@@ -325,6 +326,41 @@ async fn reinserting_a_row_removes_its_grave(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(graves(&pool).await, []);
+}
+
+#[sqlx::test]
+async fn saved_search_changes_are_tracked(pool: SqlitePool) {
+    let save = async |query: &str| {
+        crate::api::saved_search::save_search(
+            &pool,
+            crate::schema::saved_search::SavedSearch {
+                name: "due".to_string(),
+                query: query.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    };
+    save("c.due<=today").await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM saved_search")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(usn(&pool, "saved_search", id).await, -1);
+    stamp_all(&pool, 4).await;
+    // Saving the same query again changes nothing that is synced.
+    save("c.due<=today").await;
+    assert_eq!(usn(&pool, "saved_search", id).await, 4);
+    save("c.due<=today+1d").await;
+    assert_eq!(usn(&pool, "saved_search", id).await, -1);
+    assert_eq!(
+        base(&pool, "saved_search", id).await.unwrap()["query"],
+        "c.due<=today"
+    );
+    crate::api::saved_search::delete_saved_search(&pool, "due")
+        .await
+        .unwrap();
+    assert_eq!(graves(&pool).await, [("saved_search".to_string(), id)]);
 }
 
 #[sqlx::test]

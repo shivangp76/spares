@@ -151,7 +151,43 @@ impl Replicas {
         }
         assert_eq!(laptop.2, server.2, "review logs differ");
         assert_eq!(laptop.3, server.3, "tags differ");
+        assert_eq!(
+            saved_searches(&self.laptop).await,
+            saved_searches(&self.server).await,
+            "saved searches differ"
+        );
     }
+}
+
+/// Each saved search as `(name, query)`, by name.
+async fn saved_searches(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT name, query FROM saved_search ORDER BY name")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn save_search(pool: &SqlitePool, name: &str, query: &str) {
+    crate::api::saved_search::save_search(
+        pool,
+        crate::schema::saved_search::SavedSearch {
+            name: name.to_string(),
+            query: query.to_string(),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+async fn exec(pool: &SqlitePool, statement: &str) {
+    sqlx::query(statement).execute(pool).await.unwrap();
+}
+
+fn pairs(searches: &[(&str, &str)]) -> Vec<(String, String)> {
+    searches
+        .iter()
+        .map(|(name, query)| ((*name).to_string(), (*query).to_string()))
+        .collect()
 }
 
 struct InProcess {
@@ -525,6 +561,135 @@ async fn both_sides_creating_a_tag_with_one_name_gives_one_tag() {
     assert_eq!(shared.len(), 1);
     assert_eq!(tags_of(&replicas.laptop, laptop_note[0]).await, ["shared"]);
     assert_eq!(tags_of(&replicas.laptop, phone_note[0]).await, ["shared"]);
+}
+
+#[tokio::test]
+async fn saved_searches_sync_both_ways() {
+    let (replicas, _) = Replicas::synced(&[]).await;
+    save_search(&replicas.laptop, "due", "c.due<=today").await;
+    on_server(save_search(&replicas.server, "hard", "c.difficulty>7")).await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.laptop).await,
+        pairs(&[("due", "c.due<=today"), ("hard", "c.difficulty>7")])
+    );
+
+    // Edited on the phone, deleted on the laptop
+    on_server(save_search(&replicas.server, "due", "c.due<=today+1d")).await;
+    crate::api::saved_search::delete_saved_search(&replicas.laptop, "hard")
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.server).await,
+        pairs(&[("due", "c.due<=today+1d")])
+    );
+
+    // A full download keeps them.
+    on_server(save_search(&replicas.server, "new", "c.state=new")).await;
+    replicas.sync_mode(SyncMode::FullDownload).await.unwrap();
+    replicas.assert_converged().await;
+    assert_eq!(saved_searches(&replicas.laptop).await.len(), 2);
+}
+
+#[tokio::test]
+async fn an_edit_to_a_saved_search_beats_a_delete() {
+    let (replicas, _) = Replicas::synced(&[]).await;
+    save_search(&replicas.laptop, "due", "c.due<=today").await;
+    replicas.sync().await;
+    on_server(crate::api::saved_search::delete_saved_search(
+        &replicas.server,
+        "due",
+    ))
+    .await
+    .unwrap();
+    save_search(&replicas.laptop, "due", "c.due<=today+1d").await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.server).await,
+        pairs(&[("due", "c.due<=today+1d")])
+    );
+}
+
+#[tokio::test]
+async fn both_sides_saving_one_name_keep_the_newer_query() {
+    let (replicas, _) = Replicas::synced(&[]).await;
+    save_search(&replicas.laptop, "due", "c.due<=today").await;
+    on_server(save_search(&replicas.server, "due", "c.due<=today+1d")).await;
+    exec(&replicas.laptop, "UPDATE saved_search SET updated_at = 100").await;
+    exec(&replicas.server, "UPDATE saved_search SET updated_at = 200").await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.laptop).await,
+        pairs(&[("due", "c.due<=today+1d")])
+    );
+
+    // The other way around, with the laptop's newer
+    save_search(&replicas.laptop, "hard", "c.difficulty>8").await;
+    on_server(save_search(&replicas.server, "hard", "c.difficulty>7")).await;
+    exec(
+        &replicas.laptop,
+        "UPDATE saved_search SET updated_at = 400 WHERE name = 'hard'",
+    )
+    .await;
+    exec(
+        &replicas.server,
+        "UPDATE saved_search SET updated_at = 300 WHERE name = 'hard'",
+    )
+    .await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.server).await,
+        pairs(&[("due", "c.due<=today+1d"), ("hard", "c.difficulty>8")])
+    );
+}
+
+/// Swaps the names of saved searches `a` and `b`, by way of a third, since names are unique.
+async fn swap(pool: &SqlitePool) {
+    exec(
+        pool,
+        "UPDATE saved_search SET name = 'swap' WHERE name = 'a'",
+    )
+    .await;
+    exec(pool, "UPDATE saved_search SET name = 'a' WHERE name = 'b'").await;
+    exec(
+        pool,
+        "UPDATE saved_search SET name = 'b' WHERE name = 'swap'",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn saved_searches_can_swap_and_reuse_names() {
+    let (replicas, _) = Replicas::synced(&[]).await;
+    save_search(&replicas.laptop, "a", "tag=a").await;
+    save_search(&replicas.laptop, "b", "tag=b").await;
+    replicas.sync().await;
+    // The phone swaps their names.
+    swap(&replicas.server).await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.laptop).await,
+        pairs(&[("a", "tag=b"), ("b", "tag=a")])
+    );
+    // The laptop swaps them back, and deletes one to save another under its name.
+    swap(&replicas.laptop).await;
+    crate::api::saved_search::delete_saved_search(&replicas.laptop, "a")
+        .await
+        .unwrap();
+    save_search(&replicas.laptop, "a", "tag=c").await;
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        saved_searches(&replicas.server).await,
+        pairs(&[("a", "tag=c"), ("b", "tag=b")])
+    );
 }
 
 #[tokio::test]

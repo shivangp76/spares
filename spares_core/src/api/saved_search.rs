@@ -1,11 +1,13 @@
 //! Searches saved by name, which `spares saved-search` and the web app's notes and cards pages
 //! list and run. They are kept by the server, so the CLI and the web app share them when they use
-//! the same server. They are not synced between replicas.
+//! the same server, and are synced between replicas like tags (see [`crate::sync`]).
 
 use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
+use crate::ids::IdTable;
+use crate::ids::next_id_in;
 use crate::schema::saved_search::SavedSearch;
 use crate::search::QueryReturnItemType;
 
@@ -52,10 +54,13 @@ pub async fn save_search(db: &SqlitePool, search: SavedSearch) -> Result<SavedSe
     }
     // Checks the query, with the same error as searching it
     crate::search::explain(query, QueryReturnItemType::Notes)?;
+    // A search saved again keeps its id, so the id taken here goes unused.
+    let id = next_id_in(db, IdTable::SavedSearch).await?;
     sqlx::query(
-        "INSERT INTO saved_search (name, query) VALUES (?, ?)
+        "INSERT INTO saved_search (id, name, query) VALUES (?, ?, ?)
          ON CONFLICT (name) DO UPDATE SET query = excluded.query, updated_at = strftime('%s', 'now')",
     )
+    .bind(id)
     .bind(name)
     .bind(query)
     .execute(db)

@@ -39,6 +39,15 @@ pub struct TagRecord {
     pub updated_at: i64,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
+pub struct SavedSearchRecord {
+    pub id: i64,
+    pub name: String,
+    pub query: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 fn reschedule_default() -> i64 {
     1
 }
@@ -116,6 +125,7 @@ pub struct Changes {
     pub notes: Vec<NoteRecord>,
     pub cards: Vec<CardRecord>,
     pub review_logs: Vec<ReviewLogRecord>,
+    pub saved_searches: Vec<SavedSearchRecord>,
     pub graves: Vec<Grave>,
 }
 
@@ -126,6 +136,7 @@ impl Changes {
             && self.notes.is_empty()
             && self.cards.is_empty()
             && self.review_logs.is_empty()
+            && self.saved_searches.is_empty()
             && self.graves.is_empty()
     }
 
@@ -135,6 +146,7 @@ impl Changes {
             + self.notes.len()
             + self.cards.len()
             + self.review_logs.len()
+            + self.saved_searches.len()
             + self.graves.len()
     }
 }
@@ -278,6 +290,19 @@ pub(crate) async fn read_review_logs(
     .map_err(sqlx_error)
 }
 
+pub(crate) async fn read_saved_searches(
+    conn: &mut SqliteConnection,
+    selection: Selection,
+) -> Result<Vec<SavedSearchRecord>, Error> {
+    sqlx::query_as(&format!(
+        "SELECT id, name, query, created_at, updated_at FROM saved_search WHERE {} ORDER BY id",
+        selection.condition()
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(sqlx_error)
+}
+
 pub(crate) async fn read_graves(
     conn: &mut SqliteConnection,
     selection: Selection,
@@ -310,6 +335,7 @@ pub(crate) async fn read_changes(
         notes: read_notes(conn, selection).await?,
         cards: read_cards(conn, selection).await?,
         review_logs: read_review_logs(conn, selection).await?,
+        saved_searches: read_saved_searches(conn, selection).await?,
         graves: read_graves(conn, selection).await?,
     })
 }
@@ -357,6 +383,17 @@ pub(crate) async fn read_tag(
     .fetch_optional(&mut *conn)
     .await
     .map_err(sqlx_error)
+}
+
+pub(crate) async fn read_saved_search(
+    conn: &mut SqliteConnection,
+    id: i64,
+) -> Result<Option<SavedSearchRecord>, Error> {
+    sqlx::query_as("SELECT id, name, query, created_at, updated_at FROM saved_search WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(sqlx_error)
 }
 
 pub(crate) async fn read_parser(

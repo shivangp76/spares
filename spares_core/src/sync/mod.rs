@@ -44,8 +44,9 @@
 //!
 //! Migration `20261014130000_sync` adds:
 //!
-//! - **`usn`** on `parser`, `tag`, `note`, `card` and `review_log`, defaulting to `-1` (changed and
-//!   not yet synced), so new rows are dirty without a trigger.
+//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and (since
+//!   `20261017140000_saved_search_sync`) `saved_search`, defaulting to `-1` (changed and not yet
+//!   synced), so new rows are dirty without a trigger.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
@@ -164,7 +165,14 @@ pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
 pub const NOTES_VERSION_OFFSET_KEY: &str = "notes_version_offset";
 
 /// The tables with a `usn` column.
-pub(crate) const USN_TABLES: [&str; 5] = ["parser", "tag", "note", "card", "review_log"];
+pub(crate) const USN_TABLES: [&str; 6] = [
+    "parser",
+    "tag",
+    "note",
+    "card",
+    "review_log",
+    "saved_search",
+];
 
 fn sqlx_error(e: sqlx::Error) -> Error {
     Error::Sqlx { source: e }
@@ -251,20 +259,22 @@ pub(crate) async fn schema_version(conn: &mut SqliteConnection) -> Result<i64, E
 }
 
 pub(crate) async fn read_counts(conn: &mut SqliteConnection) -> Result<protocol::Counts, Error> {
-    let (parsers, tags, notes, cards, review_logs): (i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM parser), (SELECT COUNT(*) FROM tag),
-                (SELECT COUNT(*) FROM note), (SELECT COUNT(*) FROM card),
-                (SELECT COUNT(*) FROM review_log)",
-    )
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(sqlx_error)?;
+    let (parsers, tags, notes, cards, review_logs, saved_searches): (i64, i64, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM parser), (SELECT COUNT(*) FROM tag),
+                    (SELECT COUNT(*) FROM note), (SELECT COUNT(*) FROM card),
+                    (SELECT COUNT(*) FROM review_log), (SELECT COUNT(*) FROM saved_search)",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
     Ok(protocol::Counts {
         parsers,
         tags,
         notes,
         cards,
         review_logs,
+        saved_searches,
     })
 }
 
@@ -303,6 +313,7 @@ pub enum SyncKind {
     Tag,
     Note,
     Card,
+    SavedSearch,
 }
 
 impl SyncKind {
@@ -312,6 +323,7 @@ impl SyncKind {
             "tag" => Ok(Self::Tag),
             "note" => Ok(Self::Note),
             "card" => Ok(Self::Card),
+            "saved_search" => Ok(Self::SavedSearch),
             _ => Err(Error::Sync(format!("unknown row kind `{name}`"))),
         }
     }
@@ -322,6 +334,7 @@ impl SyncKind {
             Self::Tag => "tag",
             Self::Note => "note",
             Self::Card => "card",
+            Self::SavedSearch => "saved_search",
         }
     }
 }

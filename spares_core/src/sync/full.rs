@@ -29,9 +29,10 @@ use crate::Error;
 
 /// The tables a full sync copies, parents first. `id_counter` is merged instead (see
 /// [`restore`]). Undo history, graves, bases and other local state are not copied.
-const DATA_TABLES: [&str; 11] = [
+const DATA_TABLES: [&str; 12] = [
     "parser",
     "tag",
+    "saved_search",
     "note",
     "note_keyword",
     "note_link",

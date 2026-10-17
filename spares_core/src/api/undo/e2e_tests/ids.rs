@@ -127,6 +127,16 @@ async fn e2e_synced_tables_only_get_helper_ids(
     .await
     .unwrap();
 
+    crate::api::saved_search::save_search(
+        &pool,
+        crate::schema::saved_search::SavedSearch {
+            name: "new".to_string(),
+            query: "c.new".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+
     for table in IdTable::ALL {
         let ids: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM {}", table.name()))
             .fetch_all(&pool)

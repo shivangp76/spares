@@ -20,6 +20,7 @@ use super::records::Grave;
 use super::records::NoteRecord;
 use super::records::ParserRecord;
 use super::records::ReviewLogRecord;
+use super::records::SavedSearchRecord;
 use super::records::TagRecord;
 use crate::Error;
 use crate::api::note::update::links::update_note_links;
@@ -95,6 +96,65 @@ pub(crate) async fn upsert_tag(
     .bind(&record.query)
     .bind(record.auto_delete)
     .bind(record.reschedule)
+    .bind(record.created_at)
+    .bind(record.updated_at)
+    .bind(usn)
+    .execute(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    Ok(())
+}
+
+/// Deletes the saved searches with the ids of `records`, before [`insert_saved_search`] writes
+/// them again. Deleting them all first means searches that swapped names, or a name that moved
+/// from one search to another, don't clash on the unique name on the way. Their bases are kept.
+pub(crate) async fn remove_saved_searches(
+    conn: &mut SqliteConnection,
+    records: &[SavedSearchRecord],
+) -> Result<(), Error> {
+    for chunk in records.chunks(crate::api::MAX_ROWS_IN_QUERY) {
+        sqlx::query(&format!(
+            "DELETE FROM saved_search WHERE id IN ({})",
+            id_list(chunk.iter().map(|r| r.id))
+        ))
+        .execute(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
+    }
+    Ok(())
+}
+
+/// Writes a saved search removed by [`remove_saved_searches`]. Another search here with the same
+/// name stops the sync.
+pub(crate) async fn insert_saved_search(
+    conn: &mut SqliteConnection,
+    record: &SavedSearchRecord,
+    usn: i64,
+) -> Result<(), Error> {
+    let clash: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM saved_search WHERE name = ? AND id != ?")
+            .bind(&record.name)
+            .bind(record.id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(sqlx_error)?;
+    if let Some(clash) = clash {
+        return Err(sync_error(format!(
+            "both replicas have a saved search named `{}` (ids {clash} and {}). Sync again to \
+             merge them.",
+            record.name, record.id
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO saved_search (id, name, query, created_at, updated_at, usn)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, query = excluded.query,
+             created_at = excluded.created_at, updated_at = excluded.updated_at,
+             usn = excluded.usn",
+    )
+    .bind(record.id)
+    .bind(&record.name)
+    .bind(&record.query)
     .bind(record.created_at)
     .bind(record.updated_at)
     .bind(usn)
@@ -373,7 +433,7 @@ pub(crate) async fn mark_dirty(
         let snapshot = match kind {
             SyncKind::Note => Some("sync_note_snapshot"),
             SyncKind::Card => Some("sync_card_snapshot"),
-            SyncKind::Parser | SyncKind::Tag => None,
+            SyncKind::Parser | SyncKind::Tag | SyncKind::SavedSearch => None,
         };
         if let Some(view) = snapshot {
             sqlx::query(&format!(
@@ -439,6 +499,27 @@ pub(crate) async fn apply_changes(
     }
     for record in &changes.tags {
         upsert_tag(conn, record, usn).await?;
+    }
+    // Deleted searches go first, so a new one can take a deleted one's name.
+    for grave in changes
+        .graves
+        .iter()
+        .filter(|g| g.kind == SyncKind::SavedSearch)
+    {
+        delete_row(conn, grave.kind, grave.oid).await?;
+        insert_grave(conn, *grave, usn).await?;
+    }
+    remove_saved_searches(conn, &changes.saved_searches).await?;
+    for record in &changes.saved_searches {
+        insert_saved_search(conn, record, usn).await?;
+        remove_grave(
+            conn,
+            Grave {
+                kind: SyncKind::SavedSearch,
+                oid: record.id,
+            },
+        )
+        .await?;
     }
     for grave in &changes.graves {
         if matches!(grave.kind, SyncKind::Card | SyncKind::Note) {

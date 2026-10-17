@@ -102,6 +102,7 @@ pub struct Counts {
     pub notes: i64,
     pub cards: i64,
     pub review_logs: i64,
+    pub saved_searches: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
