@@ -147,12 +147,20 @@ pub(crate) async fn handle(
             query,
             output_format,
             fields: _,
+            explain,
         }) => {
             // Clap requires a query unless `--fields` is given.
             let Some(query) = query else {
                 print_fields();
                 return Ok(());
             };
+            if explain {
+                print!(
+                    "{}",
+                    spares_core::search::explain(&query, QueryReturnItemType::Cards)?
+                );
+                return Ok(());
+            }
             search(
                 query,
                 QueryReturnItemType::Cards,

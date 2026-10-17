@@ -659,6 +659,9 @@ pub(crate) struct SearchArgs {
     /// List the fields a query can use, with the kind of value each holds and an example
     #[arg(long, conflicts_with = "query")]
     pub(crate) fields: bool,
+    /// Print how the query was parsed and the SQL it runs, instead of searching
+    #[arg(long, conflicts_with = "fields")]
+    pub(crate) explain: bool,
 }
 
 impl NotesSelectorLocal {

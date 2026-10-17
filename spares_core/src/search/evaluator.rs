@@ -193,6 +193,42 @@ impl<'de> Evaluator<'de> {
         Ok(result)
     }
 
+    /// The parsed query and the SQL that runs it, as `spares note search --explain` prints them.
+    pub(crate) fn explain(
+        self,
+        output_type: EvaluatorReturnItemType,
+    ) -> Result<String, crate::Error> {
+        let to_error = search_error(self.query);
+        let token_tree = self.parser.parse_expression().map_err(&to_error)?;
+        let needs_parser = matches!(
+            output_type,
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::Cards
+        );
+        let sql = |tree: &TokenTree| {
+            Self::build_query_from_tree(tree, output_type, needs_parser, self.scope.as_deref())
+                .map(|sql| format_sql(&sql))
+                .map_err(&to_error)
+        };
+        let mut out = format!("Parsed:\n{token_tree}\n\nSQL:\n");
+        let is_cards = matches!(
+            output_type,
+            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds
+        );
+        if is_cards && has_cloze_field(&token_tree) {
+            out.push_str(
+                "`c.cloze` is matched after the database query, so each of these runs on its own and \
+                 the cards they find are combined:\n",
+            );
+            for disjunct in to_dnf(token_tree) {
+                let _ = write!(out, "\n{}\n", sql(&disjunct)?);
+            }
+        } else {
+            out.push_str(&sql(&token_tree)?);
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     /// The sort the query asks for with `sort_by_asc` and `sort_by_desc` outside any limited
     /// group, as `ORDER BY` terms (`"<expr> ASC"` or `"<expr> DESC"`) over the `c`, `n` and `p`
     /// aliases, most significant first. A sort inside a limited group, like the one in
@@ -331,6 +367,32 @@ impl<'de> Evaluator<'de> {
 /// Converts an error in `query` to the error returned for a search.
 fn search_error(query: &str) -> impl Fn(Report) -> crate::Error + '_ {
     move |e| crate::Error::Library(LibraryError::Search(render_error(query, &e)))
+}
+
+/// `sql` with each clause of the outermost query on its own line, for reading. Subqueries and
+/// strings are left as they are.
+fn format_sql(sql: &str) -> String {
+    const CLAUSES: [&str; 5] = [" FROM ", " LEFT JOIN ", " WHERE ", " ORDER BY ", " LIMIT "];
+    let mut out = String::with_capacity(sql.len());
+    let mut depth = 0_usize;
+    let mut in_string = false;
+    for (i, c) in sql.char_indices() {
+        match c {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            ' ' if !in_string
+                && depth == 0
+                && CLAUSES.iter().any(|clause| sql[i..].starts_with(clause)) =>
+            {
+                out.push('\n');
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `s` as an SQL string literal.
@@ -1576,6 +1638,16 @@ fn evaluate_field_value(
         value_context.params.push(state.to_string());
         value_type = FieldType::Integer;
     }
+    // The state's name goes in the SQL, so `--explain` shows `c.state = 2 /* review */`.
+    if matches!(field, Field::Card(CardField::State))
+        && matches!(value_type, FieldType::Integer)
+        && let Some(state) = value_context.params.last_mut()
+        && let Some((name, _)) = CARD_STATES
+            .iter()
+            .find(|(_, id)| id.to_string() == *state)
+    {
+        let _ = write!(state, " /* {name} */");
+    }
 
     // Note ids are written as letters and stored packed, which keeps their order, so a letter id
     // becomes its packed integer and is then compared like any integer. Numbers are rejected, so
@@ -2075,6 +2147,25 @@ mod tests {
     }
 
     #[test]
+    fn explain_shows_the_tree_and_the_sql() {
+        let explain = |query, output_type| Evaluator::new(query).explain(output_type).unwrap();
+        assert_eq!(
+            explain(r#"c.state=review "a (b" limit=2"#, EvaluatorReturnItemType::NoteIds),
+            expand_text(
+                "Parsed:\n(and (and (= c.state review) (~  \"a (b\")) (= limit 2))\n\nSQL:\n\
+                 SELECT DISTINCT n.id\nFROM note n\nLEFT JOIN card c ON n.id = c.note_id\n\
+                 WHERE (c.state = 2 /* review */ AND n.data REGEXP text(a (b))\n\
+                 ORDER BY n.id ASC\nLIMIT 2\n"
+            )
+        );
+        let cloze = explain("c.cloze~a or dog", EvaluatorReturnItemType::CardIds);
+        assert!(
+            cloze.contains("runs on its own") && cloze.matches("SELECT").count() == 2,
+            "{cloze}"
+        );
+    }
+
+    #[test]
     fn card_order_by_is_the_top_level_sort() {
         let order = |query| Evaluator::new(query).card_order_by().unwrap();
         assert_eq!(
@@ -2252,12 +2343,12 @@ mod tests {
             // Card states by name
             (
                 "c.state=new or c.state!=Review",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.state = 0 OR NOT (c.state = 2)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.state = 0 /* new */ OR NOT (c.state = 2 /* review */)) ORDER BY n.id ASC",
             ),
             // `!=` and `not` negate
             (
                 "c.state!=0 not dog",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data REGEXP text(word dog))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0 /* new */) AND NOT (n.data REGEXP text(word dog))) ORDER BY n.id ASC",
             ),
             // `and` binds tighter than `or`
             (
@@ -2959,7 +3050,7 @@ mod tests {
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 /* new */ ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
             // A limited branch next to an unlimited one, note output orders by id by default
             (
@@ -2986,7 +3077,7 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data REGEXP text(word dog) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
 n.data REGEXP text(word cat)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 /* review */ ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
         for (input, output_type, expected_sql) in inputs {

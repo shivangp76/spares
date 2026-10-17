@@ -1,6 +1,9 @@
 //! # Searching
 //!
 //! `spares note search --fields` lists the fields with their kind and an example.
+//! `spares note search --explain '<query>'` (or `spares card search --explain`) prints how the
+//! query was parsed, with `and` and `or` grouped as they apply, and the SQL it runs, without
+//! searching. A card state in the SQL is followed by its name, as in `c.state = 2 /* review */`.
 //!
 //! | Field               | Type     |
 //! |---------------------|----------|
@@ -487,6 +490,16 @@ pub fn query_has_limit(query: &str) -> bool {
     parser::Parser::new(query)
         .parse_expression()
         .is_ok_and(|tree| evaluator::tree_has_limit(&tree))
+}
+
+/// The parsed `query` and the SQL that runs it for `output_type`, to debug a query, as
+/// `spares note search --explain` prints them. Nothing is read from the database, so a missing
+/// note in `note[<id>]` is not reported.
+pub fn explain(query: &str, output_type: QueryReturnItemType) -> Result<String, crate::Error> {
+    evaluator::Evaluator::new(query).explain(match output_type {
+        QueryReturnItemType::Notes => evaluator::EvaluatorReturnItemType::Notes,
+        QueryReturnItemType::Cards => evaluator::EvaluatorReturnItemType::Cards,
+    })
 }
 
 /// A field that queries can use, as listed by `spares note search --fields`.
