@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { describeReverted, redoEvent, undoEvent } from '../api/client';
+import { PAGE_HELP } from '../help/pages';
+import type { Keybinding } from '../help/shortcuts';
 import { RedoIcon, UndoIcon } from './Icons';
 import OfflineIndicator from './OfflineIndicator';
+import PageHelp from './PageHelp';
 import SyncButton from './SyncButton';
 import { errorMessage } from '../utils';
 
 interface NavbarProps {
   onLogout: () => void;
   extra?: React.ReactNode;
+  /** For a page that opens its help itself, with `?`, and has shortcuts of its own. Otherwise the
+      navbar's `?` opens it. */
+  help?: { open: boolean; onOpenChange: (open: boolean) => void; bindings: Keybinding[] };
 }
 
 const NAV_LINKS = [
@@ -23,8 +29,28 @@ const NAV_LINKS = [
   { to: '/settings', label: 'Settings' },
 ];
 
-export default function Navbar({ onLogout, extra }: NavbarProps) {
+export default function Navbar({ onLogout, extra, help }: NavbarProps) {
   const { pathname } = useLocation();
+  const [helpOpenHere, setHelpOpenHere] = useState(false);
+  const helpOpen = help?.open ?? helpOpenHere;
+  const setHelpOpen = help?.onOpenChange ?? setHelpOpenHere;
+  const pageHelp = PAGE_HELP[pathname];
+  const handlesHelpKey = !help && !!pageHelp;
+
+  // `?` opens the help, unless the page handles it, or it is typed into a box
+  useEffect(() => {
+    if (!handlesHelpKey) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      if (target instanceof Element && target.closest('.cm-editor, [contenteditable="true"]')) return;
+      e.preventDefault();
+      setHelpOpenHere(open => !open);
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handlesHelpKey]);
   const [undoStatus, setUndoStatus] = useState<string | null>(null);
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);
@@ -76,8 +102,14 @@ export default function Navbar({ onLogout, extra }: NavbarProps) {
         <SyncButton onStatus={setUndoStatus} />
         <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>
         {lastUndoId !== null && <button onClick={redoLast} className="navbar-button" title="Redo the change just undone"><RedoIcon />Redo last undo</button>}
+        {pageHelp && (
+          <button onClick={() => setHelpOpen(true)} className="navbar-button" title="What this page is for, its keyboard shortcuts, and the manual">
+            Help <span className="key-hint">(?)</span>
+          </button>
+        )}
         <button onClick={onLogout} className="navbar-button">Logout</button>
       </div>
+      {helpOpen && pageHelp && <PageHelp help={pageHelp} bindings={help?.bindings} onClose={() => setHelpOpen(false)} />}
       {undoStatus && (
         <div style={{ flexBasis: '100%', marginTop: 4, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span>{undoStatus}</span>

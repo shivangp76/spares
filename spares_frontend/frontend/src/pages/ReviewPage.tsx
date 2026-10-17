@@ -40,7 +40,6 @@ import {
 } from '../offline/review';
 import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
-import KeybindingsHelp, { type Keybinding } from '../components/KeybindingsHelp';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
@@ -52,6 +51,7 @@ import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
 import { useShowReviewTimer, useVimKeybindings } from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
@@ -820,13 +820,12 @@ export default function ReviewPage() {
     }
   }
 
-  // Keyboard shortcuts, as listed by the ? popup
+  // Keyboard shortcuts, as listed by the help popup, which ? opens
   const [showKeybindings, setShowKeybindings] = useState(false);
   const cardShown = reviewing && card !== null;
   const hasAudio = !!card?.audio && (card.audio.front.length > 0 || (phase === 'back' && card.audio.back.length > 0));
   const keybindings: Keybinding[] = [
     { keys: ['Space'], description: 'Show answer', available: phase === 'front' },
-    { keys: ['Enter'], description: 'Check typed answer (in an answer box)', available: phase === 'front' && !!card?.typed_answer },
     ...ratings.map((r, i) => ({ keys: [String(i + 1)], description: `Rate ${r.description}`, available: phase === 'back' })),
     { keys: ['u'], description: phase === 'back' ? 'Undo (hide the answer)' : 'Undo', available: reviewing },
     { keys: ['U'], description: 'Redo', available: reviewing && lastUndo !== null },
@@ -835,7 +834,7 @@ export default function ReviewPage() {
     { keys: ['e'], description: cardShown && panelNote?.id === card.note_id ? 'Close note' : 'Edit note', available: cardShown },
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
-    { keys: ['?'], description: 'Show or hide keyboard shortcuts', available: true },
+    ...TYPED_ANSWER_SHORTCUTS.map(s => ({ ...s, available: phase === 'front' && !!card?.typed_answer })),
   ];
 
   // Re-bound on every render so closures are current
@@ -902,9 +901,8 @@ export default function ReviewPage() {
 
   return (
     <div className="page">
-      <Navbar onLogout={logout} />
+      <Navbar onLogout={logout} help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
       <h2 style={{ marginBottom: 16 }}>Review</h2>
-      {showKeybindings && <KeybindingsHelp bindings={keybindings} onClose={() => setShowKeybindings(false)} />}
 
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>

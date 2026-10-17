@@ -106,6 +106,7 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
     onChange(applied.query);
   }
 
+  // Listed in the help popup as `SEARCH_BOX_SHORTCUTS`
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     const count = completions?.items.length ?? 0;
     if (count > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {

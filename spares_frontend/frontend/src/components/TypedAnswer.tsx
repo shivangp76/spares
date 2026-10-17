@@ -32,6 +32,7 @@ export function TypedAnswerInputs({ info, answers, onChange, onSubmit }: {
   const vimEnabled = useVimKeybindings();
   const form = useRef<HTMLFormElement>(null);
   const last = info.blanks.length - 1;
+  // Listed in the help popup as `TYPED_ANSWER_SHORTCUTS`
   function onEnter(e: React.KeyboardEvent, index: number) {
     if (index === last || e.ctrlKey || e.metaKey) {
       onSubmit();

@@ -18,8 +18,8 @@ const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13 };
 
-// `:w` saves the note being edited. Ex commands are global, so the editor reaches its note's
-// NoteDetail through a DOM event.
+// `:w` saves the note being edited (listed in the help popup as `NOTE_EDITOR_SHORTCUTS`). Ex
+// commands are global, so the editor reaches its note's NoteDetail through a DOM event.
 const VIM_WRITE_EVENT = 'spares-vim-write';
 const VIM_WRITE_TIP = 'With Vim keybindings, :w saves the note.';
 Vim.defineEx('write', 'w', cm => {
