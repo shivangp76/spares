@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use chrono::NaiveDate;
 use miette::Error;
 use miette::miette;
 
@@ -90,6 +91,20 @@ impl RelativeDate {
         Ok(Self { anchor, offsets })
     }
 
+    /// When the date is the start of a local day, like `today` or `today-3d`, the start of the
+    /// day after, so that comparing against the date can mean the whole day.
+    pub(crate) fn next_day(&self) -> Option<Self> {
+        if self.anchor != Anchor::Today || !self.offsets.iter().all(|o| o.unit.is_calendar()) {
+            return None;
+        }
+        let mut next = self.clone();
+        next.offsets.push(Offset {
+            amount: 1,
+            unit: OffsetUnit::Days,
+        });
+        Some(next)
+    }
+
     /// An SQL expression for the date as Unix time, matching how dates are stored.
     pub(crate) fn to_sql(&self) -> String {
         let reference = |table: &str, column: DateColumn, id: i64| {
@@ -144,6 +159,11 @@ impl RelativeDate {
             args.join(", ")
         )
     }
+}
+
+/// An SQL expression for the start of the local day `days` days after `date`, as Unix time.
+pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64) -> String {
+    format!("(SELECT CAST(strftime('%s', '{date}', '{days:+} days', 'utc') AS INTEGER))")
 }
 
 impl fmt::Display for RelativeDate {

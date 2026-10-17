@@ -30,6 +30,7 @@ use crate::search::RelativeDate;
 use crate::search::TokenTree;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
+use crate::search::relative_date::local_day_start_sql;
 
 pub(crate) struct Evaluator<'de> {
     // whole: &'de str,
@@ -315,6 +316,28 @@ impl<'de> Evaluator<'de> {
     }
 }
 
+/// `s` as an SQL string literal.
+fn sql_string(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// `s` with the `LIKE` wildcards `%` and `_` escaped, to be matched literally by
+/// [`like_pattern`].
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// A `LIKE` pattern for `pattern`, whose literal `%`, `_` and `\` are escaped by [`escape_like`].
+fn like_pattern(pattern: &str) -> String {
+    if pattern.contains('\\') {
+        format!("{} ESCAPE '\\'", sql_string(pattern))
+    } else {
+        sql_string(pattern)
+    }
+}
+
 /// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
 pub(crate) fn is_boolean_field(name: &str) -> bool {
     Field::from_str(&[name]).is_ok_and(|field| field.get_field_type() == FieldType::Boolean)
@@ -464,16 +487,11 @@ impl Field {
                 NoteField::CreatedAt => with_op("n.created_at"),
                 NoteField::UpdatedAt => with_op("n.updated_at"),
                 NoteField::ParserName => with_op("p.name"),
-                NoteField::Tag => {
-                    // format!(
-                    //     "n.id IN (SELECT note_id FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE t.name {})",
-                    //     value_str
-                    // )
-                    format!(
-                        "c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE {} UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE {})",
-                        value_str, value_str
-                    )
-                }
+                // The note's tags, or the card's. `EXISTS` is never NULL, so a note without cards
+                // can still match, and `-tag=x` matches it when it isn't tagged.
+                NoteField::Tag => format!(
+                    "(EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND {value_str}) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND {value_str}))"
+                ),
                 NoteField::Keyword => {
                     format!(
                         "EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword {})",
@@ -481,7 +499,11 @@ impl Field {
                     )
                 }
                 NoteField::CustomData(json_path) => {
-                    format!("json_extract(n.custom_data, '{}') {}", json_path, value_str)
+                    format!(
+                        "json_extract(n.custom_data, {}) {}",
+                        sql_string(json_path),
+                        value_str
+                    )
                 }
                 NoteField::LinkedToNote => {
                     format!(
@@ -537,7 +559,11 @@ impl Field {
                 }
                 CardField::State => with_op("c.state"),
                 CardField::CustomData(json_path) => {
-                    format!("json_extract(c.custom_data, '{}') {}", json_path, value_str)
+                    format!(
+                        "json_extract(c.custom_data, {}) {}",
+                        sql_string(json_path),
+                        value_str
+                    )
                 }
                 CardField::Rated => {
                     format!(
@@ -1136,21 +1162,48 @@ fn evaluate_field_value(
 
     // `today` and `now` are ordinary words unless compared against a date field, so `data~today`
     // still searches for the word.
-    let mut is_relative_date = matches!(trees[1], TokenTree::Atom(Atom::RelativeDate(_)));
+    let mut relative_date = match &trees[1] {
+        TokenTree::Atom(Atom::RelativeDate(date)) => Some(date.clone()),
+        _ => None,
+    };
     if matches!(field_type, FieldType::DateTime)
         && let TokenTree::Atom(Atom::String(s)) = &trees[1]
         && RelativeDate::starts_with_word_anchor(s)
     {
-        value_context.params = vec![RelativeDate::parse(s)?.to_sql()];
+        let date = RelativeDate::parse(s)?;
+        value_context.params = vec![date.to_sql()];
         value_type = FieldType::DateTime;
-        is_relative_date = true;
+        relative_date = Some(date);
     }
-    if is_relative_date && matches!(op, Op::Tilde) {
+    if relative_date.is_some() && matches!(op, Op::Tilde) {
         return Err(miette!(
             "A relative date cannot be used with operator `{}`. Compare it with `=`, `<`, `<=`, `>` or `>=`.",
             op
         ));
     }
+    // A day, like `2026-10-17` or `today-1d`, compared against a date field stands for the whole
+    // local day, so `created_at=2026-10-17` finds notes created any time that day. Against a text
+    // field, it is just the text.
+    let day = match (&trees[1], &relative_date) {
+        (TokenTree::Atom(Atom::Date(date)), _) => match field_type {
+            FieldType::DateTime if matches!(op, Op::Tilde) => {
+                return Err(miette!(
+                    "A date cannot be used with operator `{}`. Compare it with `=`, `<`, `<=`, `>` or `>=`.",
+                    op
+                ));
+            }
+            FieldType::DateTime => {
+                Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
+            }
+            _ => {
+                value_context.params = vec![date.to_string()];
+                value_type = FieldType::String;
+                None
+            }
+        },
+        (_, Some(date)) => date.next_day().map(|next| (date.to_sql(), next.to_sql())),
+        _ => None,
+    };
 
     // Note ids are written as letters and stored packed, which keeps their order, so a letter id
     // becomes its packed integer and is then compared like any integer. Numbers are rejected, so
@@ -1226,17 +1279,29 @@ fn evaluate_field_value(
                 ));
             }
             if let Some(mut value_param) = value_context.params.pop() {
-                if matches!(field, Field::Note(NoteField::Tag)) && matches!(op, Op::Equal) {
-                    value_context
-                        .params
-                        .push(format!("':' || t.name || ':' LIKE '%:{}:%'", value_param));
+                if let Some((start, end)) = &day {
+                    value_context.params.push(match op {
+                        Op::Equal => format!("BETWEEN {start} AND ({end} - 1)"),
+                        Op::GreaterThan => format!(">= {end}"),
+                        Op::GreaterThanEqual => format!(">= {start}"),
+                        Op::LessThan => format!("< {start}"),
+                        Op::LessThanEqual => format!("< {end}"),
+                        _ => unreachable!("by the outer match"),
+                    });
+                } else if matches!(field, Field::Note(NoteField::Tag)) && matches!(op, Op::Equal) {
+                    // The tag and its descendants, like `math` and `math:algebra`.
+                    let name = escape_like(&value_param);
+                    value_context.params.push(format!(
+                        "(t.name LIKE {} OR t.name LIKE {})",
+                        like_pattern(&name),
+                        like_pattern(&format!("{name}:%")),
+                    ));
                 } else {
-                    if matches!(op, Op::Equal)
-                        && (matches!(field_type, FieldType::String)
-                            || (matches!(field_type, FieldType::Json)
-                                && matches!(value_type, FieldType::String)))
+                    if matches!(field_type, FieldType::String)
+                        || (matches!(field_type, FieldType::Json)
+                            && matches!(value_type, FieldType::String))
                     {
-                        value_param = format!("\"{}\"", value_param);
+                        value_param = sql_string(&value_param);
                     }
                     value_context.params.push(format!("{} {}", op, value_param));
                 }
@@ -1247,11 +1312,12 @@ fn evaluate_field_value(
                 if matches!(value_type, FieldType::Regex) {
                     value_context
                         .params
-                        .push(format!("REGEXP '{}'", value_param));
+                        .push(format!("REGEXP {}", sql_string(&value_param)));
                 } else {
-                    value_context
-                        .params
-                        .push(format!("LIKE '%{}%'", value_param));
+                    value_context.params.push(format!(
+                        "LIKE {}",
+                        like_pattern(&format!("%{}%", escape_like(&value_param)))
+                    ));
                 }
             }
         }
@@ -1500,6 +1566,11 @@ impl Evaluate for Atom<'_> {
                 context.params.push(d.timestamp().to_string());
                 Ok(())
             }
+            Atom::Date(d) => {
+                context.value_type = Some(FieldType::DateTime);
+                context.params.push(local_day_start_sql(*d, 0));
+                Ok(())
+            }
             Atom::RelativeDate(d) => {
                 context.value_type = Some(FieldType::DateTime);
                 context.params.push(d.to_sql());
@@ -1563,16 +1634,16 @@ mod tests {
             // Tag search - needs tag joins and special field matching syntax
             (
                 "tag=math",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))",
             ),
             (
                 r#"tag="math:measure-theory:homework""#,
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:measure-theory:homework:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:measure-theory:homework:%')",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%')))",
             ),
             // Exclude tag
             (
                 "-tag=math",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))))",
             ),
             // linked_to_note
             (
@@ -1587,7 +1658,7 @@ mod tests {
             // linked_to_keyword
             (
                 r#"linked_to_keyword="foo""#,
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword = \"foo\")",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword = 'foo')",
             ),
             // linked_from_note
             (
@@ -1606,7 +1677,7 @@ mod tests {
             // Convert types
             (
                 "tag=2 or tag=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:2:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:2:%') OR c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:true:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:true:%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE '2' OR t.name LIKE '2:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE '2' OR t.name LIKE '2:%'))) OR (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%'))))",
             ),
             // Card search - needs card join
             (
@@ -1616,11 +1687,11 @@ mod tests {
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')) AND NOT (c.special_state = 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1))",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%')) AND (c.special_state IS NULL OR c.special_state != 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1))",
             ),
             // Custom data - no joins needed
             (
@@ -1630,7 +1701,7 @@ mod tests {
             // Custom data with string value containing special characters
             (
                 r#"custom_data:"$.card_key"="preflop-hand|SB|K5o|default""#,
-                r#"SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = "preflop-hand|SB|K5o|default""#,
+                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = 'preflop-hand|SB|K5o|default'",
             ),
             // Regex search
             (
@@ -1643,7 +1714,7 @@ mod tests {
             ),
             (
                 "tag~re:\"^math\"",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.name REGEXP '^math' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE t.name REGEXP '^math')",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND t.name REGEXP '^math') OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND t.name REGEXP '^math'))",
             ),
             // Negated groups
             (
@@ -1652,15 +1723,38 @@ mod tests {
             ),
             (
                 "-(tag=math or dog)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') OR n.data LIKE '%dog%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data LIKE '%dog%'))",
             ),
             (
                 "-(tag=math and data~foo)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND n.data LIKE '%foo%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data LIKE '%foo%'))",
             ),
             (
                 "tag=math and -(data~re:\"20[0-9][0-9]-(fall|winter)-[0-9]+\" or data~re:\"fall[0-9][0-9]-sol[0-9]-[0-9]+\")",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND NOT ((n.data REGEXP '20[0-9][0-9]-(fall|winter)-[0-9]+' OR n.data REGEXP 'fall[0-9][0-9]-sol[0-9]-[0-9]+')))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND NOT ((n.data REGEXP '20[0-9][0-9]-(fall|winter)-[0-9]+' OR n.data REGEXP 'fall[0-9][0-9]-sol[0-9]-[0-9]+')))",
+            ),
+            // Values are quoted and LIKE wildcards are matched literally.
+            (
+                r#""don't" snake_case "100%" re:"it's""#,
+                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data LIKE '%don''t%' AND n.data LIKE '%snake\_case%' ESCAPE '\') AND n.data LIKE '%100\%%' ESCAPE '\') AND n.data REGEXP 'it''s')",
+            ),
+            (
+                "parser_name=name",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE p.name = 'name'",
+            ),
+            (
+                r#"custom_data:"$.a's">=1 tag="a_b""#,
+                r"SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (json_extract(n.custom_data, '$.a''s') >= 1 AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\'))))",
+            ),
+            // Words that start with a keyword, numbers and bare boolean fields
+            (
+                "orbit 2024 c.user_buried",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2)",
+            ),
+            // `and` binds tighter than `or`
+            (
+                "a or b c",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%a%' OR (n.data LIKE '%b%' AND n.data LIKE '%c%'))",
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -1747,9 +1841,37 @@ mod tests {
                 "created_at>=today",
                 format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at >= {today}"),
             ),
+            // A day stands for the whole day, so this is up to the end of the day 3 days from now.
             (
                 "c.due<=today+3d",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', 'utc') AS INTEGER))".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', '+1 days', 'utc') AS INTEGER))".to_string(),
+            ),
+            (
+                "created_at=today",
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+1 days', 'utc') AS INTEGER)) - 1)"),
+            ),
+            (
+                "created_at>today-1w",
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+1 days', 'utc') AS INTEGER))".to_string(),
+            ),
+            // A fixed date is a local day too.
+            (
+                "created_at=2026-10-17",
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)) - 1)".to_string(),
+            ),
+            (
+                "created_at<2026-10-17 c.due<=2026-10-17",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)))".to_string(),
+            ),
+            // A time is exact.
+            (
+                "created_at>=2026-10-17T12:00:00Z",
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= 1792238400".to_string(),
+            ),
+            // Against text, a date is text.
+            (
+                "data~2026-10-17",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%2026-10-17%'".to_string(),
             ),
             (
                 "-created_at>=now-12h",
@@ -1766,7 +1888,7 @@ mod tests {
             ),
             (
                 "keyword=today-5d",
-                "SELECT DISTINCT n.id FROM note n WHERE EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = \"today-5d\")".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = 'today-5d')".to_string(),
             ),
             // `note` followed by a group is not a reference.
             (
@@ -1791,6 +1913,7 @@ mod tests {
             // A date can't be searched for as text
             "created_at~note[gir].created_at",
             "created_at~today",
+            "created_at~2026-10-17",
             // Malformed references and offsets
             "created_at>=note[gir",
             "created_at>=note[gir].due",
@@ -1870,6 +1993,88 @@ mod tests {
         );
     }
 
+    #[sqlx::test]
+    async fn searches_text_tags_and_days(pool: SqlitePool) {
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        let yesterday = chrono::Local::now().date_naive() - chrono::Days::new(1);
+        let start_of_yesterday = yesterday
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .earliest()
+            .unwrap()
+            .timestamp();
+        // `a` to `c` have cards, `d` has none. `b` was created at the start of yesterday, `c` at
+        // the end of it, and the others today.
+        let now = chrono::Utc::now().timestamp();
+        let notes = [
+            ("a", "don't use snake_case", now),
+            ("b", "dont use snakeXcase", start_of_yesterday),
+            ("c", "100% orbit", start_of_yesterday + 24 * 60 * 60 - 1),
+            ("d", "1000 or bit", now),
+        ];
+        for (letters, data, created_at) in notes {
+            sqlx::query(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, ?, ?, '{}', 1)",
+            )
+            .bind(letters.parse::<NoteId>().unwrap())
+            .bind(data)
+            .bind(created_at)
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for letters in ["a", "b", "c"] {
+            sqlx::query(
+                r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, custom_data) VALUES (?, 1, 1, 0, 0, 0, 0.9, 0, '{}')"#,
+            )
+            .bind(letters.parse::<NoteId>().unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'math', '', 0), (2, 'math:algebra', '', 0), (3, 'physics:math', '', 0), (4, 'mathx', '', 0)").await;
+        // `a` is tagged `math`, `b` a descendant, `c` has `math` in the middle and `d` (with no
+        // cards) is `mathx`.
+        exec(&format!(
+            "INSERT INTO note_tag (note_id, tag_id) VALUES ({}, 1), ({}, 2), ({}, 3), ({}, 4)",
+            "a".parse::<NoteId>().unwrap().packed(),
+            "b".parse::<NoteId>().unwrap().packed(),
+            "c".parse::<NoteId>().unwrap().packed(),
+            "d".parse::<NoteId>().unwrap().packed(),
+        ))
+        .await;
+
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+        assert_eq!(search("\"don't\"").await, ["a"]);
+        assert_eq!(search("snake_case").await, ["a"]);
+        assert_eq!(search("\"100%\"").await, ["c"]);
+        assert_eq!(search("orbit").await, ["c"]);
+        assert_eq!(search("1000").await, ["d"]);
+        assert_eq!(search("tag=math").await, ["a", "b"]);
+        assert_eq!(search("tag=mathx").await, ["d"]);
+        assert_eq!(search("-tag=math").await, ["c", "d"]);
+        assert_eq!(search("created_at=today-1d").await, ["b", "c"]);
+        assert_eq!(search(&format!("created_at={yesterday}")).await, ["b", "c"]);
+        assert_eq!(search(&format!("created_at>{yesterday}")).await, ["a", "d"]);
+        assert_eq!(search("created_at<today").await, ["b", "c"]);
+    }
+
     #[test]
     fn test_sorting() {
         let inputs = vec![
@@ -1930,7 +2135,7 @@ mod tests {
             // Sort combined with WHERE clause
             (
                 "tag=math sort_by_asc=created_at",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') ORDER BY n.created_at ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) ORDER BY n.created_at ASC",
             ),
             (
                 "c.stability>=2 sort_by_desc=c.due",
@@ -1949,12 +2154,12 @@ mod tests {
             // Sort with parenthesis
             (
                 "(tag=math and c.stability>=2) sort_by_asc=linked_to_note)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND c.stability >= 2) ORDER BY n.id ASC",
             ),
             // The following should be equivalent to the one above.
             (
                 "tag=math and (c.stability>=2 sort_by_asc=linked_to_note)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE (c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%' UNION SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN note_tag nt ON n.id = nt.note_id JOIN tag t ON nt.tag_id = t.id WHERE ':' || t.name || ':' LIKE '%:math:%') AND c.stability >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND c.stability >= 2) ORDER BY n.id ASC",
             ),
         ];
 

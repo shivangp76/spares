@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use chrono::DateTime;
 use chrono::NaiveDate;
-use chrono::TimeZone;
 use chrono::Utc;
 use miette::Error;
 use miette::LabeledSpan;
@@ -17,17 +16,15 @@ use crate::search::TokenKind;
 use crate::search::TokenTree;
 use crate::search::lexer::Lexer;
 
-fn parse_date(date_str: &str) -> Result<DateTime<Utc>, Error> {
-    // Try parsing as NaiveDate (YYYY-MM-DD)
+fn parse_date(date_str: &str) -> Result<Atom<'static>, Error> {
+    // A day (YYYY-MM-DD), in local time
     if let Ok(naive_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-        // SAFETY: Hard coded hours, minutes, and seconds.
-        let naive_date_time = naive_date.and_hms_opt(0, 0, 0).unwrap();
-        return Ok(TimeZone::from_utc_datetime(&Utc, &naive_date_time));
+        return Ok(Atom::Date(naive_date));
     }
 
     // Try parsing as DateTime<Utc> (YYYY-MM-DDTHH:MM:SSZ)
     if let Ok(datetime) = DateTime::parse_from_rfc3339(date_str) {
-        return Ok(datetime.with_timezone(&Utc));
+        return Ok(Atom::DateTime(datetime.with_timezone(&Utc)));
     }
 
     // Return an error if neither format matches
@@ -91,7 +88,7 @@ impl<'de> Parser<'de> {
                 kind: TokenKind::Date,
                 span,
                 ..
-            } => TokenTree::Atom(Atom::DateTime(parse_date(&self.whole[span])?)),
+            } => TokenTree::Atom(parse_date(&self.whole[span])?),
             Token {
                 kind: TokenKind::RelativeDate,
                 span,

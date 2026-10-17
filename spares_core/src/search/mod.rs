@@ -45,7 +45,10 @@
 //! ### Strings
 //!
 //! **Unquoted Strings:**
-//! - Strings containing only alphanumeric characters (`a-z`, `A-Z`, `0-9`) do not need quotes.
+//! - Words made of letters, digits, `.`, `_`, `-` and `+` that don't start with `-` do not need
+//!   quotes. Without a field, a number or date like `2024` is a word too.
+//! - `and`, `or`, `AND`, `OR`, `true` and `false` are keywords only as whole words, so `orbit` is
+//!   an ordinary word. Quote a keyword to search for it, as in `"or"`.
 //!
 //! **Quoted Strings:**
 //! - Strings with non-alphanumeric characters must be quoted.
@@ -59,7 +62,8 @@
 //! #### Tilde Operator (`~`)
 //!
 //! **With a normal String**:
-//! - `field~"value"`: Searches if `field` contains `value` (case insensitive).
+//! - `field~"value"`: Searches if `field` contains `value` (case insensitive for ASCII letters).
+//!   Every character is matched literally, including `%` and `_`.
 //!   - Example: `tag~"math test"` finds notes with tags containing `math test`.
 //!
 //! **With a Regex String**:
@@ -67,11 +71,16 @@
 //! - This uses the [`regex`](https://docs.rs/regex/latest/regex/) crate.
 //!
 //! #### Exact Match (`=`)
-//! - `field="value"`: Searches for notes where `field` matches `value` exactly and `value` appears in the note's body.
-//!   - Example: `tag="math test"` finds notes tagged `math test` with `test` in the body.
+//! - `field="value"`: Searches for notes where `field` is exactly `value`.
+//!   - Example: `keyword="Integration by parts"` finds notes with that keyword.
+//! - `tag=value` finds notes and cards tagged `value` or one of its descendants (case insensitive
+//!   for ASCII letters).
+//!   - Example: `tag=math` finds the tags `math` and `math:algebra`, but not `physics:math` or
+//!     `mathematics`.
 //!
 //! #### Default Field
-//! - If no field is specified, `data` is used by default.
+//! - If no field is specified, `data~` is used by default, so a bare word searches the note's
+//!   text.
 //!   - Example: `-dog` or `-"dog"` finds notes not containing `dog`.
 //!   - Example: `"-dog"` finds notes containing `-dog`. This follows the quoting rule for non-alphanumeric characters like `-`.
 //!
@@ -95,14 +104,14 @@
 //! ### Booleans
 //!
 //! **Example:**
-//! - `c.suspended=true`: Returns suspended cards.
+//! - `c.suspended=true` or `c.suspended`: Returns suspended cards.
 //! - `c.suspended=false` or `-c.suspended=true`: Returns non-suspended cards.
 //!
 //! ### Dates
 //!
 //! **Formats:**
-//! - `YYYY-MM-DD`
-//! - `YYYY-MM-DDTHH:MM:SSZ`
+//! - `YYYY-MM-DD`: a whole day, in local time.
+//! - `YYYY-MM-DDTHH:MM:SSZ`: an exact time, in UTC.
 //!
 //! **Operators:**
 //! - `=`
@@ -111,6 +120,9 @@
 //! - `<`
 //! - `<=`
 //!
+//! Compared against a day, `=` matches any time in it, `>` is after the day and `<=` is up to the
+//! end of it, so `created_at=2026-10-17` finds notes created any time that day.
+//!
 //! #### Relative dates
 //!
 //! In place of a fixed date, a date field can be compared against a date that is worked out when
@@ -118,7 +130,7 @@
 //! - Another note's timestamp: `note[<id>].created_at` or `note[<id>].updated_at`, where `<id>` is
 //!   the note's letters.
 //! - A card's timestamp: `card[<id>].created_at`, `card[<id>].updated_at` or `card[<id>].due`.
-//! - `today`: the start of the current day, in local time.
+//! - `today`: the current day, in local time.
 //! - `now`.
 //!
 //! Each can be followed by one or more offsets, written with no spaces: `+` or `-`, a number, and a
@@ -126,13 +138,16 @@
 //! and weeks are calendar days in local time, so `today-1d` is the start of yesterday even across
 //! a daylight saving change. Minutes and hours are exact.
 //!
+//! `today` with only day and week offsets is a whole day, like `YYYY-MM-DD`, so `c.due<=today`
+//! includes cards due later today and `created_at=today-1d` finds notes created yesterday.
+//!
 //! A query that refers to a note or card that doesn't exist is an error. `today` and `now` are only
 //! dates when compared against a date field, so `today` and `data~now` still search for the words.
 //!
 //! **Examples:**
 //! - `created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d`: notes created in
 //!   the 5 days up to note `gir`.
-//! - `c.due<=today+3d`: cards due by the start of the day 3 days from now.
+//! - `c.due<=today+3d`: cards due by the end of the day 3 days from now.
 //! - `updated_at>=now-12h`: notes edited in the last 12 hours.
 //!
 //! ### JSON
@@ -158,7 +173,7 @@
 //!
 //! **Examples:**
 //! - `custom_data:"$.x.y[1]"=zz`
-//! - `-custom_data:"$.a.b"`
+//! - `-custom_data:"$.a.b"=true`
 //! - `custom_data:"$.array[0].key">=1`
 //!
 //! ### Sorting
@@ -268,7 +283,7 @@
 //! - `tag=math sort_by_desc=created_at limit=10`
 //!
 //! ### Equivalences
-//! - `dog` is equivalent to `data=dog` and `data="dog"`.
+//! - `dog` is equivalent to `data~dog` and `data~"dog"`.
 //! - `-cat -mouse` is equivalent to `-(cat or mouse)` (De Morgan's Laws).
 //! - `dog cat` is equivalent to `dog and cat`. A space between terms implies an `and` operator unless part of a quoted string.
 //!
@@ -283,6 +298,7 @@ use std::fmt;
 use std::ops::Range;
 
 use chrono::DateTime;
+use chrono::NaiveDate;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
@@ -411,6 +427,8 @@ pub(crate) enum Atom<'de> {
     Float(f64),
     Boolean(bool),
     DateTime(DateTime<Utc>),
+    /// A date without a time, like `2026-10-17`, which stands for that whole local day.
+    Date(NaiveDate),
     RelativeDate(RelativeDate),
     Regex(Cow<'de, str>),
     Nil,
@@ -425,6 +443,7 @@ impl fmt::Display for Atom<'_> {
             Atom::Float(n) => write!(f, "{n}"),
             Atom::Boolean(b) => write!(f, "{b:?}"),
             Atom::DateTime(d) => write!(f, "{d:?}"),
+            Atom::Date(d) => write!(f, "{d}"),
             Atom::RelativeDate(d) => write!(f, "{d}"),
             Atom::Regex(s) => write!(f, "re:\"{s}\""),
             Atom::Nil => write!(f, "nil"),
