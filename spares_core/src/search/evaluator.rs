@@ -545,6 +545,19 @@ enum FieldType {
 }
 
 impl FieldType {
+    /// How to write a value of the type, for errors.
+    fn how_to_write(&self) -> &'static str {
+        match self {
+            FieldType::Integer => "Write a whole number, like `3`",
+            FieldType::Float => "Write a number, like `0.9` or `3`",
+            FieldType::String => "Write a word, or text in quotes",
+            FieldType::DateTime => "Write a date, like `2026-10-17`, `today+1d` or `now-12h`",
+            FieldType::Json => "Write a number, text, `true` or `false`",
+            FieldType::Boolean => "Write `true` or `false`",
+            FieldType::Regex => "Write a regex, like `re:\"^a\"`",
+        }
+    }
+
     /// The kind of value the type holds, for errors, like `a number`.
     fn describe(&self) -> &'static str {
         match self {
@@ -1262,12 +1275,40 @@ fn validate_field_value_types(
         | (FieldType::String | FieldType::Json, _)
         | (FieldType::DateTime, FieldType::DateTime)
         | (FieldType::Boolean, FieldType::Boolean) => Ok(()),
-        _ => Err(miette!(
-            "`{field_name}` holds {}, so it can't be compared with {} `{value}`",
-            field_type.describe(),
-            value_type.describe(),
-        )),
+        _ => {
+            let value = match value {
+                TokenTree::Atom(Atom::String(s)) => s.to_string(),
+                value => value.to_string(),
+            };
+            let example = if matches!(field_type, FieldType::Boolean) {
+                Some(format!("{field_name}=false"))
+            } else {
+                field_example(field_name).map(str::to_string)
+            };
+            let help = match example {
+                Some(example) => format!("{}, as in `{example}`", field_type.how_to_write()),
+                None => field_type.how_to_write().to_string(),
+            };
+            Err(miette!(
+                help = help,
+                "`{field_name}` holds {}, so it can't be compared with {} `{value}`",
+                field_type.describe(),
+                value_type.describe(),
+            ))
+        }
     }
+}
+
+/// The example of the field written `field_name` in [`FIELDS`], if it has one.
+fn field_example(field_name: &str) -> Option<&'static str> {
+    let name = match field_name.strip_prefix("card.") {
+        Some(rest) => format!("c.{rest}"),
+        None => field_name.to_string(),
+    };
+    FIELDS
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| field.example)
 }
 
 fn validate_field_operator_types(
@@ -1281,10 +1322,12 @@ fn validate_field_operator_types(
             Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual,
         )
         | (FieldType::Integer | FieldType::Float | FieldType::Boolean, Op::Tilde) => Err(miette!(
-            help = match field_type {
-                FieldType::String => "Use `=` to match it exactly or `~` to search within it",
-                FieldType::Boolean => "Use `=`, as in `c.suspended=true`",
-                _ => "Use `=`, `<`, `<=`, `>` or `>=`",
+            help = match (field_type, field_example(field_name)) {
+                (FieldType::String, _) =>
+                    "Use `=` to match it exactly or `~` to search within it".to_string(),
+                (FieldType::Boolean, _) => format!("Use `=`, as in `{field_name}=true`"),
+                (_, Some(example)) => format!("Use `=`, `<`, `<=`, `>` or `>=`, as in `{example}`"),
+                (_, None) => "Use `=`, `<`, `<=`, `>` or `>=`".to_string(),
             },
             "`{field_name}` holds {}, so it can't use `{op}`",
             field_type.describe(),
@@ -1973,6 +2016,30 @@ mod tests {
         for field in FIELDS {
             assert!(Field::from_str(&[field.name]).is_ok(), "{}", field.name);
         }
+    }
+
+    #[test]
+    fn type_errors_say_how_to_write_the_value() {
+        let error = |query| {
+            render_error(
+                query,
+                &Evaluator::new(query)
+                    .evaluate(EvaluatorReturnItemType::NoteIds)
+                    .unwrap_err(),
+            )
+        };
+        assert_eq!(
+            error("c.due=tomorrow"),
+            "`c.due` holds a date, so it can't be compared with text `tomorrow`\n\nhelp: Write a date, like `2026-10-17`, `today+1d` or `now-12h`, as in `c.due<=today`"
+        );
+        assert_eq!(
+            error("card.suspended=yes"),
+            "`card.suspended` holds `true` or `false`, so it can't be compared with text `yes`\n\nhelp: Write `true` or `false`, as in `card.suspended=false`"
+        );
+        assert_eq!(
+            error("c.stability~2"),
+            "`c.stability` holds a number, so it can't use `~`\n\nhelp: Use `=`, `<`, `<=`, `>` or `>=`, as in `c.stability>=30`"
+        );
     }
 
     #[test]
