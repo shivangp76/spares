@@ -36,6 +36,11 @@ use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
 use crate::search::relative_date::local_day_start_sql;
 use crate::search::relative_date::local_month_start_sql;
+use crate::schedulers::fsrs::utils::Rating as FsrsRating;
+use crate::schedulers::fsrs::utils::State as FsrsState;
+use crate::schedulers::fsrs::utils::decay;
+use crate::schedulers::fsrs::utils::rating_to_number;
+use crate::schedulers::fsrs::utils::state_to_number;
 use crate::search::render_error;
 
 pub(crate) struct Evaluator<'de> {
@@ -497,7 +502,17 @@ enum CardField {
     WaitingOnLinks,
     State,
     CustomData(String),
-    Rated,
+    /// A rating, in reviews at the time written in brackets, like the `>=today-7d` of
+    /// `c.rated[>=today-7d]`, if there is one.
+    Rated(Option<String>),
+    Reviewed,
+    Reps,
+    Lapses,
+    Interval,
+    Retrievability,
+    /// When a review in `review_log rl` was, for the brackets of `c.rated[…]`. It can't be
+    /// written in a query.
+    ReviewedAt,
     Count,
     Cloze,
 }
@@ -520,7 +535,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 30] = [
+pub(crate) const FIELDS: [FieldDoc; 35] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~dog", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -545,7 +560,12 @@ pub(crate) const FIELDS: [FieldDoc; 30] = [
     doc("c.waiting_on_links", "c.waiting_on_links", "Whether the card waits for the notes it links to"),
     doc("c.state", "c.state=review", "The card's state: new, learning, review or relearning"),
     doc("c.custom_data", "c.custom_data.key=1", "A value in the card's custom data"),
-    doc("c.rated", "c.rated=1", "A rating the card got in a review, from 1 (again) to 4 (easy)"),
+    doc("c.rated", "c.rated[>=today-7d]=1", "A rating the card got in a review, from 1 (again) to 4 (easy), in reviews at the time in brackets if there are any"),
+    doc("c.reviewed", "c.reviewed>=today-7d", "When the card was last reviewed"),
+    doc("c.reps", "c.reps>=10", "How many times the card was reviewed"),
+    doc("c.lapses", "c.lapses>=3", "How many times the card was forgotten after it had been learned"),
+    doc("c.interval", "c.interval>=30", "Days from the card's last review to when it is due"),
+    doc("c.retrievability", "c.retrievability<0.8", "How likely you are to recall the card now, from 0 to 1, as FSRS predicts"),
     doc("c.count", "c.count>=2", "How many cards the note has"),
     doc("c.cloze", "c.cloze~proof", "The text of the card's cloze"),
     doc("sort_by_asc", "sort_by_asc=c.due", "Sorts by a field, smallest first"),
@@ -723,6 +743,13 @@ impl Field {
         } else {
             value_str.to_string()
         };
+        // Ratings in reviews at a time, like `c.rated[>=today-7d]`.
+        if let Some(range) = normalized_value_str
+            .strip_prefix("c.rated[")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            return Ok(Field::Card(CardField::Rated(Some(range.to_string()))));
+        }
         // A path into custom data, like `custom_data.x.y[1]`.
         for (prefix, is_card) in [("custom_data", false), ("c.custom_data", true)] {
             if let Some(path) = normalized_value_str.strip_prefix(prefix)
@@ -763,7 +790,12 @@ impl Field {
             "c.waiting_on_links" => Ok(Field::Card(CardField::WaitingOnLinks)),
             "c.state" => Ok(Field::Card(CardField::State)),
             "c.custom_data" => Ok(Field::Card(CardField::CustomData("$".to_string()))),
-            "c.rated" => Ok(Field::Card(CardField::Rated)),
+            "c.rated" => Ok(Field::Card(CardField::Rated(None))),
+            "c.reviewed" => Ok(Field::Card(CardField::Reviewed)),
+            "c.reps" => Ok(Field::Card(CardField::Reps)),
+            "c.lapses" => Ok(Field::Card(CardField::Lapses)),
+            "c.interval" => Ok(Field::Card(CardField::Interval)),
+            "c.retrievability" => Ok(Field::Card(CardField::Retrievability)),
             "c.count" => Ok(Field::Card(CardField::Count)),
             "c.cloze" => Ok(Field::Card(CardField::Cloze)),
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
@@ -788,9 +820,11 @@ impl Field {
         }
     }
 
-    fn to_sql_str(&self, value_str: &str) -> String {
+    fn to_sql_str(&self, value_str: &str) -> Result<String, Error> {
         let with_op = move |field_name: &str| format!("{} {}", field_name, value_str);
-        match self {
+        // Never NULL, so negating it matches the cards that have no value, like new cards.
+        let never_null = move |expr: &str| format!("COALESCE({expr} {value_str}, 0)");
+        Ok(match self {
             Field::Note(note_field) => match note_field {
                 NoteField::Id => with_op("n.id"),
                 NoteField::Data => with_op("n.data"),
@@ -876,13 +910,15 @@ impl Field {
                         value_str
                     )
                 }
-                CardField::Rated => {
-                    format!(
-                        "EXISTS (SELECT 1 FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {} AND rl.rating {})",
-                        ReviewLogKind::Review as u8,
-                        value_str
-                    )
-                }
+                CardField::Rated(range) => rated_sql(Some(value_str), range.as_deref())?,
+                CardField::Reviewed => never_null(&last_rated_sql()),
+                CardField::Reps => with_op(&reps_sql()),
+                CardField::Lapses => with_op(&lapses_sql()),
+                CardField::Interval => never_null(&interval_sql()),
+                // `value_str` is a bound on elapsed days over stability, see
+                // `retrievability_bound`.
+                CardField::Retrievability => never_null(&elapsed_over_stability_sql()),
+                CardField::ReviewedAt => with_op("rl.reviewed_at"),
                 CardField::Count => {
                     with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
                 }
@@ -893,7 +929,7 @@ impl Field {
                 }
             },
             Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => String::new(),
-        }
+        })
     }
 
     /// The kind of value the field holds, as listed by `spares note search --fields`.
@@ -931,13 +967,22 @@ impl Field {
                 NoteField::CustomData(_) => FieldType::Json,
             },
             Field::Card(card_field) => match card_field {
-                CardField::Id | CardField::Rated | CardField::State | CardField::Count => {
-                    FieldType::Integer
-                }
-                CardField::CreatedAt | CardField::UpdatedAt | CardField::Due => FieldType::DateTime,
-                CardField::Stability | CardField::Difficulty | CardField::DesiredRetention => {
-                    FieldType::Float
-                }
+                CardField::Id
+                | CardField::Rated(_)
+                | CardField::State
+                | CardField::Count
+                | CardField::Reps
+                | CardField::Lapses => FieldType::Integer,
+                CardField::CreatedAt
+                | CardField::UpdatedAt
+                | CardField::Due
+                | CardField::Reviewed
+                | CardField::ReviewedAt => FieldType::DateTime,
+                CardField::Stability
+                | CardField::Difficulty
+                | CardField::DesiredRetention
+                | CardField::Interval
+                | CardField::Retrievability => FieldType::Float,
                 // CardField::SpecialState => {
                 CardField::Suspended
                 | CardField::UserBuried
@@ -992,9 +1037,16 @@ impl Field {
                 CardField::Count => {
                     Ok("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)".to_string())
                 }
+                CardField::Reviewed => Ok(last_rated_sql()),
+                CardField::Reps => Ok(reps_sql()),
+                CardField::Lapses => Ok(lapses_sql()),
+                CardField::Interval => Ok(interval_sql()),
+                // Retrievability falls as elapsed days over stability grow.
+                CardField::Retrievability => Ok(format!("-{}", elapsed_over_stability_sql())),
                 // Unsupported types
                 // A card can have many ratings, so there is none to sort by.
-                CardField::Rated => Err(miette!("a card can have many ratings")),
+                CardField::Rated(_) => Err(miette!("a card can have many ratings")),
+                CardField::ReviewedAt => Err(miette!("it isn't a field of cards")),
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
@@ -1404,6 +1456,11 @@ fn evaluate_bare_field(name: &str, context: &mut EvaluationContext) -> Result<()
     let (column, path) = match Field::from_str(name)? {
         Field::Note(NoteField::CustomData(path)) => ("n.custom_data", path),
         Field::Card(CardField::CustomData(path)) => ("c.custom_data", path),
+        // Any rating at the time, as in `c.rated[today]`.
+        Field::Card(CardField::Rated(Some(range))) => {
+            context.add_where_clause(rated_sql(None, Some(&range))?);
+            return Ok(());
+        }
         _ => {
             let example = field_example(name).unwrap_or("tag=math");
             return Err(miette!(
@@ -1517,7 +1574,6 @@ fn validate_field_operator_types(
     }
 }
 
-#[expect(clippy::too_many_lines)]
 fn evaluate_field_value(
     trees: &[TokenTree],
     context: &mut EvaluationContext,
@@ -1540,23 +1596,35 @@ fn evaluate_field_value(
         .ok_or_else(|| miette!("Missing field"))?;
     // The field as written, for errors.
     let field_name = trees[0].to_string();
+    evaluate_comparison(&field, &field_name, &trees[1], context, op)
+}
+
+/// Adds the condition that `field` compares with `value` by `op`. `field_name` is the field as
+/// written, for errors.
+#[expect(clippy::too_many_lines)]
+fn evaluate_comparison(
+    field: &Field,
+    field_name: &str,
+    value: &TokenTree,
+    context: &mut EvaluationContext,
+    op: Op,
+) -> Result<(), Error> {
     let field_type = field.get_field_type();
 
-    // Second tree should be the value
     let mut value_context = context.child();
-    trees[1].evaluate(&mut value_context)?;
+    value.evaluate(&mut value_context)?;
     let mut value_type = value_context
         .value_type
         .ok_or_else(|| miette!("Missing value"))?;
 
     // `today` and `now` are ordinary words unless compared against a date field, so `data~today`
     // still searches for the word.
-    let mut relative_date = match &trees[1] {
+    let mut relative_date = match value {
         TokenTree::Atom(Atom::RelativeDate(date)) => Some(date.clone()),
         _ => None,
     };
     if matches!(field_type, FieldType::DateTime)
-        && let TokenTree::Atom(Atom::String(s) | Atom::Word(s)) = &trees[1]
+        && let TokenTree::Atom(Atom::String(s) | Atom::Word(s)) = value
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
@@ -1572,7 +1640,7 @@ fn evaluate_field_value(
     }
     // A month, like `2026-10`, or a year, like `2026`, compared against a date field, as its first
     // day and how many months it lasts.
-    let month_or_year = match &trees[1] {
+    let month_or_year = match value {
         _ if !matches!(field_type, FieldType::DateTime) => None,
         TokenTree::Atom(Atom::String(s) | Atom::Word(s))
             if s.len() == 7
@@ -1598,7 +1666,7 @@ fn evaluate_field_value(
     // stands for the whole local period, so `created_at=2026-10-17` finds notes created any time
     // that day and `created_at=2026` any time that year. Against a text field, it is just the
     // text.
-    let period = match (&trees[1], &relative_date, month_or_year) {
+    let period = match (value, &relative_date, month_or_year) {
         (TokenTree::Atom(Atom::Date(_)), _, _) | (_, _, Some(_))
             if matches!(field_type, FieldType::DateTime) && matches!(op, Op::Tilde) =>
         {
@@ -1701,7 +1769,14 @@ fn evaluate_field_value(
             // Merge table requirements for the sort target field
             context
                 .table_requirements
-                .merge(&TableRequirements::analyze_field(target_field));
+                .merge(&TableRequirements::analyze_field(target_field.clone()));
+            // Cards with no value, like new cards for `c.retrievability`, come last either way.
+            if matches!(
+                target_field,
+                Field::Card(CardField::Reviewed | CardField::Interval | CardField::Retrievability)
+            ) {
+                context.order_by.push(format!("({order_expr}) IS NULL ASC"));
+            }
             match field {
                 Field::SortAsc(_) => context.order_by.push(format!("{order_expr} ASC")),
                 Field::SortDesc(_) => context.order_by.push(format!("{order_expr} DESC")),
@@ -1755,6 +1830,10 @@ fn evaluate_field_value(
                         like_pattern(&name),
                         like_pattern(&format!("{name}:%")),
                     ));
+                } else if matches!(field, Field::Card(CardField::Retrievability))
+                    && let Ok(value) = value_param.parse::<f64>()
+                {
+                    value_context.params.push(retrievability_bound(op, value)?);
                 } else if matches!(field_type, FieldType::Float)
                     && matches!(op, Op::Equal)
                     && let Ok(value) = value_param.parse::<f64>()
@@ -1788,7 +1867,7 @@ fn evaluate_field_value(
                     // A value without quotes, like a word or a date, searches the text for words
                     // starting with it, so `cat` finds `cats` but not `concatenate`. In quotes,
                     // it can be anywhere.
-                    let word_start = !matches!(trees[1], TokenTree::Atom(Atom::String(_)))
+                    let word_start = !matches!(value, TokenTree::Atom(Atom::String(_)))
                         && matches!(
                             field,
                             Field::Note(NoteField::Data) | Field::Card(CardField::Cloze)
@@ -1815,18 +1894,159 @@ fn evaluate_field_value(
     // - Booleans do not have an order
     // - Booleans cannot use containment operator
     // - Numbers cannot use containment operator
-    validate_field_operator_types(&field_name, &field_type, op)?;
+    validate_field_operator_types(field_name, &field_type, op)?;
 
     // Ensure field and value have the same type
-    validate_field_value_types(&field_name, &field_type, &value_type, &trees[1])?;
+    validate_field_value_types(field_name, &field_type, &value_type, value)?;
 
     let sql_condition = if matches!(field, Field::Card(CardField::WaitingOnLinks)) {
         waiting_on_links_sql(&value_str)?
     } else {
-        field.to_sql_str(&value_str)
+        field.to_sql_str(&value_str)?
     };
     context.add_where_clause(sql_condition);
     Ok(())
+}
+
+/// When the card was last reviewed, or NULL if it never was. Crams and forgets are left out, as in
+/// statistics. The `0` is [`ReviewLogKind::Review`].
+fn last_rated_sql() -> String {
+    "(SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = 0)"
+        .to_string()
+}
+
+/// How many times the card was reviewed, leaving out crams.
+fn reps_sql() -> String {
+    format!(
+        "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {})",
+        ReviewLogKind::Review as u8
+    )
+}
+
+/// How many times the card lapsed: was forgotten (rated again) in the review state, counted like
+/// the scheduler's `lapses`.
+fn lapses_sql() -> String {
+    format!(
+        "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {} AND rl.rating = {} AND rl.previous_state = {})",
+        ReviewLogKind::Review as u8,
+        rating_to_number(FsrsRating::Again),
+        state_to_number(FsrsState::Review),
+    )
+}
+
+/// Days from the card's last review to when it is due, as in statistics, or NULL for a new card.
+fn interval_sql() -> String {
+    format!(
+        "(CASE WHEN c.state != {} THEN (c.due - {}) / 86400.0 END)",
+        state_to_number(FsrsState::New),
+        last_rated_sql()
+    )
+}
+
+/// Days since the card's last review over its stability, or NULL for a new card. FSRS's
+/// retrievability falls as this grows, with the same curve for every card.
+fn elapsed_over_stability_sql() -> String {
+    format!(
+        "(CASE WHEN c.state != {} THEN MAX(CAST(strftime('%s', 'now') AS INTEGER) - {}, 0) / 86400.0 / MAX(c.stability, 0.0001) END)",
+        state_to_number(FsrsState::New),
+        last_rated_sql()
+    )
+}
+
+/// The bound on [`elapsed_over_stability_sql`] that is the same as the card's retrievability
+/// comparing with `value` by `op`, under the decay of the configured FSRS parameters. SQLite has
+/// no `pow`, but retrievability falls as the ratio grows, so a bound on one is a bound on the
+/// other, turned around. Equal is within a millionth, as for other numbers.
+fn retrievability_bound(op: Op, value: f64) -> Result<String, Error> {
+    let config = read_external_config().map_err(|e| miette!("{e}"))?;
+    Ok(retrievability_bound_with_decay(op, value, f64::from(decay(&config))))
+}
+
+fn retrievability_bound_with_decay(op: Op, value: f64, decay: f64) -> String {
+    let factor = 0.9_f64.powf(-1.0 / decay) - 1.0;
+    // The ratio at which retrievability is `r`: infinite for 0 or less, which no card reaches,
+    // and below 0, which no card has, above 1.
+    let ratio = |r: f64| {
+        let ratio = (r.max(0.0).powf(-1.0 / decay) - 1.0) / factor;
+        if ratio.is_infinite() {
+            // SQLite reads this as infinity.
+            "1e999".to_string()
+        } else {
+            ratio.to_string()
+        }
+    };
+    match op {
+        Op::GreaterThan => format!("< {}", ratio(value)),
+        Op::GreaterThanEqual => format!("<= {}", ratio(value)),
+        Op::LessThan => format!("> {}", ratio(value)),
+        Op::LessThanEqual => format!(">= {}", ratio(value)),
+        _ => {
+            let tolerance = 1e-6 * value.abs().max(1.0);
+            format!(
+                "BETWEEN {} AND {}",
+                ratio(value + tolerance),
+                ratio(value - tolerance)
+            )
+        }
+    }
+}
+
+/// Whether the card has a rating in a review, which compares with `value_str` if there is one,
+/// at the time written in `range`, like the `>=today-7d` of `c.rated[>=today-7d]`. Crams are left
+/// out, since the card's schedule is not based on them.
+fn rated_sql(value_str: Option<&str>, range: Option<&str>) -> Result<String, Error> {
+    let mut sql = format!(
+        "EXISTS (SELECT 1 FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {}",
+        ReviewLogKind::Review as u8
+    );
+    if let Some(value_str) = value_str {
+        let _ = write!(sql, " AND rl.rating {value_str}");
+    }
+    if let Some(range) = range {
+        let _ = write!(sql, " AND {}", review_time_sql(range)?);
+    }
+    sql.push(')');
+    Ok(sql)
+}
+
+/// The condition on when a review was that is written in `range`, the brackets of
+/// `c.rated[…]`: a comparison with a date, like `>=today-7d`, or a date, which means the review was
+/// in it, like `2026-10`. Dates work as they do for other date fields.
+fn review_time_sql(range: &str) -> Result<String, Error> {
+    let shown = format!("c.rated[{range}]");
+    let invalid = || {
+        miette!(
+            help = "Write a date in the brackets, or a comparison with one, as in `c.rated[today]` or `c.rated[>=today-7d]=1`",
+            "`{shown}` doesn't say when the reviews were",
+        )
+    };
+    let written = if range.starts_with(['<', '>', '=']) {
+        format!("c.reviewed{range}")
+    } else {
+        format!("c.reviewed={range}")
+    };
+    let tree = Parser::new(&written)
+        .parse_expression()
+        .map_err(|_| invalid())?;
+    let TokenTree::Cons(
+        op @ (Op::Equal | Op::GreaterThan | Op::GreaterThanEqual | Op::LessThan | Op::LessThanEqual),
+        children,
+    ) = &tree
+    else {
+        return Err(invalid());
+    };
+    let [_, value] = children.as_slice() else {
+        return Err(invalid());
+    };
+    let mut context = EvaluationContext::new(EvaluatorReturnItemType::CardIds, None);
+    evaluate_comparison(
+        &Field::Card(CardField::ReviewedAt),
+        &shown,
+        value,
+        &mut context,
+        *op,
+    )?;
+    context.where_clauses.pop().ok_or_else(invalid)
 }
 
 /// The SQL of `c.waiting_on_links` compared with `value_str`, with the `[queue]` settings of
@@ -2462,6 +2682,15 @@ mod tests {
             "data=re:\"math\"",
             // Not a card state
             "c.state=suspended",
+            // Not a time of reviews
+            "c.rated[]=1",
+            "c.rated[>=]=1",
+            "c.rated[soon]=1",
+            "c.rated[~x]=1",
+            "c.rated[today",
+            "c.rated[today]~1",
+            "sort_by_asc=c.rated[today]",
+            "c.retrievability~0.5",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);
@@ -2811,6 +3040,129 @@ mod tests {
         assert_eq!(
             search(&format!("created_at>{}", today.format("%Y"))).await,
             Vec::<String>::new()
+        );
+    }
+
+    #[sqlx::test]
+    #[allow(clippy::too_many_lines, reason = "test data is long")]
+    async fn searches_review_history(pool: SqlitePool) {
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        let now = chrono::Utc::now().timestamp();
+        let day = 24 * 60 * 60;
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        // `a` was reviewed 20, 10 and 2 days ago, lapsing 10 days ago, and is due in 5 days. `b`
+        // was reviewed 30 days ago and crammed yesterday. `c` is new.
+        let cards = [
+            ("a", 1, 2, 10.0, now + 5 * day),
+            ("b", 2, 2, 1.0, now + day),
+            ("c", 3, 0, 0.0, now),
+        ];
+        for (letters, card_id, state, stability, due) in cards {
+            let note_id = letters.parse::<NoteId>().unwrap();
+            sqlx::query(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, '{}', 1)",
+            )
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, custom_data) VALUES (?, ?, 1, 1, ?, ?, 5, 0.9, ?, '{}')"#,
+            )
+            .bind(card_id)
+            .bind(note_id)
+            .bind(due)
+            .bind(stability)
+            .bind(state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // (card, days ago, kind, rating, previous state)
+        let reviews = [
+            (1, 20, 0, 3, 0),
+            (1, 10, 0, 1, 2),
+            (1, 2, 0, 3, 3),
+            (2, 30, 0, 4, 0),
+            (2, 1, 16, 1, 2),
+        ];
+        for (card_id, days_ago, kind, rating, previous_state) in reviews {
+            sqlx::query(
+                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (?, ?, ?, ?, 'fsrs', ?, '{}')",
+            )
+            .bind(card_id)
+            .bind(now - days_ago * day)
+            .bind(kind)
+            .bind(rating)
+            .bind(previous_state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let search = async |query: &str| {
+            Evaluator::new(query)
+                .get_card_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"))
+        };
+        assert_eq!(search("c.reviewed>=today-7d").await, [1]);
+        assert_eq!(search("-c.reviewed>=today-7d").await, [3, 2]);
+        assert_eq!(search("c.rated[>=today-7d]").await, [1]);
+        assert_eq!(search("c.rated[>=today-15d]=1").await, [1]);
+        assert_eq!(search("c.rated[>=today-5d]=1").await, Vec::<CardId>::new());
+        // The cram is not a rating.
+        assert_eq!(search("c.rated=1").await, [1]);
+        assert_eq!(search("card.rated[<today-25d]=4").await, [2]);
+        assert_eq!(search("c.rated[today-2d]").await, [1]);
+        assert_eq!(search("c.reps>=2").await, [1]);
+        assert_eq!(search("c.reps=0").await, [3]);
+        assert_eq!(search("c.lapses=1").await, [1]);
+        assert_eq!(search("c.interval=7").await, [1]);
+        assert_eq!(search("c.interval>=1 c.interval<2").await, Vec::<CardId>::new());
+        assert_eq!(search("c.retrievability<0.8").await, [2]);
+        assert_eq!(search("-c.retrievability<0.8").await, [3, 1]);
+        assert_eq!(search("c.retrievability>0").await, [2, 1]);
+        assert_eq!(search("c.retrievability>1").await, Vec::<CardId>::new());
+        // The same retrievability as FSRS gives
+        let config = read_external_config().unwrap();
+        let recall = crate::schedulers::fsrs::utils::retrievability(2.0, 10.0, decay(&config));
+        assert_eq!(
+            search(&format!(
+                "c.retrievability>{} c.retrievability<{}",
+                recall - 0.001,
+                recall + 0.001
+            ))
+            .await,
+            [1]
+        );
+        // Cards with no retrievability come last.
+        assert_eq!(search("sort_by_asc=c.retrievability").await, [2, 1, 3]);
+        assert_eq!(search("sort_by_desc=c.retrievability").await, [1, 2, 3]);
+        assert_eq!(search("sort_by_desc=c.lapses,c.id").await, [1, 3, 2]);
+    }
+
+    #[test]
+    fn retrievability_bounds_turn_around() {
+        let decay = 0.5;
+        let ratio = |bound: &str| bound.split(' ').nth(1).unwrap().parse::<f64>().unwrap();
+        let elapsed_over_stability = ratio(&retrievability_bound_with_decay(
+            Op::LessThan,
+            0.8,
+            decay,
+        ));
+        let recall =
+            crate::schedulers::fsrs::utils::retrievability(elapsed_over_stability, 1.0, 0.5);
+        assert!((recall - 0.8).abs() < 1e-6, "{recall}");
+        assert_eq!(
+            retrievability_bound_with_decay(Op::GreaterThan, 0.0, decay),
+            "< 1e999"
+        );
+        assert_eq!(
+            retrievability_bound_with_decay(Op::GreaterThanEqual, 1.0, decay),
+            "<= 0"
         );
     }
 

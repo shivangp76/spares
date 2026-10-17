@@ -32,6 +32,11 @@
 //! | `linked_to_keyword`   | String   |
 //! | `linked_from_note`    | i64      |
 //! | c.rated             | u32      |
+//! | c.reviewed          | `DateTime` |
+//! | c.reps              | u32      |
+//! | c.lapses            | u32      |
+//! | c.interval          | f64      |
+//! | c.retrievability    | f64      |
 //! | c.count             | u32      |
 //! | c.cloze             | String   |
 //!
@@ -48,6 +53,30 @@
 //! but it carries no rating, so it never makes a card match `c.rated`. Neither does a cram (a
 //! rating in a filtered tag that does not reschedule), since it is not a review the card's
 //! schedule is based on.
+//!
+//! ### Review history
+//!
+//! These fields are worked out from the card's reviews. Like `c.rated`, they leave out crams, and
+//! a card that was never reviewed has no `c.reviewed`, `c.interval` or `c.retrievability`, so it
+//! matches none of their comparisons, and `-` matches it.
+//! - `c.reviewed`: when the card was last reviewed, a date, as in `c.reviewed>=today-7d`.
+//! - `c.reps`: how many times it was reviewed.
+//! - `c.lapses`: how many times it was forgotten (rated again) after it had been learned, counted
+//!   as for leeches.
+//! - `c.interval`: the days from its last review to when it is due, as in statistics, as in
+//!   `c.interval>=30`. A postponed card's interval includes the postponement.
+//! - `c.retrievability`: how likely you are to recall it now, from 0 to 1, as FSRS predicts from its
+//!   stability and the time since its last review, as in `c.retrievability<0.8`.
+//!
+//! A time in brackets after `c.rated` limits it to the reviews at that time: a date, which means
+//! any time in it, or a comparison with a date, written with no spaces. With no value, it is any
+//! rating:
+//! - `c.rated[today]`: cards reviewed today.
+//! - `c.rated[>=today-7d]=1`: cards forgotten in the last week.
+//! - `c.rated[2026-10]>=3`: cards rated good or easy in October 2026.
+//!
+//! Sorting by `c.reviewed`, `c.interval` or `c.retrievability` puts the cards without one last,
+//! so `sort_by_asc=c.retrievability limit=20` is the 20 cards you are least likely to recall.
 //!
 //! ## Types
 //!

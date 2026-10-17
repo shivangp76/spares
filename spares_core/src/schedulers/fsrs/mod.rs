@@ -11,7 +11,7 @@
 mod optimize;
 mod reposition;
 mod steps;
-mod utils;
+pub(crate) mod utils;
 
 use async_trait::async_trait;
 use chrono::DateTime;

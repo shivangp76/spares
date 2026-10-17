@@ -124,8 +124,12 @@ impl Iterator for Lexer<'_> {
                 }
                 let kind = match self.eat_reference(cursor_start) {
                     Ok(true) => TokenKind::RelativeDate,
-                    Ok(false) => match self.eat_custom_data_path(cursor_start) {
-                        // A path on its own, like `custom_data.flag`, means the key is there.
+                    Ok(false) => match self
+                        .eat_custom_data_path(cursor_start)
+                        .and_then(|path| Ok(path || self.eat_rated_time(cursor_start)?))
+                    {
+                        // A path on its own, like `custom_data.flag`, means the key is there, and
+                        // `c.rated[today]` that the card was rated then.
                         Ok(true) if !self.prev_takes_value() => TokenKind::Field,
                         Ok(true) => TokenKind::String,
                         Ok(false) => self.classify_word(cursor_start),
@@ -340,6 +344,25 @@ impl Lexer<'_> {
                 .with_source_code(self.s.string().to_string()));
             }
             self.s.eat_while(is_word_char);
+        }
+        Ok(true)
+    }
+
+    /// After the word starting at `start`, consumes the time in brackets of ratings at a time, like
+    /// the `[>=today-7d]` of `c.rated[>=today-7d]`, returning whether there was one. The evaluator
+    /// validates the time.
+    fn eat_rated_time(&mut self, start: usize) -> Result<bool, Error> {
+        if !(matches!(self.s.from(start), "c.rated" | "card.rated") && self.s.eat_if('[')) {
+            return Ok(false);
+        }
+        self.s.eat_until(|c: char| c == ']' || c.is_whitespace());
+        if !self.s.eat_if(']') {
+            return Err(miette::miette! {
+                labels = vec![LabeledSpan::at(start..self.s.cursor(), "this field")],
+                help = "Write the time with no spaces, as in `c.rated[>=today-7d]`",
+                "Missing `]` after the time",
+            }
+            .with_source_code(self.s.string().to_string()));
         }
         Ok(true)
     }

@@ -25,7 +25,7 @@ use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
 
-mod fsrs;
+pub(crate) mod fsrs;
 pub mod placement;
 
 pub(crate) use fsrs::learning_states;
