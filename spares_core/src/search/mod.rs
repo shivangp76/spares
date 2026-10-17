@@ -248,6 +248,20 @@
 //!
 //! Before October 2026, paths were written `custom_data:"$.x.y[1]"`. That form is now an error.
 //!
+//! ### Links
+//!
+//! `linked_to_note=gir` finds the notes that link to note `gir`, and `linked_from_note=gir` the
+//! notes `gir` links to. In place of a note, either can take a query in parentheses, which
+//! searches notes, to find the notes linked to or from any note it matches:
+//! - `linked_to_note=(tag=math)`: notes that link to a note tagged `math`.
+//! - `linked_from_note=(keyword="Integration by parts")`: notes linked from a note with that
+//!   keyword.
+//! - `-linked_to_note=(tag=math)`: notes that link to no note tagged `math`.
+//! - `linked_to_note=(linked_to_note=(tag=math))`: queries nest, so this is notes that link to a
+//!   note that links to a note tagged `math`.
+//!
+//! The query in parentheses can't have a sort, a limit or `c.cloze`, and no other field takes one.
+//!
 //! ### Sorting
 //!
 //! - Use sorting keys to order results by numeric or `DateTime` fields:

@@ -544,6 +544,19 @@ mod tests {
     }
 
     #[test]
+    fn a_query_in_parentheses_is_a_value() {
+        let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
+        assert_eq!(
+            parse("linked_to_note=(tag=math) dog"),
+            "(and (= linked_to_note (group (= tag math))) (~  dog))"
+        );
+        assert_eq!(
+            parse("-linked_from_note=(linked_to_note=(a or b))"),
+            "(not (= linked_from_note (group (= linked_to_note (group (or (~  a) (~  b)))))))"
+        );
+    }
+
+    #[test]
     fn sorts_and_limits_apply_to_their_parentheses() {
         let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
         assert_eq!(

@@ -223,6 +223,8 @@ impl Lexer<'_> {
                 current_token.kind,
                 TokenKind::Field | TokenKind::LeftParen | TokenKind::Minus
             ) && self.prev.is_some()
+                // A value in parentheses, as in `linked_to_note=(tag=math)`, follows an operator.
+                && !self.prev_takes_value()
                 && !matches!(self.prev, Some(ref token) if matches!(token.kind, TokenKind::And | TokenKind::Or | TokenKind::Minus | TokenKind::LeftParen));
             if add_implied_and {
                 self.buffered.push(Ok(current_token.clone()));

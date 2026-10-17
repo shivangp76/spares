@@ -27,6 +27,11 @@ use crate::model::StateId;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
+use crate::schedulers::fsrs::utils::Rating as FsrsRating;
+use crate::schedulers::fsrs::utils::State as FsrsState;
+use crate::schedulers::fsrs::utils::decay;
+use crate::schedulers::fsrs::utils::rating_to_number;
+use crate::schedulers::fsrs::utils::state_to_number;
 use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
@@ -36,11 +41,6 @@ use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
 use crate::search::relative_date::local_day_start_sql;
 use crate::search::relative_date::local_month_start_sql;
-use crate::schedulers::fsrs::utils::Rating as FsrsRating;
-use crate::schedulers::fsrs::utils::State as FsrsState;
-use crate::schedulers::fsrs::utils::decay;
-use crate::schedulers::fsrs::utils::rating_to_number;
-use crate::schedulers::fsrs::utils::state_to_number;
 use crate::search::render_error;
 
 pub(crate) struct Evaluator<'de> {
@@ -1390,6 +1390,20 @@ impl TokenTree<'_> {
             TokenTree::Atom(Atom::Field(field)) => {
                 Ok(TableRequirements::analyze_field(Field::from_str(field)?))
             }
+            // A query in parentheses as a value, as in `linked_to_note=(c.state=new)`, is its own
+            // query with its own tables.
+            TokenTree::Cons(
+                Op::Equal
+                | Op::GreaterThan
+                | Op::GreaterThanEqual
+                | Op::LessThan
+                | Op::LessThanEqual
+                | Op::Tilde,
+                trees,
+            ) => trees.first().map_or_else(
+                || Ok(TableRequirements::default()),
+                Self::analyze_requirements,
+            ),
             TokenTree::Cons(_, trees) => {
                 let mut requirements = TableRequirements::default();
                 for tree in trees {
@@ -1596,7 +1610,72 @@ fn evaluate_field_value(
         .ok_or_else(|| miette!("Missing field"))?;
     // The field as written, for errors.
     let field_name = trees[0].to_string();
+    if let TokenTree::Cons(Op::Group, query) = &trees[1] {
+        return evaluate_link_query(&field, &field_name, query, context, op);
+    }
     evaluate_comparison(&field, &field_name, &trees[1], context, op)
+}
+
+/// Adds the condition that the note links to, or is linked from, a note matching `query`, as in
+/// `linked_to_note=(tag=math)`. `query` always searches notes.
+fn evaluate_link_query(
+    field: &Field,
+    field_name: &str,
+    query: &[TokenTree],
+    context: &mut EvaluationContext,
+    op: Op,
+) -> Result<(), Error> {
+    let (this_note, other_note) = match field {
+        Field::Note(NoteField::LinkedToNote) => ("parent_note_id", "linked_note_id"),
+        Field::Note(NoteField::LinkedFromNote) => ("linked_note_id", "parent_note_id"),
+        _ => {
+            return Err(miette!(
+                help = "Only `linked_to_note` and `linked_from_note` take a query, as in `linked_to_note=(tag=math)`",
+                "`{field_name}` can't be compared with a query in parentheses",
+            ));
+        }
+    };
+    if !matches!(op, Op::Equal) {
+        return Err(miette!(
+            "A query in parentheses can only follow `=` or `!=`, as in `{field_name}=(tag=math)`"
+        ));
+    }
+    let [query] = query else {
+        return Err(miette!("Missing query"));
+    };
+    if matches!(query, TokenTree::Atom(Atom::Nil)) {
+        return Err(miette!(
+            "The parentheses after `{field_name}=` are empty. Write a query in them, as in `{field_name}=(tag=math)`"
+        ));
+    }
+    if tree_has_modifier(query) {
+        return Err(miette!(
+            "A sort or limit can't go in `{field_name}=(…)`, since it only says which notes are linked"
+        ));
+    }
+    if has_cloze_field(query) {
+        return Err(miette!(
+            "`c.cloze` can't go in `{field_name}=(…)`, since it is matched after the database query"
+        ));
+    }
+    let mut query_context = EvaluationContext::new(EvaluatorReturnItemType::NoteIds, None);
+    query.evaluate(&mut query_context)?;
+    let notes = query_context.build_query(EvaluatorReturnItemType::NoteIds);
+    context.add_where_clause(format!(
+        "EXISTS (SELECT 1 FROM note_link nl WHERE nl.{this_note} = n.id AND nl.{other_note} IN ({notes}))"
+    ));
+    Ok(())
+}
+
+/// Whether `tree` has a `sort_by_asc`, `sort_by_desc` or `limit` anywhere.
+fn tree_has_modifier(tree: &TokenTree) -> bool {
+    match tree {
+        TokenTree::Atom(Atom::Field(f)) => {
+            matches!(f.as_ref(), "sort_by_asc" | "sort_by_desc" | "limit")
+        }
+        TokenTree::Atom(_) => false,
+        TokenTree::Cons(_, children) => children.iter().any(tree_has_modifier),
+    }
 }
 
 /// Adds the condition that `field` compares with `value` by `op`. `field_name` is the field as
@@ -1710,9 +1789,7 @@ fn evaluate_comparison(
     if matches!(field, Field::Card(CardField::State))
         && matches!(value_type, FieldType::Integer)
         && let Some(state) = value_context.params.last_mut()
-        && let Some((name, _)) = CARD_STATES
-            .iter()
-            .find(|(_, id)| id.to_string() == *state)
+        && let Some((name, _)) = CARD_STATES.iter().find(|(_, id)| id.to_string() == *state)
     {
         let _ = write!(state, " /* {name} */");
     }
@@ -1959,7 +2036,11 @@ fn elapsed_over_stability_sql() -> String {
 /// other, turned around. Equal is within a millionth, as for other numbers.
 fn retrievability_bound(op: Op, value: f64) -> Result<String, Error> {
     let config = read_external_config().map_err(|e| miette!("{e}"))?;
-    Ok(retrievability_bound_with_decay(op, value, f64::from(decay(&config))))
+    Ok(retrievability_bound_with_decay(
+        op,
+        value,
+        f64::from(decay(&config)),
+    ))
 }
 
 fn retrievability_bound_with_decay(op: Op, value: f64, decay: f64) -> String {
@@ -2029,7 +2110,8 @@ fn review_time_sql(range: &str) -> Result<String, Error> {
         .parse_expression()
         .map_err(|_| invalid())?;
     let TokenTree::Cons(
-        op @ (Op::Equal | Op::GreaterThan | Op::GreaterThanEqual | Op::LessThan | Op::LessThanEqual),
+        op
+        @ (Op::Equal | Op::GreaterThan | Op::GreaterThanEqual | Op::LessThan | Op::LessThanEqual),
         children,
     ) = &tree
     else {
@@ -2370,7 +2452,10 @@ mod tests {
     fn explain_shows_the_tree_and_the_sql() {
         let explain = |query, output_type| Evaluator::new(query).explain(output_type).unwrap();
         assert_eq!(
-            explain(r#"c.state=review "a (b" limit=2"#, EvaluatorReturnItemType::NoteIds),
+            explain(
+                r#"c.state=review "a (b" limit=2"#,
+                EvaluatorReturnItemType::NoteIds
+            ),
             expand_text(
                 "Parsed:\n(and (and (= c.state review) (~  \"a (b\")) (= limit 2))\n\nSQL:\n\
                  SELECT DISTINCT n.id\nFROM note n\nLEFT JOIN card c ON n.id = c.note_id\n\
@@ -2691,6 +2776,14 @@ mod tests {
             "c.rated[today]~1",
             "sort_by_asc=c.rated[today]",
             "c.retrievability~0.5",
+            // Queries in parentheses only go with link fields, and only say which notes
+            "tag=(math)",
+            "linked_to_note~(tag=math)",
+            "linked_to_note=()",
+            "linked_to_note=(tag=math limit=1)",
+            "linked_to_note=(tag=math sort_by_asc=id)",
+            "linked_from_note=(c.cloze~x)",
+            "linked_to_note=(tag=math",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);
@@ -3121,7 +3214,10 @@ mod tests {
         assert_eq!(search("c.reps=0").await, [3]);
         assert_eq!(search("c.lapses=1").await, [1]);
         assert_eq!(search("c.interval=7").await, [1]);
-        assert_eq!(search("c.interval>=1 c.interval<2").await, Vec::<CardId>::new());
+        assert_eq!(
+            search("c.interval>=1 c.interval<2").await,
+            Vec::<CardId>::new()
+        );
         assert_eq!(search("c.retrievability<0.8").await, [2]);
         assert_eq!(search("-c.retrievability<0.8").await, [3, 1]);
         assert_eq!(search("c.retrievability>0").await, [2, 1]);
@@ -3144,15 +3240,75 @@ mod tests {
         assert_eq!(search("sort_by_desc=c.lapses,c.id").await, [1, 3, 2]);
     }
 
+    #[sqlx::test]
+    async fn searches_notes_linked_to_a_query(pool: SqlitePool) {
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'math', '', 0)")
+            .await;
+        // `a` links to `m`, which is tagged `math`, `b` links to `a`, `c` links to `x`, which isn't,
+        // and `d` links to nothing.
+        for letters in ["a", "b", "c", "d", "m", "x"] {
+            exec(&format!(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '', 0, 0, '{{}}', 1)",
+                id(letters)
+            ))
+            .await;
+        }
+        exec(&format!(
+            "INSERT INTO note_tag (note_id, tag_id) VALUES ({}, 1)",
+            id("m")
+        ))
+        .await;
+        for (order, (from, to)) in [("a", "m"), ("b", "a"), ("c", "x")].into_iter().enumerate() {
+            exec(&format!(
+                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, {}, {order}, 'k')",
+                id(from),
+                id(to)
+            ))
+            .await;
+        }
+        let search = async |query: &str| {
+            Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"))
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(search("linked_to_note=(tag=math)").await, ["a"]);
+        assert_eq!(
+            search("linked_from_note=(tag=math)").await,
+            Vec::<String>::new()
+        );
+        assert_eq!(search("linked_from_note=(linked_to_note=m)").await, ["m"]);
+        assert_eq!(
+            search("-linked_to_note=(tag=math)").await,
+            ["b", "c", "d", "m", "x"]
+        );
+        assert_eq!(
+            search("linked_to_note!=(tag=math)").await,
+            search("-linked_to_note=(tag=math)").await
+        );
+        assert_eq!(
+            search("linked_to_note=(linked_to_note=(tag=math))").await,
+            ["b"]
+        );
+        assert_eq!(search("linked_to_note=(-tag=math)").await, ["b", "c"]);
+        // Still a single note without parentheses
+        assert_eq!(search("linked_to_note=x").await, ["c"]);
+    }
+
     #[test]
     fn retrievability_bounds_turn_around() {
         let decay = 0.5;
         let ratio = |bound: &str| bound.split(' ').nth(1).unwrap().parse::<f64>().unwrap();
-        let elapsed_over_stability = ratio(&retrievability_bound_with_decay(
-            Op::LessThan,
-            0.8,
-            decay,
-        ));
+        let elapsed_over_stability =
+            ratio(&retrievability_bound_with_decay(Op::LessThan, 0.8, decay));
         let recall =
             crate::schedulers::fsrs::utils::retrievability(elapsed_over_stability, 1.0, 0.5);
         assert!((recall - 0.8).abs() < 1e-6, "{recall}");
