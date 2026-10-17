@@ -271,8 +271,8 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   opacity: 0.6;
 }
 
-/* The ? popup listing every keybinding */
-.keybindings-help {
+/* Popups of help: the ? keybindings, the search syntax and the note syntax */
+.help-dialog {
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -282,16 +282,16 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   box-sizing: border-box;
 }
 
-.keybindings-help::backdrop {
+.help-dialog::backdrop {
   background: rgb(0 0 0 / 0.4);
 }
 
-/* The search box's Syntax popup, styled like the keybindings one */
-.keybindings-help.search-help {
+/* For tables of examples */
+.help-dialog.wide {
   width: min(640px, calc(100% - 32px));
 }
 
-.search-help td:first-child button {
+.help-dialog td:first-child button {
   padding: 2px 6px;
   font-size: 12px;
   text-align: left;
@@ -351,32 +351,38 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   .audio-recorder-dot { animation: none; }
 }
 
-.keybindings-help-content {
+.help-dialog-content {
   padding: 16px 20px 20px;
 }
 
-.keybindings-help table {
+.help-dialog-intro {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 8px 0 12px;
+}
+
+.help-dialog table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0 2px;
   font-size: 14px;
 }
 
-.keybindings-help td {
+.help-dialog td {
   padding: 4px 8px;
 }
 
-.keybindings-help td:first-child {
+.help-dialog td:first-child {
   white-space: nowrap;
   width: 1%;
   border-radius: 4px 0 0 4px;
 }
 
-.keybindings-help td:last-child {
+.help-dialog td:last-child {
   border-radius: 0 4px 4px 0;
 }
 
-.keybindings-help kbd {
+.help-dialog kbd {
   display: inline-block;
   min-width: 1.4em;
   padding: 1px 6px;
@@ -389,18 +395,18 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   text-align: center;
 }
 
-.keybindings-help tr.available td {
+.help-dialog tr.available td {
   background: var(--tone-blue-bg);
   color: var(--tone-blue-fg);
   font-weight: 600;
 }
 
-.keybindings-help tr.available kbd {
+.help-dialog tr.available kbd {
   border-color: var(--tone-blue-border);
   color: var(--tone-blue-fg);
 }
 
-.keybindings-help tr.unavailable {
+.help-dialog tr.unavailable {
   opacity: 0.45;
 }
 
