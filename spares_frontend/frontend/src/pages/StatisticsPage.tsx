@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { advanceCards, getReviewHistory, getStatistics, getStatisticsGraphs, isNetworkError, postponeCards } from '../api/client';
+import { advanceCards, ApiError, getReviewHistory, getStatistics, getStatisticsGraphs, isNetworkError, postponeCards } from '../api/client';
 import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import BarChart from '../components/charts/BarChart';
 import { cumulative, daysBetween, fillDays, HOUR_LABELS, percent, toSeries, type Series } from '../components/charts/chartData';
 import Histogram from '../components/charts/Histogram';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
+import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import ReviewHeatmap from '../components/ReviewHeatmap';
 import { useAuth } from '../hooks/useAuth';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -430,6 +431,8 @@ export default function StatisticsPage() {
 
   const [date, setDate] = useState(() => toDateInputValue(new Date()));
   const [queryInput, setQueryInput] = useState('');
+  // A query that can't be searched, marked in the box
+  const [queryError, setQueryError] = useState<SearchInputError | null>(null);
   const [view, setView] = useState<StatisticsView>({ query: '', periodDays: 30, forecastDays: 30 });
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
   const [graphs, setGraphs] = useState<StatisticsGraphsResponse | null>(null);
@@ -468,6 +471,8 @@ export default function StatisticsPage() {
     Promise.allSettled([statisticsFetch, graphsFetch, historyFetch]).then(async ([s, g, h]) => {
       if (cancelled) return;
       const cacheKey = statisticsKey(credentials.serverUrl, view);
+      const failed = [g, h].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+      setQueryError(query && failed?.reason instanceof ApiError && failed.reason.span ? { query, span: failed.reason.span } : null);
       if (s.status === 'fulfilled' && g.status === 'fulfilled') {
         setError(null);
         setOfflineEntry(null);
@@ -533,14 +538,15 @@ export default function StatisticsPage() {
       <Navbar onLogout={logout} />
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          type="search"
+        <SearchInput
           value={queryInput}
-          onChange={e => setQueryInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') applyQuery(); }}
+          onChange={setQueryInput}
+          onSubmit={applyQuery}
           placeholder="Search query, e.g. tag=languages"
-          aria-label="Only the cards matching this query"
-          style={{ ...input, flex: 1, minWidth: 180 }}
+          ariaLabel="Only the cards matching this query"
+          error={queryError}
+          style={{ minWidth: 180, maxWidth: 'none' }}
+          inputStyle={input}
         />
         <button onClick={() => applyQuery()} className="touch-target-small">Apply</button>
         {view.query && <button onClick={() => applyQuery('')} className="touch-target-small" title="Every card">Clear</button>}

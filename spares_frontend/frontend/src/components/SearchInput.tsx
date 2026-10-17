@@ -22,6 +22,10 @@ interface SearchInputProps {
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   placeholder?: string;
+  /** The input's id, for a `<label htmlFor>`. */
+  id?: string;
+  /** What the box is for, when no label says it. */
+  ariaLabel?: string;
   /** Underlined while the box still holds the query that failed. */
   error?: SearchInputError | null;
   ref?: React.Ref<HTMLInputElement>;
@@ -34,7 +38,7 @@ interface SearchInputProps {
  * A search box that completes field names, tags, card states and sort fields, underlines where a
  * failed query went wrong, and has a "Syntax" link in it that opens examples and the fields.
  */
-export default function SearchInput({ value, onChange, onSubmit, placeholder, error, ref, style, inputStyle }: SearchInputProps) {
+export default function SearchInput({ value, onChange, onSubmit, placeholder, id, ariaLabel, error, ref, style, inputStyle }: SearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(ref, () => inputRef.current!, []);
   const underlineRef = useRef<HTMLDivElement>(null);
@@ -135,6 +139,8 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, er
     <div className="search-input" style={{ position: 'relative', display: 'flex', flex: 1, maxWidth: 400, ...style }}>
       <input
         ref={inputRef}
+        id={id}
+        aria-label={ariaLabel}
         type="text"
         value={value}
         onChange={e => {

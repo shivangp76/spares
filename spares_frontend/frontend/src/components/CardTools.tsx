@@ -1,17 +1,21 @@
 import { useState } from 'react';
-import { forgetCard, getLeeches, searchCards, unburyCards, updateCards } from '../api/client';
+import { ApiError, forgetCard, getLeeches, searchCards, unburyCards, updateCards } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { STATE_LABELS, type CardResponse, type CardsSelector, type SpecialStateUpdate, type UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, sectionLabel, td, th } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
+import SearchInput, { type SearchInputError } from './SearchInput';
 
 type SelectorMode = 'query' | 'ids';
+/** The boxes a query is typed in. */
+type QueryBox = 'unbury' | 'forget' | 'edit';
 // `''` leaves the special state unchanged, `'None'` clears it
 type SpecialStateChoice = '' | 'None' | Exclude<SpecialStateUpdate, 'BuriedUntilLaterToday'>;
 
 const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 const row: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 };
 const section: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginBottom: 16 };
+const queryBoxStyle: React.CSSProperties = { minWidth: 200, maxWidth: 'none' };
 
 /** Parses card ids separated by spaces or commas, like the CLI's `--ids`. */
 function parseIds(value: string): number[] {
@@ -24,12 +28,13 @@ function parseIds(value: string): number[] {
 }
 
 /** A `--ids` / `--query` target, as the CLI's `CardsSelectorLocal`. */
-function SelectorInput({ mode, setMode, value, setValue, onEnter }: {
+function SelectorInput({ mode, setMode, value, setValue, onEnter, error }: {
   mode: SelectorMode;
   setMode: (mode: SelectorMode) => void;
   value: string;
   setValue: (value: string) => void;
   onEnter: () => void;
+  error: SearchInputError | null;
 }) {
   return (
     <>
@@ -37,14 +42,26 @@ function SelectorInput({ mode, setMode, value, setValue, onEnter }: {
         <option value="query">Query</option>
         <option value="ids">Card ids</option>
       </select>
-      <input
-        type="text"
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') onEnter(); }}
-        placeholder={mode === 'query' ? 'e.g. tag=a c.state=review' : 'e.g. 12 34 56'}
-        style={{ ...input, flex: 1, minWidth: 200 }}
-      />
+      {mode === 'query' ? (
+        <SearchInput
+          value={value}
+          onChange={setValue}
+          onSubmit={onEnter}
+          placeholder="e.g. tag=a c.state=review"
+          error={error}
+          style={queryBoxStyle}
+          inputStyle={input}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onEnter(); }}
+          placeholder="e.g. 12 34 56"
+          style={{ ...input, flex: 1, minWidth: 200 }}
+        />
+      )}
     </>
   );
 }
@@ -65,6 +82,8 @@ export default function CardTools({ onOpenCard }: {
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
   const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A query that can't be searched, marked in the box it was typed in
+  const [queryError, setQueryError] = useState<SearchInputError & { box: QueryBox } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [unburyQuery, setUnburyQuery] = useState('');
@@ -80,14 +99,17 @@ export default function CardTools({ onOpenCard }: {
 
   const [leeches, setLeeches] = useState<CardResponse[] | null>(null);
 
-  async function run(action: () => Promise<ActionOutcome | null>) {
+  /** Runs `action`, which searches with what is in `box`, if it is given. */
+  async function run(action: () => Promise<ActionOutcome | null>, box?: { box: QueryBox; query: string }) {
     setBusy(true);
     setError(null);
+    setQueryError(null);
     try {
       const result = await action();
       if (result) setOutcome(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: result }));
     } catch (e) {
       setError(errorMessage(e));
+      if (box && e instanceof ApiError && e.span) setQueryError({ ...box, span: e.span });
     } finally {
       setBusy(false);
     }
@@ -99,7 +121,7 @@ export default function CardTools({ onOpenCard }: {
       await unburyCards(query);
       // The endpoint doesn't return the event it records, so no Undo is offered
       return { message: query ? `Unburied cards matching \`${query}\`.` : 'Unburied all cards.', eventIds: [] };
-    });
+    }, { box: 'unbury', query: unburyQuery.trim() });
   }
 
   function forget() {
@@ -113,7 +135,7 @@ export default function CardTools({ onOpenCard }: {
         if (res.event_id !== null) eventIds.push(res.event_id);
       }
       return { message: `Forgot ${ids.length} card(s).`, eventIds };
-    });
+    }, forgetMode === 'query' ? { box: 'forget', query: forgetValue.trim() } : undefined);
   }
 
   function edit() {
@@ -144,7 +166,7 @@ export default function CardTools({ onOpenCard }: {
       if (!window.confirm(`Edit ${count} card(s)?`)) return null;
       const res = await updateCards({ selector, ...req });
       return { message: `Edited ${res.cards.length} card(s).`, eventIds: res.event_id === null ? [] : [res.event_id] };
-    });
+    }, editMode === 'query' ? { box: 'edit', query: editValue.trim() } : undefined);
   }
 
   function loadLeeches() {
@@ -160,13 +182,14 @@ export default function CardTools({ onOpenCard }: {
       <div style={section}>
         <div style={sectionLabel}>Unbury</div>
         <div style={row}>
-          <input
-            type="text"
+          <SearchInput
             value={unburyQuery}
-            onChange={e => setUnburyQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') unbury(); }}
+            onChange={setUnburyQuery}
+            onSubmit={unbury}
             placeholder="Optional query; all buried cards if empty"
-            style={{ ...input, flex: 1, minWidth: 200 }}
+            error={queryError?.box === 'unbury' ? queryError : null}
+            style={queryBoxStyle}
+            inputStyle={input}
           />
           <button onClick={unbury} disabled={busy}>Unbury</button>
         </div>
@@ -175,7 +198,7 @@ export default function CardTools({ onOpenCard }: {
       <div style={section}>
         <div style={sectionLabel}>Forget (reset scheduling, keep review logs)</div>
         <div style={row}>
-          <SelectorInput mode={forgetMode} setMode={setForgetMode} value={forgetValue} setValue={setForgetValue} onEnter={forget} />
+          <SelectorInput mode={forgetMode} setMode={setForgetMode} value={forgetValue} setValue={setForgetValue} onEnter={forget} error={queryError?.box === 'forget' ? queryError : null} />
           <button onClick={forget} disabled={busy}>Forget</button>
         </div>
       </div>
@@ -183,7 +206,7 @@ export default function CardTools({ onOpenCard }: {
       <div style={section}>
         <div style={sectionLabel}>Edit</div>
         <div style={row}>
-          <SelectorInput mode={editMode} setMode={setEditMode} value={editValue} setValue={setEditValue} onEnter={edit} />
+          <SelectorInput mode={editMode} setMode={setEditMode} value={editValue} setValue={setEditValue} onEnter={edit} error={queryError?.box === 'edit' ? queryError : null} />
         </div>
         <div style={{ ...row, marginTop: 8 }}>
           <label>

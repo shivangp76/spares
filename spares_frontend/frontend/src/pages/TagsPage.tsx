@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/client';
+import { ApiError, createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/client';
 import Navbar from '../components/Navbar';
+import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
@@ -112,11 +113,13 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
   const [reschedule, setReschedule] = useState(tag?.reschedule ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queryError, setQueryError] = useState<SearchInputError | null>(null);
 
   async function save() {
     if (!name.trim()) { setError('Name is empty'); return; }
     setSaving(true);
     setError(null);
+    setQueryError(null);
     const newQuery = query.trim() || null;
     try {
       if (tag) {
@@ -132,6 +135,8 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
       }
     } catch (e) {
       setError(errorMessage(e));
+      // Only the query is searched, so a place in an error is a place in it
+      if (newQuery && e instanceof ApiError && e.span) setQueryError({ query: newQuery, span: e.span });
     } finally {
       setSaving(false);
     }
@@ -146,7 +151,16 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
         <label htmlFor="tag-description">Description</label>
         <input id="tag-description" value={description} onChange={e => setDescription(e.target.value)} style={input} />
         <label htmlFor="tag-query">Query</label>
-        <input id="tag-query" value={query} onChange={e => setQuery(e.target.value)} placeholder="Makes a filtered tag; leave empty for a regular tag" style={input} />
+        <SearchInput
+          id="tag-query"
+          value={query}
+          onChange={setQuery}
+          onSubmit={() => { void save(); }}
+          placeholder="Makes a filtered tag; leave empty for a regular tag"
+          error={queryError}
+          style={{ maxWidth: 'none' }}
+          inputStyle={input}
+        />
         <span />
         <label>
           <input type="checkbox" checked={autoDelete} onChange={e => setAutoDelete(e.target.checked)} style={{ marginRight: 6 }} />
