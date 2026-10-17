@@ -52,6 +52,8 @@ pub(crate) struct Evaluator<'de> {
     /// Extra SQL condition that every result must satisfy. It is applied inside each limited `or`
     /// branch *before* that branch's LIMIT, so limits count only in-scope items.
     scope: Option<String>,
+    /// See [`Evaluator::ranked`].
+    rank_cards: bool,
 }
 
 impl<'de> Evaluator<'de> {
@@ -60,7 +62,16 @@ impl<'de> Evaluator<'de> {
             query: input,
             parser: Parser::new(input),
             scope: None,
+            rank_cards: false,
         }
+    }
+
+    /// Orders cards found by words by how relevant their notes are, as notes always are, when the
+    /// query has no sort. It is for showing results: reviews and other uses keep the review order.
+    /// Cards found with `c.cloze` aren't ranked, since each part of the query runs on its own.
+    pub(crate) fn ranked(mut self) -> Self {
+        self.rank_cards = true;
+        self
     }
 
     /// Restricts results to items matching `scope`, a raw SQL condition over the `c`/`n` aliases.
@@ -77,6 +88,7 @@ impl<'de> Evaluator<'de> {
             internal_output_type,
             false,
             self.scope.as_deref(),
+            self.rank_cards,
         )
     }
 
@@ -85,6 +97,7 @@ impl<'de> Evaluator<'de> {
         internal_output_type: EvaluatorReturnItemType,
         needs_parser: bool,
         scope: Option<&str>,
+        rank_cards: bool,
     ) -> Result<String, Report> {
         let mut context = EvaluationContext::new(internal_output_type, scope.map(str::to_string));
         context.root_context = true;
@@ -92,14 +105,22 @@ impl<'de> Evaluator<'de> {
             context.table_requirements.needs_parser = true;
         }
         token_tree.evaluate(&mut context)?;
-        // Notes found by words come in order of relevance, unless the query sorts them.
-        if matches!(
-            internal_output_type,
-            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds
-        ) && context.order_by.is_empty()
+        // Notes found by words come in order of relevance, unless the query sorts them, and so do
+        // cards when asked, with the usual order for ties.
+        let ranks = match internal_output_type {
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => true,
+            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => rank_cards,
+        };
+        if ranks
+            && context.order_by.is_empty()
             && let Some(order) = relevance_order(token_tree)
         {
             context.order_by.push(order);
+            context.order_by.extend(
+                default_order(internal_output_type)
+                    .iter()
+                    .map(ToString::to_string),
+            );
         }
         if let Some(scope) = scope {
             // Scoping card fields requires the card table even for note output.
@@ -132,6 +153,7 @@ impl<'de> Evaluator<'de> {
             EvaluatorReturnItemType::Notes,
             true,
             self.scope.as_deref(),
+            self.rank_cards,
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
@@ -158,6 +180,7 @@ impl<'de> Evaluator<'de> {
             EvaluatorReturnItemType::NoteIds,
             false,
             self.scope.as_deref(),
+            self.rank_cards,
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
@@ -196,6 +219,7 @@ impl<'de> Evaluator<'de> {
             EvaluatorReturnItemType::Cards,
             true,
             self.scope.as_deref(),
+            self.rank_cards,
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
@@ -222,9 +246,15 @@ impl<'de> Evaluator<'de> {
             EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::Cards
         );
         let sql = |tree: &TokenTree| {
-            Self::build_query_from_tree(tree, output_type, needs_parser, self.scope.as_deref())
-                .map(|sql| format_sql(&sql))
-                .map_err(&to_error)
+            Self::build_query_from_tree(
+                tree,
+                output_type,
+                needs_parser,
+                self.scope.as_deref(),
+                self.rank_cards,
+            )
+            .map(|sql| format_sql(&sql))
+            .map_err(&to_error)
         };
         let mut out = format!("Parsed:\n{token_tree}\n\nSQL:\n");
         let is_cards = matches!(
@@ -283,6 +313,7 @@ impl<'de> Evaluator<'de> {
             EvaluatorReturnItemType::CardIds,
             false,
             self.scope.as_deref(),
+            self.rank_cards,
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
@@ -331,6 +362,7 @@ impl<'de> Evaluator<'de> {
                     EvaluatorReturnItemType::Cards,
                     true,
                     scope,
+                    false,
                 )
                 .map_err(search_error(query))?;
                 info!("{}", query_str);
@@ -363,6 +395,7 @@ impl<'de> Evaluator<'de> {
                     EvaluatorReturnItemType::Cards,
                     true,
                     scope,
+                    false,
                 )
                 .map_err(search_error(query))?;
                 info!("{}", query_str);
@@ -1210,13 +1243,10 @@ impl EvaluationContext<'_> {
     /// items each time. The query's sort is followed by the id, and without a sort, cards come in
     /// the order review shows them by default (the cards due the longest first) and notes by id.
     fn complete_order_by(&mut self, output_type: EvaluatorReturnItemType) {
-        let (default, id) = match output_type {
-            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => {
-                (&["n.id ASC"][..], "n.id")
-            }
-            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
-                (&["c.due ASC", "n.created_at ASC", "c.id ASC"][..], "c.id")
-            }
+        let default = default_order(output_type);
+        let id = match output_type {
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => "n.id",
+            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => "c.id",
         };
         if self.order_by.is_empty() {
             self.order_by
@@ -1312,6 +1342,16 @@ impl EvaluationContext<'_> {
 
     fn add_where_clause(&mut self, clause: String) {
         self.where_clauses.push(clause);
+    }
+}
+
+/// The order of results when the query has no sort: notes by id, and cards in review order.
+fn default_order(output_type: EvaluatorReturnItemType) -> &'static [&'static str] {
+    match output_type {
+        EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => &["n.id ASC"],
+        EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
+            &["c.due ASC", "n.created_at ASC", "c.id ASC"]
+        }
     }
 }
 
@@ -3585,6 +3625,54 @@ mod tests {
         assert_eq!(indexed("cat").await, [id("b")]);
     }
 
+    #[sqlx::test]
+    async fn ranks_cards_found_by_words_only_when_asked(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        // (note, text, card, due)
+        let cards = [
+            ("a", "a dog sat on a mat", 1, 100),
+            ("b", "the cat and the dog", 2, 300),
+            ("b", "the cat and the dog", 3, 200),
+            ("c", "a cat sat on a mat", 4, 50),
+        ];
+        for (letters, data, card, due) in cards {
+            let note = letters.parse::<NoteId>().unwrap().packed();
+            exec(&format!(
+                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({note}, '{data}', 0, 0, '{{}}', 1)"
+            ))
+            .await;
+            exec(&format!(
+                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, custom_data) VALUES ({card}, {note}, {card}, 1, {due}, 1, 5, 0.9, 2, '{{}}')"#
+            ))
+            .await;
+        }
+        let search = async |evaluator: Evaluator<'_>| {
+            evaluator
+                .get_card_ids(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        // Note `b` has both words, and its cards tie, so they come in review order.
+        assert_eq!(search(Evaluator::new("dog or cat").ranked()).await, [3, 2, 4, 1]);
+        // Reviews keep the review order.
+        assert_eq!(search(Evaluator::new("dog or cat")).await, [4, 1, 3, 2]);
+        // A sort takes the place of relevance.
+        assert_eq!(
+            search(Evaluator::new("dog or cat sort_by_desc=c.id").ranked()).await,
+            [4, 3, 2, 1]
+        );
+    }
+
     #[test]
     fn marks_where_the_text_matches() {
         let marks = |query: &str, text: &str| {
@@ -4162,6 +4250,7 @@ n.data REGEXP text(word cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_a
             EvaluatorReturnItemType::CardIds,
             false,
             None,
+            false,
         )
         .unwrap();
         // Cloze becomes "1", stability condition stays.
@@ -4179,6 +4268,7 @@ n.data REGEXP text(word cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_a
             EvaluatorReturnItemType::CardIds,
             false,
             None,
+            false,
         )
         .unwrap();
         // Second disjunct is c.suspended=false — no cloze tautology at the WHERE level.

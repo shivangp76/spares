@@ -284,6 +284,10 @@
 //!   (`bm25`), with a word in a note's keywords counting double. So `Paris limit=5` keeps the 5
 //!   notes that match `Paris` best. Words under `-` don't count, and nor do regexes. The ranking
 //!   only orders the notes the search finds: which notes match is decided as described above.
+//! - Cards found by words come in the order of their notes' relevance when they are shown as
+//!   results (`spares card search`, the web app's cards page), with the review order for cards
+//!   that rank the same. Reviews, filtered tags and the other card commands keep the review order,
+//!   and so do queries with `c.cloze`.
 //! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
 //!   limited branch sets the order new and review cards are shown in, together, in place of the
 //!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see
@@ -565,10 +569,13 @@ pub fn query_has_limit(query: &str) -> bool {
 /// `spares note search --explain` prints them. Nothing is read from the database, so a missing
 /// note in `note[<id>]` is not reported.
 pub fn explain(query: &str, output_type: QueryReturnItemType) -> Result<String, crate::Error> {
-    evaluator::Evaluator::new(query).explain(match output_type {
-        QueryReturnItemType::Notes => evaluator::EvaluatorReturnItemType::Notes,
-        QueryReturnItemType::Cards => evaluator::EvaluatorReturnItemType::Cards,
-    })
+    // As `spares card search` runs it.
+    evaluator::Evaluator::new(query)
+        .ranked()
+        .explain(match output_type {
+            QueryReturnItemType::Notes => evaluator::EvaluatorReturnItemType::Notes,
+            QueryReturnItemType::Cards => evaluator::EvaluatorReturnItemType::Cards,
+        })
 }
 
 /// A field that queries can use, as listed by `spares note search --fields`.

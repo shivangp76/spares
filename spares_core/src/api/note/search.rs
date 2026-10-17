@@ -41,7 +41,7 @@ pub async fn search_notes(
     body: SearchNotesRequest,
 ) -> Result<SearchNotesResponse, Error> {
     let SearchNotesRequest { query, output_type } = body;
-    let evaluator = Evaluator::new(&query);
+    let evaluator = Evaluator::new(&query).ranked();
     match output_type {
         crate::search::QueryReturnItemType::Cards => {
             let cards = evaluator.get_cards(db).await?;
@@ -132,7 +132,7 @@ pub async fn search_page(
                 card: Card,
                 name: String,
             }
-            let ids = Evaluator::new(&query).get_card_ids(db).await?;
+            let ids = Evaluator::new(&query).ranked().get_card_ids(db).await?;
             let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
             let rows: Vec<CardWithParser> = sqlx::query_as(&format!(
                 "SELECT c.*, p.name FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id WHERE c.id IN ({})",
