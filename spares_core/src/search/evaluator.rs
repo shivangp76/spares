@@ -1681,7 +1681,8 @@ mod tests {
     #[test]
     fn test_relative_dates() {
         let gir = "(SELECT created_at FROM note WHERE id = 76967537148)";
-        let today = "CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER)";
+        let today =
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER))";
         let inputs = [
             (
                 "created_at<=note[gir].created_at",
@@ -1690,7 +1691,7 @@ mod tests {
             (
                 "created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d",
                 format!(
-                    "SELECT DISTINCT n.id FROM note n WHERE (n.created_at <= {gir} AND n.created_at >= CAST(strftime('%s', {gir}, 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER))"
+                    "SELECT DISTINCT n.id FROM note n WHERE (n.created_at <= {gir} AND n.created_at >= (SELECT CAST(strftime('%s', {gir}, 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER)))"
                 ),
             ),
             (
@@ -1707,11 +1708,11 @@ mod tests {
             ),
             (
                 "c.due<=today+3d",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', 'utc') AS INTEGER)".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', 'utc') AS INTEGER))".to_string(),
             ),
             (
                 "-created_at>=now-12h",
-                "SELECT DISTINCT n.id FROM note n WHERE NOT (n.created_at >= CAST(strftime('%s', 'now', '-12 hours') AS INTEGER))".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE NOT (n.created_at >= (SELECT CAST(strftime('%s', 'now', '-12 hours') AS INTEGER)))".to_string(),
             ),
             // `today` and `now` are still words when the field isn't a date.
             (
