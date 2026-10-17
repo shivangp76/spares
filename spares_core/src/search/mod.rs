@@ -295,6 +295,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::Range;
 
 use chrono::DateTime;
@@ -364,6 +365,67 @@ pub(crate) enum TokenKind {
     // Grouping
     LeftParen,
     RightParen,
+}
+
+impl TokenKind {
+    /// How the token is described in an error, like ``a field`` or ``` `(` ```.
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            TokenKind::Field => "a field",
+            TokenKind::String => "a word",
+            TokenKind::Integer(_) | TokenKind::Float(_) => "a number",
+            TokenKind::True => "`true`",
+            TokenKind::False => "`false`",
+            TokenKind::Date | TokenKind::RelativeDate => "a date",
+            TokenKind::Regex => "a regex",
+            TokenKind::And => "`and`",
+            TokenKind::Or => "`or`",
+            TokenKind::Minus => "`-`",
+            TokenKind::Equal => "`=`",
+            TokenKind::GreaterThan => "`>`",
+            TokenKind::GreaterThanEqual => "`>=`",
+            TokenKind::LessThan => "`<`",
+            TokenKind::LessThanEqual => "`<=`",
+            TokenKind::Colon => "`:`",
+            TokenKind::Tilde => "`~`",
+            TokenKind::LeftParen => "`(`",
+            TokenKind::RightParen => "`)`",
+        }
+    }
+}
+
+/// Renders an error in `query` as plain text: what went wrong, the line of the query it is on with
+/// the place marked, and any help. Context added with `wrap_err`, like "in bracketed expression",
+/// is left out, since the marked place says where the problem is.
+pub(crate) fn render_error(query: &str, report: &miette::Report) -> String {
+    let mut out = report
+        .chain()
+        .last()
+        .map_or_else(|| report.to_string(), ToString::to_string);
+    if report.source_code().is_some() {
+        for label in report.labels().into_iter().flatten() {
+            let offset = label.offset().min(query.len());
+            let line_start = query[..offset].rfind('\n').map_or(0, |i| i + 1);
+            let line_end = query[offset..]
+                .find('\n')
+                .map_or(query.len(), |i| offset + i);
+            let marked_end = (offset + label.len()).min(line_end);
+            let column = query[line_start..offset].chars().count();
+            let width = query[offset..marked_end].chars().count().max(1);
+            let _ = write!(
+                out,
+                "\n\n    {}\n    {}{} {}",
+                &query[line_start..line_end],
+                " ".repeat(column),
+                "^".repeat(width),
+                label.label().unwrap_or_default(),
+            );
+        }
+    }
+    if let Some(help) = report.help() {
+        let _ = write!(out, "\n\nhelp: {help}");
+    }
+    out
 }
 
 /// Returns true if `query` uses `limit` anywhere, either globally or in a limited `or` branch. An
@@ -469,5 +531,35 @@ impl fmt::Display for TokenTree<'_> {
                 write!(f, ")")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(query: &str) -> String {
+        let report = parser::Parser::new(query).parse_expression().unwrap_err();
+        render_error(query, &report)
+    }
+
+    #[test]
+    fn errors_mark_where_the_problem_is() {
+        assert_eq!(
+            render("tag=math and (dog"),
+            "Missing `)`\n\n    tag=math and (dog\n                 ^ this `(` is never closed"
+        );
+        assert_eq!(
+            render("dog ) cat"),
+            "This `)` has no matching `(`\n\n    dog ) cat\n        ^ unexpected `)`"
+        );
+        assert_eq!(
+            render("tag="),
+            "The query ends too early\n\n    tag=\n        ^ expected a search term here"
+        );
+        assert_eq!(
+            render("a\nor or b"),
+            "Expected a search term\n\n    or or b\n       ^^ found `or`"
+        );
     }
 }

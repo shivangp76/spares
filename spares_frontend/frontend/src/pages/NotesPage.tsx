@@ -157,7 +157,7 @@ export default function NotesPage() {
             </div>
           )}
 
-          {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
+          {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
           {loading && <div>Loading…</div>}
 
           {!loading && (

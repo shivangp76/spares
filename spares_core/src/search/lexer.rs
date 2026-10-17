@@ -31,10 +31,6 @@ impl<'de> Lexer<'de> {
 }
 
 #[derive(Diagnostic, Debug, Error)]
-#[error("Unexpected EOF")]
-pub(crate) struct Eof;
-
-#[derive(Diagnostic, Debug, Error)]
 #[error("Unexpected token '{token}'")]
 struct SingleTokenError {
     #[source_code]
@@ -368,34 +364,6 @@ impl Lexer<'_> {
 }
 
 impl Lexer<'_> {
-    pub(crate) fn expect(
-        &mut self,
-        expected: TokenKind,
-        unexpected: &str,
-    ) -> Result<Token, miette::Error> {
-        self.expect_where(|next| next.kind == expected, unexpected)
-    }
-
-    pub(crate) fn expect_where(
-        &mut self,
-        mut check: impl FnMut(&Token) -> bool,
-        unexpected: &str,
-    ) -> Result<Token, miette::Error> {
-        match self.next() {
-            Some(Ok(token)) if check(&token) => Ok(token),
-            Some(Ok(token)) => Err(miette::miette! {
-                labels = vec![
-                    LabeledSpan::at(token.span.clone(), "here"),
-                ],
-                help = format!("Expected {token:?}"),
-                "{unexpected}",
-            }
-            .with_source_code(self.s.string().to_string())),
-            Some(Err(e)) => Err(e),
-            None => Err(Eof.into()),
-        }
-    }
-
     pub(crate) fn peek(&mut self) -> Option<&Result<Token, miette::Error>> {
         // if self.peeked.is_some() {
         //     return self.peeked.as_ref();

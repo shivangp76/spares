@@ -252,7 +252,7 @@ export default function TagsPage() {
 
       {editing && <TagForm key={editing.tag?.id ?? 'new'} tag={editing.tag} onSaved={onSaved} onCancel={() => setEditing(null)} />}
       {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
-      {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>Error: {error}</div>}
+      {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
       {!tags && !error && <div>Loading…</div>}
 
       {tags && view === 'tree' && (

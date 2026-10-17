@@ -31,9 +31,10 @@ use crate::search::TokenTree;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
 use crate::search::relative_date::local_day_start_sql;
+use crate::search::render_error;
 
 pub(crate) struct Evaluator<'de> {
-    // whole: &'de str,
+    query: &'de str,
     parser: Parser<'de>,
     /// Extra SQL condition that every result must satisfy. It is applied inside each limited `or`
     /// branch *before* that branch's LIMIT, so limits count only in-scope items.
@@ -43,7 +44,7 @@ pub(crate) struct Evaluator<'de> {
 impl<'de> Evaluator<'de> {
     pub(crate) fn new(input: &'de str) -> Self {
         Self {
-            // whole: input,
+            query: input,
             parser: Parser::new(input),
             scope: None,
         }
@@ -97,10 +98,11 @@ impl<'de> Evaluator<'de> {
             #[sqlx(rename = "name")]
             parser_name: String,
         }
+        let query = self.query;
         let token_tree = self
             .parser
             .parse_expression()
-            .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+            .map_err(search_error(query))?;
         check_references_exist(&token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
@@ -108,7 +110,7 @@ impl<'de> Evaluator<'de> {
             true,
             self.scope.as_deref(),
         )
-        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        .map_err(search_error(query))?;
         info!("{}", query_str);
         let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -122,10 +124,11 @@ impl<'de> Evaluator<'de> {
     }
 
     pub(crate) async fn get_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, crate::Error> {
+        let query = self.query;
         let token_tree = self
             .parser
             .parse_expression()
-            .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+            .map_err(search_error(query))?;
         check_references_exist(&token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
@@ -133,7 +136,7 @@ impl<'de> Evaluator<'de> {
             false,
             self.scope.as_deref(),
         )
-        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        .map_err(search_error(query))?;
         info!("{}", query_str);
         let note_ids: Vec<NoteId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
@@ -153,15 +156,16 @@ impl<'de> Evaluator<'de> {
             #[sqlx(rename = "name")]
             parser_name: String,
         }
+        let query = self.query;
 
         let token_tree = self
             .parser
             .parse_expression()
-            .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+            .map_err(search_error(query))?;
         check_references_exist(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
-            return Self::get_cards_cloze_path(&token_tree, self.scope.as_deref(), db).await;
+            return Self::get_cards_cloze_path(&token_tree, query, self.scope.as_deref(), db).await;
         }
 
         let query_str = Self::build_query_from_tree(
@@ -170,7 +174,7 @@ impl<'de> Evaluator<'de> {
             true,
             self.scope.as_deref(),
         )
-        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        .map_err(search_error(query))?;
         info!("{}", query_str);
         let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
             .fetch_all(db)
@@ -189,8 +193,8 @@ impl<'de> Evaluator<'de> {
     /// `(tag=a sort_by_asc=c.due limit=5)`, only picks the cards that group keeps, so it is left
     /// out.
     pub(crate) fn card_order_by(self) -> Result<Vec<String>, crate::Error> {
-        let to_error = |e: Report| crate::Error::Library(LibraryError::Search(e.to_string()));
-        let token_tree = self.parser.parse_expression().map_err(to_error)?;
+        let to_error = search_error(self.query);
+        let token_tree = self.parser.parse_expression().map_err(&to_error)?;
         let mut context = EvaluationContext::new(EvaluatorReturnItemType::CardIds, None);
         context.root_context = true;
         token_tree.evaluate(&mut context).map_err(to_error)?;
@@ -198,15 +202,16 @@ impl<'de> Evaluator<'de> {
     }
 
     pub(crate) async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
+        let query = self.query;
         let token_tree = self
             .parser
             .parse_expression()
-            .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+            .map_err(search_error(query))?;
         check_references_exist(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             return Ok(
-                Self::get_cards_cloze_path(&token_tree, self.scope.as_deref(), db)
+                Self::get_cards_cloze_path(&token_tree, query, self.scope.as_deref(), db)
                     .await?
                     .into_iter()
                     .map(|(card, _)| card.id)
@@ -220,7 +225,7 @@ impl<'de> Evaluator<'de> {
             false,
             self.scope.as_deref(),
         )
-        .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+        .map_err(search_error(query))?;
         info!("{}", query_str);
         let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
             .fetch_all(db)
@@ -233,6 +238,7 @@ impl<'de> Evaluator<'de> {
     /// optional in-memory cloze filtering, and union the results.
     async fn get_cards_cloze_path(
         token_tree: &TokenTree<'_>,
+        query: &str,
         scope: Option<&str>,
         db: &SqlitePool,
     ) -> Result<Vec<(Card, String)>, crate::Error> {
@@ -267,7 +273,7 @@ impl<'de> Evaluator<'de> {
                     true,
                     scope,
                 )
-                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                .map_err(search_error(query))?;
                 info!("{}", query_str);
                 let candidates: Vec<EnrichedCardWithNoteData> = sqlx::query_as(&query_str)
                     .fetch_all(db)
@@ -299,7 +305,7 @@ impl<'de> Evaluator<'de> {
                     true,
                     scope,
                 )
-                .map_err(|e| crate::Error::Library(LibraryError::Search(e.to_string())))?;
+                .map_err(search_error(query))?;
                 info!("{}", query_str);
                 let cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
                     .fetch_all(db)
@@ -314,6 +320,11 @@ impl<'de> Evaluator<'de> {
         }
         Ok(result)
     }
+}
+
+/// Converts an error in `query` to the error returned for a search.
+fn search_error(query: &str) -> impl Fn(Report) -> crate::Error + '_ {
+    move |e| crate::Error::Library(LibraryError::Search(render_error(query, &e)))
 }
 
 /// `s` as an SQL string literal.
@@ -395,6 +406,40 @@ enum CardField {
     Cloze,
 }
 
+/// The names of the fields, as written in a query.
+const FIELD_NAMES: [&str; 30] = [
+    "id",
+    "data",
+    "created_at",
+    "updated_at",
+    "parser_name",
+    "tag",
+    "keyword",
+    "custom_data",
+    "linked_to_note",
+    "linked_to_keyword",
+    "linked_from_note",
+    "c.id",
+    "c.created_at",
+    "c.updated_at",
+    "c.due",
+    "c.stability",
+    "c.difficulty",
+    "c.desired_retention",
+    "c.suspended",
+    "c.user_buried",
+    "c.scheduler_buried",
+    "c.waiting_on_links",
+    "c.state",
+    "c.custom_data",
+    "c.rated",
+    "c.count",
+    "c.cloze",
+    "sort_by_asc",
+    "sort_by_desc",
+    "limit",
+];
+
 #[derive(Debug, Clone, PartialEq)]
 enum FieldType {
     Integer,
@@ -404,6 +449,21 @@ enum FieldType {
     Json,
     Boolean,
     Regex,
+}
+
+impl FieldType {
+    /// The kind of value the type holds, for errors, like `a number`.
+    fn describe(&self) -> &'static str {
+        match self {
+            FieldType::Integer => "a whole number",
+            FieldType::Float => "a number",
+            FieldType::String => "text",
+            FieldType::DateTime => "a date",
+            FieldType::Json => "JSON",
+            FieldType::Boolean => "`true` or `false`",
+            FieldType::Regex => "a regex",
+        }
+    }
 }
 
 impl Field {
@@ -422,9 +482,7 @@ impl Field {
             && normalized_value_str.as_str() != "c.custom_data"
         {
             return Err(miette!(
-                "Found an unexpected second field of `{}` when `{}` only accepts 1 field",
-                input[1],
-                input[0]
+                "`:` only follows `custom_data` or `c.custom_data`, as in `custom_data:\"$.x\"=1`. To search a field, use `=` or `~`, as in `tag=math`."
             ));
         }
         match normalized_value_str.as_str() {
@@ -474,7 +532,10 @@ impl Field {
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
             "sort_by_desc" => Ok(Field::SortDesc(String::new())),
             "limit" => Ok(Field::Limit),
-            f => Err(miette!("Unrecognized field: {}", f)),
+            f => Err(miette!(
+                help = format!("The fields are {}", FIELD_NAMES.join(", ")),
+                "Unknown field `{f}`",
+            )),
         }
     }
 
@@ -624,11 +685,7 @@ impl Field {
         match field_type {
             FieldType::Integer | FieldType::Float | FieldType::DateTime | FieldType::String => {}
             _ => {
-                return Err(miette!(
-                    "Can only sort by numeric, DateTime, or String fields. Got `{:?}` of type `{:?}`",
-                    field,
-                    field_type
-                ));
+                return Err(miette!("it holds {}", field_type.describe()));
             }
         }
         match field {
@@ -651,7 +708,7 @@ impl Field {
                         .to_string(),
                 ),
                 // Unsupported types
-                NoteField::CustomData(_) => Err(miette!("Cannot sort by field `{:?}`", field)),
+                NoteField::CustomData(_) => Err(miette!("it holds JSON")),
             },
             Field::Card(card_field) => match card_field {
                 CardField::Id => Ok("c.id".to_string()),
@@ -672,9 +729,11 @@ impl Field {
                 | CardField::SchedulerBuried
                 | CardField::WaitingOnLinks
                 | CardField::CustomData(_)
-                | CardField::Cloze => Err(miette!("Cannot sort by field `{:?}`", field)),
+                | CardField::Cloze => Err(miette!("it can't be sorted")),
             },
-            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => Err(miette!("Cannot sort by sort field `{:?}`", field)),
+            Field::SortAsc(_) | Field::SortDesc(_) | Field::Limit => {
+                Err(miette!("it isn't a field of notes or cards"))
+            }
         }
     }
 }
@@ -978,7 +1037,9 @@ impl Evaluate for TokenTree<'_> {
                 Op::Minus => evaluate_minus(trees, context),
                 Op::Colon => {
                     if context.root_context {
-                        return Err(miette!("Missing operator"));
+                        return Err(miette!(
+                            "`:` only follows `custom_data` or `c.custom_data`, as in `custom_data:\"$.x\"=1`. To search a field, use `=` or `~`, as in `tag=math`."
+                        ));
                     }
                     evaluate_colon(trees, context)
                 }
@@ -1085,10 +1146,10 @@ fn evaluate_colon(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
 }
 
 fn validate_field_value_types(
-    field: &Field,
+    field_name: &str,
     field_type: &FieldType,
     value_type: &FieldType,
-    value_str: &str,
+    value: &TokenTree,
 ) -> Result<(), Error> {
     match (field_type, value_type) {
         (FieldType::Integer, FieldType::Integer)
@@ -1097,17 +1158,15 @@ fn validate_field_value_types(
         | (FieldType::DateTime, FieldType::DateTime)
         | (FieldType::Boolean, FieldType::Boolean) => Ok(()),
         _ => Err(miette!(
-            "The field `{:?}` has a type of `{:?}`. The provided value of `{}` has a type of `{:?}` which does not match the field's type.",
-            field,
-            field_type,
-            value_str,
-            value_type
+            "`{field_name}` holds {}, so it can't be compared with {} `{value}`",
+            field_type.describe(),
+            value_type.describe(),
         )),
     }
 }
 
 fn validate_field_operator_types(
-    field: &Field,
+    field_name: &str,
     field_type: &FieldType,
     op: Op,
 ) -> Result<(), Error> {
@@ -1117,10 +1176,13 @@ fn validate_field_operator_types(
             Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual,
         )
         | (FieldType::Integer | FieldType::Float | FieldType::Boolean, Op::Tilde) => Err(miette!(
-            "The field `{:?}` has a type of `{:?}` which cannot use operator `{}`",
-            field,
-            field_type,
-            op,
+            help = match field_type {
+                FieldType::String => "Use `=` to match it exactly or `~` to search within it",
+                FieldType::Boolean => "Use `=`, as in `c.suspended=true`",
+                _ => "Use `=`, `<`, `<=`, `>` or `>=`",
+            },
+            "`{field_name}` holds {}, so it can't use `{op}`",
+            field_type.describe(),
         )),
         _ => Ok(()),
     }
@@ -1151,6 +1213,14 @@ fn evaluate_field_value(
     let field = field_context
         .field
         .ok_or_else(|| miette!("Missing field"))?;
+    // The field as written, for errors.
+    let field_name = match &trees[0] {
+        TokenTree::Cons(Op::Colon, children) => match children.as_slice() {
+            [field, path] => format!("{field}:{path}"),
+            _ => trees[0].to_string(),
+        },
+        tree => tree.to_string(),
+    };
     let field_type = field.get_field_type();
 
     // Second tree should be the value
@@ -1238,7 +1308,8 @@ fn evaluate_field_value(
             .ok_or_else(|| miette!("Missing sort field name"))?
             .clone();
         let target_field = Field::from_str(&[&rhs_field_name])?;
-        let order_expr = Field::to_order_by_expr(&target_field)?;
+        let order_expr = Field::to_order_by_expr(&target_field)
+            .map_err(|e| miette!("Can't sort by `{rhs_field_name}`, since {e}"))?;
         // Merge table requirements for the sort target field
         context
             .table_requirements
@@ -1331,15 +1402,15 @@ fn evaluate_field_value(
     }
     let value_str = value_context.params.join(" ");
 
-    // Ensure field and value have the same type
-    validate_field_value_types(&field, &field_type, &value_type, &value_str)?;
-
     // Ensure field and operator have valid type
     // - Strings do not have an order
     // - Booleans do not have an order
     // - Booleans cannot use containment operator
     // - Numbers cannot use containment operator
-    validate_field_operator_types(&field, &field_type, op)?;
+    validate_field_operator_types(&field_name, &field_type, op)?;
+
+    // Ensure field and value have the same type
+    validate_field_value_types(&field_name, &field_type, &value_type, &trees[1])?;
 
     let sql_condition = if matches!(field, Field::Card(CardField::WaitingOnLinks)) {
         waiting_on_links_sql(&value_str)?
@@ -1767,6 +1838,13 @@ mod tests {
     }
 
     #[test]
+    fn field_names_are_fields() {
+        for name in FIELD_NAMES {
+            assert!(Field::from_str(&[name]).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
     fn test_search_query_errors() {
         let inputs = [
             // Missing value
@@ -1799,6 +1877,10 @@ mod tests {
             // Dangling operator
             "tag=math and",
             "or tag=math",
+            // Unbalanced parentheses
+            "(dog",
+            "dog ) cat",
+            "()",
             // Invalid regex usage
             "data=re:\"math\"",
         ];
@@ -2153,7 +2235,7 @@ mod tests {
             ),
             // Sort with parenthesis
             (
-                "(tag=math and c.stability>=2) sort_by_asc=linked_to_note)",
+                "(tag=math and c.stability>=2) sort_by_asc=linked_to_note",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND c.stability >= 2) ORDER BY n.id ASC",
             ),
             // The following should be equivalent to the one above.

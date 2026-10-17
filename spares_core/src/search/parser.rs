@@ -31,6 +31,15 @@ fn parse_date(date_str: &str) -> Result<Atom<'static>, Error> {
     Err(miette!("Invalid date format: {}", date_str))
 }
 
+/// An error in `query`, with `label` marking `span`.
+fn error_at(query: &str, span: std::ops::Range<usize>, label: &str, message: &str) -> Error {
+    miette! {
+        labels = vec![LabeledSpan::at(span, label.to_string())],
+        "{message}",
+    }
+    .with_source_code(query.to_string())
+}
+
 pub(crate) struct Parser<'de> {
     whole: &'de str,
     lexer: Lexer<'de>,
@@ -45,13 +54,34 @@ impl<'de> Parser<'de> {
     }
 
     pub(crate) fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
-        Ok(hoist_modifiers(self.parse_expression_within(0)?))
+        let tree = self.parse_expression_within(0)?;
+        // Parsing stops at a `)`, which is unmatched at the top level.
+        match self.lexer.next() {
+            None => Ok(hoist_modifiers(tree)),
+            Some(Err(e)) => Err(e),
+            Some(Ok(token)) => Err(error_at(
+                self.whole,
+                token.span,
+                &format!("unexpected {}", token.kind.describe()),
+                "This `)` has no matching `(`",
+            )),
+        }
     }
 
     #[allow(clippy::too_many_lines, reason = "main parser method")]
     pub(crate) fn parse_expression_within(&mut self, min_bp: u8) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
+            // Something is missing after an operator, like the value in `tag=`.
+            None if min_bp > 0 => {
+                let end = self.whole.len();
+                return Err(error_at(
+                    self.whole,
+                    end..end,
+                    "expected a search term here",
+                    "The query ends too early",
+                ));
+            }
             None => return Ok(TokenTree::Atom(Atom::Nil)),
             Some(Err(e)) => {
                 return Err(e).wrap_err("on left-hand side");
@@ -109,17 +139,24 @@ impl<'de> Parser<'de> {
             // groups
             Token {
                 kind: TokenKind::LeftParen,
-                ..
+                span: open,
             } => {
                 let lhs = self
                     .parse_expression_within(0)
                     .wrap_err("in bracketed expression")?;
-                self.lexer
-                    .expect(
-                        TokenKind::RightParen,
-                        "Unexpected end to bracketed expression",
-                    )
-                    .wrap_err("after bracketed expression")?;
+                // The inner expression stops at a `)` or the end of the query.
+                match self.lexer.next() {
+                    Some(Ok(close)) if close.kind == TokenKind::RightParen => {}
+                    Some(Err(e)) => return Err(e),
+                    _ => {
+                        return Err(error_at(
+                            self.whole,
+                            open,
+                            "this `(` is never closed",
+                            "Missing `)`",
+                        ));
+                    }
+                }
                 TokenTree::Cons(Op::Group, vec![lhs])
             }
 
@@ -148,14 +185,12 @@ impl<'de> Parser<'de> {
             }
 
             token => {
-                return Err(miette::miette! {
-                    labels = vec![
-                        LabeledSpan::at(token.span.clone(), "here"),
-                    ],
-                    help = format!("Unexpected {token:?}"),
-                    "Expected an expression",
-                }
-                .with_source_code(self.whole.to_string()));
+                return Err(error_at(
+                    self.whole,
+                    token.span,
+                    &format!("found {}", token.kind.describe()),
+                    "Expected a search term",
+                ));
             }
         };
 
@@ -216,14 +251,12 @@ impl<'de> Parser<'de> {
                     ..
                 }) => Op::Colon,
                 Some(token) => {
-                    return Err(miette::miette! {
-                        labels = vec![
-                            LabeledSpan::at(token.span.clone(), "here"),
-                        ],
-                        help = format!("Unexpected {token:?}"),
-                        "Expected an infix operator",
-                    }
-                    .with_source_code(self.whole.to_string()));
+                    return Err(error_at(
+                        self.whole,
+                        token.span.clone(),
+                        &format!("found {}", token.kind.describe()),
+                        "Expected an operator like `and`, `or` or `=`",
+                    ));
                 }
             };
 

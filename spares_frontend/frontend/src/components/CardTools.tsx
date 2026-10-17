@@ -246,7 +246,7 @@ export default function CardTools({ onOpenCard }: {
         ))}
       </div>
 
-      {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>Error: {error}</div>}
+      {error && <pre style={{ color: 'var(--error)', fontSize: 13, marginTop: 0, whiteSpace: 'pre-wrap' }}>Error: {error}</pre>}
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} />}
     </div>
   );
