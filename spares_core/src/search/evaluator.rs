@@ -113,9 +113,10 @@ impl<'de> Evaluator<'de> {
         };
         if ranks
             && context.order_by.is_empty()
-            && let Some(order) = relevance_order(token_tree)
+            && let Some(words) = relevance_match(token_tree)
         {
-            context.order_by.push(order);
+            context.relevance_match = Some(words);
+            context.order_by.push(RELEVANCE_ORDER.to_string());
             context.order_by.extend(
                 default_order(internal_output_type)
                     .iter()
@@ -1188,6 +1189,8 @@ struct EvaluationContext<'a> {
     output_type: EvaluatorReturnItemType,
     /// See [`Evaluator::scope`].
     scope_clause: Option<String>,
+    /// The words results are ranked by, for [`relevance_cte`].
+    relevance_match: Option<String>,
 }
 
 impl EvaluationContext<'_> {
@@ -1204,6 +1207,7 @@ impl EvaluationContext<'_> {
             limit: None,
             output_type,
             scope_clause,
+            relevance_match: None,
         }
     }
 
@@ -1261,6 +1265,9 @@ impl EvaluationContext<'_> {
     }
 
     fn build_query(&mut self, output_type: EvaluatorReturnItemType) -> String {
+        if let Some(words) = &self.relevance_match {
+            self.query_builder.push(relevance_cte(words));
+        }
         // Start with base table
         match output_type {
             EvaluatorReturnItemType::Notes => {
@@ -2044,7 +2051,7 @@ fn evaluate_comparison(
                         );
                     value_context.params.push(format!(
                         "REGEXP {}",
-                        sql_string(&text_regex(&value_param, word_start))
+                        sql_string(&sql_text_regex(&value_param, word_start))
                     ));
                 }
             }
@@ -2295,6 +2302,22 @@ const ACCENTED_LETTERS: [(char, &str); 19] = [
     ('z', "źżž"),
 ];
 
+/// [`text_regex`] for SQLite's `REGEXP`, which is much faster without `\b`: the `regex` crate can't
+/// run a Unicode `\b` on its fast engines, so `~electron` took a second over a few thousand notes.
+/// `\b` before a word character is the start of the text or a character that isn't one, as
+/// `(?:^|\W)` says, since `\b` and `\W` agree on what a word character is. This only says
+/// whether a note matches; where the match is would include the character before it. Text that
+/// may not start with a word character, like `²`, keeps `\b`.
+fn sql_text_regex(text: &str, word_start: bool) -> String {
+    let pattern = text_regex(text, word_start);
+    let starts_with_word_char =
+        text.starts_with(|c: char| c.is_alphabetic() || c.is_ascii_digit() || c == '_');
+    match pattern.strip_prefix("(?i)\\b") {
+        Some(rest) if starts_with_word_char => format!("(?i)(?:^|\\W){rest}"),
+        _ => pattern,
+    }
+}
+
 /// A regex that finds `text` anywhere, or with `word_start` only at the start of a word, ignoring
 /// case and accents in any script, so `cafe` and `CAFÉ` both find `Café`. An accent written as its
 /// own combining character is ignored too. It only uses what both SQLite's `REGEXP` (the `regex`
@@ -2371,12 +2394,26 @@ fn text_terms<'a, 'de>(tree: &'a TokenTree<'de>) -> Vec<&'a Atom<'de>> {
     terms
 }
 
-/// The `ORDER BY` term that puts the notes that best match the words and quoted text `tree`
-/// searches for first, by FTS5's `bm25` over the `note_fts` index, with a word in a note's keywords
-/// counting double. `None` when it searches for none. Each is a phrase whose last word may start
-/// a longer one, and the more of them a note has, the better it ranks. A note the index doesn't
-/// match, as when a quoted text is in the middle of a word, comes after those it does.
-fn relevance_order(tree: &TokenTree) -> Option<String> {
+/// The `ORDER BY` term that puts the notes that best match the words first, from the `note_rank`
+/// table that [`relevance_cte`] makes. A note the index doesn't match, as when a quoted text is in
+/// the middle of a word, comes after those it does.
+const RELEVANCE_ORDER: &str =
+    "IFNULL((SELECT rank FROM note_rank WHERE note_rank.id = n.id), 0) ASC";
+
+/// The `WITH` clause that ranks the notes matching `words`, an FTS5 query from
+/// [`relevance_match`], by FTS5's `bm25` over the `note_fts` index, with a word in a note's keywords
+/// counting double. The ranks are worked out once, since `bm25` in a subquery for each result
+/// reads every matching note again, which took seconds for a common word.
+fn relevance_cte(words: &str) -> String {
+    format!(
+        "WITH note_rank AS MATERIALIZED (SELECT rowid AS id, bm25(note_fts, 1.0, 2.0) AS rank FROM note_fts WHERE note_fts MATCH {words}) "
+    )
+}
+
+/// The FTS5 query, as an SQL string, for the words and quoted text `tree` searches for, to rank
+/// notes by. `None` when it searches for none. Each is a phrase whose last word may start a longer
+/// one, and the more of them a note has, the better it ranks.
+fn relevance_match(tree: &TokenTree) -> Option<String> {
     let phrases = text_terms(tree)
         .into_iter()
         .filter_map(|term| match term {
@@ -2393,10 +2430,7 @@ fn relevance_order(tree: &TokenTree) -> Option<String> {
     if phrases.is_empty() {
         return None;
     }
-    Some(format!(
-        "IFNULL((SELECT bm25(note_fts, 1.0, 2.0) FROM note_fts WHERE note_fts MATCH {} AND note_fts.rowid = n.id), 0) ASC",
-        sql_string(&phrases.join(" OR "))
-    ))
+    Some(sql_string(&phrases.join(" OR ")))
 }
 
 /// The most places [`text_matches`] marks in one text.
@@ -2669,30 +2703,29 @@ mod tests {
                 Some(word) => (word, true),
                 None => (inner, false),
             };
-            out.push_str(&sql_string(&text_regex(text, word_start)));
+            out.push_str(&sql_string(&sql_text_regex(text, word_start)));
             rest = &rest[end + 1..];
         }
         out.push_str(rest);
         out
     }
 
-    /// `expected` with each `rank(q)` replaced by the `ORDER BY` term that ranks notes by the FTS5
-    /// query `q`.
+    /// `expected` with its `rank(q)` replaced by the `ORDER BY` term that ranks notes by the FTS5
+    /// query `q`, and the `WITH` clause that term reads put before the query.
     fn expand_rank(expected: &str) -> String {
-        let mut out = String::new();
-        let mut rest = expected;
-        while let Some(start) = rest.find("rank(") {
-            let end = start + rest[start..].find(')').expect("`rank(` is closed");
-            out.push_str(&rest[..start]);
-            let _ = write!(
-                out,
-                "IFNULL((SELECT bm25(note_fts, 1.0, 2.0) FROM note_fts WHERE note_fts MATCH {} AND note_fts.rowid = n.id), 0) ASC",
-                sql_string(&rest[start + "rank(".len()..end])
-            );
-            rest = &rest[end + 1..];
-        }
-        out.push_str(rest);
-        out
+        let Some(start) = expected.find("rank(") else {
+            return expected.to_string();
+        };
+        let end = start + expected[start..].find(')').expect("`rank(` is closed");
+        let words = sql_string(&expected[start + "rank(".len()..end]);
+        let select = expected.find("SELECT").expect("a query");
+        format!(
+            "{}{}{}{RELEVANCE_ORDER}{}",
+            &expected[..select],
+            relevance_cte(&words),
+            &expected[select..start],
+            &expected[end + 1..]
+        )
     }
 
     #[test]
@@ -3626,6 +3659,51 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn sql_regexes_match_where_the_marked_ones_do(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+        let texts = [
+            "cat",
+            "a cat",
+            "bobcat",
+            "x_cat",
+            "é cat",
+            "écat",
+            "-cat",
+            "\u{301}cat",
+            "dog\ncat",
+            "\ncat",
+            "ça cat",
+            "Électron",
+            "l'électron",
+            "2²x",
+            "a ²x",
+            "_x",
+            "3d",
+            "a3d",
+            "٣d",
+        ];
+        for word in ["cat", "électron", "_x", "3d", "²x", "٣d", "çat"] {
+            let marked = get_or_compile_regex(&text_regex(word, true)).unwrap();
+            for text in texts {
+                let in_sql: bool = sqlx::query_scalar("SELECT ? REGEXP ?")
+                    .bind(text)
+                    .bind(sql_text_regex(word, true))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    in_sql,
+                    marked.is_match(text).unwrap(),
+                    "`{word}` in {text:?}"
+                );
+            }
+        }
+    }
+
+    #[sqlx::test]
     async fn ranks_cards_found_by_words_only_when_asked(
         pool_options: sqlx::sqlite::SqlitePoolOptions,
         options: sqlx::sqlite::SqliteConnectOptions,
@@ -3663,7 +3741,10 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // Note `b` has both words, and its cards tie, so they come in review order.
-        assert_eq!(search(Evaluator::new("dog or cat").ranked()).await, [3, 2, 4, 1]);
+        assert_eq!(
+            search(Evaluator::new("dog or cat").ranked()).await,
+            [3, 2, 4, 1]
+        );
         // Reviews keep the review order.
         assert_eq!(search(Evaluator::new("dog or cat")).await, [4, 1, 3, 2]);
         // A sort takes the place of relevance.
