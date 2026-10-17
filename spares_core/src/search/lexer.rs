@@ -84,6 +84,7 @@ impl Iterator for Lexer<'_> {
             Some('<') => just(TokenKind::LessThan, self.s.cursor()),
             Some('>') if self.s.eat_if('=') => just(TokenKind::GreaterThanEqual, self.s.cursor()),
             Some('>') => just(TokenKind::GreaterThan, self.s.cursor()),
+            Some('!') if self.s.eat_if('=') => just(TokenKind::NotEqual, self.s.cursor()),
             Some(':') => just(TokenKind::Colon, self.s.cursor()),
             Some('~') => just(TokenKind::Tilde, self.s.cursor()),
             Some(open) if is_quote(open) => match self.parse_string(open, false) {
@@ -162,6 +163,7 @@ fn takes_value(kind: TokenKind) -> bool {
             | TokenKind::GreaterThanEqual
             | TokenKind::LessThan
             | TokenKind::LessThanEqual
+            | TokenKind::NotEqual
             | TokenKind::Colon
     )
 }
@@ -233,9 +235,15 @@ impl Lexer<'_> {
         match word {
             "and" | "AND" => TokenKind::And,
             "or" | "OR" => TokenKind::Or,
+            // A word for `-`, except as a value, as in `tag=not`.
+            "not" | "NOT" if !self.prev_takes_value() => TokenKind::Minus,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
-            _ if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':')) => TokenKind::Field,
+            _ if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':'))
+                || self.s.after().starts_with("!=") =>
+            {
+                TokenKind::Field
+            }
             // A boolean field on its own, like `c.suspended`, means it is true.
             _ if !self.prev_takes_value() && is_boolean_field(word) => {
                 let end = self.s.cursor();
@@ -892,6 +900,32 @@ mod tests {
                 (TokenKind::Field, "tag"),
                 (TokenKind::Equal, "="),
                 (TokenKind::String, "-math"),
+            ]
+        );
+    }
+
+    #[test]
+    fn not_and_not_equal() {
+        assert_eq!(
+            lex("not tag=math c.state!=0 NOT dog tag=not"),
+            vec![
+                (TokenKind::Minus, "not"),
+                (TokenKind::Field, "tag"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "math"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "c.state"),
+                (TokenKind::NotEqual, "!="),
+                (TokenKind::Integer(0), "0"),
+                (TokenKind::And, ""),
+                (TokenKind::Minus, "NOT"),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "dog"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "tag"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "not"),
             ]
         );
     }

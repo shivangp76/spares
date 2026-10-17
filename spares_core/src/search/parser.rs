@@ -204,7 +204,10 @@ impl<'de> Parser<'de> {
                     .expect_err("checked Err above"))
                 .wrap_err("in place of expected operator");
             }
-            let op = match op.map(|res| res.as_ref().expect("handled Err above")) {
+            let op = op.map(|res| res.as_ref().expect("handled Err above"));
+            // `field!=value` is `-(field=value)`.
+            let negate = op.is_some_and(|token| token.kind == TokenKind::NotEqual);
+            let op = match op {
                 Some(Token {
                     kind: TokenKind::RightParen,
                     ..
@@ -239,7 +242,7 @@ impl<'de> Parser<'de> {
                     ..
                 }) => Op::Or,
                 Some(Token {
-                    kind: TokenKind::Equal,
+                    kind: TokenKind::Equal | TokenKind::NotEqual,
                     ..
                 }) => Op::Equal,
                 Some(Token {
@@ -289,7 +292,12 @@ impl<'de> Parser<'de> {
                     let rhs = self
                         .parse_expression_within(r_bp)
                         .wrap_err_with(|| format!("on the right-hand side of {lhs} {op}"))?;
-                    TokenTree::Cons(op, vec![lhs, rhs])
+                    let tree = TokenTree::Cons(op, vec![lhs, rhs]);
+                    if negate {
+                        TokenTree::Cons(Op::Minus, vec![tree])
+                    } else {
+                        tree
+                    }
                 };
                 continue;
             }
@@ -515,6 +523,15 @@ mod tests {
             parse("-a or b and c"),
             r#"(or (not (~  "a")) (and (~  "b") (~  "c")))"#
         );
+    }
+
+    #[test]
+    fn not_equal_and_not_negate() {
+        let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
+        assert_eq!(parse("c.state!=0"), "(not (= c.state 0))");
+        assert_eq!(parse("not tag=math"), parse("-tag=math"));
+        assert_eq!(parse("dog NOT (a or b)"), parse("dog -(a or b)"));
+        assert_eq!(parse("\"not\""), r#"(~  "not")"#);
     }
 
     #[test]

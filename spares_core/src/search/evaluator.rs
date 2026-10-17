@@ -1822,6 +1822,11 @@ mod tests {
                 "orbit 2024 c.user_buried",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2)",
             ),
+            // `!=` and `not` negate
+            (
+                "c.state!=0 not dog",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data LIKE '%dog%'))",
+            ),
             // `and` binds tighter than `or`
             (
                 "a or b c",

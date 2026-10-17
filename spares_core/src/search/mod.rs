@@ -47,8 +47,8 @@
 //! **Unquoted Strings:**
 //! - Words made of letters, digits, `.`, `_`, `-` and `+` that don't start with `-` do not need
 //!   quotes. Without a field, a number or date like `2024` is a word too.
-//! - `and`, `or`, `AND`, `OR`, `true` and `false` are keywords only as whole words, so `orbit` is
-//!   an ordinary word. Quote a keyword to search for it, as in `"or"`.
+//! - `and`, `or`, `not`, `AND`, `OR`, `NOT`, `true` and `false` are keywords only as whole words,
+//!   so `orbit` is an ordinary word. Quote a keyword to search for it, as in `"or"`.
 //!
 //! **Quoted Strings:**
 //! - Strings with non-alphanumeric characters must be quoted.
@@ -93,13 +93,14 @@
 //!
 //! **Operators:**
 //! - `=`
+//! - `!=`
 //! - `>`
 //! - `>=`
 //! - `<`
 //! - `<=`
 //!
 //! **Example:**
-//! - `id>=5`
+//! - `c.stability>=5`
 //!
 //! ### Booleans
 //!
@@ -236,8 +237,9 @@
 //!
 //! ### Other Operators
 //!
-//! - **Exclusion:** `-QUALIFIER`
-//!   - Example: `-tag=math`
+//! - **Exclusion:** `-QUALIFIER`, or `not QUALIFIER` (also `NOT`)
+//!   - Example: `-tag=math` or `not tag=math`
+//!   - `field!=value` is short for `-field=value`, as in `c.state!=0`.
 //! - **Logical Operators:** `and`, `or` (also `AND`, `OR`). `and`, whether written or implied by a
 //!   space, binds tighter than `or`, so `a or b c` means `a or (b and c)`. Before October 2026 they
 //!   bound equally from left to right, so a query mixing them without parentheses may now match
@@ -360,6 +362,8 @@ pub(crate) enum TokenKind {
     GreaterThanEqual,
     LessThan,
     LessThanEqual,
+    /// `!=`, which the parser turns into `-(field=value)`.
+    NotEqual,
     Colon,
     Tilde,
     // Grouping
@@ -386,6 +390,7 @@ impl TokenKind {
             TokenKind::GreaterThanEqual => "`>=`",
             TokenKind::LessThan => "`<`",
             TokenKind::LessThanEqual => "`<=`",
+            TokenKind::NotEqual => "`!=`",
             TokenKind::Colon => "`:`",
             TokenKind::Tilde => "`~`",
             TokenKind::LeftParen => "`(`",
