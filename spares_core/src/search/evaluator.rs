@@ -90,6 +90,15 @@ impl<'de> Evaluator<'de> {
             context.table_requirements.needs_parser = true;
         }
         token_tree.evaluate(&mut context)?;
+        // Notes found by words come in order of relevance, unless the query sorts them.
+        if matches!(
+            internal_output_type,
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds
+        ) && context.order_by.is_empty()
+            && let Some(order) = relevance_order(token_tree)
+        {
+            context.order_by.push(order);
+        }
         if let Some(scope) = scope {
             // Scoping card fields requires the card table even for note output.
             context.table_requirements.needs_card = true;
@@ -2234,35 +2243,72 @@ fn text_regex(text: &str, word_start: bool) -> String {
 /// a link like `linked_to_note=(dog)`, are left out, since the note need not contain them. A query
 /// that can't be parsed has none.
 pub(crate) fn text_patterns(query: &str) -> Vec<String> {
-    fn collect(tree: &TokenTree, patterns: &mut Vec<String>) {
+    let Ok(tree) = Parser::new(query).parse_expression() else {
+        return Vec::new();
+    };
+    text_terms(&tree)
+        .into_iter()
+        .filter_map(|term| match term {
+            Atom::Regex(r) => Some(r.to_string()),
+            Atom::String(s) => Some(text_regex(s, false)),
+            Atom::Word(s) => Some(text_regex(s, true)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The words, quoted text and regexes that `tree` compares with `data` by `~`, leaving out those
+/// under `-` and in the query of a link. See [`text_patterns`].
+fn text_terms<'a, 'de>(tree: &'a TokenTree<'de>) -> Vec<&'a Atom<'de>> {
+    fn collect<'a, 'de>(tree: &'a TokenTree<'de>, terms: &mut Vec<&'a Atom<'de>>) {
         match tree {
             TokenTree::Cons(Op::Tilde, children) => {
-                let [TokenTree::Atom(Atom::Field(field)), value] = children.as_slice() else {
-                    return;
-                };
-                if !matches!(Field::from_str(field), Ok(Field::Note(NoteField::Data))) {
-                    return;
-                }
-                match value {
-                    TokenTree::Atom(Atom::Regex(r)) => patterns.push(r.to_string()),
-                    TokenTree::Atom(Atom::String(s)) => patterns.push(text_regex(s, false)),
-                    TokenTree::Atom(Atom::Word(s)) => patterns.push(text_regex(s, true)),
-                    _ => {}
+                if let [TokenTree::Atom(Atom::Field(field)), TokenTree::Atom(value)] =
+                    children.as_slice()
+                    && matches!(Field::from_str(field), Ok(Field::Note(NoteField::Data)))
+                {
+                    terms.push(value);
                 }
             }
             TokenTree::Cons(Op::And | Op::Or | Op::Group, children) => {
                 for child in children {
-                    collect(child, patterns);
+                    collect(child, terms);
                 }
             }
             _ => {}
         }
     }
-    let mut patterns = Vec::new();
-    if let Ok(tree) = Parser::new(query).parse_expression() {
-        collect(&tree, &mut patterns);
+    let mut terms = Vec::new();
+    collect(tree, &mut terms);
+    terms
+}
+
+/// The `ORDER BY` term that puts the notes that best match the words and quoted text `tree`
+/// searches for first, by FTS5's `bm25` over the `note_fts` index, with a word in a note's keywords
+/// counting double. `None` when it searches for none. Each is a phrase whose last word may start
+/// a longer one, and the more of them a note has, the better it ranks. A note the index doesn't
+/// match, as when a quoted text is in the middle of a word, comes after those it does.
+fn relevance_order(tree: &TokenTree) -> Option<String> {
+    let phrases = text_terms(tree)
+        .into_iter()
+        .filter_map(|term| match term {
+            Atom::String(s) | Atom::Word(s) => {
+                let words = s
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .collect::<Vec<_>>();
+                (!words.is_empty()).then(|| format!("\"{}\"*", words.join(" ")))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if phrases.is_empty() {
+        return None;
     }
-    patterns
+    Some(format!(
+        "IFNULL((SELECT bm25(note_fts, 1.0, 2.0) FROM note_fts WHERE note_fts MATCH {} AND note_fts.rowid = n.id), 0) ASC",
+        sql_string(&phrases.join(" OR "))
+    ))
 }
 
 /// The most places [`text_matches`] marks in one text.
@@ -2519,8 +2565,9 @@ mod tests {
     /// `expected` with each `text(x)` replaced by the SQL string of the regex that `~"x"` searches
     /// with, and each `text(word x)` by the one for `~x`, so expected queries stay readable.
     fn expand_text(expected: &str) -> String {
+        let expected = expand_rank(expected);
         let mut out = String::new();
-        let mut rest = expected;
+        let mut rest = expected.as_str();
         while let Some(start) = rest.find("text(") {
             let end = start + rest[start..].find(')').expect("`text(word ` is closed");
             out.push_str(&rest[..start]);
@@ -2530,6 +2577,25 @@ mod tests {
                 None => (inner, false),
             };
             out.push_str(&sql_string(&text_regex(text, word_start)));
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// `expected` with each `rank(q)` replaced by the `ORDER BY` term that ranks notes by the FTS5
+    /// query `q`.
+    fn expand_rank(expected: &str) -> String {
+        let mut out = String::new();
+        let mut rest = expected;
+        while let Some(start) = rest.find("rank(") {
+            let end = start + rest[start..].find(')').expect("`rank(` is closed");
+            out.push_str(&rest[..start]);
+            let _ = write!(
+                out,
+                "IFNULL((SELECT bm25(note_fts, 1.0, 2.0) FROM note_fts WHERE note_fts MATCH {} AND note_fts.rowid = n.id), 0) ASC",
+                sql_string(&rest[start + "rank(".len()..end])
+            );
             rest = &rest[end + 1..];
         }
         out.push_str(rest);
@@ -2548,7 +2614,7 @@ mod tests {
                 "Parsed:\n(and (and (= c.state review) (~  \"a (b\")) (= limit 2))\n\nSQL:\n\
                  SELECT DISTINCT n.id\nFROM note n\nLEFT JOIN card c ON n.id = c.note_id\n\
                  WHERE (c.state = 2 /* review */ AND n.data REGEXP text(a (b))\n\
-                 ORDER BY n.id ASC\nLIMIT 2\n"
+                 ORDER BY rank(\"a b\"*), n.id ASC\nLIMIT 2\n"
             )
         );
         let cloze = explain("c.cloze~a or dog", EvaluatorReturnItemType::CardIds);
@@ -2593,7 +2659,7 @@ mod tests {
             // Only data search - no joins needed
             (
                 "dog",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             // Card count
             (
@@ -2602,7 +2668,7 @@ mod tests {
             ),
             (
                 "dog c.count>=2",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data REGEXP text(word dog) AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data REGEXP text(word dog) AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             // Tag search - needs tag joins and special field matching syntax
             (
@@ -2660,11 +2726,11 @@ mod tests {
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             // Custom data - no joins needed
             (
@@ -2718,7 +2784,7 @@ mod tests {
             // Values are quoted and LIKE wildcards are matched literally.
             (
                 r#""don't" snake_case "100%" re:"it's""#,
-                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data REGEXP text(don't) AND n.data REGEXP text(word snake_case)) AND n.data REGEXP text(100%)) AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
+                r#"SELECT DISTINCT n.id FROM note n WHERE (((n.data REGEXP text(don't) AND n.data REGEXP text(word snake_case)) AND n.data REGEXP text(100%)) AND n.data REGEXP 'it''s') ORDER BY rank("don t"* OR "snake case"* OR "100"*), n.id ASC"#,
             ),
             (
                 "parser_name=name",
@@ -2731,7 +2797,7 @@ mod tests {
             // Words that start with a keyword, numbers and bare boolean fields
             (
                 "orbit 2024 c.user_buried",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word orbit) AND n.data REGEXP text(word 2024)) AND c.special_state = 2) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word orbit) AND n.data REGEXP text(word 2024)) AND c.special_state = 2) ORDER BY rank(\"orbit\"* OR \"2024\"*), n.id ASC",
             ),
             // Card states by name
             (
@@ -2746,7 +2812,7 @@ mod tests {
             // `and` binds tighter than `or`
             (
                 "a or b c",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word a) OR (n.data REGEXP text(word b) AND n.data REGEXP text(word c))) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word a) OR (n.data REGEXP text(word b) AND n.data REGEXP text(word c))) ORDER BY rank(\"a\"* OR \"b\"* OR \"c\"*), n.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2971,11 +3037,11 @@ mod tests {
             // `today` and `now` are still words when the field isn't a date.
             (
                 "today",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word today) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word today) ORDER BY rank(\"today\"*), n.id ASC".to_string(),
             ),
             (
                 "data~now",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word now) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word now) ORDER BY rank(\"now\"*), n.id ASC".to_string(),
             ),
             (
                 "keyword=today-5d",
@@ -2984,7 +3050,7 @@ mod tests {
             // `note` followed by a group is not a reference.
             (
                 "note(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word note) AND (n.data REGEXP text(word dog) OR n.data REGEXP text(word cat))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data REGEXP text(word note) AND (n.data REGEXP text(word dog) OR n.data REGEXP text(word cat))) ORDER BY rank(\"note\"* OR \"dog\"* OR \"cat\"*), n.id ASC".to_string(),
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -3391,6 +3457,81 @@ mod tests {
         assert_eq!(search("linked_to_note=x").await, ["c"]);
     }
 
+    #[sqlx::test]
+    async fn ranks_notes_found_by_words(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        let notes = [
+            ("a", "a dog sat on a mat"),
+            ("b", "the cat and the dog"),
+            ("c", "a cat sat on a mat"),
+            ("d", "nothing here"),
+        ];
+        for (letters, data) in notes {
+            exec(&format!(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '{data}', 0, 0, '{{}}', 1)",
+                id(letters)
+            ))
+            .await;
+        }
+        let search = async |query: &str| {
+            Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+        };
+        // The note with both words first
+        assert_eq!(search("dog or cat").await, ["b", "a", "c"]);
+        // A sort takes the place of relevance.
+        assert_eq!(search("dog or cat sort_by_desc=id").await, ["c", "b", "a"]);
+        // Quoted text in the middle of a word is found, though the index can't rank it.
+        assert_eq!(search("\"og\" or cat").await, ["b", "c", "a"]);
+
+        // The index follows edits, keywords and deletes.
+        let indexed = async |words: &str| {
+            let mut ids = sqlx::query_scalar::<_, i64>(
+                "SELECT rowid FROM note_fts WHERE note_fts MATCH ? ORDER BY rowid",
+            )
+            .bind(words)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            ids.dedup();
+            ids
+        };
+        exec(&format!(
+            "UPDATE note SET data = 'a dog and a dog' WHERE id = {}",
+            id("d")
+        ))
+        .await;
+        assert_eq!(indexed("dog").await, [id("a"), id("b"), id("d")]);
+        exec(&format!(
+            "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES ({}, 'Felines', 0)",
+            id("c")
+        ))
+        .await;
+        assert_eq!(indexed("felines").await, [id("c")]);
+        assert_eq!(indexed("cat").await, [id("b"), id("c")]);
+        exec(&format!("DELETE FROM note WHERE id = {}", id("c"))).await;
+        assert_eq!(indexed("felines OR cat").await, [id("b")]);
+        exec(&format!(
+            "DELETE FROM note_keyword WHERE note_id = {}",
+            id("c")
+        ))
+        .await;
+        assert_eq!(indexed("cat").await, [id("b")]);
+    }
+
     #[test]
     fn marks_where_the_text_matches() {
         let marks = |query: &str, text: &str| {
@@ -3632,7 +3773,7 @@ mod tests {
             // Limit combined with WHERE clause
             (
                 "dog limit=5",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC LIMIT 5",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY rank(\"dog\"*), n.id ASC LIMIT 5",
             ),
             // Limit combined with ORDER BY
             (
@@ -3677,7 +3818,7 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 EvaluatorReturnItemType::NoteIds,
                 "SELECT DISTINCT n.id FROM note n WHERE (\
 n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP text(word dog) ORDER BY n.id ASC LIMIT 5) OR \
-n.data REGEXP text(word cat)) ORDER BY n.id ASC",
+n.data REGEXP text(word cat)) ORDER BY rank(\"dog\"* OR \"cat\"*), n.id ASC",
             ),
             // A sort inside a limited branch picks which items the limit keeps, and a global
             // limit still caps the whole result
@@ -3748,7 +3889,7 @@ n.data REGEXP text(word cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_a
         assert_eq!(
             query_str,
             expand_text(
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data REGEXP text(word dog) AND (c.due <= 100) ORDER BY n.id ASC"
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data REGEXP text(word dog) AND (c.due <= 100) ORDER BY rank(\"dog\"*), n.id ASC"
             )
         );
     }

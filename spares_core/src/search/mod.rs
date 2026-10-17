@@ -276,6 +276,11 @@
 //!   by default: the cards due the longest first (`c.due`, then the note's `created_at`). Results a
 //!   sort ranks the same come in the order of their ids, so the order, and what a limit keeps, is
 //!   the same each time.
+//! - Notes found by words or quoted text, with no sort, come in order of relevance instead: the
+//!   notes with more of the words, and with the rarer ones, first, by SQLite's full-text search
+//!   (`bm25`), with a word in a note's keywords counting double. So `dog limit=5` keeps the 5 notes
+//!   that match `dog` best. Words under `-` don't count, and nor do regexes. The ranking only orders
+//!   the notes the search finds: which notes match is decided as described above.
 //! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
 //!   limited branch sets the order new and review cards are shown in, together, in place of the
 //!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see
