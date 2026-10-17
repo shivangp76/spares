@@ -515,3 +515,16 @@ export interface SearchField {
   about: string;
   sortable: boolean;
 }
+
+/** A note a search found, and where its text has what the search looks for, as `[start, end)` string indices. */
+export interface NoteMatch {
+  note: NoteResponse;
+  parser_name: string;
+  matches: [number, number][];
+}
+
+/** One page of a search's results, and how many there are on every page together. */
+export interface SearchPage<T> {
+  total: number;
+  items: T[];
+}

@@ -10,6 +10,7 @@ import type {
   ImageOcclusionData,
   ImageOcclusionEditorConfig,
   MatchedKeywordResponse,
+  NoteMatch,
   NoteLink,
   NoteRenderResponse,
   NoteResponse,
@@ -24,6 +25,7 @@ import type {
   ReviewQueueResponse,
   ReviewSnapshotResponse,
   SearchField,
+  SearchPage,
   StatisticsGraphsRequest,
   StatisticsGraphsResponse,
   StatisticsResponse,
@@ -633,6 +635,15 @@ export async function searchNotes(query: string): Promise<NoteResponse[]> {
   return data.Notes.map(([note]) => note);
 }
 
+/** One page of the notes a search finds, with where each one's text matches. */
+export async function searchNotesPage(query: string, page: number, limit: number): Promise<SearchPage<NoteMatch>> {
+  const data = await apiFetch<{ total: number; items: { Notes: NoteMatch[] } }>('Search', '/api/notes/search/page', {
+    method: 'POST',
+    body: JSON.stringify({ query, output_type: 'Notes', page, limit }),
+  });
+  return { total: data.total, items: data.items.Notes };
+}
+
 export async function listNotes(page: number, limit: number): Promise<NoteResponse[]> {
   return cacheListPage(`notes?${pageQuery(page, limit)}`, apiFetch('Notes fetch', `/api/notes?${pageQuery(page, limit)}`));
 }
@@ -693,6 +704,15 @@ export async function searchCards(query: string): Promise<CardResponse[]> {
     body: JSON.stringify({ query, output_type: 'Cards' }),
   });
   return data.Cards.map(([card]) => card);
+}
+
+/** One page of the cards a search finds. */
+export async function searchCardsPage(query: string, page: number, limit: number): Promise<SearchPage<CardResponse>> {
+  const data = await apiFetch<{ total: number; items: { Cards: [CardResponse, string][] } }>('Search', '/api/notes/search/page', {
+    method: 'POST',
+    body: JSON.stringify({ query, output_type: 'Cards', page, limit }),
+  });
+  return { total: data.total, items: data.items.Cards.map(([card]) => card) };
 }
 
 /** Cards that are frequently forgotten. */

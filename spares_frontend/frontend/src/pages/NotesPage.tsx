@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedNotesPage, deleteNotes, getNote, listNotes, searchNotes } from '../api/client';
+import { ApiError, cachedNotesPage, deleteNotes, getNote, listNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -10,7 +10,7 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, formatNoteId, td, th, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, formatNoteId, highlightPreview, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
@@ -27,7 +27,10 @@ export default function NotesPage() {
   // The search is kept in the URL so it survives navigating away and back
   const searchQuery = searchParams.get('q');
   const [query, setQuery] = useState(searchQuery ?? '');
+  // The page of search results, how many there are in all, and where each note matches
   const [searchResults, setSearchResults] = useState<NoteResponse[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchMatches, setSearchMatches] = useState<Map<number, [number, number][]>>(new Map());
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
@@ -70,8 +73,16 @@ export default function NotesPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchNotes(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setError(null); setSearchError(null); } })
+    searchNotesPage(searchQuery, page, PAGE_SIZE)
+      .then(data => {
+        if (cancelled) return;
+        setSearchResults(data.items.map(m => m.note));
+        setSearchTotal(data.total);
+        setSearchMatches(new Map(data.items.map(m => [m.note.id, m.matches])));
+        saveRecentSearch(searchQuery);
+        setError(null);
+        setSearchError(null);
+      })
       .catch(e => {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
@@ -79,18 +90,21 @@ export default function NotesPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, searchCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, searchCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
     setQuery(q);
-    setSearchParams(prev => withSearch(prev, q));
+    setSearchParams(prev => withPage(withSearch(prev, q), null));
     setSearchCount(n => n + 1);
   }
 
   function handleClear() {
-    setSearchParams(prev => withSearch(prev, null));
+    setSearchParams(prev => withPage(withSearch(prev, null), null));
   }
+
+  const pageCount = Math.max(1, Math.ceil(searchTotal / PAGE_SIZE));
+  const hasNextPage = searchResults !== null ? page < pageCount : notes.length === PAGE_SIZE;
 
   const displayedNotes = searchResults ?? notes;
   // -1 if the selected note was opened from a link and isn't in the table
@@ -119,6 +133,7 @@ export default function NotesPage() {
     try {
       await deleteNotes({ Ids: [id] });
       setNotes(prev => prev.filter(n => n.id !== id));
+      if (searchResults?.some(n => n.id === id)) setSearchTotal(total => total - 1);
       setSearchResults(prev => (prev ? prev.filter(n => n.id !== id) : prev));
       setSelectedNote(null);
       setPaneStatus(`Note ${id} deleted.`);
@@ -158,7 +173,7 @@ export default function NotesPage() {
 
           {searchResults !== null && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
+              {searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"
             </div>
           )}
 
@@ -191,9 +206,9 @@ export default function NotesPage() {
                       </td>
                       <td style={dataTd} className="clamp-narrow" title={note.data}>
                         <span>
-                          {note.data.length > DATA_PREVIEW_LEN
-                            ? note.data.slice(0, DATA_PREVIEW_LEN) + '…'
-                            : note.data}
+                          {highlightPreview(note.data, searchMatches.get(note.id) ?? [], DATA_PREVIEW_LEN).map((part, i) =>
+                            part.mark ? <mark key={i} className="search-match">{part.text}</mark> : part.text,
+                          )}
                         </span>
                       </td>
                       <td style={td}>{note.tags.join(', ') || '—'}</td>
@@ -212,13 +227,11 @@ export default function NotesPage() {
             </div>
           )}
 
-          {searchResults === null && (
-            <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button disabled={page <= 1} className="touch-target-small" onClick={() => setSearchParams({ page: String(page - 1) })}>Prev</button>
-              <span style={{ fontSize: 13 }}>Page {page}</span>
-              <button disabled={notes.length < PAGE_SIZE} className="touch-target-small" onClick={() => setSearchParams({ page: String(page + 1) })}>Next</button>
-            </div>
-          )}
+          <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button disabled={page <= 1} className="touch-target-small" onClick={() => setSearchParams(prev => withPage(prev, page - 1))}>Prev</button>
+            <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
+            <button disabled={!hasNextPage} className="touch-target-small" onClick={() => setSearchParams(prev => withPage(prev, page + 1))}>Next</button>
+          </div>
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

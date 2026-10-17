@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedCardsPage, listCards, searchCards } from '../api/client';
+import { ApiError, cachedCardsPage, listCards, searchCardsPage } from '../api/client';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
@@ -10,7 +10,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { STATE_LABELS, type CardResponse } from '../types/spares';
-import { formatNoteId, td, th, withSearch } from '../utils';
+import { formatNoteId, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 
@@ -30,7 +30,9 @@ export default function CardsPage() {
   // The search is kept in the URL so it survives navigating away and back
   const searchQuery = searchParams.get('q');
   const [query, setQuery] = useState(searchQuery ?? '');
+  // The page of search results, and how many there are in all
   const [searchResults, setSearchResults] = useState<CardResponse[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   // The list being stepped through, which is the table unless a card was opened from the leeches
   const [browse, setBrowse] = useState<{ cards: CardResponse[]; index: number } | null>(null);
@@ -69,8 +71,16 @@ export default function CardsPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchCards(searchQuery)
-      .then(data => { if (!cancelled) { setSearchResults(data); saveRecentSearch(searchQuery); setBrowse(null); setError(null); setSearchError(null); } })
+    searchCardsPage(searchQuery, page, PAGE_SIZE)
+      .then(data => {
+        if (cancelled) return;
+        setSearchResults(data.items);
+        setSearchTotal(data.total);
+        saveRecentSearch(searchQuery);
+        setBrowse(null);
+        setError(null);
+        setSearchError(null);
+      })
       .catch(e => {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
@@ -78,19 +88,22 @@ export default function CardsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, searchCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, searchCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
     setQuery(q);
-    setSearchParams(prev => withSearch(prev, q.trim()));
+    setSearchParams(prev => withPage(withSearch(prev, q.trim()), null));
     setSearchCount(n => n + 1);
   }
 
   function handleClear() {
-    setSearchParams(prev => withSearch(prev, null));
+    setSearchParams(prev => withPage(withSearch(prev, null), null));
     setBrowse(null);
   }
+
+  const pageCount = Math.max(1, Math.ceil(searchTotal / PAGE_SIZE));
+  const hasNextPage = searchResults !== null ? page < pageCount : cards.length === PAGE_SIZE;
 
   function onCardChanged(card: CardResponse) {
     setCards(prev => replaceCard(prev, card));
@@ -138,7 +151,7 @@ export default function CardsPage() {
 
           {searchResults !== null && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
+              {searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"
             </div>
           )}
 
@@ -184,13 +197,11 @@ export default function CardsPage() {
             </div>
           )}
 
-          {searchResults === null && (
-            <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button disabled={page <= 1} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams({ page: String(page - 1) }); }}>Prev</button>
-              <span style={{ fontSize: 13 }}>Page {page}</span>
-              <button disabled={cards.length < PAGE_SIZE} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams({ page: String(page + 1) }); }}>Next</button>
-            </div>
-          )}
+          <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button disabled={page <= 1} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams(prev => withPage(prev, page - 1)); }}>Prev</button>
+            <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
+            <button disabled={!hasNextPage} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams(prev => withPage(prev, page + 1)); }}>Next</button>
+          </div>
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

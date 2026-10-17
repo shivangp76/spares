@@ -2229,6 +2229,83 @@ fn text_regex(text: &str, word_start: bool) -> String {
     pattern
 }
 
+/// The regexes of what `query` searches the note's text for, to mark where a note matches: its
+/// words, quoted text and regexes compared with `data` by `~`. Terms under `-`, and in the query of
+/// a link like `linked_to_note=(dog)`, are left out, since the note need not contain them. A query
+/// that can't be parsed has none.
+pub(crate) fn text_patterns(query: &str) -> Vec<String> {
+    fn collect(tree: &TokenTree, patterns: &mut Vec<String>) {
+        match tree {
+            TokenTree::Cons(Op::Tilde, children) => {
+                let [TokenTree::Atom(Atom::Field(field)), value] = children.as_slice() else {
+                    return;
+                };
+                if !matches!(Field::from_str(field), Ok(Field::Note(NoteField::Data))) {
+                    return;
+                }
+                match value {
+                    TokenTree::Atom(Atom::Regex(r)) => patterns.push(r.to_string()),
+                    TokenTree::Atom(Atom::String(s)) => patterns.push(text_regex(s, false)),
+                    TokenTree::Atom(Atom::Word(s)) => patterns.push(text_regex(s, true)),
+                    _ => {}
+                }
+            }
+            TokenTree::Cons(Op::And | Op::Or | Op::Group, children) => {
+                for child in children {
+                    collect(child, patterns);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut patterns = Vec::new();
+    if let Ok(tree) = Parser::new(query).parse_expression() {
+        collect(&tree, &mut patterns);
+    }
+    patterns
+}
+
+/// The most places [`text_matches`] marks in one text.
+const MAX_TEXT_MATCHES: usize = 200;
+
+/// Where `text` matches any of `patterns`, as starts and ends in UTF-16 code units, in order, with
+/// overlapping and touching matches merged. An invalid pattern matches nothing.
+pub(crate) fn text_matches(patterns: &[String], text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = patterns
+        .iter()
+        .filter_map(|pattern| get_or_compile_regex(pattern).ok())
+        .flat_map(|regex| {
+            regex
+                .find_iter(text)
+                .map_while(Result::ok)
+                .filter(|m| !m.range().is_empty())
+                .take(MAX_TEXT_MATCHES)
+                .map(|m| m.range())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<std::ops::Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged.truncate(MAX_TEXT_MATCHES);
+    // Byte offsets to UTF-16 ones, counting up through the text once
+    let (mut byte, mut utf16) = (0, 0);
+    let mut to_utf16 = |offset: usize| {
+        utf16 += text[byte..offset].encode_utf16().count();
+        byte = offset;
+        utf16
+    };
+    merged
+        .into_iter()
+        .map(|range| (to_utf16(range.start), to_utf16(range.end)))
+        .collect()
+}
+
 /// Converts a `TokenTree` to Disjunctive Normal Form (a `Vec` of conjunctions).
 ///
 /// Each element of the returned `Vec` is an AND-conjunction (a tree whose top-level
@@ -3312,6 +3389,29 @@ mod tests {
         assert_eq!(search("linked_to_note=(-tag=math)").await, ["b", "c"]);
         // Still a single note without parentheses
         assert_eq!(search("linked_to_note=x").await, ["c"]);
+    }
+
+    #[test]
+    fn marks_where_the_text_matches() {
+        let marks = |query: &str, text: &str| {
+            let utf16 = text.encode_utf16().collect::<Vec<_>>();
+            text_matches(&text_patterns(query), text)
+                .into_iter()
+                .map(|(start, end)| String::from_utf16(&utf16[start..end]).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let text = "Hot dogs: 12 cats, a fish, 😀 CAFÉ dog";
+        // Touching matches are merged, and excluded terms and a link's query are not marked.
+        assert_eq!(
+            marks(
+                r#"dog -cat "hot d" re:"\d+" linked_to_note=(fish) cafe"#,
+                text
+            ),
+            ["Hot dog", "12", "CAFÉ", "dog"]
+        );
+        assert_eq!(marks("tag=math or (dog)", text), ["dog", "dog"]);
+        assert_eq!(marks("og", text), Vec::<String>::new());
+        assert_eq!(marks("dog (", text), Vec::<String>::new());
     }
 
     #[test]

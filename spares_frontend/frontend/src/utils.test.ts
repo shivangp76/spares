@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { draggedImageUrl, imageUploadName, insertInline } from './utils';
+import { draggedImageUrl, highlightPreview, imageUploadName, insertInline, withPage } from './utils';
 
 test('imageUploadName keeps a supported extension', () => {
   expect(imageUploadName({ name: 'brain.PNG', type: 'image/png' })).toBe('brain.PNG');
@@ -35,4 +35,22 @@ test('insertInline appends after a space without an editor', () => {
   expect(insertInline(undefined, '', '[listen](/a.wav)')).toBe('[listen](/a.wav)');
   expect(insertInline(undefined, 'Say', '[listen](/a.wav)')).toBe('Say [listen](/a.wav)');
   expect(insertInline(undefined, 'Say\n', '[listen](/a.wav)')).toBe('Say\n[listen](/a.wav)');
+});
+
+test('highlightPreview marks the matches in the preview', () => {
+  const show = (text: string, matches: [number, number][], max: number) =>
+    highlightPreview(text, matches, max).map(p => (p.mark ? `[${p.text}]` : p.text)).join('');
+  expect(show('a hot dog', [[6, 9]], 100)).toBe('a hot [dog]');
+  expect(show('dog and dog', [[0, 3], [8, 11]], 9)).toBe('[dog] and [d]…');
+  expect(show('short', [], 3)).toBe('sho…');
+  // A match past the end of the preview is shown with some text before it
+  const long = `${'x'.repeat(100)} the dog sat`;
+  expect(show(long, [[105, 108]], 50)).toBe(`…${'x'.repeat(25)} the [dog] sat`);
+  // Not between the halves of an emoji
+  expect(show('😀😀', [], 3)).toBe('😀…');
+});
+
+test('withPage keeps the search', () => {
+  expect(withPage(new URLSearchParams('q=dog'), 3).toString()).toBe('q=dog&page=3');
+  expect(withPage(new URLSearchParams('q=dog&page=3'), 1).toString()).toBe('q=dog');
 });

@@ -48,6 +48,7 @@ use crate::handlers::note::list_notes_handler;
 use crate::handlers::note::search_fields_handler;
 use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
+use crate::handlers::note::search_page_handler;
 use crate::handlers::note::update_notes_handler;
 use crate::handlers::notes_vcs::notes_vcs_check_handler;
 use crate::handlers::notes_vcs::notes_vcs_finish_handler;
@@ -242,6 +243,7 @@ pub(crate) fn create_router(
             post(generate_note_files_handler),
         )
         .route("/api/notes/search", post(search_notes_handler))
+        .route("/api/notes/search/page", post(search_page_handler))
         .route("/api/search/fields", get(search_fields_handler))
         .route("/api/notes/export", post(export_notes_handler))
         .route("/api/notes/search/keyword", post(search_keyword_handler))

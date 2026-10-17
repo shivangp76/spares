@@ -20,6 +20,7 @@ use spares_core::api::note::list_notes;
 use spares_core::api::note::render_notes;
 use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
+use spares_core::api::note::search_page;
 use spares_core::api::note::update_notes;
 use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
@@ -34,6 +35,7 @@ use spares_core::schema::note::NoteLinksRequest;
 use spares_core::schema::note::RenderNotesRequest;
 use spares_core::schema::note::SearchKeywordRequest;
 use spares_core::schema::note::SearchNotesRequest;
+use spares_core::schema::note::SearchPageRequest;
 use spares_core::schema::note::UpdateNotesRequest;
 
 use crate::AppState;
@@ -114,6 +116,17 @@ pub(crate) async fn search_notes_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(search_notes_res))
+}
+
+/// One page of a search's results, with how many there are in all.
+pub(crate) async fn search_page_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<SearchPageRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let page = search_page(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(page))
 }
 
 /// The fields a search query can use, with the kind of value each holds and an example, as

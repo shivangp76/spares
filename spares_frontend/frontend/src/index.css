@@ -220,6 +220,13 @@ button:disabled {
   line-height: 16px;
 }
 
+/* Where a note's text matches a search */
+mark.search-match {
+  background-color: light-dark(#fde68a, #5c4a0b);
+  color: inherit;
+  border-radius: 2px;
+}
+
 /* Mobile. Most styling is inline, so pieces that change by screen size or input get a class here.
    Narrow screens are phones; a coarse pointer without hover is a touchscreen. */
 

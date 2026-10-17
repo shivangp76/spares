@@ -202,6 +202,41 @@ pub mod note {
         Cards(Vec<(CardResponse, String)>),
     }
 
+    /// One page of the results of a search, in the order the search returns them.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct SearchPageRequest {
+        pub query: String,
+        pub output_type: QueryReturnItemType,
+        /// The page, from 1.
+        pub page: usize,
+        /// How many results a page has, from 1 to 1000.
+        pub limit: usize,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct SearchPageResponse {
+        /// How many results there are on every page together.
+        pub total: usize,
+        pub items: SearchPageItems,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub enum SearchPageItems {
+        Notes(Vec<NoteMatch>),
+        Cards(Vec<(CardResponse, String)>),
+    }
+
+    /// A note a search found, and where its text has what the search looks for.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct NoteMatch {
+        pub note: NoteResponse,
+        pub parser_name: String,
+        /// Where the note's text has the words, text or regexes the query searches it for, as
+        /// starts and ends in UTF-16 code units, in order and not overlapping. Terms the query
+        /// excludes, like `-dog`, are not marked.
+        pub matches: Vec<(usize, usize)>,
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct SearchKeywordRequest {
         pub keyword: String,

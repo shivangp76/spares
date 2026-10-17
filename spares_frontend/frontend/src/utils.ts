@@ -94,6 +94,46 @@ export function withSearch(params: URLSearchParams, q: string | null): URLSearch
   return next;
 }
 
+/** `params` with the results page set, or removed for `null`, keeping the search. */
+export function withPage(params: URLSearchParams, page: number | null): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (page === null || page <= 1) next.delete('page');
+  else next.set('page', String(page));
+  return next;
+}
+
+/** A part of a preview, which a search matched if `mark` is set. */
+export interface PreviewPart {
+  text: string;
+  mark: boolean;
+}
+
+/**
+ * A preview of `text` at most `maxLength` long, in parts that `matches` (`[start, end)` string
+ * indices, in order) mark or not, with `…` where text is left out. It starts at the beginning,
+ * unless that leaves out the first match, when it starts a little before it.
+ */
+export function highlightPreview(text: string, matches: [number, number][], maxLength: number): PreviewPart[] {
+  // Not between the two halves of a character like an emoji
+  const boundary = (i: number) => (i > 0 && i < text.length && /[\uDC00-\uDFFF]/.test(text[i]) ? i - 1 : i);
+  const first = matches[0];
+  const start = first && first[1] > maxLength ? boundary(Math.max(0, first[0] - 30)) : 0;
+  const end = boundary(Math.min(text.length, start + maxLength));
+  const parts: PreviewPart[] = start > 0 ? [{ text: '…', mark: false }] : [];
+  let at = start;
+  for (const [matchStart, matchEnd] of matches) {
+    if (matchEnd <= at) continue;
+    if (matchStart >= end) break;
+    const from = Math.max(matchStart, at);
+    if (from > at) parts.push({ text: text.slice(at, from), mark: false });
+    at = Math.min(matchEnd, end);
+    parts.push({ text: text.slice(from, at), mark: true });
+  }
+  if (at < end) parts.push({ text: text.slice(at, end), mark: false });
+  if (end < text.length) parts.push({ text: '…', mark: false });
+  return parts;
+}
+
 /** Inserts a block of text at the editor's cursor, on its own line, and returns the editor's new
     contents. Without an editor, the block is appended to `value`. */
 export function insertBlock(view: EditorView | undefined, value: string, block: string): string {
