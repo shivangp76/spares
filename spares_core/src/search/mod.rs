@@ -118,6 +118,8 @@
 //!
 //! **Formats:**
 //! - `YYYY-MM-DD`: a whole day, in local time.
+//! - `YYYY-MM`: a whole month, in local time.
+//! - `YYYY`: a whole year, in local time.
 //! - `YYYY-MM-DDTHH:MM:SSZ`: an exact time, in UTC.
 //!
 //! **Operators:**
@@ -128,7 +130,10 @@
 //! - `<=`
 //!
 //! Compared against a day, `=` matches any time in it, `>` is after the day and `<=` is up to the
-//! end of it, so `created_at=2026-10-17` finds notes created any time that day.
+//! end of it, so `created_at=2026-10-17` finds notes created any time that day. A month or a year
+//! works the same way: `created_at=2026-10` is any time in October 2026 and `c.due>2026` is after
+//! the end of 2026. Against a text field, they are just text, so `keyword=2026` is the keyword
+//! `2026`.
 //!
 //! #### Relative dates
 //!

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::NaiveDate;
 use chrono::Utc;
 use log::info;
 use miette::Error;
@@ -32,6 +33,7 @@ use crate::search::TokenTree;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
 use crate::search::relative_date::local_day_start_sql;
+use crate::search::relative_date::local_month_start_sql;
 use crate::search::render_error;
 
 pub(crate) struct Evaluator<'de> {
@@ -1460,27 +1462,56 @@ fn evaluate_field_value(
             op
         ));
     }
-    // A day, like `2026-10-17` or `today-1d`, compared against a date field stands for the whole
-    // local day, so `created_at=2026-10-17` finds notes created any time that day. Against a text
-    // field, it is just the text.
-    let day = match (&trees[1], &relative_date) {
-        (TokenTree::Atom(Atom::Date(date)), _) => match field_type {
-            FieldType::DateTime if matches!(op, Op::Tilde) => {
-                return Err(miette!(
-                    "A date cannot be used with operator `{}`. Compare it with `=`, `<`, `<=`, `>` or `>=`.",
-                    op
-                ));
-            }
-            FieldType::DateTime => {
-                Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
-            }
-            _ => {
-                value_context.params = vec![date.to_string()];
-                value_type = FieldType::String;
-                None
-            }
-        },
-        (_, Some(date)) => date.next_day().map(|next| (date.to_sql(), next.to_sql())),
+    // A month, like `2026-10`, or a year, like `2026`, compared against a date field, as its first
+    // day and how many months it lasts.
+    let month_or_year = match &trees[1] {
+        _ if !matches!(field_type, FieldType::DateTime) => None,
+        TokenTree::Atom(Atom::String(s))
+            if s.len() == 7
+                && s.char_indices()
+                    .all(|(i, c)| if i == 4 { c == '-' } else { c.is_ascii_digit() }) =>
+        {
+            let month = NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d")
+                .map_err(|_| miette!("`{s}` is not a month"))?;
+            Some((month, 1))
+        }
+        TokenTree::Atom(Atom::Integer(year)) if (1000..=9999).contains(year) => {
+            i32::try_from(*year)
+                .ok()
+                .and_then(|year| NaiveDate::from_ymd_opt(year, 1, 1))
+                .map(|start| (start, 12))
+        }
+        _ => None,
+    };
+    if month_or_year.is_some() {
+        value_type = FieldType::DateTime;
+    }
+    // A day, like `2026-10-17` or `today-1d`, a month or a year compared against a date field
+    // stands for the whole local period, so `created_at=2026-10-17` finds notes created any time
+    // that day and `created_at=2026` any time that year. Against a text field, it is just the
+    // text.
+    let period = match (&trees[1], &relative_date, month_or_year) {
+        (TokenTree::Atom(Atom::Date(_)), _, _) | (_, _, Some(_))
+            if matches!(field_type, FieldType::DateTime) && matches!(op, Op::Tilde) =>
+        {
+            return Err(miette!(
+                "A date cannot be used with operator `{}`. Compare it with `=`, `<`, `<=`, `>` or `>=`.",
+                op
+            ));
+        }
+        (_, _, Some((start, months))) => Some((
+            local_month_start_sql(start, 0),
+            local_month_start_sql(start, months),
+        )),
+        (TokenTree::Atom(Atom::Date(date)), _, _) if matches!(field_type, FieldType::DateTime) => {
+            Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
+        }
+        (TokenTree::Atom(Atom::Date(date)), _, _) => {
+            value_context.params = vec![date.to_string()];
+            value_type = FieldType::String;
+            None
+        }
+        (_, Some(date), _) => date.next_day().map(|next| (date.to_sql(), next.to_sql())),
         _ => None,
     };
 
@@ -1589,7 +1620,7 @@ fn evaluate_field_value(
                 ));
             }
             if let Some(mut value_param) = value_context.params.pop() {
-                if let Some((start, end)) = &day {
+                if let Some((start, end)) = &period {
                     value_context.params.push(match op {
                         Op::Equal => format!("BETWEEN {start} AND ({end} - 1)"),
                         Op::GreaterThan => format!(">= {end}"),
@@ -2235,6 +2266,20 @@ mod tests {
                 "created_at<2026-10-17 c.due<=2026-10-17",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
+            // So are a month and a year.
+            (
+                "created_at=2026-10 c.due<2026",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-01', '+0 months', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-01', '+1 months', 'utc') AS INTEGER)) - 1) AND c.due < (SELECT CAST(strftime('%s', '2026-01-01', '+0 months', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+            ),
+            (
+                "created_at>2026",
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+            ),
+            // Against text, they are text.
+            (
+                "keyword=2026-10 or keyword=2026",
+                "SELECT DISTINCT n.id FROM note n WHERE (EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = '2026-10') OR EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = '2026')) ORDER BY n.id ASC".to_string(),
+            ),
             // A time is exact.
             (
                 "created_at>=2026-10-17T12:00:00Z",
@@ -2286,6 +2331,9 @@ mod tests {
             "created_at~note[gir].created_at",
             "created_at~today",
             "created_at~2026-10-17",
+            "created_at~2026-10",
+            "created_at=2026-13",
+            "created_at=12345",
             // Malformed references and offsets
             "created_at>=note[gir",
             "created_at>=note[gir].due",
@@ -2445,6 +2493,19 @@ mod tests {
         assert_eq!(search(&format!("created_at={yesterday}")).await, ["b", "c"]);
         assert_eq!(search(&format!("created_at>{yesterday}")).await, ["a", "d"]);
         assert_eq!(search("created_at<today").await, ["b", "c"]);
+        // `a` and `d` were created this month and year, and `b` and `c` too unless yesterday was in
+        // the last one.
+        let today = chrono::Local::now().date_naive();
+        let this_month = search(&format!("created_at={}", today.format("%Y-%m"))).await;
+        assert!(
+            this_month.starts_with(&["a".to_string()]) && this_month.contains(&"d".to_string())
+        );
+        let this_year = search(&format!("created_at>={}", today.format("%Y"))).await;
+        assert!(this_year.contains(&"a".to_string()) && this_year.contains(&"d".to_string()));
+        assert_eq!(
+            search(&format!("created_at>{}", today.format("%Y"))).await,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

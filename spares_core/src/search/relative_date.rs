@@ -181,6 +181,12 @@ pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64) -> String {
     format!("(SELECT CAST(strftime('%s', '{date}', '{days:+} days', 'utc') AS INTEGER))")
 }
 
+/// An SQL expression for the start of the local month `months` months after the month starting on
+/// `month`, as Unix time.
+pub(crate) fn local_month_start_sql(month: NaiveDate, months: i64) -> String {
+    format!("(SELECT CAST(strftime('%s', '{month}', '{months:+} months', 'utc') AS INTEGER))")
+}
+
 impl fmt::Display for RelativeDate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.anchor {
