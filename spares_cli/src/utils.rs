@@ -64,8 +64,12 @@ pub(crate) async fn ensure_ok(response: reqwest::Response) -> Result<reqwest::Re
     let status = response.status();
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| miette!("{}", e))?;
-        let message = response_json.get("message");
-        return Err(miette!(message.unwrap().to_string()));
+        let message = match response_json.get("message") {
+            Some(Value::String(message)) => message.clone(),
+            Some(message) => message.to_string(),
+            None => status.to_string(),
+        };
+        return Err(miette!("{message}"));
     }
     Ok(response)
 }

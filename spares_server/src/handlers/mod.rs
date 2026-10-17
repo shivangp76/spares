@@ -12,6 +12,7 @@ use axum::response::Response;
 use serde_json::Value;
 use serde_json::json;
 use spares_core::Error;
+use spares_core::LibraryError;
 
 use crate::AppState;
 
@@ -41,7 +42,7 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
             Json(json!({ "message": e.to_string() })),
         );
     }
-    let sync_status = match &e {
+    let status = match &e {
         // The sync server changed during the sync: the client starts over.
         Error::SyncRetry => Some(StatusCode::CONFLICT),
         Error::FullSyncRequired(reason) => {
@@ -50,10 +51,11 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": reason, "full_sync_required": true })),
             );
         }
-        Error::Sync(_) => Some(StatusCode::BAD_REQUEST),
+        // A search error's message marks the problem in the query.
+        Error::Sync(_) | Error::Library(LibraryError::Search(_)) => Some(StatusCode::BAD_REQUEST),
         _ => None,
     };
-    if let Some(status) = sync_status {
+    if let Some(status) = status {
         return (status, Json(json!({ "message": e.to_string() })));
     }
     (
