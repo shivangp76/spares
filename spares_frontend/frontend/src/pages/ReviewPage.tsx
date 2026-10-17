@@ -231,6 +231,8 @@ export default function ReviewPage() {
   const [sessionRateMs, setSessionRateMs] = useState(0);
   const [sessionStart, setSessionStart] = useState<number | null>(null);
   const [sessionEnd, setSessionEnd] = useState<number | null>(null);
+  // Whether the session has shown a card, so one that failed to start, e.g. on a query error, has no summary
+  const [sessionShowedCard, setSessionShowedCard] = useState(false);
   // When the next learning card can be shown, while waiting for it with nothing else to review
   const [waitingUntil, setWaitingUntil] = useState<number | null>(null);
   const [, setWaitTick] = useState(0);
@@ -322,6 +324,7 @@ export default function ReviewPage() {
       }
       if (!next) { setCard(null); setSessionEnd(Date.now()); setPhase('done'); return; }
       setCard(next);
+      setSessionShowedCard(true);
       recallStart.current = Date.now();
       recallDuration.current = null;
       rateDuration.current = null;
@@ -423,6 +426,7 @@ export default function ReviewPage() {
     setSessionRateMs(0);
     setSessionStart(Date.now());
     setSessionEnd(null);
+    setSessionShowedCard(false);
     lastEventId.current = null;
     lastActionWasRating.current = false;
     lastPendingAction.current = null;
@@ -890,7 +894,7 @@ export default function ReviewPage() {
 
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>
-          {sessionStarted && <div style={{ marginBottom: 24 }}>{summary}</div>}
+          {sessionStarted && sessionShowedCard && <div style={{ marginBottom: 24 }}>{summary}</div>}
           {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift. */}
           <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center', minHeight: DUE_CARD_HEIGHT }}>
             {statistics && Object.entries(statistics.due_count_by_state)
