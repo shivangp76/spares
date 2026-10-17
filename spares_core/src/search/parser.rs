@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use chrono::DateTime;
 use chrono::NaiveDate;
+use chrono::NaiveDateTime;
 use chrono::Utc;
 use miette::Error;
 use miette::LabeledSpan;
@@ -27,8 +28,17 @@ fn parse_date(date_str: &str) -> Result<Atom<'static>, Error> {
         return Ok(Atom::DateTime(datetime.with_timezone(&Utc)));
     }
 
-    // Return an error if neither format matches
-    Err(miette!("Invalid date format: {}", date_str))
+    // A time without a zone (YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS), in local time
+    for format in ["%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(datetime) = NaiveDateTime::parse_from_str(date_str, format) {
+            return Ok(Atom::LocalDateTime(datetime));
+        }
+    }
+
+    Err(miette!(
+        help = "Write a day like `2026-10-17`, or a time like `2026-10-17T14:30` (local) or `2026-10-17T14:30:00Z` (UTC)",
+        "Invalid date `{date_str}`",
+    ))
 }
 
 /// An error in `query`, with `label` marking `span`.

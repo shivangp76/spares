@@ -120,6 +120,7 @@
 //! - `YYYY-MM-DD`: a whole day, in local time.
 //! - `YYYY-MM`: a whole month, in local time.
 //! - `YYYY`: a whole year, in local time.
+//! - `YYYY-MM-DDTHH:MM` or `YYYY-MM-DDTHH:MM:SS`: an exact time, in local time.
 //! - `YYYY-MM-DDTHH:MM:SSZ`: an exact time, in UTC.
 //!
 //! **Operators:**
@@ -322,6 +323,7 @@ use std::ops::Range;
 
 use chrono::DateTime;
 use chrono::NaiveDate;
+use chrono::NaiveDateTime;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
@@ -534,6 +536,8 @@ pub(crate) enum Atom<'de> {
     DateTime(DateTime<Utc>),
     /// A date without a time, like `2026-10-17`, which stands for that whole local day.
     Date(NaiveDate),
+    /// A time without a zone, like `2026-10-17T14:30`, in local time.
+    LocalDateTime(NaiveDateTime),
     RelativeDate(RelativeDate),
     Regex(Cow<'de, str>),
     Nil,
@@ -549,6 +553,7 @@ impl fmt::Display for Atom<'_> {
             Atom::Boolean(b) => write!(f, "{b:?}"),
             Atom::DateTime(d) => write!(f, "{d:?}"),
             Atom::Date(d) => write!(f, "{d}"),
+            Atom::LocalDateTime(d) => write!(f, "{}", d.format("%Y-%m-%dT%H:%M:%S")),
             Atom::RelativeDate(d) => write!(f, "{d}"),
             Atom::Regex(s) => write!(f, "re:\"{s}\""),
             Atom::Nil => write!(f, "nil"),

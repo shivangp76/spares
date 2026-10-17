@@ -1912,6 +1912,14 @@ impl Evaluate for Atom<'_> {
                 context.params.push(local_day_start_sql(*d, 0));
                 Ok(())
             }
+            Atom::LocalDateTime(d) => {
+                context.value_type = Some(FieldType::DateTime);
+                context.params.push(format!(
+                    "(SELECT CAST(strftime('%s', '{}', 'utc') AS INTEGER))",
+                    d.format("%Y-%m-%d %H:%M:%S")
+                ));
+                Ok(())
+            }
             Atom::RelativeDate(d) => {
                 context.value_type = Some(FieldType::DateTime);
                 context.params.push(d.to_sql());
@@ -2275,6 +2283,11 @@ mod tests {
                 "created_at>2026",
                 "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
+            // A time without a zone is local.
+            (
+                "created_at>=2026-10-17T14:30 created_at<2026-10-17T14:30:05",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.created_at >= (SELECT CAST(strftime('%s', '2026-10-17 14:30:00', 'utc') AS INTEGER)) AND n.created_at < (SELECT CAST(strftime('%s', '2026-10-17 14:30:05', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+            ),
             // Against text, they are text.
             (
                 "keyword=2026-10 or keyword=2026",
@@ -2334,6 +2347,8 @@ mod tests {
             "created_at~2026-10",
             "created_at=2026-13",
             "created_at=12345",
+            "created_at=2026-10-17T25:00",
+            "created_at=2026-10-17T14",
             // Malformed references and offsets
             "created_at>=note[gir",
             "created_at>=note[gir].due",
