@@ -2078,6 +2078,19 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
     }
 
     #[test]
+    fn sorts_and_limits_apply_to_their_parentheses() {
+        let sql = |input| {
+            Evaluator::new(input)
+                .evaluate(EvaluatorReturnItemType::NoteIds)
+                .unwrap()
+        };
+        let whole = sql("(dog or cat) sort_by_asc=created_at limit=5");
+        assert_eq!(sql("dog limit=5 or cat sort_by_asc=created_at"), whole);
+        assert_eq!(sql("dog or cat sort_by_asc=created_at limit=5"), whole);
+        assert_eq!(sql("dog or limit=5 cat sort_by_asc=created_at"), whole);
+    }
+
+    #[test]
     fn test_limit_with_scope() {
         // The scope is applied inside each limited branch, before its LIMIT, and to the whole
         // result, so unlimited branches are scoped too.
@@ -2136,9 +2149,6 @@ n.data LIKE '%cat%') AND (c.due <= 100)"
             "limit~10",
             // Cannot negate limit
             "-limit=10",
-            // A limit inside 'or' must be parenthesized with the conditions it limits
-            "dog or limit=10",
-            "dog limit=5 or cat",
             // limit can only be specified once
             "limit=10 limit=20",
             "(dog limit=5 limit=6) or cat",
@@ -2173,7 +2183,6 @@ n.data LIKE '%cat%') AND (c.due <= 100)"
             "sort_by_asc=sort_by_desc",
             // Cannot use certain operators for sorting
             "-sort_by_asc=linked_to_note",
-            "c.stability>=2 or sort_by_asc=linked_to_note",
             // `and` is fine since that is implictly used everywhere
             // Cannot use sort by inside grouping
             "c.stability>=2 or (a sort_by_asc=linked_to_note)",

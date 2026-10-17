@@ -200,8 +200,10 @@
 //!   - Example: `(tag=chess sort_by_desc=c.difficulty limit=5) or (tag=math limit=5)`
 //! - A limit outside the parentheses still caps the combined result:
 //!   `((tag=a limit=5) or (tag=b limit=5)) limit=8`.
-//! - The limited conditions must be wrapped in parentheses: `dog limit=5 or cat` is an error.
-//! - A sort in an `or` branch without a limit is still an error.
+//! - A sort or limit applies to the parentheses it is written in, or to the whole query, wherever
+//!   it appears in them, so the limited conditions must be wrapped in parentheses:
+//!   `dog limit=5 or cat` limits the whole `dog or cat` to 5.
+//! - A parenthesized `or` branch with a sort but no limit is an error.
 //! - `c.cloze` cannot be used inside a limited branch, since cloze matching runs after the
 //!   database query.
 //!
@@ -221,7 +223,10 @@
 //!
 //! - **Exclusion:** `-QUALIFIER`
 //!   - Example: `-tag=math`
-//! - **Logical Operators:** `and`, `or`
+//! - **Logical Operators:** `and`, `or` (also `AND`, `OR`). `and`, whether written or implied by a
+//!   space, binds tighter than `or`, so `a or b c` means `a or (b and c)`. Before October 2026 they
+//!   bound equally from left to right, so a query mixing them without parentheses may now match
+//!   differently.
 //! - **Grouping:** Use parentheses for grouping expressions.
 //!
 //! ## Examples

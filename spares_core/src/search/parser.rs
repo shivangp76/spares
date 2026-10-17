@@ -48,7 +48,7 @@ impl<'de> Parser<'de> {
     }
 
     pub(crate) fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
-        self.parse_expression_within(0)
+        Ok(hoist_modifiers(self.parse_expression_within(0)?))
     }
 
     #[allow(clippy::too_many_lines, reason = "main parser method")]
@@ -271,6 +271,71 @@ impl<'de> Parser<'de> {
     }
 }
 
+/// Whether `tree` is a `sort_by_asc`, `sort_by_desc` or `limit` term, which changes how results
+/// are returned rather than which items match.
+fn is_modifier(tree: &TokenTree) -> bool {
+    matches!(
+        tree,
+        TokenTree::Cons(Op::Equal, children)
+            if matches!(
+                children.first(),
+                Some(TokenTree::Atom(Atom::Field(field)))
+                    if matches!(field.as_ref(), "sort_by_asc" | "sort_by_desc" | "limit")
+            )
+    )
+}
+
+/// Moves each sort and limit to the end of the parentheses it is written in, or of the whole
+/// query, so that it applies to all of them however `and` and `or` group the rest. For example,
+/// `(a limit=2) or (b limit=1) limit=10` limits the whole `or` to 10, and
+/// `tag=a or tag=b sort_by_asc=c.due` sorts both tags.
+fn hoist_modifiers(tree: TokenTree<'_>) -> TokenTree<'_> {
+    fn strip<'de>(
+        tree: TokenTree<'de>,
+        modifiers: &mut Vec<TokenTree<'de>>,
+    ) -> Option<TokenTree<'de>> {
+        match tree {
+            TokenTree::Cons(op @ (Op::And | Op::Or), children) => {
+                let mut kept = children
+                    .into_iter()
+                    .filter_map(|child| strip(child, modifiers))
+                    .collect::<Vec<_>>();
+                match kept.len() {
+                    0 => None,
+                    1 => kept.pop(),
+                    _ => Some(TokenTree::Cons(op, kept)),
+                }
+            }
+            tree if is_modifier(&tree) => {
+                modifiers.push(tree);
+                None
+            }
+            tree => Some(hoist_within(tree)),
+        }
+    }
+    // Groups start a new scope. A modifier directly under `-` is left for the evaluator to reject.
+    fn hoist_within(tree: TokenTree<'_>) -> TokenTree<'_> {
+        match tree {
+            TokenTree::Cons(Op::Group, children) => TokenTree::Cons(
+                Op::Group,
+                children.into_iter().map(hoist_modifiers).collect(),
+            ),
+            TokenTree::Cons(Op::Minus, children) => {
+                TokenTree::Cons(Op::Minus, children.into_iter().map(hoist_within).collect())
+            }
+            tree => tree,
+        }
+    }
+    let mut modifiers = Vec::new();
+    let rest = strip(tree, &mut modifiers);
+    let mut terms = rest.into_iter().chain(modifiers).collect::<Vec<_>>();
+    match terms.len() {
+        0 => TokenTree::Atom(Atom::Nil),
+        1 => terms.pop().expect("one term"),
+        _ => TokenTree::Cons(Op::And, terms),
+    }
+}
+
 fn prefix_binding_power(op: Op) -> ((), u8) {
     match op {
         Op::Minus => ((), 4),
@@ -290,7 +355,10 @@ fn postfix_binding_power(_op: Op) -> Option<(u8, ())> {
 
 fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
     let res = match op {
-        Op::And | Op::Or => (3, 4),
+        // `and`, written or implied by a space, binds tighter than `or`, so `a or b c` is
+        // `a or (b and c)`.
+        Op::Or => (1, 2),
+        Op::And => (3, 4),
         Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual => (6, 5),
         Op::Equal | Op::Tilde => (11, 10),
         Op::Colon => (13, 12),
@@ -400,6 +468,38 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test]
+    fn and_binds_tighter_than_or() {
+        let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
+        assert_eq!(
+            parse("a or b c"),
+            r#"(or (~  "a") (and (~  "b") (~  "c")))"#
+        );
+        assert_eq!(
+            parse("a b or c"),
+            r#"(or (and (~  "a") (~  "b")) (~  "c"))"#
+        );
+        assert_eq!(
+            parse("-a or b and c"),
+            r#"(or (not (~  "a")) (and (~  "b") (~  "c")))"#
+        );
+    }
+
+    #[test]
+    fn sorts_and_limits_apply_to_their_parentheses() {
+        let parse = |input| Parser::new(input).parse_expression().unwrap().to_string();
+        assert_eq!(
+            parse("(a limit=2) or (b limit=1) limit=10"),
+            r#"(and (or (group (and (~  "a") (= limit 2))) (group (and (~  "b") (= limit 1)))) (= limit 10))"#
+        );
+        assert_eq!(
+            parse("a or b sort_by_asc=c.due"),
+            r#"(and (or (~  "a") (~  "b")) (= sort_by_asc "c.due"))"#
+        );
+        assert_eq!(parse("limit=5"), "(= limit 5)");
+        assert_eq!(parse("-limit=5"), "(not (= limit 5))");
     }
 
     #[test]
