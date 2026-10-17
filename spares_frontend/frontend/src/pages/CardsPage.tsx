@@ -155,7 +155,7 @@ export default function CardsPage() {
               error={searchError}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
-            <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>
+            <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares card search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
           </div>
           <RecentSearches
