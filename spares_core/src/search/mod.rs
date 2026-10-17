@@ -190,6 +190,10 @@
 //!   - Descending: `sort_by_desc=c.stability`
 //! - Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to_note`, `linked_from_note`, `linked_to_keyword`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
 //! - Multiple sorts are allowed; later keys are appended to the ORDER BY list.
+//! - Without a sort, notes come in the order of their ids, and cards in the order review shows them
+//!   by default: the cards due the longest first (`c.due`, then the note's `created_at`). Results a
+//!   sort ranks the same come in the order of their ids, so the order, and what a limit keeps, is
+//!   the same each time.
 //! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
 //!   limited branch sets the order new and review cards are shown in, together, in place of the
 //!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see

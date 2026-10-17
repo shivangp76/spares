@@ -85,6 +85,7 @@ impl<'de> Evaluator<'de> {
             context.table_requirements.needs_card = true;
             context.add_where_clause(format!("({scope})"));
         }
+        context.complete_order_by(internal_output_type);
         Ok(context.build_query(internal_output_type))
     }
 
@@ -984,22 +985,12 @@ impl EvaluationContext<'_> {
             self.table_requirements.needs_card = true;
             self.add_where_clause(format!("({scope})"));
         }
+        self.complete_order_by(self.output_type);
         let (id_column, subquery_type) = match self.output_type {
             EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => {
-                if self.order_by.is_empty() {
-                    self.order_by.push("n.id ASC".to_string());
-                }
                 ("n.id", EvaluatorReturnItemType::NoteIds)
             }
             EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
-                if self.order_by.is_empty() {
-                    // The cards due the longest first, as review shows them by default.
-                    self.order_by.extend([
-                        "c.due ASC".to_string(),
-                        "n.created_at ASC".to_string(),
-                        "c.id ASC".to_string(),
-                    ]);
-                }
                 ("c.id", EvaluatorReturnItemType::CardIds)
             }
         };
@@ -1007,6 +998,25 @@ impl EvaluationContext<'_> {
             "{id_column} IN ({})",
             self.build_query(subquery_type)
         ))
+    }
+
+    /// Makes the order of `output_type` results deterministic, so that a limit keeps the same
+    /// items each time. The query's sort is followed by the id, and without a sort, cards come in
+    /// the order review shows them by default (the cards due the longest first) and notes by id.
+    fn complete_order_by(&mut self, output_type: EvaluatorReturnItemType) {
+        let (default, id) = match output_type {
+            EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => {
+                (&["n.id ASC"][..], "n.id ASC")
+            }
+            EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
+                (&["c.due ASC", "n.created_at ASC", "c.id ASC"][..], "c.id ASC")
+            }
+        };
+        if self.order_by.is_empty() {
+            self.order_by.extend(default.iter().map(ToString::to_string));
+        } else if !self.order_by.iter().any(|term| term == id) {
+            self.order_by.push(id.to_string());
+        }
     }
 
     fn build_query(&mut self, output_type: EvaluatorReturnItemType) -> String {
@@ -1880,160 +1890,160 @@ mod tests {
         let inputs = vec![
             (
                 "c.stability>=2.1",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2.1",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2.1 ORDER BY n.id ASC",
             ),
             (
                 "c.stability=2.1",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability = 2.1",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability = 2.1 ORDER BY n.id ASC",
             ),
             // Only data search - no joins needed
             (
                 "dog",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%'",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC",
             ),
             // Card count
             (
                 "c.count=2",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) = 2",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) = 2 ORDER BY n.id ASC",
             ),
             (
                 "dog c.count>=2",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data LIKE '%dog%' AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.data LIKE '%dog%' AND (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) >= 2) ORDER BY n.id ASC",
             ),
             // Tag search - needs tag joins and special field matching syntax
             (
                 "tag=math",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) ORDER BY n.id ASC",
             ),
             (
                 r#"tag="math:measure-theory:homework""#,
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%')))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math:measure-theory:homework' OR t.name LIKE 'math:measure-theory:homework:%'))) ORDER BY n.id ASC",
             ),
             // Exclude tag
             (
                 "-tag=math",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) ORDER BY n.id ASC",
             ),
             // linked_to_note
             (
                 "linked_to_note=gir",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148) ORDER BY n.id ASC",
             ),
             // Exclude linked_to_note
             (
                 "-linked_to_note=gir",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE NOT (EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE NOT (EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.linked_note_id = 76967537148)) ORDER BY n.id ASC",
             ),
             // linked_to_keyword
             (
                 r#"linked_to_keyword="foo""#,
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword = 'foo')",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND nl.searched_keyword = 'foo') ORDER BY n.id ASC",
             ),
             // linked_from_note
             (
                 "linked_from_note=a",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id = 10460353203)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id WHERE EXISTS (SELECT 1 FROM note_link nl WHERE nl.linked_note_id = n.id AND nl.parent_note_id = 10460353203) ORDER BY n.id ASC",
             ),
             // Note ids, in any case, compared in the order of their letters
             (
                 "id=GIR",
-                "SELECT DISTINCT n.id FROM note n WHERE n.id = 76967537148",
+                "SELECT DISTINCT n.id FROM note n WHERE n.id = 76967537148 ORDER BY n.id ASC",
             ),
             (
                 "id>=gir and id<\"gja\"",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.id >= 76967537148 AND n.id < 77111026218)",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.id >= 76967537148 AND n.id < 77111026218) ORDER BY n.id ASC",
             ),
             // Convert types
             (
                 "tag=2 or tag=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE '2' OR t.name LIKE '2:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE '2' OR t.name LIKE '2:%'))) OR (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%'))))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE '2' OR t.name LIKE '2:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE '2' OR t.name LIKE '2:%'))) OR (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'true' OR t.name LIKE 'true:%')))) ORDER BY n.id ASC",
             ),
             // Card search - needs card join
             (
                 "-card.scheduler_buried=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.special_state = 3)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.special_state = 3) ORDER BY n.id ASC",
             ),
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY n.id ASC",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%dog%' AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY n.id ASC",
             ),
             // Custom data - no joins needed
             (
                 "custom_data:\"$.x.y[1]\">=123",
-                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.x.y[1]') >= 123",
+                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.x.y[1]') >= 123 ORDER BY n.id ASC",
             ),
             // Custom data with string value containing special characters
             (
                 r#"custom_data:"$.card_key"="preflop-hand|SB|K5o|default""#,
-                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = 'preflop-hand|SB|K5o|default'",
+                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = 'preflop-hand|SB|K5o|default' ORDER BY n.id ASC",
             ),
             // Regex search
             (
                 "re:\"\\d{3}\"",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}'",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}' ORDER BY n.id ASC",
             ),
             (
                 "data~re:\"\\d{3}\"",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}'",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data REGEXP '\\d{3}' ORDER BY n.id ASC",
             ),
             (
                 "tag~re:\"^math\"",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND t.name REGEXP '^math') OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND t.name REGEXP '^math'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND t.name REGEXP '^math') OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND t.name REGEXP '^math')) ORDER BY n.id ASC",
             ),
             // Negated groups
             (
                 "-(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data LIKE '%dog%' OR n.data LIKE '%cat%'))",
+                "SELECT DISTINCT n.id FROM note n WHERE NOT ((n.data LIKE '%dog%' OR n.data LIKE '%cat%')) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math or dog)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data LIKE '%dog%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) OR n.data LIKE '%dog%')) ORDER BY n.id ASC",
             ),
             (
                 "-(tag=math and data~foo)",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data LIKE '%foo%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND n.data LIKE '%foo%')) ORDER BY n.id ASC",
             ),
             (
                 "tag=math and -(data~re:\"20[0-9][0-9]-(fall|winter)-[0-9]+\" or data~re:\"fall[0-9][0-9]-sol[0-9]-[0-9]+\")",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND NOT ((n.data REGEXP '20[0-9][0-9]-(fall|winter)-[0-9]+' OR n.data REGEXP 'fall[0-9][0-9]-sol[0-9]-[0-9]+')))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) AND NOT ((n.data REGEXP '20[0-9][0-9]-(fall|winter)-[0-9]+' OR n.data REGEXP 'fall[0-9][0-9]-sol[0-9]-[0-9]+'))) ORDER BY n.id ASC",
             ),
             // Values are quoted and LIKE wildcards are matched literally.
             (
                 r#""don't" snake_case "100%" re:"it's""#,
-                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data LIKE '%don''t%' AND n.data LIKE '%snake\_case%' ESCAPE '\') AND n.data LIKE '%100\%%' ESCAPE '\') AND n.data REGEXP 'it''s')",
+                r"SELECT DISTINCT n.id FROM note n WHERE (((n.data LIKE '%don''t%' AND n.data LIKE '%snake\_case%' ESCAPE '\') AND n.data LIKE '%100\%%' ESCAPE '\') AND n.data REGEXP 'it''s') ORDER BY n.id ASC",
             ),
             (
                 "parser_name=name",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE p.name = 'name'",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE p.name = 'name' ORDER BY n.id ASC",
             ),
             (
                 r#"custom_data:"$.a's">=1 tag="a_b""#,
-                r"SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (json_extract(n.custom_data, '$.a''s') >= 1 AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\'))))",
+                r"SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (json_extract(n.custom_data, '$.a''s') >= 1 AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')))) ORDER BY n.id ASC",
             ),
             // Words that start with a keyword, numbers and bare boolean fields
             (
                 "orbit 2024 c.user_buried",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2)",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2) ORDER BY n.id ASC",
             ),
             // Card states by name
             (
                 "c.state=new or c.state!=Review",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.state = 0 OR NOT (c.state = 2))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.state = 0 OR NOT (c.state = 2)) ORDER BY n.id ASC",
             ),
             // `!=` and `not` negate
             (
                 "c.state!=0 not dog",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data LIKE '%dog%'))",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (c.state = 0) AND NOT (n.data LIKE '%dog%')) ORDER BY n.id ASC",
             ),
             // `and` binds tighter than `or`
             (
                 "a or b c",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%a%' OR (n.data LIKE '%b%' AND n.data LIKE '%c%'))",
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%a%' OR (n.data LIKE '%b%' AND n.data LIKE '%c%')) ORDER BY n.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2152,79 +2162,79 @@ mod tests {
         let inputs = [
             (
                 "created_at<=note[gir].created_at",
-                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at <= {gir}"),
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at <= {gir} ORDER BY n.id ASC"),
             ),
             (
                 "created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d",
                 format!(
-                    "SELECT DISTINCT n.id FROM note n WHERE (n.created_at <= {gir} AND n.created_at >= (SELECT CAST(strftime('%s', {gir}, 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER)))"
+                    "SELECT DISTINCT n.id FROM note n WHERE (n.created_at <= {gir} AND n.created_at >= (SELECT CAST(strftime('%s', {gir}, 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER))) ORDER BY n.id ASC"
                 ),
             ),
             (
                 "updated_at>note[gir].updated_at",
-                "SELECT DISTINCT n.id FROM note n WHERE n.updated_at > (SELECT updated_at FROM note WHERE id = 76967537148)".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.updated_at > (SELECT updated_at FROM note WHERE id = 76967537148) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "c.due<=card[12].due",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= (SELECT due FROM card WHERE id = 12)".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due <= (SELECT due FROM card WHERE id = 12) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at>=today",
-                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at >= {today}"),
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at >= {today} ORDER BY n.id ASC"),
             ),
             // A day stands for the whole day, so this is up to the end of the day 3 days from now.
             (
                 "c.due<=today+3d",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', '+1 days', 'utc') AS INTEGER))".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at=today",
-                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+1 days', 'utc') AS INTEGER)) - 1)"),
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC"),
             ),
             (
                 "created_at>today-1w",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+1 days', 'utc') AS INTEGER))".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             // A fixed date is a local day too.
             (
                 "created_at=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)) - 1)".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at<2026-10-17 c.due<=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)))".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             // A time is exact.
             (
                 "created_at>=2026-10-17T12:00:00Z",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= 1792238400".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= 1792238400 ORDER BY n.id ASC".to_string(),
             ),
             // Against text, a date is text.
             (
                 "data~2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%2026-10-17%'".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%2026-10-17%' ORDER BY n.id ASC".to_string(),
             ),
             (
                 "-created_at>=now-12h",
-                "SELECT DISTINCT n.id FROM note n WHERE NOT (n.created_at >= (SELECT CAST(strftime('%s', 'now', '-12 hours') AS INTEGER)))".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE NOT (n.created_at >= (SELECT CAST(strftime('%s', 'now', '-12 hours') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             // `today` and `now` are still words when the field isn't a date.
             (
                 "today",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%today%'".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%today%' ORDER BY n.id ASC".to_string(),
             ),
             (
                 "data~now",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%now%'".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%now%' ORDER BY n.id ASC".to_string(),
             ),
             (
                 "keyword=today-5d",
-                "SELECT DISTINCT n.id FROM note n WHERE EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = 'today-5d')".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE EXISTS (SELECT 1 FROM note_keyword nk WHERE nk.note_id = n.id AND nk.keyword = 'today-5d') ORDER BY n.id ASC".to_string(),
             ),
             // `note` followed by a group is not a reference.
             (
                 "note(dog or cat)",
-                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%note%' AND (n.data LIKE '%dog%' OR n.data LIKE '%cat%'))".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE (n.data LIKE '%note%' AND (n.data LIKE '%dog%' OR n.data LIKE '%cat%')) ORDER BY n.id ASC".to_string(),
             ),
         ];
         for (input, expected_sql) in inputs {
@@ -2412,12 +2422,12 @@ mod tests {
             // Basic ascending sort on note field
             (
                 "sort_by_asc=created_at",
-                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC, n.id ASC",
             ),
             // Basic descending sort on note field
             (
                 "sort_by_desc=updated_at",
-                "SELECT DISTINCT n.id FROM note n ORDER BY n.updated_at DESC",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.updated_at DESC, n.id ASC",
             ),
             // Sort by note id
             (
@@ -2427,50 +2437,50 @@ mod tests {
             // Sort by card field
             (
                 "sort_by_asc=c.stability",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability ASC, n.id ASC",
             ),
             // Sort by card due date
             (
                 "sort_by_desc=c.due",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.due DESC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.due DESC, n.id ASC",
             ),
             // Sort by numeric card fields
             (
                 "sort_by_asc=c.difficulty",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.difficulty ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.difficulty ASC, n.id ASC",
             ),
             (
                 "sort_by_desc=c.desired_retention",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.desired_retention DESC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.desired_retention DESC, n.id ASC",
             ),
             // Sort by card id
             (
                 "sort_by_asc=c.id",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.id ASC, n.id ASC",
             ),
             // Sort by card created_at
             (
                 "sort_by_desc=c.created_at",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.created_at DESC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.created_at DESC, n.id ASC",
             ),
             // Sort by card count
             (
                 "sort_by_asc=c.count",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) ASC, n.id ASC",
             ),
             // Multiple sorts
             (
                 "sort_by_desc=c.stability sort_by_asc=c.id",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability DESC, c.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.stability DESC, c.id ASC, n.id ASC",
             ),
             // Sort combined with WHERE clause
             (
                 "tag=math sort_by_asc=created_at",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) ORDER BY n.created_at ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%'))) ORDER BY n.created_at ASC, n.id ASC",
             ),
             (
                 "c.stability>=2 sort_by_desc=c.due",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC, n.id ASC",
             ),
             // Sort with linked_to_note field
             (
@@ -2480,7 +2490,7 @@ mod tests {
             // Sort with linked_to_keyword field
             (
                 "sort_by_asc=linked_to_keyword",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id ORDER BY (SELECT min(nl.searched_keyword) FROM note_link nl WHERE nl.parent_note_id = n.id) ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN note_link nl ON n.id = nl.parent_note_id ORDER BY (SELECT min(nl.searched_keyword) FROM note_link nl WHERE nl.parent_note_id = n.id) ASC, n.id ASC",
             ),
             // Sort with parenthesis
             (
@@ -2509,22 +2519,22 @@ mod tests {
             // Sort by parser_name
             (
                 "sort_by_asc=parser_name",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id ORDER BY p.name ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id ORDER BY p.name ASC, n.id ASC",
             ),
             // Sort by keyword (subquery min)
             (
                 "sort_by_desc=keyword",
-                "SELECT DISTINCT n.id FROM note n ORDER BY (SELECT min(nk.keyword) FROM note_keyword nk WHERE nk.note_id = n.id) DESC",
+                "SELECT DISTINCT n.id FROM note n ORDER BY (SELECT min(nk.keyword) FROM note_keyword nk WHERE nk.note_id = n.id) DESC, n.id ASC",
             ),
             // Sort by tag (subquery min)
             (
                 "sort_by_asc=tag",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT min(t.name) FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id) ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT min(t.name) FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id) ASC, n.id ASC",
             ),
             // Sort by data
             (
                 "sort_by_desc=data",
-                "SELECT DISTINCT n.id FROM note n ORDER BY n.data DESC",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.data DESC, n.id ASC",
             ),
         ];
 
@@ -2541,21 +2551,21 @@ mod tests {
     fn test_limit() {
         let inputs = vec![
             // Basic limit
-            ("limit=10", "SELECT DISTINCT n.id FROM note n LIMIT 10"),
+            ("limit=10", "SELECT DISTINCT n.id FROM note n ORDER BY n.id ASC LIMIT 10"),
             // Limit combined with WHERE clause
             (
                 "dog limit=5",
-                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' LIMIT 5",
+                "SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC LIMIT 5",
             ),
             // Limit combined with ORDER BY
             (
                 "sort_by_asc=created_at limit=20",
-                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC LIMIT 20",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.created_at ASC, n.id ASC LIMIT 20",
             ),
             // Limit combined with WHERE and ORDER BY
             (
                 "c.stability>=2 sort_by_desc=c.due limit=100",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC LIMIT 100",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2 ORDER BY c.due DESC, n.id ASC LIMIT 100",
             ),
         ];
 
@@ -2577,7 +2587,7 @@ mod tests {
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3))",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 0 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 3)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
             // A limited branch next to an unlimited one, note output orders by id by default
             (
@@ -2585,7 +2595,7 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
                 EvaluatorReturnItemType::NoteIds,
                 "SELECT DISTINCT n.id FROM note n WHERE (\
 n.id IN (SELECT DISTINCT n.id FROM note n WHERE n.data LIKE '%dog%' ORDER BY n.id ASC LIMIT 5) OR \
-n.data LIKE '%cat%')",
+n.data LIKE '%cat%') ORDER BY n.id ASC",
             ),
             // A sort inside a limited branch picks which items the limit keeps, and a global
             // limit still caps the whole result
@@ -2593,8 +2603,8 @@ n.data LIKE '%cat%')",
                 "(dog sort_by_desc=c.stability limit=2) or (cat limit=1) limit=10",
                 EvaluatorReturnItemType::CardIds,
                 "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.stability DESC LIMIT 2) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%cat%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) LIMIT 10",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.stability DESC, c.id ASC LIMIT 2) OR \
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%cat%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 10",
             ),
             // Limited groups can nest
             (
@@ -2604,7 +2614,7 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 1) OR \
 n.data LIKE '%cat%') ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 4) OR \
-c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2))",
+c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE c.state = 2 ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 2)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
         for (input, output_type, expected_sql) in inputs {
@@ -2638,7 +2648,7 @@ c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id W
             query_str,
             "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (\
 c.id IN (SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC LIMIT 5) OR \
-n.data LIKE '%cat%') AND (c.due <= 100)"
+n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.id ASC"
         );
 
         // Note output needs the card join for a card-level scope.
@@ -2648,7 +2658,7 @@ n.data LIKE '%cat%') AND (c.due <= 100)"
             .unwrap();
         assert_eq!(
             query_str,
-            "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100)"
+            "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE n.data LIKE '%dog%' AND (c.due <= 100) ORDER BY n.id ASC"
         );
     }
 
@@ -2743,11 +2753,11 @@ n.data LIKE '%cat%') AND (c.due <= 100)"
         let inputs = vec![
             (
                 r#"c.cloze~"proof""#,
-                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE 1",
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE 1 ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
             (
                 r#"c.cloze~"proof" AND c.suspended=false"#,
-                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (1 AND (c.special_state IS NULL OR c.special_state != 1))",
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (1 AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
