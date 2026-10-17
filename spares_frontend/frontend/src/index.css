@@ -389,7 +389,7 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   border-radius: 0 4px 4px 0;
 }
 
-.help-dialog kbd {
+kbd {
   display: inline-block;
   min-width: 1.4em;
   padding: 1px 6px;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedCardsPage, listCards, searchCardsPage } from '../api/client';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
@@ -210,7 +210,13 @@ export default function CardsPage() {
                     </tr>
                   ))}
                   {displayedCards.length === 0 && (
-                    <tr><td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No cards found</td></tr>
+                    <tr>
+                      <td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                        {searchResults === null && page === 1
+                          ? <>No cards yet. Cards are made by the clozes of notes, written on the <Link to="/notes">Notes</Link> page.</>
+                          : 'No cards found'}
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>

@@ -109,6 +109,13 @@ export default function NotesPage() {
     if (name?.trim()) void saveSavedSearch(name.trim(), q);
   }
 
+  function startNewNote() {
+    setSelectedNote(null);
+    setPaneStatus(null);
+    setCreating(true);
+    setHasDraft(true);
+  }
+
   function handleClear() {
     setSearchParams(prev => withPage(withSearch(prev, null), null));
   }
@@ -178,7 +185,7 @@ export default function NotesPage() {
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
-            <button onClick={() => { setSelectedNote(null); setPaneStatus(null); setCreating(true); setHasDraft(true); }} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
+            <button onClick={startNewNote} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
           </div>
           <RecentSearches
             heading="Saved"
@@ -240,7 +247,13 @@ export default function NotesPage() {
                     </tr>
                   ))}
                   {displayedNotes.length === 0 && (
-                    <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No notes found</td></tr>
+                    <tr>
+                      <td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                        {searchResults === null && page === 1 ? (
+                          <>No notes yet. <button onClick={startNewNote} style={{ padding: '2px 8px', fontSize: 12 }}>Write one</button>, or press <kbd>?</kbd> to learn how.</>
+                        ) : 'No notes found'}
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
