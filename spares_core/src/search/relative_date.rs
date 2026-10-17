@@ -137,7 +137,12 @@ impl RelativeDate {
         if local {
             args.push("'utc'".to_string());
         }
-        format!("CAST(strftime('%s', {}) AS INTEGER)", args.join(", "))
+        // A subquery of its own, which SQLite evaluates once. Inline, `strftime` over the reference's
+        // subquery would run again for every row compared against it.
+        format!(
+            "(SELECT CAST(strftime('%s', {}) AS INTEGER))",
+            args.join(", ")
+        )
     }
 }
 
@@ -309,24 +314,24 @@ mod tests {
         );
         assert_eq!(
             sql("note[gir].created_at-5d"),
-            "CAST(strftime('%s', (SELECT created_at FROM note WHERE id = 76967537148), 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER)"
+            "(SELECT CAST(strftime('%s', (SELECT created_at FROM note WHERE id = 76967537148), 'unixepoch', 'localtime', '-5 days', 'utc') AS INTEGER))"
         );
         assert_eq!(
             sql("card[3].due+12h"),
-            "CAST(strftime('%s', (SELECT due FROM card WHERE id = 3), 'unixepoch', '+12 hours') AS INTEGER)"
+            "(SELECT CAST(strftime('%s', (SELECT due FROM card WHERE id = 3), 'unixepoch', '+12 hours') AS INTEGER))"
         );
         assert_eq!(
             sql("today"),
-            "CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER)"
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER))"
         );
         // Calendar offsets stay in local time, exact ones switch back to UTC first.
         assert_eq!(
             sql("today-1w+2d-3h"),
-            "CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+2 days', 'utc', '-3 hours') AS INTEGER)"
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+2 days', 'utc', '-3 hours') AS INTEGER))"
         );
         assert_eq!(
             sql("now-30m"),
-            "CAST(strftime('%s', 'now', '-30 minutes') AS INTEGER)"
+            "(SELECT CAST(strftime('%s', 'now', '-30 minutes') AS INTEGER))"
         );
     }
 
