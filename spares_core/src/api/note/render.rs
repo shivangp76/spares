@@ -159,11 +159,19 @@ async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Er
 
     // Get all existing note links where score != 0
     // The second case is for when a note is deleted. Any notes that used to link to that deleted note need to be updated as well.
-    let existing_note_links: Vec<NoteLink> =
-        sqlx::query_as(r"SELECT * FROM note_link WHERE (score IS NULL OR score != 0) OR (score IS NOT NULL AND linked_note_id IS NULL)")
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+    // The third case is for when the matched keyword was renamed or removed from its note.
+    let existing_note_links: Vec<NoteLink> = sqlx::query_as(
+        r"SELECT * FROM note_link nl
+         WHERE (score IS NULL OR score != 0)
+           OR (score IS NOT NULL AND linked_note_id IS NULL)
+           OR NOT EXISTS (
+             SELECT 1 FROM note_keyword nk
+             WHERE nk.note_id = nl.linked_note_id AND nk.keyword = nl.matched_keyword
+           )",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
 
     // Re-match existing linked notes against keywords
     let updated_note_links =
