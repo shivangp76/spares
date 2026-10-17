@@ -123,7 +123,7 @@ export default function CardsPage() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              placeholder="Search cards, e.g. tag=a c.state=2"
+              placeholder="Search cards, e.g. tag=a c.state=review"
               style={{ padding: '6px 10px', fontSize: 14, flex: 1, maxWidth: 400 }}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>

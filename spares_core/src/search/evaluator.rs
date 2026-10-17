@@ -21,6 +21,7 @@ use crate::model::CardId;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::ReviewLogKind;
+use crate::model::StateId;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
@@ -347,6 +348,30 @@ fn like_pattern(pattern: &str) -> String {
     } else {
         sql_string(pattern)
     }
+}
+
+/// The names of the card states, as in `c.state=review`, and the FSRS state each stands for.
+const CARD_STATES: [(&str, StateId); 4] = [
+    ("new", 0),
+    ("learning", 1),
+    ("review", 2),
+    ("relearning", 3),
+];
+
+fn card_state_from_name(name: &str) -> Option<StateId> {
+    CARD_STATES
+        .iter()
+        .find(|(state_name, _)| state_name.eq_ignore_ascii_case(name))
+        .map(|(_, state)| *state)
+}
+
+/// The card states for errors, like `` `new` (0), `learning` (1), ... ``.
+fn card_state_names() -> String {
+    let names = CARD_STATES
+        .iter()
+        .map(|(name, state)| format!("`{name}` ({state})"))
+        .collect::<Vec<_>>();
+    format!("{} and {}", names[..names.len() - 1].join(", "), names[names.len() - 1])
 }
 
 /// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
@@ -1275,6 +1300,22 @@ fn evaluate_field_value(
         _ => None,
     };
 
+    // Card states can be written by name, as in `c.state=review`.
+    if matches!(field, Field::Card(CardField::State)) && matches!(value_type, FieldType::String) {
+        let name = value_context
+            .params
+            .pop()
+            .ok_or_else(|| miette!("Missing value"))?;
+        let state = card_state_from_name(&name).ok_or_else(|| {
+            miette!(
+                help = format!("The states are {}", card_state_names()),
+                "`{name}` is not a card state",
+            )
+        })?;
+        value_context.params.push(state.to_string());
+        value_type = FieldType::Integer;
+    }
+
     // Note ids are written as letters and stored packed, which keeps their order, so a letter id
     // becomes its packed integer and is then compared like any integer. Numbers are rejected, so
     // that an old query like `id>100` cannot silently change meaning.
@@ -1822,6 +1863,11 @@ mod tests {
                 "orbit 2024 c.user_buried",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data LIKE '%orbit%' AND n.data LIKE '%2024%') AND c.special_state = 2)",
             ),
+            // Card states by name
+            (
+                "c.state=new or c.state!=Review",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (c.state = 0 OR NOT (c.state = 2))",
+            ),
             // `!=` and `not` negate
             (
                 "c.state!=0 not dog",
@@ -1888,6 +1934,8 @@ mod tests {
             "()",
             // Invalid regex usage
             "data=re:\"math\"",
+            // Not a card state
+            "c.state=suspended",
         ];
         for input in inputs {
             let evaluator = Evaluator::new(input);

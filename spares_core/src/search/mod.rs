@@ -35,6 +35,10 @@
 //! `spares card search 'c.waiting_on_links=true'` shows why a card is not coming up. It matches
 //! nothing while both are off.
 //!
+//! `c.state` is the card's FSRS state, written by name or number: `new` (0), `learning` (1),
+//! `review` (2) or `relearning` (3), as in `c.state=review` or `c.state!=new`. Names are matched
+//! ignoring case.
+//!
 //! `c.rated` matches against graded reviews only. Forgetting a card is recorded in the review log too,
 //! but it carries no rating, so it never makes a card match `c.rated`. Neither does a cram (a
 //! rating in a filtered tag that does not reschedule), since it is not a review the card's
@@ -207,9 +211,8 @@
 //! - Each parenthesized branch of an `or` can have its own limit, and each branch keeps at most
 //!   that many results.
 //!   - Example: `(tag=chess limit=5) or (tag="measure-theory:grad" limit=30)`
-//! - Combine this with `c.state` to limit by card state. FSRS states are `0` (new), `1` (learning),
-//!   `2` (review), and `3` (relearning).
-//!   - Example: `(tag=a c.state=0 limit=10) or (tag=a c.state=2 limit=10) or (tag=b c.state=0 limit=20)`
+//! - Combine this with `c.state` to limit by card state.
+//!   - Example: `(tag=a c.state=new limit=10) or (tag=a c.state=review limit=10) or (tag=b c.state=new limit=20)`
 //! - A sort inside a branch decides which results its limit keeps. Without one, a branch keeps the
 //!   cards due the longest (`c.due`, then the note's `created_at`), or, when searching notes, the
 //!   lowest note ids. A sort inside a branch does not change the order cards are reviewed in.

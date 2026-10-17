@@ -42,7 +42,7 @@ function SelectorInput({ mode, setMode, value, setValue, onEnter }: {
         value={value}
         onChange={e => setValue(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') onEnter(); }}
-        placeholder={mode === 'query' ? 'e.g. tag=a c.state=2' : 'e.g. 12 34 56'}
+        placeholder={mode === 'query' ? 'e.g. tag=a c.state=review' : 'e.g. 12 34 56'}
         style={{ ...input, flex: 1, minWidth: 200 }}
       />
     </>
