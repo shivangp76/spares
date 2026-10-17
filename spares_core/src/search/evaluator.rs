@@ -315,6 +315,11 @@ impl<'de> Evaluator<'de> {
     }
 }
 
+/// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
+pub(crate) fn is_boolean_field(name: &str) -> bool {
+    Field::from_str(&[name]).is_ok_and(|field| field.get_field_type() == FieldType::Boolean)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Field {
     Note(NoteField),

@@ -7,6 +7,7 @@ use unscanny::Scanner;
 
 use crate::search::Token;
 use crate::search::TokenKind;
+use crate::search::evaluator::is_boolean_field;
 
 pub(crate) struct Lexer<'de> {
     /// The scanner: contains the underlying string and location as a "cursor".
@@ -89,12 +90,6 @@ impl Iterator for Lexer<'_> {
             Some('>') => just(TokenKind::GreaterThan, self.s.cursor()),
             Some(':') => just(TokenKind::Colon, self.s.cursor()),
             Some('~') => just(TokenKind::Tilde, self.s.cursor()),
-            Some('a') if self.s.eat_if("nd") => just(TokenKind::And, self.s.cursor()),
-            Some('A') if self.s.eat_if("ND") => just(TokenKind::And, self.s.cursor()),
-            Some('o') if self.s.eat_if('r') => just(TokenKind::Or, self.s.cursor()),
-            Some('O') if self.s.eat_if('R') => just(TokenKind::Or, self.s.cursor()),
-            Some('t') if self.s.eat_if("rue") => just(TokenKind::True, self.s.cursor()),
-            Some('f') if self.s.eat_if("alse") => just(TokenKind::False, self.s.cursor()),
             Some(open) if is_quote(open) => match self.parse_string(open, false) {
                 Ok(close_len) => Ok(Token {
                     kind: TokenKind::String,
@@ -121,21 +116,14 @@ impl Iterator for Lexer<'_> {
                     span: cursor_start + 3 + open.len_utf8()..self.s.cursor() - close_len,
                 })
             }
-            Some(c) if char::is_ascii_digit(&c) || c == '-' => match self.parse_date_or_number(c) {
-                Ok(kind) => Ok(Token {
-                    kind,
-                    span: cursor_start..self.s.cursor(),
-                }),
-                Err(e) => return Some(Err(e)),
-            },
+            Some(c) if char::is_ascii_digit(&c) || c == '-' => {
+                just(self.parse_date_or_number(c), self.s.cursor())
+            }
             Some(ch) if char::is_alphanumeric(ch) || ch == '.' || ch == '_' => {
                 self.s.eat_while(is_word_char);
                 let kind = match self.eat_reference(cursor_start) {
                     Ok(true) => TokenKind::RelativeDate,
-                    Ok(false) if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':')) => {
-                        TokenKind::Field
-                    }
-                    Ok(false) => TokenKind::String,
+                    Ok(false) => self.classify_word(cursor_start),
                     Err(e) => return Some(Err(e)),
                 };
                 just(kind, self.s.cursor())
@@ -168,6 +156,20 @@ fn is_word_char(c: char) -> bool {
     char::is_alphanumeric(c) || c == '.' || c == '_' || c == '-' || c == '+'
 }
 
+/// Whether a token of `kind` is followed by a value, like the `=` in `tag=math`.
+fn takes_value(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Equal
+            | TokenKind::Tilde
+            | TokenKind::GreaterThan
+            | TokenKind::GreaterThanEqual
+            | TokenKind::LessThan
+            | TokenKind::LessThanEqual
+            | TokenKind::Colon
+    )
+}
+
 /// Whether `c` delimits a string. Curly double quotes are accepted since phone keyboards insert them in place of `"`.
 fn is_quote(c: char) -> bool {
     matches!(c, '"' | '\u{201C}' | '\u{201D}')
@@ -176,20 +178,24 @@ fn is_quote(c: char) -> bool {
 impl Lexer<'_> {
     fn normalize(&mut self, current_token: &mut Token) {
         if self.normalize {
-            if matches!(current_token.kind, TokenKind::String | TokenKind::Regex) {
-                let add_implied_field = self.prev.as_ref().is_none_or(|prev| {
-                    !matches!(
-                        prev.kind,
-                        TokenKind::Equal
-                            | TokenKind::Tilde
-                            | TokenKind::GreaterThan
-                            | TokenKind::GreaterThanEqual
-                            | TokenKind::LessThan
-                            | TokenKind::LessThanEqual
-                            | TokenKind::Colon
-                    )
-                });
+            // A value with no field before it is searched for in the note's text. That includes
+            // numbers, dates and `true`, so `dog 2024` finds notes containing both words.
+            if matches!(
+                current_token.kind,
+                TokenKind::String
+                    | TokenKind::Regex
+                    | TokenKind::Integer(_)
+                    | TokenKind::Float(_)
+                    | TokenKind::Date
+                    | TokenKind::RelativeDate
+                    | TokenKind::True
+                    | TokenKind::False
+            ) {
+                let add_implied_field = !self.prev_takes_value();
                 if add_implied_field {
+                    if current_token.kind != TokenKind::Regex {
+                        current_token.kind = TokenKind::String;
+                    }
                     self.buffered.push(Ok(current_token.clone()));
                     self.buffered.push(Ok(Token {
                         kind: TokenKind::Tilde,
@@ -214,6 +220,40 @@ impl Lexer<'_> {
                     span: current_token.span.start..current_token.span.start, // Zero-width span at start
                 };
             }
+        }
+    }
+
+    /// Whether the previous token is followed by a value, like the `=` in `tag=math`.
+    fn prev_takes_value(&self) -> bool {
+        self.prev
+            .as_ref()
+            .is_some_and(|prev| takes_value(prev.kind))
+    }
+
+    /// Classifies the word from `start` to the cursor. A keyword is only one when it is the
+    /// whole word, so `orbit` and `android` are ordinary words.
+    fn classify_word(&mut self, start: usize) -> TokenKind {
+        let word = self.s.from(start);
+        match word {
+            "and" | "AND" => TokenKind::And,
+            "or" | "OR" => TokenKind::Or,
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
+            _ if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':')) => TokenKind::Field,
+            // A boolean field on its own, like `c.suspended`, means it is true.
+            _ if !self.prev_takes_value() && is_boolean_field(word) => {
+                let end = self.s.cursor();
+                self.buffered.push(Ok(Token {
+                    kind: TokenKind::True,
+                    span: end..end,
+                }));
+                self.buffered.push(Ok(Token {
+                    kind: TokenKind::Equal,
+                    span: end..end,
+                }));
+                TokenKind::Field
+            }
+            _ => TokenKind::String,
         }
     }
 
@@ -277,28 +317,23 @@ impl Lexer<'_> {
         Err(err.into())
     }
 
-    #[allow(clippy::unnecessary_wraps, reason = "For consistency")]
-    fn parse_date_or_number(&mut self, c: char) -> Result<TokenKind, Error> {
+    /// Lexes a word starting with a digit or `-`, whose first character `c` was consumed. A `-`
+    /// negates what follows, except right after an operator like `>=`, where it starts a value
+    /// such as `-2` or `-math`. A number or date running into other word characters, like `3d`
+    /// or `2024-25`, is an ordinary word.
+    fn parse_date_or_number(&mut self, c: char) -> TokenKind {
         let start = self.s.cursor() - 1;
-
-        // If it's a minus, check the next character
-        if c == '-' {
-            let next_char = self.s.peek();
-            if next_char.is_some_and(|nc| char::is_ascii_digit(&nc)) {
-                self.s.eat(); // Consume the '-'
-            } else {
-                return Ok(TokenKind::Minus);
-            }
+        if c == '-' && !self.prev_takes_value() {
+            return TokenKind::Minus;
         }
 
-        // At this point, it's a number (possibly negative)
         self.s.eat_while(char::is_ascii_digit);
-
-        // Check for potential date format
+        let mut is_date = false;
         if self.s.eat_if('-') {
             self.s.eat_while(char::is_ascii_digit);
             if self.s.eat_if('-') {
                 self.s.eat_while(char::is_ascii_digit);
+                is_date = true;
 
                 // Optional time parsing
                 if self.s.eat_if('T') {
@@ -311,18 +346,23 @@ impl Lexer<'_> {
                         }
                     }
                 }
-                return Ok(TokenKind::Date);
             }
-        }
-        // Handle as a float if there's a decimal point
-        let contains_decimal = self.s.eat_if('.');
-        if contains_decimal {
+        } else if self.s.eat_if('.') {
             self.s.eat_while(char::is_ascii_digit);
-            let num = self.s.from(start).parse::<f64>().unwrap();
-            Ok(TokenKind::Float(num))
+        }
+        let number_end = self.s.cursor();
+        self.s.eat_while(is_word_char);
+        let text = self.s.from(start);
+        if self.s.cursor() != number_end {
+            TokenKind::String
+        } else if is_date {
+            TokenKind::Date
+        } else if let Ok(n) = text.parse::<i64>() {
+            TokenKind::Integer(n)
+        } else if let Ok(n) = text.parse::<f64>() {
+            TokenKind::Float(n)
         } else {
-            let num = self.s.from(start).parse::<i64>().unwrap();
-            Ok(TokenKind::Integer(num))
+            TokenKind::String
         }
     }
 }
@@ -782,6 +822,138 @@ mod tests {
                 (TokenKind::Field, ""),
                 (TokenKind::Tilde, ""),
                 (TokenKind::String, "\u{201C}c\u{201D}"),
+            ]
+        );
+    }
+
+    fn lex(input: &str) -> Vec<(TokenKind, &str)> {
+        Lexer::new(input)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.kind, &input[t.span]))
+            .collect()
+    }
+
+    #[test]
+    fn keywords_are_whole_words() {
+        assert_eq!(
+            lex("orbit android falsehood trueno"),
+            vec![
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "orbit"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "android"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "falsehood"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "trueno"),
+            ]
+        );
+        assert_eq!(
+            lex("a OR b"),
+            vec![
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "a"),
+                (TokenKind::Or, "OR"),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "b"),
+            ]
+        );
+    }
+
+    #[test]
+    fn values_without_a_field_are_text() {
+        assert_eq!(
+            lex("dog 2024 1.5 2020-01-01 3d 2024-25 true"),
+            vec![
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "dog"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "2024"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "1.5"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "2020-01-01"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "3d"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "2024-25"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "true"),
+            ]
+        );
+    }
+
+    #[test]
+    fn minus_negates_unless_it_starts_a_value() {
+        assert_eq!(
+            lex("-5 c.stability>=-2 tag=-math"),
+            vec![
+                (TokenKind::Minus, "-"),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "5"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "c.stability"),
+                (TokenKind::GreaterThanEqual, ">="),
+                (TokenKind::Integer(-2), "-2"),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "tag"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "-math"),
+            ]
+        );
+    }
+
+    #[test]
+    fn boolean_field_alone_means_true() {
+        assert_eq!(
+            lex("dog -c.user_buried card.suspended"),
+            vec![
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "dog"),
+                (TokenKind::And, ""),
+                (TokenKind::Minus, "-"),
+                (TokenKind::Field, "c.user_buried"),
+                (TokenKind::Equal, ""),
+                (TokenKind::True, ""),
+                (TokenKind::And, ""),
+                (TokenKind::Field, "card.suspended"),
+                (TokenKind::Equal, ""),
+                (TokenKind::True, ""),
+            ]
+        );
+        // Quoted, it is still text.
+        assert_eq!(
+            lex("\"c.suspended\""),
+            vec![
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "c.suspended"),
             ]
         );
     }
