@@ -141,12 +141,14 @@
 //! - `now`.
 //!
 //! Each can be followed by one or more offsets, written with no spaces: `+` or `-`, a number, and a
-//! unit of `m` (minutes), `h` (hours), `d` (days) or `w` (weeks), as in `-5d` or `+1w-12h`. Days
-//! and weeks are calendar days in local time, so `today-1d` is the start of yesterday even across
-//! a daylight saving change. Minutes and hours are exact.
+//! unit of `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `mo` (months) or `y` (years), as in
+//! `-5d`, `+1w-12h` or `-1mo`. Days, weeks, months and years follow the calendar in local time, so
+//! `today-1d` is the start of yesterday even across a daylight saving change, and a month after
+//! January 31st is the last day of February. Minutes and hours are exact.
 //!
-//! `today` with only day and week offsets is a whole day, like `YYYY-MM-DD`, so `c.due<=today`
-//! includes cards due later today and `created_at=today-1d` finds notes created yesterday.
+//! `today` with only calendar offsets (`d`, `w`, `mo` and `y`) is a whole day, like `YYYY-MM-DD`,
+//! so `c.due<=today` includes cards due later today, `created_at=today-1d` finds notes created
+//! yesterday and `created_at>=today-1mo` the ones created since this day last month.
 //!
 //! A query that refers to a note or card that doesn't exist is an error. `today` and `now` are only
 //! dates when compared against a date field, so `today` and `data~now` still search for the words.

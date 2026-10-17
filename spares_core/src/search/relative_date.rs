@@ -1,5 +1,6 @@
 //! Date values that are resolved when a query runs: another item's timestamp (`note[gir].created_at`,
-//! `card[12].due`), or `today` and `now`, each optionally shifted by offsets like `-5d` or `+1w-12h`.
+//! `card[12].due`), or `today` and `now`, each optionally shifted by offsets like `-5d`, `+1w-12h` or
+//! `-1mo`.
 //!
 //! They compile to SQL expressions rather than constants, so the database resolves them in the same
 //! statement as the rest of the query.
@@ -57,22 +58,30 @@ enum OffsetUnit {
     Hours,
     Days,
     Weeks,
+    Months,
+    Years,
 }
 
 impl OffsetUnit {
-    fn suffix(self) -> char {
+    fn suffix(self) -> &'static str {
         match self {
-            OffsetUnit::Minutes => 'm',
-            OffsetUnit::Hours => 'h',
-            OffsetUnit::Days => 'd',
-            OffsetUnit::Weeks => 'w',
+            OffsetUnit::Minutes => "m",
+            OffsetUnit::Hours => "h",
+            OffsetUnit::Days => "d",
+            OffsetUnit::Weeks => "w",
+            OffsetUnit::Months => "mo",
+            OffsetUnit::Years => "y",
         }
     }
 
-    /// Days and weeks move by calendar days in local time, so `today-1d` is always the start of
-    /// yesterday, even across a daylight saving change. Minutes and hours are exact durations.
+    /// Days, weeks, months and years move by the calendar in local time, so `today-1d` is always
+    /// the start of yesterday, even across a daylight saving change. Minutes and hours are exact
+    /// durations.
     fn is_calendar(self) -> bool {
-        matches!(self, OffsetUnit::Days | OffsetUnit::Weeks)
+        matches!(
+            self,
+            OffsetUnit::Days | OffsetUnit::Weeks | OffsetUnit::Months | OffsetUnit::Years
+        )
     }
 }
 
@@ -146,8 +155,14 @@ impl RelativeDate {
                 OffsetUnit::Hours => (offset.amount, "hours"),
                 OffsetUnit::Days => (offset.amount, "days"),
                 OffsetUnit::Weeks => (offset.amount.saturating_mul(7), "days"),
+                OffsetUnit::Months => (offset.amount, "months"),
+                OffsetUnit::Years => (offset.amount, "years"),
             };
             args.push(format!("'{amount:+} {unit}'"));
+            // A month later than January 31st is the end of February, not March 3rd.
+            if matches!(offset.unit, OffsetUnit::Months | OffsetUnit::Years) {
+                args.push("'floor'".to_string());
+            }
         }
         if local {
             args.push("'utc'".to_string());
@@ -260,23 +275,28 @@ fn parse_offsets(mut s: &str) -> Result<Vec<Offset>, Error> {
             .parse::<i64>()
             .map_err(|_| miette!("The offset `{}` is too large", &s[..=digits_end]))?;
         let after_digits = &after_sign[digits_end..];
-        let unit = match after_digits.chars().next() {
-            Some('m') => OffsetUnit::Minutes,
-            Some('h') => OffsetUnit::Hours,
-            Some('d') => OffsetUnit::Days,
-            Some('w') => OffsetUnit::Weeks,
-            _ => {
-                return Err(miette!(
-                    "Expected a unit after `{}`: `m` (minutes), `h` (hours), `d` (days) or `w` (weeks)",
-                    &s[..=digits_end]
-                ));
-            }
+        let units = [
+            ("mo", OffsetUnit::Months),
+            ("m", OffsetUnit::Minutes),
+            ("h", OffsetUnit::Hours),
+            ("d", OffsetUnit::Days),
+            ("w", OffsetUnit::Weeks),
+            ("y", OffsetUnit::Years),
+        ];
+        let Some((suffix, unit)) = units
+            .into_iter()
+            .find(|(suffix, _)| after_digits.starts_with(suffix))
+        else {
+            return Err(miette!(
+                "Expected a unit after `{}`: `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `mo` (months) or `y` (years)",
+                &s[..=digits_end]
+            ));
         };
         offsets.push(Offset {
             amount: sign * amount,
             unit,
         });
-        s = &after_digits[1..];
+        s = &after_digits[suffix.len()..];
     }
     Ok(offsets)
 }
@@ -295,6 +315,8 @@ mod tests {
             "today",
             "today+3d",
             "now-30m",
+            "today-1mo",
+            "now+2y-3mo+1m",
         ] {
             assert_eq!(RelativeDate::parse(input).unwrap().to_string(), input);
         }
@@ -314,6 +336,7 @@ mod tests {
             "today-5",
             "today-d",
             "today-5x",
+            "today-5M",
             "today5d",
             "today-99999999999999999999d",
             "yesterday",
@@ -353,6 +376,28 @@ mod tests {
             sql("now-30m"),
             "(SELECT CAST(strftime('%s', 'now', '-30 minutes') AS INTEGER))"
         );
+        // Months and years are calendar offsets that stop at the end of a short month.
+        assert_eq!(
+            sql("today-1mo+1y"),
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-1 months', 'floor', '+1 years', 'floor', 'utc') AS INTEGER))"
+        );
+        assert!(
+            RelativeDate::parse("today-1mo")
+                .unwrap()
+                .next_day()
+                .is_some()
+        );
+    }
+
+    #[sqlx::test]
+    async fn months_stop_at_the_end_of_a_short_month(pool: sqlx::SqlitePool) {
+        let date: String = sqlx::query_scalar(
+            "SELECT date('2026-01-31', '+1 months', 'floor', '+1 years', 'floor')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(date, "2027-02-28");
     }
 
     #[test]

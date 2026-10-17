@@ -1014,7 +1014,8 @@ impl EvaluationContext<'_> {
             }
         };
         if self.order_by.is_empty() {
-            self.order_by.extend(default.iter().map(ToString::to_string));
+            self.order_by
+                .extend(default.iter().map(ToString::to_string));
         } else if !self
             .order_by
             .iter()
@@ -2291,7 +2292,7 @@ mod tests {
             "created_at>=note[12].created_at",
             "created_at>=card[gir].due",
             "created_at>=today-5",
-            "created_at>=today-5y",
+            "created_at>=today-5x",
             "created_at>=nowish",
         ];
         for input in inputs {
