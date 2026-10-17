@@ -371,7 +371,11 @@ fn card_state_names() -> String {
         .iter()
         .map(|(name, state)| format!("`{name}` ({state})"))
         .collect::<Vec<_>>();
-    format!("{} and {}", names[..names.len() - 1].join(", "), names[names.len() - 1])
+    format!(
+        "{} and {}",
+        names[..names.len() - 1].join(", "),
+        names[names.len() - 1]
+    )
 }
 
 /// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
@@ -431,39 +435,103 @@ enum CardField {
     Cloze,
 }
 
-/// The names of the fields, as written in a query.
-const FIELD_NAMES: [&str; 30] = [
-    "id",
-    "data",
-    "created_at",
-    "updated_at",
-    "parser_name",
-    "tag",
-    "keyword",
-    "custom_data",
-    "linked_to_note",
-    "linked_to_keyword",
-    "linked_from_note",
-    "c.id",
-    "c.created_at",
-    "c.updated_at",
-    "c.due",
-    "c.stability",
-    "c.difficulty",
-    "c.desired_retention",
-    "c.suspended",
-    "c.user_buried",
-    "c.scheduler_buried",
-    "c.waiting_on_links",
-    "c.state",
-    "c.custom_data",
-    "c.rated",
-    "c.count",
-    "c.cloze",
-    "sort_by_asc",
-    "sort_by_desc",
-    "limit",
+/// A field as written in a query, with an example and what it matches. Every field is here, so
+/// errors and `spares note search --fields` list them from this table.
+pub(crate) struct FieldDoc {
+    pub(crate) name: &'static str,
+    pub(crate) example: &'static str,
+    pub(crate) about: &'static str,
+}
+
+const fn doc(name: &'static str, example: &'static str, about: &'static str) -> FieldDoc {
+    FieldDoc {
+        name,
+        example,
+        about,
+    }
+}
+
+#[rustfmt::skip]
+pub(crate) const FIELDS: [FieldDoc; 30] = [
+    doc("id", "id=gir", "The note's id"),
+    doc("data", "data~dog", "The note's text, which a word on its own searches"),
+    doc("created_at", "created_at>=today-7d", "When the note was created"),
+    doc("updated_at", "updated_at>=now-12h", "When the note was last changed"),
+    doc("parser_name", "parser_name=markdown", "The parser the note is written for"),
+    doc("tag", "tag=math", "A tag of the note or card, including its descendants"),
+    doc("keyword", "keyword=\"Integration by parts\"", "A keyword of the note"),
+    doc("custom_data", "custom_data:\"$.x\"=1", "A value in the note's custom data"),
+    doc("linked_to_note", "linked_to_note=gir", "A note the note links to"),
+    doc("linked_to_keyword", "linked_to_keyword=\"Integration by parts\"", "A keyword the note links to"),
+    doc("linked_from_note", "linked_from_note=gir", "A note that links to the note"),
+    doc("c.id", "c.id=12", "The card's id"),
+    doc("c.created_at", "c.created_at>=today", "When the card was created"),
+    doc("c.updated_at", "c.updated_at>=today", "When the card was last changed"),
+    doc("c.due", "c.due<=today", "When the card is due"),
+    doc("c.stability", "c.stability>=30", "The card's FSRS stability, in days"),
+    doc("c.difficulty", "c.difficulty>7", "The card's FSRS difficulty, from 1 to 10"),
+    doc("c.desired_retention", "c.desired_retention=0.9", "The retention the card is scheduled for"),
+    doc("c.suspended", "c.suspended", "Whether the card is suspended"),
+    doc("c.user_buried", "c.user_buried", "Whether the card was buried by hand"),
+    doc("c.scheduler_buried", "c.scheduler_buried", "Whether the card was buried as a sibling"),
+    doc("c.waiting_on_links", "c.waiting_on_links", "Whether the card waits for the notes it links to"),
+    doc("c.state", "c.state=review", "The card's state: new, learning, review or relearning"),
+    doc("c.custom_data", "c.custom_data:\"$.x\"=1", "A value in the card's custom data"),
+    doc("c.rated", "c.rated=1", "A rating the card got in a review, from 1 (again) to 4 (easy)"),
+    doc("c.count", "c.count>=2", "How many cards the note has"),
+    doc("c.cloze", "c.cloze~proof", "The text of the card's cloze"),
+    doc("sort_by_asc", "sort_by_asc=c.due", "Sorts by a field, smallest first"),
+    doc("sort_by_desc", "sort_by_desc=created_at", "Sorts by a field, largest first"),
+    doc("limit", "limit=10", "Returns at most this many results"),
 ];
+
+/// The fields whose names are close to `name`, best first, for a "did you mean" hint. A field
+/// matches if it is a few edits away, if it starts with `name`, or either of those once its `c.` is
+/// left off, so `due` suggests `c.due`.
+fn similar_fields(name: &str) -> Vec<&'static str> {
+    let name = name.to_lowercase();
+    let max_distance = (name.chars().count() / 3).max(1);
+    let mut matches = FIELDS
+        .iter()
+        .filter_map(|field| {
+            let short = field.name.strip_prefix("c.").unwrap_or(field.name);
+            let distance = edit_distance(&name, field.name).min(edit_distance(&name, short));
+            let is_prefix = name.chars().count() >= 3
+                && (field.name.starts_with(&name) || short.starts_with(&name));
+            (distance <= max_distance || is_prefix).then_some((distance, field.name))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|(distance, _)| *distance);
+    matches.into_iter().map(|(_, name)| name).collect()
+}
+
+/// `names` as a list for a sentence, like `` `a`, `b` or `c` ``.
+fn or_list(names: &[&str]) -> String {
+    let quoted = names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>();
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// The Levenshtein distance between `a` and `b`, in characters.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b = b.chars().collect::<Vec<_>>();
+    let mut previous = (0..=b.len()).collect::<Vec<_>>();
+    for (i, a_char) in a.chars().enumerate() {
+        let mut current = vec![i + 1];
+        for (j, b_char) in b.iter().enumerate() {
+            let substitution = previous[j] + usize::from(a_char != *b_char);
+            current.push(substitution.min(previous[j + 1] + 1).min(current[j] + 1));
+        }
+        previous = current;
+    }
+    previous[b.len()]
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum FieldType {
@@ -557,10 +625,22 @@ impl Field {
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
             "sort_by_desc" => Ok(Field::SortDesc(String::new())),
             "limit" => Ok(Field::Limit),
-            f => Err(miette!(
-                help = format!("The fields are {}", FIELD_NAMES.join(", ")),
-                "Unknown field `{f}`",
-            )),
+            f => {
+                let similar = similar_fields(f);
+                let all = FIELDS.iter().map(|field| field.name).collect::<Vec<_>>();
+                Err(if similar.is_empty() {
+                    miette!(
+                        help = format!("The fields are {}", all.join(", ")),
+                        "Unknown field `{f}`",
+                    )
+                } else {
+                    miette!(
+                        help = format!("The fields are {}", all.join(", ")),
+                        "Unknown field `{f}`: did you mean {}?",
+                        or_list(&similar),
+                    )
+                })
+            }
         }
     }
 
@@ -1890,9 +1970,24 @@ mod tests {
 
     #[test]
     fn field_names_are_fields() {
-        for name in FIELD_NAMES {
-            assert!(Field::from_str(&[name]).is_ok(), "{name}");
+        for field in FIELDS {
+            assert!(Field::from_str(&[field.name]).is_ok(), "{}", field.name);
         }
+    }
+
+    #[test]
+    fn unknown_fields_suggest_similar_ones() {
+        assert_eq!(similar_fields("tags"), ["tag"]);
+        assert_eq!(similar_fields("due"), ["c.due"]);
+        assert_eq!(similar_fields("sort_by"), ["sort_by_asc", "sort_by_desc"]);
+        assert_eq!(similar_fields("c.stabilty"), ["c.stability"]);
+        assert_eq!(similar_fields("Keywords"), ["keyword"]);
+        assert_eq!(similar_fields("zebra"), Vec::<&str>::new());
+        let error = Field::from_str(&["sort_by"]).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "Unknown field `sort_by`: did you mean `sort_by_asc` or `sort_by_desc`?"
+        );
     }
 
     #[test]

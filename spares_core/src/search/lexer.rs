@@ -937,7 +937,10 @@ mod tests {
 
     #[test]
     fn spaces_around_operators() {
-        assert_eq!(lex("c.due <= today tag = math"), lex("c.due<=today tag=math"));
+        assert_eq!(
+            lex("c.due <= today tag = math"),
+            lex("c.due<=today tag=math")
+        );
         assert_eq!(lex("c.state != new"), lex("c.state!=new"));
         assert_eq!(lex("c.suspended = false"), lex("c.suspended=false"));
         assert_eq!(lex("c.stability >= -2"), lex("c.stability>=-2"));
