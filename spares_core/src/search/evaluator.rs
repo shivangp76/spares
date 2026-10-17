@@ -36,6 +36,7 @@ use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
 use crate::search::TokenTree;
+use crate::search::error_span;
 use crate::search::lexer::is_quote;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
@@ -371,7 +372,12 @@ impl<'de> Evaluator<'de> {
 
 /// Converts an error in `query` to the error returned for a search.
 fn search_error(query: &str) -> impl Fn(Report) -> crate::Error + '_ {
-    move |e| crate::Error::Library(LibraryError::Search(render_error(query, &e)))
+    move |e| {
+        crate::Error::Library(LibraryError::Search {
+            message: render_error(query, &e),
+            span: error_span(query, &e),
+        })
+    }
 }
 
 /// `sql` with each clause of the outermost query on its own line, for reading. Subqueries and
@@ -2298,9 +2304,10 @@ async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result
         .await
         .map_err(|e| crate::Error::Sqlx { source: e })?;
         if !exists {
-            return Err(crate::Error::Library(LibraryError::Search(format!(
-                "`{date}` refers to {table} `{shown_id}`, which doesn't exist"
-            ))));
+            return Err(crate::Error::Library(LibraryError::Search {
+                message: format!("`{date}` refers to {table} `{shown_id}`, which doesn't exist"),
+                span: None,
+            }));
         }
     }
     Ok(())

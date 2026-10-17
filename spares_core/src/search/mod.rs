@@ -527,6 +527,24 @@ pub(crate) fn render_error(query: &str, report: &miette::Report) -> String {
     out
 }
 
+/// Where the first place an error in `query` marks is, as a start and end in UTF-16 code units.
+pub(crate) fn error_span(query: &str, report: &miette::Report) -> Option<(usize, usize)> {
+    report.source_code()?;
+    let label = report.labels()?.next()?;
+    let utf16_offset = |offset: usize| {
+        let offset = offset.min(query.len());
+        query
+            .char_indices()
+            .take_while(|(i, _)| *i < offset)
+            .map(|(_, c)| c.len_utf16())
+            .sum::<usize>()
+    };
+    Some((
+        utf16_offset(label.offset()),
+        utf16_offset(label.offset() + label.len()),
+    ))
+}
+
 /// Returns true if `query` uses `limit` anywhere, either globally or in a limited `or` branch. An
 /// unparseable query returns false; evaluating it reports the parse error.
 pub fn query_has_limit(query: &str) -> bool {
@@ -672,6 +690,19 @@ mod tests {
     fn render(query: &str) -> String {
         let report = parser::Parser::new(query).parse_expression().unwrap_err();
         render_error(query, &report)
+    }
+
+    #[test]
+    fn error_spans_count_utf16_code_units() {
+        let span = |query| {
+            let report = parser::Parser::new(query).parse_expression().unwrap_err();
+            error_span(query, &report)
+        };
+        assert_eq!(span("dog ) cat"), Some((4, 5)));
+        // `é` is one code unit and `😀` two.
+        assert_eq!(span("\"é😀\" ) cat"), Some((6, 7)));
+        assert_eq!(span("é 😀"), Some((2, 4)));
+        assert_eq!(span("tag="), Some((4, 4)));
     }
 
     #[test]

@@ -116,6 +116,12 @@ pub(crate) async fn search_notes_handler(
     Ok(Json(search_notes_res))
 }
 
+/// The fields a search query can use, with the kind of value each holds and an example, as
+/// `spares note search --fields` lists them.
+pub(crate) async fn search_fields_handler() -> impl IntoResponse {
+    Json(spares_core::search::fields())
+}
+
 pub(crate) async fn search_keyword_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SearchKeywordRequest>,

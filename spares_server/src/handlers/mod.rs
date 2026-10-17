@@ -51,8 +51,14 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": reason, "full_sync_required": true })),
             );
         }
-        // A search error's message marks the problem in the query.
-        Error::Sync(_) | Error::Library(LibraryError::Search(_)) => Some(StatusCode::BAD_REQUEST),
+        // A search error's message marks the problem in the query, and `span` says where it is.
+        Error::Library(LibraryError::Search { message, span }) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "message": message, "span": span })),
+            );
+        }
+        Error::Sync(_) => Some(StatusCode::BAD_REQUEST),
         _ => None,
     };
     if let Some(status) = status {

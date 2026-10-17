@@ -83,8 +83,15 @@ pub enum LibraryError {
     Card(#[from] CardErrorKind),
     #[error("{0}")]
     InvalidConfig(String),
-    #[error("{0}")]
-    Search(String),
+    /// A query that can't be searched. `message` says what is wrong and marks the place in the
+    /// query.
+    #[error("{message}")]
+    Search {
+        message: String,
+        /// Where in the query the problem is, as a start and end in UTF-16 code units, the way
+        /// JavaScript counts them, so the web client can mark it.
+        span: Option<(usize, usize)>,
+    },
     #[error("{0}")]
     InvalidTimeZone(String),
 }

@@ -143,7 +143,7 @@ impl Iterator for Lexer<'_> {
                 return Some(Err(SingleTokenError {
                     src: self.s.string().to_string(),
                     token: e,
-                    err_span: SourceSpan::from(self.s.cursor()..self.s.string().len()),
+                    err_span: SourceSpan::from(cursor_start..self.s.cursor()),
                 }
                 .into()));
             }
