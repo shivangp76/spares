@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
+import { useFieldAbout } from '../hooks/useFieldAbout';
 import { backPath, backWebPath, errorMessage, formatNoteId, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
@@ -33,6 +34,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
   const [goTo, setGoTo] = useState('');
   const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const about = useFieldAbout();
 
   useEffect(() => {
     let cancelled = false;
@@ -136,11 +138,11 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         <div><div style={metaLabel}>Note Id</div>{formatNoteId(card.note_id)}</div>
         <div><div style={metaLabel}>Parser</div>{reviewCard?.parser_name ?? '…'}</div>
         <div><div style={metaLabel}>Order</div>{card.order}</div>
-        <div><div style={metaLabel}>State</div>{STATE_LABELS[card.state] ?? card.state}</div>
-        <div><div style={metaLabel}>Due</div>{new Date(card.due).toLocaleString()}</div>
-        <div><div style={metaLabel}>Desired Retention</div>{card.desired_retention}</div>
-        <div><div style={metaLabel}>Stability</div>{card.stability.toFixed(2)}</div>
-        <div><div style={metaLabel}>Difficulty</div>{card.difficulty.toFixed(2)}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.state')}>State</div>{STATE_LABELS[card.state] ?? card.state}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.due')}>Due</div>{new Date(card.due).toLocaleString()}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.desired_retention')}>Desired Retention</div>{card.desired_retention}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.stability')}>Stability</div>{card.stability.toFixed(2)}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.difficulty')}>Difficulty</div>{card.difficulty.toFixed(2)}</div>
         {card.special_state && <div><div style={metaLabel}>Special</div>{card.special_state}</div>}
       </div>
 

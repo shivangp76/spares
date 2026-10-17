@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getCardReviews, getSchedulerRatings } from '../api/client';
 import { STATE_LABELS, type CardReviewEntry, type Rating } from '../types/spares';
+import { useFieldAbout } from '../hooks/useFieldAbout';
 import { errorMessage, formatDuration, formatInterval, td, th } from '../utils';
 
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 };
@@ -17,6 +18,7 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
   const [loaded, setLoaded] = useState<{ cardId: number; version: number; entries: CardReviewEntry[] } | { cardId: number; version: number; error: string } | null>(null);
   // Rating ids are relative to the scheduler that recorded them
   const [ratingsByScheduler, setRatingsByScheduler] = useState<Record<string, Rating[]>>({});
+  const about = useFieldAbout();
 
   useEffect(() => {
     let cancelled = false;
@@ -78,10 +80,10 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
               <th style={th}>Date</th>
               <th style={th}>Type</th>
               <th style={th}>Rating</th>
-              <th style={th}>Interval</th>
+              <th style={th} className="explained" title={about('c.interval')}>Interval</th>
               <th style={th}>Time</th>
-              <th style={th}>Stability</th>
-              <th style={th}>Difficulty</th>
+              <th style={th} className="explained" title={about('c.stability')}>Stability</th>
+              <th style={th} className="explained" title={about('c.difficulty')}>Difficulty</th>
             </tr>
           </thead>
           <tbody>

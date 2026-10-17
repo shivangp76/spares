@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PAGE_HELP, headingAnchor } from './pages';
 
@@ -46,6 +46,15 @@ test('the modules the help names exist', () => {
       expect(existsSync(dir) || existsSync(`${dir}.rs`), `${path}: ${span}`).toBe(true);
     }
   }
+});
+
+test('the fields whose descriptions explain values exist', () => {
+  const sources = readdirSync(join(import.meta.dir, '..'), { recursive: true, encoding: 'utf8' })
+    .filter(file => file.endsWith('.tsx'));
+  const named = sources.flatMap(file =>
+    [...readFileSync(join(import.meta.dir, '..', file), 'utf8').matchAll(/\babout\('([^']+)'\)/g)].map(m => m[1]));
+  expect(named).toContain('c.stability');
+  for (const name of named) expect(FIELDS).toContain(name);
 });
 
 test('headingAnchor', () => {

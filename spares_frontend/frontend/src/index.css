@@ -266,6 +266,13 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   margin-bottom: 16px;
 }
 
+/* A label with a tooltip explaining its value */
+.explained[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
 /* Keyboard shortcut hints on buttons */
 .key-hint {
   opacity: 0.6;
