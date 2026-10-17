@@ -471,9 +471,11 @@ pub struct QueueConfig {
     /// - When reviewing a query, only cards matching the query hold cards back.
     ///
     /// Filtered tags are not affected: they show every card in them. Links are only matched when
-    /// notes are rendered with linked notes, so a new note holds nothing back until then, and a
-    /// sync does not match them. The count of new cards can go up during a session, as the notes
-    /// they wait for are learned.
+    /// notes are rendered with linked notes, so a new note holds nothing back until then. They
+    /// are not synced and a sync does not match them, so each machine holds cards back by its
+    /// own links: the sync server's change only when notes are rendered with linked notes there.
+    /// The count of new cards can go up during a session, as the notes they wait for are learned,
+    /// and offline review only gets the cards let through with its next download.
     ///
     /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
     /// back before studying with it, turn it on and run one.

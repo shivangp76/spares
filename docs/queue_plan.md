@@ -30,26 +30,18 @@ chemistry ones. Interleaving helps tell similar concepts apart.
 - It should come after the review order within each group, so the order still decides which cards
   of a group come first.
 
-## Prerequisite-aware order
+## Held reviews in the room left for new cards
 
-Show a note's cards only after the notes it links to (`note_link`) are known, extending the
-"older notes first" rule to the links spares already has.
+Leave the reviews that `reviews_after_linked_notes` holds back out of the reviews due that
+`daily_limits_left_with` counts against `reviews_daily_limit`.
 
-- **Use case.** A note on the chain rule links to the note defining derivatives. With
-  `new_order = "random"` the chain rule's cards can come first, before the definition was ever
-  seen, so they are guessed at rather than learned.
-- **Example.** Notes A (derivative) and B (chain rule, links to A), both new. With
-  `new_after_linked_notes = true`, B's cards are held back until A's cards have all left learning;
-  if A's card lapses later, B's reviews due that day wait until A's card is relearned.
-- **New cards.** Delay a new card while a note it links to still has new cards, or cards in
-  learning. This is a `NOT EXISTS` over `note_link` joined to the linked note's cards, added to the
-  eligibility clause in `build_review_filter_query`, so it can be a `[queue]` setting
-  (`new_after_linked_notes = true`).
-- **Reviews.** When a linked note's card lapses, bring forward (or bury until it is relearned) the
-  reviews of the notes that link to it, since they likely depend on it.
-- **Risks.** Links are found by fuzzy keyword matching, so a wrong link could hold cards back for
-  good. Only links above a score threshold should count, and cycles must not block both notes. A
-  card held back for more than a few days should be let through anyway.
+- **Use case.** Unless `new_cards_ignore_review_limit` is set, new cards only fill the room the
+  reviews due today leave under the review limit. Held reviews are not shown today, so the room
+  they take is lost.
+- **Example.** `reviews_daily_limit = 100`, 95 reviews due, 10 of them held while a linked note
+  relearns. Only 5 new cards are allowed, though 85 reviews are shown and 15 could be.
+- **How.** Add `linked_notes_clause` to the due reviews query in `daily_limits_left_with`. The
+  difference is small, since a review is only held while a card it links to relearns that day.
 
 ## Lapses by the scheduler's pass rating
 
