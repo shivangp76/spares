@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  ApiError,
   cachedReviewHistory,
   cachedTodayStatistics,
   createReviewSnapshot,
@@ -42,7 +43,7 @@ import CardRenderer from '../components/CardRenderer';
 import KeybindingsHelp, { type Keybinding } from '../components/KeybindingsHelp';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
-import SearchInput from '../components/SearchInput';
+import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
 import AudioBar from '../components/AudioBar';
 import ReviewHeatmap from '../components/ReviewHeatmap';
@@ -196,6 +197,8 @@ export default function ReviewPage() {
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [config, setConfig] = useState<ReviewConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A query that can't be searched, marked in the box it was typed in
+  const [queryError, setQueryError] = useState<SearchInputError | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   // Shown from the last visit while they are refetched, so the landing page appears straight away
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(
@@ -332,6 +335,11 @@ export default function ReviewPage() {
       setPhase('front');
     } catch (e) {
       setError(errorMessage(e));
+      if (filter && 'Query' in filter && e instanceof ApiError && e.span) {
+        setQueryError({ query: filter.Query, span: e.span });
+        setPhase('landing');
+        return;
+      }
       setPhase('error');
     }
   }, [syncStopwatch]);
@@ -378,6 +386,7 @@ export default function ReviewPage() {
 
   async function startReview(mode: FilterMode, rawInput: string) {
     setError(null);
+    setQueryError(null);
     setSessionInfo(null);
     const input = rawInput.trim();
     const key = queueKey(mode, input);
@@ -413,6 +422,11 @@ export default function ReviewPage() {
       }
     } catch (e) {
       setError(errorMessage(e));
+      if (mode === 'query' && e instanceof ApiError && e.span) {
+        setQueryError({ query: input, span: e.span });
+        setPhase('landing');
+        return;
+      }
       setPhase('error');
       return;
     }
@@ -933,6 +947,7 @@ export default function ReviewPage() {
                 onSubmit={input => startReview(filterMode, input)}
                 style={{ maxWidth: 'none' }}
                 inputStyle={filterInputStyle}
+                error={queryError}
               />
             ) : (
               <input
@@ -949,6 +964,9 @@ export default function ReviewPage() {
               Start Review
             </button>
           </div>
+          {filterMode === 'query' && queryError && error && (
+            <pre style={{ color: 'var(--error)', marginTop: 0, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{error}</pre>
+          )}
           <RecentSearches
             recent={recentFilters.recent}
             label={f => `${RECENT_FILTER_PREFIX[f.mode]}${f.input}`}

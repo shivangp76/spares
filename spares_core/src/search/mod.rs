@@ -672,16 +672,98 @@ impl fmt::Display for Atom<'_> {
     }
 }
 
+/// Where a term is written in the query, as byte offsets, so an error in it can mark it. Spans
+/// never take part in comparisons, so two trees that search for the same thing are equal however
+/// they are spaced.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Span {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+impl Span {
+    /// The span from the start of either span to the end of either.
+    fn join(self, other: Span) -> Span {
+        Span {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+}
+
+impl PartialEq for Span {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl From<Range<usize>> for Span {
+    fn from(range: Range<usize>) -> Self {
+        Span {
+            start: range.start,
+            end: range.end,
+        }
+    }
+}
+
+impl From<Span> for Range<usize> {
+    fn from(span: Span) -> Self {
+        span.start..span.end
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TokenTree<'de> {
-    Atom(Atom<'de>),
+    Atom(Atom<'de>, Span),
     Cons(Op, Vec<TokenTree<'de>>),
+}
+
+impl TokenTree<'_> {
+    /// Where the tree is written in the query: an atom's own span, or the span of all the atoms
+    /// under an operator. The implied field of a bare word, written nowhere, is left out.
+    pub(crate) fn span(&self) -> Span {
+        fn join(tree: &TokenTree<'_>, span: &mut Option<Span>) {
+            match tree {
+                TokenTree::Atom(Atom::Field(f), s) if f.is_empty() && s.start == s.end => {}
+                TokenTree::Atom(Atom::Nil, _) => {}
+                TokenTree::Atom(_, s) => *span = Some(span.map_or(*s, |span| span.join(*s))),
+                TokenTree::Cons(_, children) => children.iter().for_each(|c| join(c, span)),
+            }
+        }
+        let mut span = None;
+        join(self, &mut span);
+        span.unwrap_or_default()
+    }
+}
+
+/// `error` with `span` marked by `label`, unless it already marks a place. The query's text is
+/// attached where the error leaves the search, so `render_error` and `error_span` can show it.
+pub(crate) fn label_error(error: miette::Report, span: Span, label: &str) -> miette::Report {
+    if error
+        .labels()
+        .is_some_and(|mut labels| labels.next().is_some())
+    {
+        return error;
+    }
+    // As `render_error` shows it, without context added by `wrap_err`.
+    let message = error
+        .chain()
+        .last()
+        .map_or_else(|| error.to_string(), ToString::to_string);
+    let labels = vec![miette::LabeledSpan::at(
+        Range::from(span),
+        label.to_string(),
+    )];
+    match error.help() {
+        Some(help) => miette::miette!(labels = labels, help = help.to_string(), "{message}"),
+        None => miette::miette!(labels = labels, "{message}"),
+    }
 }
 
 impl fmt::Display for TokenTree<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenTree::Atom(i) => write!(f, "{}", i),
+            TokenTree::Atom(i, _) => write!(f, "{}", i),
             TokenTree::Cons(head, rest) => {
                 write!(f, "({}", head)?;
                 for s in rest {
@@ -715,6 +797,40 @@ mod tests {
         assert_eq!(span("tag="), Some((4, 4)));
     }
 
+    /// The message and span of the error in evaluating `query`, which parses.
+    fn evaluation_error(query: &str) -> (String, Option<(usize, usize)>) {
+        match explain(query, QueryReturnItemType::Cards) {
+            Err(crate::Error::Library(crate::LibraryError::Search { message, span })) => {
+                (message, span)
+            }
+            other => panic!("expected a search error for `{query}`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluation_errors_mark_where_the_problem_is() {
+        for (query, marked) in [
+            ("c.due<=tomorrow", "tomorrow"),
+            ("dog c.reps~3", "c.reps~3"),
+            ("dog foo=1", "foo"),
+            ("c.state=nope", "nope"),
+            ("created_at>2026-13-01", "2026-13-01"),
+            ("sort_by_asc=c.nope", "c.nope"),
+            ("dog limit=1 limit=2", "limit=2"),
+            ("-sort_by_asc=c.due dog", "sort_by_asc=c.due"),
+        ] {
+            let (message, span) = evaluation_error(query);
+            let (start, end) = span.unwrap_or_else(|| panic!("no span for `{query}`: {message}"));
+            assert_eq!(&query[start..end], marked, "{message}");
+        }
+        assert_eq!(
+            evaluation_error("c.due<=tomorrow").0,
+            "`c.due` holds a date, so it can't be compared with text `tomorrow`\n\n    \
+             c.due<=tomorrow\n           ^^^^^^^^ not a date\n\nhelp: Write a date, like \
+             `2026-10-17`, `today+1d` or `now-12h`, as in `c.due<=today`"
+        );
+    }
+
     #[test]
     fn errors_mark_where_the_problem_is() {
         assert_eq!(
@@ -729,6 +845,9 @@ mod tests {
             render("tag="),
             "The query ends too early\n\n    tag=\n        ^ expected a search term here"
         );
+        // An unclosed regex used to end the query instead.
+        let error = render("dog re:\"ca");
+        assert!(error.starts_with("Unterminated string"), "{error}");
         assert_eq!(
             render("a\nor or b"),
             "Expected a search term\n\n    or or b\n       ^^ found `or`"

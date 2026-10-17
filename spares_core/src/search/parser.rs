@@ -12,9 +12,11 @@ use miette::miette;
 use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
+use crate::search::Span;
 use crate::search::Token;
 use crate::search::TokenKind;
 use crate::search::TokenTree;
+use crate::search::label_error;
 use crate::search::lexer::Lexer;
 use crate::search::lexer::is_quote;
 
@@ -93,68 +95,70 @@ impl<'de> Parser<'de> {
                     "The query ends too early",
                 ));
             }
-            None => return Ok(TokenTree::Atom(Atom::Nil)),
+            None => return Ok(TokenTree::Atom(Atom::Nil, Span::default())),
             Some(Err(e)) => {
                 return Err(e).wrap_err("on left-hand side");
             }
         };
+        let span = Span::from(lhs.span.clone());
         let mut lhs = match lhs {
             // atoms
             // The lexer leaves the quotes out of a string's span.
             Token {
                 kind: TokenKind::String,
-                span,
-            } if self.whole[..span.start].ends_with(is_quote)
-                && self.whole[span.end..].starts_with(is_quote) =>
+                span: range,
+            } if self.whole[..range.start].ends_with(is_quote)
+                && self.whole[range.end..].starts_with(is_quote) =>
             {
-                TokenTree::Atom(Atom::String(Token::unescape(&self.whole[span])))
+                TokenTree::Atom(Atom::String(Token::unescape(&self.whole[range])), span)
             }
             Token {
                 kind: TokenKind::String,
-                span,
-            } => TokenTree::Atom(Atom::Word(Cow::Borrowed(&self.whole[span]))),
+                span: range,
+            } => TokenTree::Atom(Atom::Word(Cow::Borrowed(&self.whole[range])), span),
             Token {
                 kind: TokenKind::Integer(n),
                 ..
-            } => TokenTree::Atom(Atom::Integer(n)),
+            } => TokenTree::Atom(Atom::Integer(n), span),
             Token {
                 kind: TokenKind::Float(n),
                 ..
-            } => TokenTree::Atom(Atom::Float(n)),
+            } => TokenTree::Atom(Atom::Float(n), span),
             Token {
                 kind: TokenKind::True,
                 ..
-            } => TokenTree::Atom(Atom::Boolean(true)),
+            } => TokenTree::Atom(Atom::Boolean(true), span),
             Token {
                 kind: TokenKind::False,
                 ..
-            } => TokenTree::Atom(Atom::Boolean(false)),
+            } => TokenTree::Atom(Atom::Boolean(false), span),
             Token {
                 kind: TokenKind::Field,
-                span,
-                ..
-            } => TokenTree::Atom(Atom::Field(Cow::Borrowed(&self.whole[span]))),
+                span: range,
+            } => TokenTree::Atom(Atom::Field(Cow::Borrowed(&self.whole[range])), span),
             Token {
                 kind: TokenKind::Date,
+                span: range,
+            } => TokenTree::Atom(
+                parse_date(&self.whole[range.clone()]).map_err(|e| {
+                    label_error(e, span, "this date").with_source_code(self.whole.to_string())
+                })?,
                 span,
-                ..
-            } => TokenTree::Atom(parse_date(&self.whole[span])?),
+            ),
             Token {
                 kind: TokenKind::RelativeDate,
+                span: range,
+            } => TokenTree::Atom(
+                Atom::RelativeDate(RelativeDate::parse(&self.whole[range]).map_err(|e| {
+                    label_error(miette!("{e}"), span, "this date")
+                        .with_source_code(self.whole.to_string())
+                })?),
                 span,
-            } => TokenTree::Atom(Atom::RelativeDate(
-                RelativeDate::parse(&self.whole[span.clone()]).map_err(|e| {
-                    miette::miette! {
-                        labels = vec![LabeledSpan::at(span, "this date")],
-                        "{e}",
-                    }
-                    .with_source_code(self.whole.to_string())
-                })?,
-            )),
+            ),
             Token {
                 kind: TokenKind::Regex,
-                span,
-            } => TokenTree::Atom(Atom::Regex(Token::unescape(&self.whole[span]))),
+                span: range,
+            } => TokenTree::Atom(Atom::Regex(Token::unescape(&self.whole[range])), span),
 
             // groups
             Token {
@@ -333,7 +337,7 @@ fn is_modifier(tree: &TokenTree) -> bool {
         TokenTree::Cons(Op::Equal, children)
             if matches!(
                 children.first(),
-                Some(TokenTree::Atom(Atom::Field(field)))
+                Some(TokenTree::Atom(Atom::Field(field), _))
                     if matches!(field.as_ref(), "sort_by_asc" | "sort_by_desc" | "limit")
             )
     )
@@ -384,7 +388,7 @@ fn hoist_modifiers(tree: TokenTree<'_>) -> TokenTree<'_> {
     let rest = strip(tree, &mut modifiers);
     let mut terms = rest.into_iter().chain(modifiers).collect::<Vec<_>>();
     match terms.len() {
-        0 => TokenTree::Atom(Atom::Nil),
+        0 => TokenTree::Atom(Atom::Nil, Span::default()),
         1 => terms.pop().expect("one term"),
         _ => TokenTree::Cons(Op::And, terms),
     }
@@ -461,15 +465,27 @@ mod tests {
                             TokenTree::Cons(
                                 Op::Tilde,
                                 vec![
-                                    TokenTree::Atom(Atom::Field(Cow::Borrowed(""))),
-                                    TokenTree::Atom(Atom::Word(Cow::Borrowed("dog"))),
+                                    TokenTree::Atom(
+                                        Atom::Field(Cow::Borrowed("")),
+                                        Span::default()
+                                    ),
+                                    TokenTree::Atom(
+                                        Atom::Word(Cow::Borrowed("dog")),
+                                        Span::default()
+                                    ),
                                 ]
                             ),
                             TokenTree::Cons(
                                 Op::Tilde,
                                 vec![
-                                    TokenTree::Atom(Atom::Field(Cow::Borrowed("tag"))),
-                                    TokenTree::Atom(Atom::String(Cow::Borrowed("math\" test")))
+                                    TokenTree::Atom(
+                                        Atom::Field(Cow::Borrowed("tag")),
+                                        Span::default()
+                                    ),
+                                    TokenTree::Atom(
+                                        Atom::String(Cow::Borrowed("math\" test")),
+                                        Span::default()
+                                    )
                                 ]
                             )
                         ]
@@ -479,8 +495,14 @@ mod tests {
                         vec![TokenTree::Cons(
                             Op::Equal,
                             vec![
-                                TokenTree::Atom(Atom::Field(Cow::Borrowed("c.special_state"))),
-                                TokenTree::Atom(Atom::Word(Cow::Borrowed("scheduler_buried"))),
+                                TokenTree::Atom(
+                                    Atom::Field(Cow::Borrowed("c.special_state")),
+                                    Span::default()
+                                ),
+                                TokenTree::Atom(
+                                    Atom::Word(Cow::Borrowed("scheduler_buried")),
+                                    Span::default()
+                                ),
                             ]
                         )]
                     )
@@ -506,16 +528,22 @@ mod tests {
                         vec![TokenTree::Cons(
                             Op::Equal,
                             vec![
-                                TokenTree::Atom(Atom::Field(Cow::Borrowed("tag"))),
-                                TokenTree::Atom(Atom::Word(Cow::Borrowed("how-a-car-works"))),
+                                TokenTree::Atom(Atom::Field(Cow::Borrowed("tag")), Span::default()),
+                                TokenTree::Atom(
+                                    Atom::Word(Cow::Borrowed("how-a-car-works")),
+                                    Span::default()
+                                ),
                             ]
                         ),]
                     ),
                     TokenTree::Cons(
                         Op::Equal,
                         vec![
-                            TokenTree::Atom(Atom::Field(Cow::Borrowed("parser_name"))),
-                            TokenTree::Atom(Atom::Word(Cow::Borrowed("markdown"))),
+                            TokenTree::Atom(
+                                Atom::Field(Cow::Borrowed("parser_name")),
+                                Span::default()
+                            ),
+                            TokenTree::Atom(Atom::Word(Cow::Borrowed("markdown")), Span::default()),
                         ]
                     ),
                 ]
@@ -580,8 +608,11 @@ mod tests {
             TokenTree::Cons(
                 Op::GreaterThanEqual,
                 vec![
-                    TokenTree::Atom(Atom::Field(Cow::Borrowed("custom_data.array[0].key"))),
-                    TokenTree::Atom(Atom::Integer(1)),
+                    TokenTree::Atom(
+                        Atom::Field(Cow::Borrowed("custom_data.array[0].key")),
+                        Span::default()
+                    ),
+                    TokenTree::Atom(Atom::Integer(1), Span::default()),
                 ]
             )
         );

@@ -35,8 +35,10 @@ use crate::schedulers::fsrs::utils::state_to_number;
 use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
+use crate::search::Span;
 use crate::search::TokenTree;
 use crate::search::error_span;
+use crate::search::label_error;
 use crate::search::lexer::is_quote;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
@@ -124,7 +126,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(search_error(query))?;
-        check_references_exist(&token_tree, db).await?;
+        check_references_exist(query, &token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
             EvaluatorReturnItemType::Notes,
@@ -150,7 +152,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(search_error(query))?;
-        check_references_exist(&token_tree, db).await?;
+        check_references_exist(query, &token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
             EvaluatorReturnItemType::NoteIds,
@@ -183,7 +185,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(search_error(query))?;
-        check_references_exist(&token_tree, db).await?;
+        check_references_exist(query, &token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             return Self::get_cards_cloze_path(&token_tree, query, self.scope.as_deref(), db).await;
@@ -264,7 +266,7 @@ impl<'de> Evaluator<'de> {
             .parser
             .parse_expression()
             .map_err(search_error(query))?;
-        check_references_exist(&token_tree, db).await?;
+        check_references_exist(query, &token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             return Ok(
@@ -382,6 +384,12 @@ impl<'de> Evaluator<'de> {
 /// Converts an error in `query` to the error returned for a search.
 fn search_error(query: &str) -> impl Fn(Report) -> crate::Error + '_ {
     move |e| {
+        // Errors found while evaluating mark a place but leave the query's text to this.
+        let e = if e.source_code().is_none() {
+            e.with_source_code(query.to_string())
+        } else {
+            e
+        };
         crate::Error::Library(LibraryError::Search {
             message: render_error(query, &e),
             span: error_span(query, &e),
@@ -1316,14 +1324,16 @@ impl Evaluate for TokenTree<'_> {
         let requirements = self.analyze_requirements()?;
         context.table_requirements.merge(&requirements);
         match self {
-            TokenTree::Atom(Atom::Field(name)) => evaluate_bare_field(name, context),
-            TokenTree::Atom(atom) => atom.evaluate(context),
+            TokenTree::Atom(Atom::Field(name), span) => {
+                evaluate_bare_field(name, context).map_err(|e| label_error(e, *span, "this field"))
+            }
+            TokenTree::Atom(atom, _) => atom.evaluate(context),
             TokenTree::Cons(op, trees) => match op {
                 Op::And | Op::Or | Op::Group => {
                     let mut clauses = Vec::new();
                     if trees
                         .iter()
-                        .any(|tree| matches!(tree, TokenTree::Atom(Atom::Nil)))
+                        .any(|tree| matches!(tree, TokenTree::Atom(Atom::Nil, _)))
                     {
                         return Err(miette!("Found nil atom inside op."));
                     }
@@ -1335,8 +1345,12 @@ impl Evaluate for TokenTree<'_> {
                         // subquery. Any sort inside it decides which items the limit keeps.
                         if matches!(op, Op::Or) && inner_context.limit.is_some() {
                             if !matches!(tree, TokenTree::Cons(Op::Group, _)) {
-                                return Err(miette!(
-                                    "A limit inside an 'or' must be wrapped in parentheses with the conditions it limits, e.g. `(tag=a limit=5) or (tag=b limit=10)`."
+                                return Err(label_error(
+                                    miette!(
+                                        "A limit inside an 'or' must be wrapped in parentheses with the conditions it limits, e.g. `(tag=a limit=5) or (tag=b limit=10)`."
+                                    ),
+                                    tree.span(),
+                                    "this has a limit",
                                 ));
                             }
                             context
@@ -1347,8 +1361,12 @@ impl Evaluate for TokenTree<'_> {
                         }
                         // Cannot use sort operations with 'or' operator
                         if matches!(op, Op::Or) && !inner_context.order_by.is_empty() {
-                            return Err(miette!(
-                                "Cannot use sort operations with 'or' operator without a limit. Sort operations cannot be used in alternative conditions unless the alternative is a parenthesized group with its own limit."
+                            return Err(label_error(
+                                miette!(
+                                    "Cannot use sort operations with 'or' operator without a limit. Sort operations cannot be used in alternative conditions unless the alternative is a parenthesized group with its own limit."
+                                ),
+                                tree.span(),
+                                "this has a sort",
                             ));
                         }
                         if let Some(clause) = inner_context.where_clauses.first() {
@@ -1361,7 +1379,11 @@ impl Evaluate for TokenTree<'_> {
                         // Merge limit
                         if let Some(inner_limit) = inner_context.limit {
                             if context.limit.is_some() {
-                                return Err(miette!("limit can only be specified once"));
+                                return Err(label_error(
+                                    miette!("limit can only be specified once"),
+                                    tree.span(),
+                                    "another limit",
+                                ));
                             }
                             context.limit = Some(inner_limit);
                         }
@@ -1387,13 +1409,14 @@ impl Evaluate for TokenTree<'_> {
                     }
                     Ok(())
                 }
-                Op::Minus => evaluate_minus(trees, context),
+                Op::Minus => evaluate_minus(trees, context)
+                    .map_err(|e| label_error(e, self.span(), "this is negated")),
                 Op::GreaterThan
                 | Op::GreaterThanEqual
                 | Op::LessThan
                 | Op::LessThanEqual
                 | Op::Equal
-                | Op::Tilde => evaluate_field_value(trees, context, *op),
+                | Op::Tilde => evaluate_field_value(trees, context, *op, self.span()),
             },
         }
     }
@@ -1402,9 +1425,9 @@ impl Evaluate for TokenTree<'_> {
 impl TokenTree<'_> {
     fn analyze_requirements(&self) -> Result<TableRequirements, Error> {
         match self {
-            TokenTree::Atom(Atom::Field(field)) => {
-                Ok(TableRequirements::analyze_field(Field::from_str(field)?))
-            }
+            TokenTree::Atom(Atom::Field(field), span) => Ok(TableRequirements::analyze_field(
+                Field::from_str(field).map_err(|e| label_error(e, *span, "this field"))?,
+            )),
             // A query in parentheses as a value, as in `linked_to_note=(c.state=new)`, is its own
             // query with its own tables.
             TokenTree::Cons(
@@ -1426,7 +1449,7 @@ impl TokenTree<'_> {
                 }
                 Ok(requirements)
             }
-            TokenTree::Atom(_) => Ok(TableRequirements::default()),
+            TokenTree::Atom(_, _) => Ok(TableRequirements::default()),
         }
     }
 }
@@ -1438,7 +1461,7 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     let mut inner_context = context.child();
     if !matches!(
         trees[0],
-        TokenTree::Atom(Atom::Field(_))
+        TokenTree::Atom(Atom::Field(_), _)
             | TokenTree::Cons(
                 Op::GreaterThan
                     | Op::GreaterThanEqual
@@ -1520,7 +1543,7 @@ fn validate_field_value_types(
         | (FieldType::Boolean, FieldType::Boolean) => Ok(()),
         _ => {
             let value = match value {
-                TokenTree::Atom(Atom::String(s) | Atom::Word(s)) => s.to_string(),
+                TokenTree::Atom(Atom::String(s) | Atom::Word(s), _) => s.to_string(),
                 value => value.to_string(),
             };
             let example = if matches!(field_type, FieldType::Boolean) {
@@ -1607,10 +1630,13 @@ fn validate_field_operator_types(
     }
 }
 
+/// Adds the condition that `trees`, a field and a value, compare by `op`. `span` is where the
+/// comparison is written, for errors.
 fn evaluate_field_value(
     trees: &[TokenTree],
     context: &mut EvaluationContext,
     op: Op,
+    span: Span,
 ) -> Result<(), Error> {
     if trees.len() != 2 {
         return Err(miette!(
@@ -1620,19 +1646,24 @@ fn evaluate_field_value(
 
     // First tree should be the field
     let mut field_context = context.child();
-    let TokenTree::Atom(field_atom @ Atom::Field(_)) = &trees[0] else {
+    let TokenTree::Atom(field_atom @ Atom::Field(_), _) = &trees[0] else {
         return Err(miette!("An operator requires a field to operate on."));
     };
-    field_atom.evaluate(&mut field_context)?;
+    field_atom
+        .evaluate(&mut field_context)
+        .map_err(|e| label_error(e, trees[0].span(), "this field"))?;
     let field = field_context
         .field
         .ok_or_else(|| miette!("Missing field"))?;
     // The field as written, for errors.
     let field_name = trees[0].to_string();
     if let TokenTree::Cons(Op::Group, query) = &trees[1] {
-        return evaluate_link_query(&field, &field_name, query, context, op);
+        return evaluate_link_query(&field, &field_name, query, context, op)
+            .map_err(|e| label_error(e, span, "this comparison"));
     }
-    evaluate_comparison(&field, &field_name, &trees[1], context, op)
+    evaluate_comparison(&field, &field_name, &trees[1], context, op, span)
+        // Errors in the operator mark the whole comparison, and the rest the value.
+        .map_err(|e| label_error(e, trees[1].span(), "this value"))
 }
 
 /// Adds the condition that the note links to, or is linked from, a note matching `query`, as in
@@ -1662,7 +1693,7 @@ fn evaluate_link_query(
     let [query] = query else {
         return Err(miette!("Missing query"));
     };
-    if matches!(query, TokenTree::Atom(Atom::Nil)) {
+    if matches!(query, TokenTree::Atom(Atom::Nil, _)) {
         return Err(miette!(
             "The parentheses after `{field_name}=` are empty. Write a query in them, as in `{field_name}=(tag=history)`"
         ));
@@ -1689,16 +1720,16 @@ fn evaluate_link_query(
 /// Whether `tree` has a `sort_by_asc`, `sort_by_desc` or `limit` anywhere.
 fn tree_has_modifier(tree: &TokenTree) -> bool {
     match tree {
-        TokenTree::Atom(Atom::Field(f)) => {
+        TokenTree::Atom(Atom::Field(f), _) => {
             matches!(f.as_ref(), "sort_by_asc" | "sort_by_desc" | "limit")
         }
-        TokenTree::Atom(_) => false,
+        TokenTree::Atom(_, _) => false,
         TokenTree::Cons(_, children) => children.iter().any(tree_has_modifier),
     }
 }
 
 /// Adds the condition that `field` compares with `value` by `op`. `field_name` is the field as
-/// written, for errors.
+/// written and `comparison_span` where the comparison is, for errors.
 #[expect(clippy::too_many_lines)]
 fn evaluate_comparison(
     field: &Field,
@@ -1706,6 +1737,7 @@ fn evaluate_comparison(
     value: &TokenTree,
     context: &mut EvaluationContext,
     op: Op,
+    comparison_span: Span,
 ) -> Result<(), Error> {
     let field_type = field.get_field_type();
 
@@ -1718,11 +1750,11 @@ fn evaluate_comparison(
     // `today` and `now` are ordinary words unless compared against a date field, so `data~today`
     // still searches for the word.
     let mut relative_date = match value {
-        TokenTree::Atom(Atom::RelativeDate(date)) => Some(date.clone()),
+        TokenTree::Atom(Atom::RelativeDate(date), _) => Some(date.clone()),
         _ => None,
     };
     if matches!(field_type, FieldType::DateTime)
-        && let TokenTree::Atom(Atom::String(s) | Atom::Word(s)) = value
+        && let TokenTree::Atom(Atom::String(s) | Atom::Word(s), _) = value
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
@@ -1740,7 +1772,7 @@ fn evaluate_comparison(
     // day and how many months it lasts.
     let month_or_year = match value {
         _ if !matches!(field_type, FieldType::DateTime) => None,
-        TokenTree::Atom(Atom::String(s) | Atom::Word(s))
+        TokenTree::Atom(Atom::String(s) | Atom::Word(s), _)
             if s.len() == 7
                 && s.char_indices()
                     .all(|(i, c)| if i == 4 { c == '-' } else { c.is_ascii_digit() }) =>
@@ -1749,7 +1781,7 @@ fn evaluate_comparison(
                 .map_err(|_| miette!("`{s}` is not a month"))?;
             Some((month, 1))
         }
-        TokenTree::Atom(Atom::Integer(year)) if (1000..=9999).contains(year) => {
+        TokenTree::Atom(Atom::Integer(year), _) if (1000..=9999).contains(year) => {
             i32::try_from(*year)
                 .ok()
                 .and_then(|year| NaiveDate::from_ymd_opt(year, 1, 1))
@@ -1765,7 +1797,7 @@ fn evaluate_comparison(
     // that day and `created_at=2026` any time that year. Against a text field, it is just the
     // text.
     let period = match (value, &relative_date, month_or_year) {
-        (TokenTree::Atom(Atom::Date(_)), _, _) | (_, _, Some(_))
+        (TokenTree::Atom(Atom::Date(_), _), _, _) | (_, _, Some(_))
             if matches!(field_type, FieldType::DateTime) && matches!(op, Op::Tilde) =>
         {
             return Err(miette!(
@@ -1777,10 +1809,12 @@ fn evaluate_comparison(
             local_month_start_sql(start, 0),
             local_month_start_sql(start, months),
         )),
-        (TokenTree::Atom(Atom::Date(date)), _, _) if matches!(field_type, FieldType::DateTime) => {
+        (TokenTree::Atom(Atom::Date(date), _), _, _)
+            if matches!(field_type, FieldType::DateTime) =>
+        {
             Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
         }
-        (TokenTree::Atom(Atom::Date(date)), _, _) => {
+        (TokenTree::Atom(Atom::Date(date), _), _, _) => {
             value_context.params = vec![date.to_string()];
             value_type = FieldType::String;
             None
@@ -1963,7 +1997,7 @@ fn evaluate_comparison(
                     // A value without quotes, like a word or a date, searches the text for words
                     // starting with it, so `cat` finds `cats` but not `concatenate`. In quotes,
                     // it can be anywhere.
-                    let word_start = !matches!(value, TokenTree::Atom(Atom::String(_)))
+                    let word_start = !matches!(value, TokenTree::Atom(Atom::String(_), _))
                         && matches!(
                             field,
                             Field::Note(NoteField::Data) | Field::Card(CardField::Cloze)
@@ -1990,10 +2024,12 @@ fn evaluate_comparison(
     // - Booleans do not have an order
     // - Booleans cannot use containment operator
     // - Numbers cannot use containment operator
-    validate_field_operator_types(field_name, &field_type, op)?;
+    validate_field_operator_types(field_name, &field_type, op)
+        .map_err(|e| label_error(e, comparison_span, "this comparison"))?;
 
     // Ensure field and value have the same type
-    validate_field_value_types(field_name, &field_type, &value_type, value)?;
+    validate_field_value_types(field_name, &field_type, &value_type, value)
+        .map_err(|e| label_error(e, value.span(), &format!("not {}", field_type.describe())))?;
 
     let sql_condition = if matches!(field, Field::Card(CardField::WaitingOnLinks)) {
         waiting_on_links_sql(&value_str)?
@@ -2146,7 +2182,17 @@ fn review_time_sql(range: &str) -> Result<String, Error> {
         value,
         &mut context,
         *op,
-    )?;
+        Span::default(),
+    )
+    // Places in `written` aren't places in the query, so the caller marks the brackets instead.
+    .map_err(|e| match e.help() {
+        Some(help) => miette!(
+            help = help.to_string(),
+            "{}",
+            e.chain().last().unwrap_or(&*e)
+        ),
+        None => miette!("{}", e.chain().last().unwrap_or(&*e)),
+    })?;
     context.where_clauses.pop().ok_or_else(invalid)
 }
 
@@ -2263,8 +2309,10 @@ fn text_terms<'a, 'de>(tree: &'a TokenTree<'de>) -> Vec<&'a Atom<'de>> {
     fn collect<'a, 'de>(tree: &'a TokenTree<'de>, terms: &mut Vec<&'a Atom<'de>>) {
         match tree {
             TokenTree::Cons(Op::Tilde, children) => {
-                if let [TokenTree::Atom(Atom::Field(field)), TokenTree::Atom(value)] =
-                    children.as_slice()
+                if let [
+                    TokenTree::Atom(Atom::Field(field), _),
+                    TokenTree::Atom(value, _),
+                ] = children.as_slice()
                     && matches!(Field::from_str(field), Ok(Field::Note(NoteField::Data)))
                 {
                     terms.push(value);
@@ -2403,11 +2451,15 @@ fn to_dnf(tree: TokenTree<'_>) -> Vec<TokenTree<'_>> {
 
 /// Fails if the query refers to a note or card that doesn't exist, as in `note[gir].created_at`.
 /// Comparing against a missing item would otherwise match nothing, with no hint why.
-async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result<(), crate::Error> {
-    fn collect<'a>(tree: &'a TokenTree, dates: &mut Vec<&'a RelativeDate>) {
+async fn check_references_exist(
+    query: &str,
+    tree: &TokenTree<'_>,
+    db: &SqlitePool,
+) -> Result<(), crate::Error> {
+    fn collect<'a>(tree: &'a TokenTree, dates: &mut Vec<(&'a RelativeDate, Span)>) {
         match tree {
-            TokenTree::Atom(Atom::RelativeDate(date)) => dates.push(date),
-            TokenTree::Atom(_) => {}
+            TokenTree::Atom(Atom::RelativeDate(date), span) => dates.push((date, *span)),
+            TokenTree::Atom(_, _) => {}
             TokenTree::Cons(_, children) => {
                 for child in children {
                     collect(child, dates);
@@ -2417,7 +2469,7 @@ async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result
     }
     let mut dates = Vec::new();
     collect(tree, &mut dates);
-    for date in dates {
+    for (date, span) in dates {
         let (table, id, shown_id) = match date.anchor {
             Anchor::Note(id, _) => ("note", id.packed(), id.to_string()),
             Anchor::Card(id, _) => ("card", id, id.to_string()),
@@ -2431,10 +2483,11 @@ async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result
         .await
         .map_err(|e| crate::Error::Sqlx { source: e })?;
         if !exists {
-            return Err(crate::Error::Library(LibraryError::Search {
-                message: format!("`{date}` refers to {table} `{shown_id}`, which doesn't exist"),
-                span: None,
-            }));
+            return Err(search_error(query)(label_error(
+                miette!("`{date}` refers to {table} `{shown_id}`, which doesn't exist"),
+                span,
+                &format!("no such {table}"),
+            )));
         }
     }
     Ok(())
@@ -2443,8 +2496,8 @@ async fn check_references_exist(tree: &TokenTree<'_>, db: &SqlitePool) -> Result
 /// Returns true if the token tree contains a `limit` field anywhere.
 pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
     match tree {
-        TokenTree::Atom(Atom::Field(f)) => f.as_ref() == "limit",
-        TokenTree::Atom(_) => false,
+        TokenTree::Atom(Atom::Field(f), _) => f.as_ref() == "limit",
+        TokenTree::Atom(_, _) => false,
         TokenTree::Cons(_, children) => children.iter().any(tree_has_limit),
     }
 }
@@ -2452,11 +2505,11 @@ pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
 /// Returns true if the token tree contains a `c.cloze` field reference.
 fn has_cloze_field(tree: &TokenTree) -> bool {
     match tree {
-        TokenTree::Atom(Atom::Field(f)) => {
+        TokenTree::Atom(Atom::Field(f), _) => {
             Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
         }
         TokenTree::Cons(_, children) => children.iter().any(has_cloze_field),
-        TokenTree::Atom(_) => false,
+        TokenTree::Atom(_, _) => false,
     }
 }
 
@@ -2466,22 +2519,22 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
         TokenTree::Cons(Op::Tilde, children) if children.len() == 2 => {
             let is_cloze = matches!(
                 &children[0],
-                TokenTree::Atom(Atom::Field(f))
+                TokenTree::Atom(Atom::Field(f), _)
                 if Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
             );
             if is_cloze {
                 return match &children[1] {
-                    TokenTree::Atom(Atom::Regex(r)) => {
+                    TokenTree::Atom(Atom::Regex(r), _) => {
                         vec![ClozePattern {
                             regex: get_or_compile_regex(r).ok(),
                         }]
                     }
-                    TokenTree::Atom(Atom::String(s)) => {
+                    TokenTree::Atom(Atom::String(s), _) => {
                         vec![ClozePattern {
                             regex: get_or_compile_regex(&text_regex(s, false)).ok(),
                         }]
                     }
-                    TokenTree::Atom(Atom::Word(s)) => {
+                    TokenTree::Atom(Atom::Word(s), _) => {
                         vec![ClozePattern {
                             regex: get_or_compile_regex(&text_regex(s, true)).ok(),
                         }]
@@ -2493,7 +2546,7 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
             children.iter().flat_map(extract_cloze_patterns).collect()
         }
         TokenTree::Cons(_, children) => children.iter().flat_map(extract_cloze_patterns).collect(),
-        TokenTree::Atom(_) => vec![],
+        TokenTree::Atom(_, _) => vec![],
     }
 }
 

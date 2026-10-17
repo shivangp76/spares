@@ -107,7 +107,10 @@ impl Iterator for Lexer<'_> {
             Some('r') if self.quote_after("e:") => {
                 self.s.eat_if("e:");
                 let open = self.s.eat()?;
-                let close_len = self.parse_string(open, false).ok()?;
+                let close_len = match self.parse_string(open, false) {
+                    Ok(close_len) => close_len,
+                    Err(e) => return Some(Err(e)),
+                };
                 Ok(Token {
                     kind: TokenKind::Regex,
                     span: cursor_start + 3 + open.len_utf8()..self.s.cursor() - close_len,
