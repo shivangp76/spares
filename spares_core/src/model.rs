@@ -44,19 +44,18 @@ pub struct Note {
 }
 
 /// Used for referencing other notes.
-/// - One note can have multiple keywords. For example, 1 theorem might be explained in multiple books, so all those books might be keywords.
-/// - Multiple notes can share a keywords. For example, all practice problems for "Integration by parts" might have that as a keyword. However, if this is the case, then there is no guarantee which note that keyword is linked to. It is advised to instead use the keyword "Integration by parts problems" for those notes and "Integration by parts" for the note explaining the concept.
+/// - One note can have multiple keywords. For example, one historical event might be covered in multiple books, so all those books might be keywords.
+/// - Multiple notes can share a keywords. For example, all practice sentences for "Subjunctive" might have that as a keyword. However, if this is the case, then there is no guarantee which note that keyword is linked to. It is advised to instead use the keyword "Subjunctive practice" for those notes and "Subjunctive" for the note explaining the concept.
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct NoteKeyword {
     pub note_id: NoteId,
     pub keyword: String,
     /// Whether the keyword is embedded within the note data. This is preferable to non-embedded
     /// keywords since grepping for an embedded keyword leads to its exact location within a note.
-    /// For example, imagine a note which contains many related theorems. By adding the names of
-    /// these theorems as embedded keywords instead of non-embedded keywords, you can grep for the
-    /// theorem name and be pointed to the exact location of the theorem within the note.
-    /// Otherwise, you would only know that that note contains the theorem and not exactly where it
-    /// is.
+    /// For example, imagine a note which covers many related grammar rules. By adding the names of
+    /// these rules as embedded keywords instead of non-embedded keywords, you can grep for a rule's
+    /// name and be pointed to the exact location of the rule within the note. Otherwise, you would
+    /// only know that that note contains the rule and not exactly where it is.
     ///
     /// For this reason, embedded keywords must be unique within a note, so their exact location
     /// can be uniquely determined. Multiple notes may still contain the same embedded keyword.

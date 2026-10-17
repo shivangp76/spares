@@ -545,7 +545,7 @@ impl Default for QueueConfig {
 /// learning_steps = [60, 300, 1800] # 1, 5 and 30 minutes
 ///
 /// [queue.presets.exam]
-/// tags = ["math:analysis", "math:algebra"]
+/// tags = ["biology:cells", "biology:genetics"]
 /// new_cards_daily_limit = 5
 /// review_order = "retrievability"
 /// relearning_steps = [600, 3600]
@@ -553,7 +553,7 @@ impl Default for QueueConfig {
 /// ```
 ///
 /// A note tagged `lang:german` gets up to 40 new cards a day, in a random order, with steps of 1,
-/// 5 and 30 minutes. One tagged `math:analysis` gets 5 new cards a day and its reviews by
+/// 5 and 30 minutes. One tagged `biology:cells` gets 5 new cards a day and its reviews by
 /// retrievability. One tagged both uses `languages`, since it is listed first. Notes matching no
 /// preset use the top-level settings.
 ///

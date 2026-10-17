@@ -57,13 +57,13 @@ spares note edit --tags-to-remove tag1 tag2 --files aaa.tex aab.tex
 
 ## Getting notes created `n` days before a note
 
-You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may be a theorem that depends on a definition introduced a few days earlier in class. A relative date in the query finds all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
+You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may build on an idea introduced a few days earlier in class. A relative date in the query finds all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
 
 ```sh
 # Notes created in the 5 days up to note `gir`
 spares note search 'created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d'
-# The same, only for notes tagged `measure-theory`
-spares note search 'tag=measure-theory created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d'
+# The same, only for notes tagged `biology`
+spares note search 'tag=biology created_at<=note[gir].created_at and created_at>=note[gir].created_at-5d'
 ```
 
 As a shell function, `get_notes_before $ID $NUM_DAYS`, where `$NUM_DAYS` defaults to 5:
