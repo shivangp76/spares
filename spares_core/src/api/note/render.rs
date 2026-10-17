@@ -15,6 +15,7 @@ use crate::api::browser_render::sync_render_assets;
 use crate::api::execute_batched_query;
 use crate::api::note::create_note_links;
 use crate::api::note::get_keywords;
+use crate::api::note::keyword_distance::MATCHER_VERSION;
 use crate::api::note::keyword_distance::NormalizedKeyword;
 use crate::api::note::keyword_distance::keyword_distance;
 use crate::api::placeholders;
@@ -151,54 +152,92 @@ pub async fn get_render_note_data(
     Ok(notes_data)
 }
 
-/// Updates existing note links by re-matching them against keywords.
-/// Returns the updated note links
-async fn update_existing_note_links(db: &SqlitePool) -> Result<Vec<NoteLink>, Error> {
-    // Get all keywords
+/// `app_state` key holding the [`MATCHER_VERSION`] that the stored note links were matched with.
+const NOTE_LINK_MATCHER_VERSION_KEY: &str = "note_link_matcher_version";
+
+/// Re-matches stored note links against keywords and saves the ones that changed.
+///
+/// Returns the notes whose links now point elsewhere, which are the notes whose rendered files
+/// change. Links whose score alone changed are saved but not returned, since scores are not
+/// rendered.
+async fn rematch_stored_note_links(db: &SqlitePool) -> Result<HashSet<NoteId>, Error> {
     let keywords = get_keywords(db).await?;
 
-    // Get all existing note links where score != 0
+    let matcher_version: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
+            .bind(NOTE_LINK_MATCHER_VERSION_KEY)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let matcher_changed =
+        matcher_version.and_then(|v| v.parse::<u32>().ok()) != Some(MATCHER_VERSION);
+
+    // Links matched by an older matcher are all rematched. Otherwise, only links where score != 0
+    // are.
     // The second case is for when a note is deleted. Any notes that used to link to that deleted note need to be updated as well.
     // The third case is for when the matched keyword was renamed or removed from its note.
     let existing_note_links: Vec<NoteLink> = sqlx::query_as(
         r"SELECT * FROM note_link nl
-         WHERE (score IS NULL OR score != 0)
+         WHERE ?
+           OR (score IS NULL OR score != 0)
            OR (score IS NOT NULL AND linked_note_id IS NULL)
            OR NOT EXISTS (
              SELECT 1 FROM note_keyword nk
              WHERE nk.note_id = nl.linked_note_id AND nk.keyword = nl.matched_keyword
            )",
     )
+    .bind(matcher_changed)
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    // Re-match existing linked notes against keywords
-    let updated_note_links =
+    let rematched_links =
         run_blocking(move || rematch_note_links(&existing_note_links, &keywords)).await;
-    Ok(updated_note_links)
+    let changed_note_ids = rematched_links
+        .iter()
+        .filter(|(_, target_changed)| *target_changed)
+        .map(|(link, _)| link.parent_note_id)
+        .collect();
+    let updated_note_links: Vec<NoteLink> =
+        rematched_links.into_iter().map(|(link, _)| link).collect();
+    persist_updated_note_links(db, &updated_note_links).await?;
+
+    if matcher_changed {
+        sqlx::query(
+            "INSERT INTO app_state (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(NOTE_LINK_MATCHER_VERSION_KEY)
+        .bind(MATCHER_VERSION.to_string())
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    Ok(changed_note_ids)
 }
 
+/// The links among `existing_note_links` whose best match changed, each with whether it now links
+/// to a different note or keyword rather than only having a different score.
 fn rematch_note_links(
     existing_note_links: &[NoteLink],
     keywords: &[(NoteId, String)],
-) -> Vec<NoteLink> {
+) -> Vec<(NoteLink, bool)> {
     let matcher = KeywordMatcher::new(keywords);
     existing_note_links
         .par_iter()
         .filter_map(|existing_link| {
             let matched_keyword_data = matcher.best_match(&existing_link.searched_keyword);
-            if matched_keyword_data.as_ref().map(|x| x.score) == existing_link.score
-                && (matched_keyword_data
-                    .as_ref()
-                    .map(|x| x.matched_keyword.clone())
-                    == existing_link.matched_keyword)
-                && (matched_keyword_data.as_ref().map(|x| x.note_id)
-                    == existing_link.linked_note_id)
+            let target_changed = matched_keyword_data
+                .as_ref()
+                .map(|x| x.matched_keyword.clone())
+                != existing_link.matched_keyword
+                || matched_keyword_data.as_ref().map(|x| x.note_id) != existing_link.linked_note_id;
+            if !target_changed
+                && matched_keyword_data.as_ref().map(|x| x.score) == existing_link.score
             {
                 return None;
             }
-            Some(NoteLink {
+            let link = NoteLink {
                 parent_note_id: existing_link.parent_note_id,
                 linked_note_id: matched_keyword_data.as_ref().map(|x| x.note_id),
                 order: existing_link.order,
@@ -207,7 +246,8 @@ fn rematch_note_links(
                     .as_ref()
                     .map(|x| x.matched_keyword.clone()),
                 score: matched_keyword_data.as_ref().map(|x| x.score),
-            })
+            };
+            Some((link, target_changed))
         })
         .collect()
 }
@@ -292,17 +332,9 @@ pub async fn render_notes(
 
     let mut changed_note_ids: HashSet<NoteId> = HashSet::new();
     if include_linked_notes {
-        // Match linked notes to keyword
-        let updated_note_links = update_existing_note_links(db).await?;
-        changed_note_ids = updated_note_links
-            .iter()
-            .map(|l| l.parent_note_id)
-            .collect();
-
-        // Update note links with updated score
-        persist_updated_note_links(db, &updated_note_links).await?;
         // Note: We'll load all note links for rendered notes later, after we know which notes we're rendering
         // The updated note links are already in the database, so we'll get them when we query
+        changed_note_ids = rematch_stored_note_links(db).await?;
     }
 
     // Update config
@@ -513,6 +545,8 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
 mod tests {
     use sqlx::SqlitePool;
 
+    use super::MATCHER_VERSION;
+    use super::NOTE_LINK_MATCHER_VERSION_KEY;
     use crate::api::note::basic::tests::create_note_helper;
     use crate::api::note::render_notes;
     use crate::model::NoteLink;
@@ -560,5 +594,76 @@ mod tests {
                 Some("keyword 2".to_string())
             ]
         );
+    }
+
+    /// Exact matches are only rematched when the matcher version changes.
+    #[sqlx::test]
+    async fn test_rematch_after_matcher_change(pool: SqlitePool) -> () {
+        let _ = create_note_helper(&pool).await;
+        let out_dir = tempfile_dir("test_rematch_after_matcher_change");
+        let render = async || {
+            let body = RenderNotesRequest {
+                selector: NotesSelector::All,
+                immutable_note_ids: None,
+                overridden_output_raw_dir: Some(out_dir.clone()),
+                include_linked_notes: true,
+                include_cards: false,
+                generate_rendered: false,
+                force_generate_rendered: false,
+            };
+            render_notes(&pool, body, &get_all_parsers()).await.unwrap();
+        };
+        let link_of = async |searched: &str| -> NoteLink {
+            sqlx::query_as("SELECT * FROM note_link WHERE searched_keyword = ?")
+                .bind(searched)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        render().await;
+        let correct = link_of("keyword 2").await;
+        let other = link_of("keyword 1").await;
+
+        // Point `keyword 2` at `keyword 1` as an exact match, as an older matcher might have.
+        let set_wrong_link = async || {
+            sqlx::query(
+                "UPDATE note_link SET linked_note_id = ?, matched_keyword = ?, score = 0
+                 WHERE searched_keyword = 'keyword 2'",
+            )
+            .bind(other.linked_note_id)
+            .bind(&other.matched_keyword)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        set_wrong_link().await;
+        render().await;
+        assert_eq!(
+            link_of("keyword 2").await.matched_keyword,
+            other.matched_keyword
+        );
+
+        sqlx::query("UPDATE app_state SET value = '1' WHERE key = ?")
+            .bind(NOTE_LINK_MATCHER_VERSION_KEY)
+            .execute(&pool)
+            .await
+            .unwrap();
+        render().await;
+        let rematched = link_of("keyword 2").await;
+        assert_eq!(rematched.matched_keyword, correct.matched_keyword);
+        assert_eq!(rematched.linked_note_id, correct.linked_note_id);
+        let version: String = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
+            .bind(NOTE_LINK_MATCHER_VERSION_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(version, MATCHER_VERSION.to_string());
+        let _ = std::fs::remove_dir_all(out_dir);
+    }
+
+    fn tempfile_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("spares-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
