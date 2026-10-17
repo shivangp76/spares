@@ -859,11 +859,12 @@ impl Field {
                 CardField::Difficulty => Ok("c.difficulty".to_string()),
                 CardField::DesiredRetention => Ok("c.desired_retention".to_string()),
                 CardField::State => Ok("c.state".to_string()),
-                CardField::Rated => Ok("c.rated".to_string()),
                 CardField::Count => {
                     Ok("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)".to_string())
                 }
                 // Unsupported types
+                // A card can have many ratings, so there is none to sort by.
+                CardField::Rated => Err(miette!("a card can have many ratings")),
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
@@ -1006,16 +1007,20 @@ impl EvaluationContext<'_> {
     fn complete_order_by(&mut self, output_type: EvaluatorReturnItemType) {
         let (default, id) = match output_type {
             EvaluatorReturnItemType::Notes | EvaluatorReturnItemType::NoteIds => {
-                (&["n.id ASC"][..], "n.id ASC")
+                (&["n.id ASC"][..], "n.id")
             }
             EvaluatorReturnItemType::Cards | EvaluatorReturnItemType::CardIds => {
-                (&["c.due ASC", "n.created_at ASC", "c.id ASC"][..], "c.id ASC")
+                (&["c.due ASC", "n.created_at ASC", "c.id ASC"][..], "c.id")
             }
         };
         if self.order_by.is_empty() {
             self.order_by.extend(default.iter().map(ToString::to_string));
-        } else if !self.order_by.iter().any(|term| term == id) {
-            self.order_by.push(id.to_string());
+        } else if !self
+            .order_by
+            .iter()
+            .any(|term| term.strip_suffix(" ASC").or(term.strip_suffix(" DESC")) == Some(id))
+        {
+            self.order_by.push(format!("{id} ASC"));
         }
     }
 
@@ -1330,6 +1335,17 @@ fn validate_field_value_types(
     }
 }
 
+/// The names of the fields that `sort_by_asc` and `sort_by_desc` accept.
+fn sortable_fields() -> Vec<&'static str> {
+    FIELDS
+        .iter()
+        .map(|doc| doc.name)
+        .filter(|name| {
+            Field::from_str(&[name]).is_ok_and(|field| Field::to_order_by_expr(&field).is_ok())
+        })
+        .collect()
+}
+
 /// The fields that queries can use, with the kind of value each holds, from [`FIELDS`].
 pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
     FIELDS
@@ -1510,23 +1526,37 @@ fn evaluate_field_value(
                 "Sorting requires '=' operator, e.g., sort_by_asc=created_at"
             ));
         }
-        let rhs_field_name = value_context
+        let rhs = value_context
             .params
             .first()
             .ok_or_else(|| miette!("Missing sort field name"))?
             .clone();
-        let target_field = Field::from_str(&[&rhs_field_name])?;
-        let order_expr = Field::to_order_by_expr(&target_field)
-            .map_err(|e| miette!("Can't sort by `{rhs_field_name}`, since {e}"))?;
-        // Merge table requirements for the sort target field
-        context
-            .table_requirements
-            .merge(&TableRequirements::analyze_field(target_field.clone()));
-        // Build order by expression
-        match field {
-            Field::SortAsc(_) => context.order_by.push(format!("{} ASC", order_expr)),
-            Field::SortDesc(_) => context.order_by.push(format!("{} DESC", order_expr)),
-            _ => {}
+        // Several fields, like `sort_by_asc=c.due,c.stability`, sort by each in turn.
+        for rhs_field_name in rhs.split(',').map(str::trim) {
+            if rhs_field_name.is_empty() {
+                return Err(miette!(
+                    "Missing a field in `{rhs}`. Separate fields with `,`, as in `sort_by_asc=c.due,c.stability`"
+                ));
+            }
+            let target_field = Field::from_str(&[rhs_field_name])?;
+            let order_expr = Field::to_order_by_expr(&target_field).map_err(|e| {
+                miette!(
+                    help = format!(
+                        "The fields that can be sorted are {}",
+                        sortable_fields().join(", ")
+                    ),
+                    "Can't sort by `{rhs_field_name}`, since {e}",
+                )
+            })?;
+            // Merge table requirements for the sort target field
+            context
+                .table_requirements
+                .merge(&TableRequirements::analyze_field(target_field));
+            match field {
+                Field::SortAsc(_) => context.order_by.push(format!("{order_expr} ASC")),
+                Field::SortDesc(_) => context.order_by.push(format!("{order_expr} DESC")),
+                _ => {}
+            }
         }
         return Ok(());
     }
@@ -2468,6 +2498,11 @@ mod tests {
                 "sort_by_asc=c.count",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY (SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id) ASC, n.id ASC",
             ),
+            // Several fields in one sort
+            (
+                "sort_by_asc=c.due,c.stability sort_by_desc=\"created_at, id\"",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id ORDER BY c.due ASC, c.stability ASC, n.created_at DESC, n.id DESC",
+            ),
             // Multiple sorts
             (
                 "sort_by_desc=c.stability sort_by_asc=c.id",
@@ -2551,7 +2586,10 @@ mod tests {
     fn test_limit() {
         let inputs = vec![
             // Basic limit
-            ("limit=10", "SELECT DISTINCT n.id FROM note n ORDER BY n.id ASC LIMIT 10"),
+            (
+                "limit=10",
+                "SELECT DISTINCT n.id FROM note n ORDER BY n.id ASC LIMIT 10",
+            ),
             // Limit combined with WHERE clause
             (
                 "dog limit=5",
@@ -2723,6 +2761,12 @@ n.data LIKE '%cat%') AND (c.due <= 100) ORDER BY c.due ASC, n.created_at ASC, c.
             // Cannot use non-equal operator for sorting
             "sort_by_asc>=created_at",
             "sort_by_desc~c.stability",
+            // A card has many ratings
+            "sort_by_asc=c.rated",
+            // A field missing from a list
+            "sort_by_asc=c.due,",
+            "sort_by_asc=c.due,,id",
+            "sort_by_asc=c.due,c.suspended",
             // Invalid field name
             "sort_by_asc=invalid_field",
             "sort_by_asc=sort_by_asc",

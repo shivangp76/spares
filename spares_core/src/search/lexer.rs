@@ -118,6 +118,10 @@ impl Iterator for Lexer<'_> {
             }
             Some(ch) if char::is_alphanumeric(ch) || ch == '.' || ch == '_' => {
                 self.s.eat_while(is_word_char);
+                // A sort can list several fields, as in `sort_by_asc=c.due,c.stability`.
+                if self.is_sort_value() {
+                    self.s.eat_while(|c| is_word_char(c) || c == ',');
+                }
                 let kind = match self.eat_reference(cursor_start) {
                     Ok(true) => TokenKind::RelativeDate,
                     Ok(false) => self.classify_word(cursor_start),
@@ -255,6 +259,17 @@ impl Lexer<'_> {
             }
             _ => TokenKind::String,
         }
+    }
+
+    /// Whether the word being lexed is the value of `sort_by_asc=` or `sort_by_desc=`.
+    fn is_sort_value(&self) -> bool {
+        self.prev.as_ref().is_some_and(|prev| {
+            prev.kind == TokenKind::Equal
+                && matches!(
+                    self.s.string()[..prev.span.start].trim_end().rsplit(char::is_whitespace).next(),
+                    Some(field) if field.ends_with("sort_by_asc") || field.ends_with("sort_by_desc")
+                )
+        })
     }
 
     /// Whether a comparison comes next, as in `c.due<=today`. Spaces may come before it, as in
@@ -944,6 +959,23 @@ mod tests {
         assert_eq!(lex("c.state != new"), lex("c.state!=new"));
         assert_eq!(lex("c.suspended = false"), lex("c.suspended=false"));
         assert_eq!(lex("c.stability >= -2"), lex("c.stability>=-2"));
+    }
+
+    #[test]
+    fn sorts_list_fields() {
+        assert_eq!(
+            lex("sort_by_asc=c.due,c.stability"),
+            vec![
+                (TokenKind::Field, "sort_by_asc"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "c.due,c.stability"),
+            ]
+        );
+        assert!(
+            Lexer::new("dog,cat")
+                .collect::<Result<Vec<_>, _>>()
+                .is_err()
+        );
     }
 
     #[test]

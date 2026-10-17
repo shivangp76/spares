@@ -188,8 +188,11 @@
 //! - Use sorting keys to order results by numeric or `DateTime` fields:
 //!   - Ascending: `sort_by_asc=created_at`
 //!   - Descending: `sort_by_desc=c.stability`
-//! - Supported sortable fields include `id`, `created_at`, `updated_at`, `linked_to_note`, `linked_from_note`, `linked_to_keyword`, and all numeric card fields like `c.id`, `c.created_at`, `c.updated_at`, `c.due`, `c.stability`, `c.difficulty`, `c.desired_retention`, `c.state`, `c.rated`, and computed `c.count`.
-//! - Multiple sorts are allowed; later keys are appended to the ORDER BY list.
+//! - Every field of numbers, dates or text can be sorted by, except `c.rated` and `c.cloze`.
+//!   Sorting by a field with several values, like `tag`, uses the smallest.
+//! - Multiple sorts are allowed; later keys are appended to the ORDER BY list. One sort can also
+//!   list several fields, separated by `,`: `sort_by_asc=c.due,c.stability` is the same as
+//!   `sort_by_asc=c.due sort_by_asc=c.stability`.
 //! - Without a sort, notes come in the order of their ids, and cards in the order review shows them
 //!   by default: the cards due the longest first (`c.due`, then the note's `created_at`). Results a
 //!   sort ranks the same come in the order of their ids, so the order, and what a limit keeps, is
