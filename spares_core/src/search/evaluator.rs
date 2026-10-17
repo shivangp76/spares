@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use chrono::NaiveDate;
@@ -30,6 +31,7 @@ use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
 use crate::search::TokenTree;
+use crate::search::lexer::is_quote;
 use crate::search::parser::Parser;
 use crate::search::relative_date::Anchor;
 use crate::search::relative_date::local_day_start_sql;
@@ -383,7 +385,7 @@ fn card_state_names() -> String {
 
 /// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
 pub(crate) fn is_boolean_field(name: &str) -> bool {
-    Field::from_str(&[name]).is_ok_and(|field| field.get_field_type() == FieldType::Boolean)
+    Field::from_str(name).is_ok_and(|field| field.get_field_type() == FieldType::Boolean)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -464,7 +466,7 @@ pub(crate) const FIELDS: [FieldDoc; 30] = [
     doc("parser_name", "parser_name=markdown", "The parser the note is written for"),
     doc("tag", "tag=math", "A tag of the note or card, including its descendants"),
     doc("keyword", "keyword=\"Integration by parts\"", "A keyword of the note"),
-    doc("custom_data", "custom_data:\"$.x\"=1", "A value in the note's custom data"),
+    doc("custom_data", "custom_data.key=1", "A value in the note's custom data"),
     doc("linked_to_note", "linked_to_note=gir", "A note the note links to"),
     doc("linked_to_keyword", "linked_to_keyword=\"Integration by parts\"", "A keyword the note links to"),
     doc("linked_from_note", "linked_from_note=gir", "A note that links to the note"),
@@ -480,7 +482,7 @@ pub(crate) const FIELDS: [FieldDoc; 30] = [
     doc("c.scheduler_buried", "c.scheduler_buried", "Whether the card was buried as a sibling"),
     doc("c.waiting_on_links", "c.waiting_on_links", "Whether the card waits for the notes it links to"),
     doc("c.state", "c.state=review", "The card's state: new, learning, review or relearning"),
-    doc("c.custom_data", "c.custom_data:\"$.x\"=1", "A value in the card's custom data"),
+    doc("c.custom_data", "c.custom_data.key=1", "A value in the card's custom data"),
     doc("c.rated", "c.rated=1", "A rating the card got in a review, from 1 (again) to 4 (easy)"),
     doc("c.count", "c.count>=2", "How many cards the note has"),
     doc("c.cloze", "c.cloze~proof", "The text of the card's cloze"),
@@ -537,6 +539,79 @@ fn edit_distance(a: &str, b: &str) -> usize {
     previous[b.len()]
 }
 
+/// The SQLite JSON path, like `$.x.y[1]` or `$."a's key"`, of the path written after
+/// `custom_data`, like `.x.y[1]` or `["a's key"]`. SQLite only has `.key` and `[n]` steps, so that
+/// is all a path can have.
+fn json_path(written: &str) -> Result<String, Error> {
+    fn push_key(path: &mut String, key: &str) -> Result<(), Error> {
+        if key.is_empty() {
+            return Err(miette!(
+                "A key is missing. Write `.key`, `[0]` or `[\"a key\"]`"
+            ));
+        }
+        if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            path.push('.');
+            path.push_str(key);
+        } else if key.contains('"') {
+            return Err(miette!("The key `{key}` can't contain `\"`"));
+        } else {
+            let _ = write!(path, ".\"{key}\"");
+        }
+        Ok(())
+    }
+    let mut path = String::from("$");
+    let mut rest = written;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix('.') {
+            let end = after.find(['.', '[']).unwrap_or(after.len());
+            push_key(&mut path, &after[..end])?;
+            rest = &after[end..];
+        } else if let Some(after) = rest.strip_prefix('[') {
+            let mut chars = after.char_indices();
+            let (key, after_key) = match chars.next() {
+                // A quoted key, like `["a's key"]`
+                Some((_, open)) if is_quote(open) => {
+                    let mut key = String::new();
+                    let mut end = None;
+                    while let Some((i, c)) = chars.next() {
+                        match c {
+                            '\\' => key.extend(chars.next().map(|(_, c)| c)),
+                            c if c == '"' || (open != '"' && is_quote(c)) => {
+                                end = Some(i + c.len_utf8());
+                                break;
+                            }
+                            c => key.push(c),
+                        }
+                    }
+                    let end = end.ok_or_else(|| miette!("A quoted key is never closed"))?;
+                    push_key(&mut path, &key)?;
+                    (key, &after[end..])
+                }
+                // An array index, like `[1]`
+                _ => {
+                    let end = after.find(']').unwrap_or(after.len());
+                    let index = &after[..end];
+                    if index.is_empty() || !index.chars().all(|c| c.is_ascii_digit()) {
+                        return Err(miette!(
+                            "`[{index}]` is not an array index. Write a number, like `[0]`, or a key in quotes, like `[\"a key\"]`"
+                        ));
+                    }
+                    let _ = write!(path, "[{index}]");
+                    (index.to_string(), &after[end..])
+                }
+            };
+            rest = after_key
+                .strip_prefix(']')
+                .ok_or_else(|| miette!("Missing `]` after `[{key}`"))?;
+        } else {
+            return Err(miette!(
+                "Unexpected `{rest}`. Write `.key`, `[0]` or `[\"a key\"]`"
+            ));
+        }
+    }
+    Ok(path)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum FieldType {
     Integer,
@@ -577,23 +652,28 @@ impl FieldType {
 }
 
 impl Field {
-    fn from_str(input: &[&str]) -> Result<Field, Error> {
-        if input.is_empty() || input[0].is_empty() {
+    fn from_str(value_str: &str) -> Result<Field, Error> {
+        if value_str.is_empty() {
             return Ok(Self::default());
         }
-        let value_str = input[0];
         let normalized_value_str = if value_str.starts_with("card.") {
             value_str.replacen("card.", "c.", 1)
         } else {
             value_str.to_string()
         };
-        if input.len() > 1
-            && normalized_value_str.as_str() != "custom_data"
-            && normalized_value_str.as_str() != "c.custom_data"
-        {
-            return Err(miette!(
-                "`:` only follows `custom_data` or `c.custom_data`, as in `custom_data:\"$.x\"=1`. To search a field, use `=` or `~`, as in `tag=math`."
-            ));
+        // A path into custom data, like `custom_data.x.y[1]`.
+        for (prefix, is_card) in [("custom_data", false), ("c.custom_data", true)] {
+            if let Some(path) = normalized_value_str.strip_prefix(prefix)
+                && (path.starts_with('.') || path.starts_with('['))
+            {
+                let path = json_path(path)
+                    .map_err(|e| e.wrap_err(format!("in the path of `{value_str}`")))?;
+                return Ok(if is_card {
+                    Field::Card(CardField::CustomData(path))
+                } else {
+                    Field::Note(NoteField::CustomData(path))
+                });
+            }
         }
         match normalized_value_str.as_str() {
             "id" => Ok(Field::Note(NoteField::Id)),
@@ -603,14 +683,7 @@ impl Field {
             "parser_name" => Ok(Field::Note(NoteField::ParserName)),
             "tag" => Ok(Field::Note(NoteField::Tag)),
             "keyword" => Ok(Field::Note(NoteField::Keyword)),
-            "custom_data" => {
-                // if input.len() != 2 {
-                //     return Err(miette!("Custom data expects 2 inputs"));
-                // }
-                Ok(Field::Note(NoteField::CustomData(
-                    input.get(1).map(|x| (*x).to_string()).unwrap_or_default(),
-                )))
-            }
+            "custom_data" => Ok(Field::Note(NoteField::CustomData("$".to_string()))),
             "linked_to_note" => Ok(Field::Note(NoteField::LinkedToNote)),
             "linked_to_keyword" => Ok(Field::Note(NoteField::LinkedToKeyword)),
             "linked_from_note" => Ok(Field::Note(NoteField::LinkedFromNote)),
@@ -627,15 +700,7 @@ impl Field {
             "c.scheduler_buried" => Ok(Field::Card(CardField::SchedulerBuried)),
             "c.waiting_on_links" => Ok(Field::Card(CardField::WaitingOnLinks)),
             "c.state" => Ok(Field::Card(CardField::State)),
-            "c.custom_data" => {
-                // if input.len() != 2 {
-                //     return Err(miette!("Custom data expects 2 inputs"));
-                // }
-                // Ok(Field::Card(CardField::CustomData(input[1].to_string())))
-                Ok(Field::Card(CardField::CustomData(
-                    input.get(1).map(|x| (*x).to_string()).unwrap_or_default(),
-                )))
-            }
+            "c.custom_data" => Ok(Field::Card(CardField::CustomData("$".to_string()))),
             "c.rated" => Ok(Field::Card(CardField::Rated)),
             "c.count" => Ok(Field::Card(CardField::Count)),
             "c.cloze" => Ok(Field::Card(CardField::Cloze)),
@@ -681,9 +746,10 @@ impl Field {
                         value_str
                     )
                 }
+                // Never NULL, so `-custom_data.x=1` matches notes without `x`.
                 NoteField::CustomData(json_path) => {
                     format!(
-                        "json_extract(n.custom_data, {}) {}",
+                        "COALESCE(json_extract(n.custom_data, {}) {}, 0)",
                         sql_string(json_path),
                         value_str
                     )
@@ -743,7 +809,7 @@ impl Field {
                 CardField::State => with_op("c.state"),
                 CardField::CustomData(json_path) => {
                     format!(
-                        "json_extract(c.custom_data, {}) {}",
+                        "COALESCE(json_extract(c.custom_data, {}) {}, 0)",
                         sql_string(json_path),
                         value_str
                     )
@@ -1121,6 +1187,7 @@ impl Evaluate for TokenTree<'_> {
         let requirements = self.analyze_requirements()?;
         context.table_requirements.merge(&requirements);
         match self {
+            TokenTree::Atom(Atom::Field(name)) => evaluate_bare_field(name, context),
             TokenTree::Atom(atom) => atom.evaluate(context),
             TokenTree::Cons(op, trees) => match op {
                 Op::And | Op::Or | Op::Group => {
@@ -1192,14 +1259,6 @@ impl Evaluate for TokenTree<'_> {
                     Ok(())
                 }
                 Op::Minus => evaluate_minus(trees, context),
-                Op::Colon => {
-                    if context.root_context {
-                        return Err(miette!(
-                            "`:` only follows `custom_data` or `c.custom_data`, as in `custom_data:\"$.x\"=1`. To search a field, use `=` or `~`, as in `tag=math`."
-                        ));
-                    }
-                    evaluate_colon(trees, context)
-                }
                 Op::GreaterThan
                 | Op::GreaterThanEqual
                 | Op::LessThan
@@ -1215,7 +1274,7 @@ impl TokenTree<'_> {
     fn analyze_requirements(&self) -> Result<TableRequirements, Error> {
         match self {
             TokenTree::Atom(Atom::Field(field)) => {
-                Ok(TableRequirements::analyze_field(Field::from_str(&[field])?))
+                Ok(TableRequirements::analyze_field(Field::from_str(field)?))
             }
             TokenTree::Cons(_, trees) => {
                 let mut requirements = TableRequirements::default();
@@ -1236,18 +1295,19 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     let mut inner_context = context.child();
     if !matches!(
         trees[0],
-        TokenTree::Cons(
-            Op::GreaterThan
-                | Op::GreaterThanEqual
-                | Op::LessThan
-                | Op::LessThanEqual
-                | Op::Equal
-                | Op::Tilde
-                | Op::Group
-                | Op::And
-                | Op::Or,
-            _
-        )
+        TokenTree::Atom(Atom::Field(_))
+            | TokenTree::Cons(
+                Op::GreaterThan
+                    | Op::GreaterThanEqual
+                    | Op::LessThan
+                    | Op::LessThanEqual
+                    | Op::Equal
+                    | Op::Tilde
+                    | Op::Group
+                    | Op::And
+                    | Op::Or,
+                _
+            )
     ) {
         return Err(miette!("Minus operation requires a comparison operand."));
     }
@@ -1275,30 +1335,26 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     Ok(())
 }
 
-fn evaluate_colon(trees: &[TokenTree], context: &mut EvaluationContext) -> Result<(), Error> {
-    if trees.len() != 2 {
-        return Err(miette!("Colon operation requires exactly two operands"));
-    }
-    let mut field_context = context.child();
-    trees[0].evaluate(&mut field_context)?;
-    if field_context.params.len() != 1 {
-        return Err(miette!("Expected 1 field param in colon operator"));
-    }
-
-    let mut data_context = context.child();
-    trees[1].evaluate(&mut data_context)?;
-    if data_context.params.len() != 1 {
-        return Err(miette!("Expected 1 data param in colon operator"));
-    }
-
-    context.field = Some(Field::from_str(&[
-        &field_context.params[0],
-        &data_context.params[0],
-    ])?);
-
-    context
-        .table_requirements
-        .merge(&data_context.table_requirements);
+/// A field on its own, which is a condition only for a custom data path like `custom_data.flag`:
+/// the key is there and its value is not `false` or `null`. A boolean field on its own, like
+/// `c.suspended`, was already given `=true` by the lexer.
+fn evaluate_bare_field(name: &str, context: &mut EvaluationContext) -> Result<(), Error> {
+    let (column, path) = match Field::from_str(name)? {
+        Field::Note(NoteField::CustomData(path)) => ("n.custom_data", path),
+        Field::Card(CardField::CustomData(path)) => ("c.custom_data", path),
+        _ => {
+            let example = field_example(name).unwrap_or("tag=math");
+            return Err(miette!(
+                "`{name}` needs a comparison and a value, as in `{example}`"
+            ));
+        }
+    };
+    // `json_type` is NULL for a missing key, so a missing key doesn't match, and `-custom_data.x`
+    // does.
+    context.add_where_clause(format!(
+        "COALESCE(json_type({column}, {}) NOT IN ('false', 'null'), 0)",
+        sql_string(&path)
+    ));
     Ok(())
 }
 
@@ -1344,7 +1400,7 @@ fn sortable_fields() -> Vec<&'static str> {
         .iter()
         .map(|doc| doc.name)
         .filter(|name| {
-            Field::from_str(&[name]).is_ok_and(|field| Field::to_order_by_expr(&field).is_ok())
+            Field::from_str(name).is_ok_and(|field| Field::to_order_by_expr(&field).is_ok())
         })
         .collect()
 }
@@ -1355,7 +1411,7 @@ pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
         .iter()
         .map(|doc| crate::search::FieldInfo {
             name: doc.name,
-            kind: Field::from_str(&[doc.name]).map_or("", |field| field.kind_name()),
+            kind: Field::from_str(doc.name).map_or("", |field| field.kind_name()),
             example: doc.example,
             about: doc.about,
         })
@@ -1413,25 +1469,15 @@ fn evaluate_field_value(
 
     // First tree should be the field
     let mut field_context = context.child();
-    if !matches!(
-        trees[0],
-        // `Op::Colon` is for Json
-        TokenTree::Atom(Atom::Field(_)) | TokenTree::Cons(Op::Colon, _)
-    ) {
+    let TokenTree::Atom(field_atom @ Atom::Field(_)) = &trees[0] else {
         return Err(miette!("An operator requires a field to operate on."));
-    }
-    trees[0].evaluate(&mut field_context)?;
+    };
+    field_atom.evaluate(&mut field_context)?;
     let field = field_context
         .field
         .ok_or_else(|| miette!("Missing field"))?;
     // The field as written, for errors.
-    let field_name = match &trees[0] {
-        TokenTree::Cons(Op::Colon, children) => match children.as_slice() {
-            [field, path] => format!("{field}:{path}"),
-            _ => trees[0].to_string(),
-        },
-        tree => tree.to_string(),
-    };
+    let field_name = trees[0].to_string();
     let field_type = field.get_field_type();
 
     // Second tree should be the value
@@ -1570,7 +1616,7 @@ fn evaluate_field_value(
                     "Missing a field in `{rhs}`. Separate fields with `,`, as in `sort_by_asc=c.due,c.stability`"
                 ));
             }
-            let target_field = Field::from_str(&[rhs_field_name])?;
+            let target_field = Field::from_str(rhs_field_name)?;
             let order_expr = Field::to_order_by_expr(&target_field).map_err(|e| {
                 miette!(
                     help = format!(
@@ -1662,7 +1708,7 @@ fn evaluate_field_value(
                 }
             }
         }
-        Op::Group | Op::And | Op::Or | Op::Minus | Op::Colon => unreachable!(),
+        Op::Group | Op::And | Op::Or | Op::Minus => unreachable!(),
     }
     if matches!(field, Field::Note(NoteField::Tag))
         && !matches!(op, Op::Equal)
@@ -1831,7 +1877,7 @@ pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
 fn has_cloze_field(tree: &TokenTree) -> bool {
     match tree {
         TokenTree::Atom(Atom::Field(f)) => {
-            Field::from_str(&[f]).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
+            Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
         }
         TokenTree::Cons(_, children) => children.iter().any(has_cloze_field),
         TokenTree::Atom(_) => false,
@@ -1845,7 +1891,7 @@ fn extract_cloze_patterns(tree: &TokenTree) -> Vec<ClozePattern> {
             let is_cloze = matches!(
                 &children[0],
                 TokenTree::Atom(Atom::Field(f))
-                if Field::from_str(&[f]).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
+                if Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::Cloze)))
             );
             if is_cloze {
                 return match &children[1] {
@@ -1878,7 +1924,7 @@ impl Evaluate for Atom<'_> {
     fn evaluate(&self, context: &mut EvaluationContext) -> Result<(), Error> {
         match self {
             Atom::Field(field) => {
-                context.field = Some(Field::from_str(&[field])?);
+                context.field = Some(Field::from_str(field)?);
                 context.params.push((*field).to_string());
                 Ok(())
             }
@@ -2044,13 +2090,22 @@ mod tests {
             ),
             // Custom data - no joins needed
             (
-                "custom_data:\"$.x.y[1]\">=123",
-                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.x.y[1]') >= 123 ORDER BY n.id ASC",
+                "custom_data.x.y[1]>=123",
+                "SELECT DISTINCT n.id FROM note n WHERE COALESCE(json_extract(n.custom_data, '$.x.y[1]') >= 123, 0) ORDER BY n.id ASC",
             ),
             // Custom data with string value containing special characters
             (
-                r#"custom_data:"$.card_key"="preflop-hand|SB|K5o|default""#,
-                "SELECT DISTINCT n.id FROM note n WHERE json_extract(n.custom_data, '$.card_key') = 'preflop-hand|SB|K5o|default' ORDER BY n.id ASC",
+                r#"custom_data.card_key="preflop-hand|SB|K5o|default""#,
+                "SELECT DISTINCT n.id FROM note n WHERE COALESCE(json_extract(n.custom_data, '$.card_key') = 'preflop-hand|SB|K5o|default', 0) ORDER BY n.id ASC",
+            ),
+            // A path on its own: the key is there and isn't `false` or `null`
+            (
+                "custom_data.flag -card.custom_data.a.b[0]",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (COALESCE(json_type(n.custom_data, '$.flag') NOT IN ('false', 'null'), 0) AND NOT (COALESCE(json_type(c.custom_data, '$.a.b[0]') NOT IN ('false', 'null'), 0))) ORDER BY n.id ASC",
+            ),
+            (
+                "-custom_data.a.b=true c.custom_data.array[0].key>=1",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (NOT (COALESCE(json_extract(n.custom_data, '$.a.b') = true, 0)) AND COALESCE(json_extract(c.custom_data, '$.array[0].key') >= 1, 0)) ORDER BY n.id ASC",
             ),
             // Regex search
             (
@@ -2092,8 +2147,8 @@ mod tests {
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE p.name = 'name' ORDER BY n.id ASC",
             ),
             (
-                r#"custom_data:"$.a's">=1 tag="a_b""#,
-                r"SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (json_extract(n.custom_data, '$.a''s') >= 1 AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')))) ORDER BY n.id ASC",
+                r#"custom_data["a's key"]>=1 tag="a_b""#,
+                r#"SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (COALESCE(json_extract(n.custom_data, '$."a''s key"') >= 1, 0) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'a\_b' ESCAPE '\' OR t.name LIKE 'a\_b:%' ESCAPE '\')))) ORDER BY n.id ASC"#,
             ),
             // Words that start with a keyword, numbers and bare boolean fields
             (
@@ -2128,7 +2183,7 @@ mod tests {
     #[test]
     fn field_names_are_fields() {
         for field in FIELDS {
-            assert!(Field::from_str(&[field.name]).is_ok(), "{}", field.name);
+            assert!(Field::from_str(field.name).is_ok(), "{}", field.name);
         }
     }
 
@@ -2164,7 +2219,7 @@ mod tests {
         assert_eq!(similar_fields("c.stabilty"), ["c.stability"]);
         assert_eq!(similar_fields("Keywords"), ["keyword"]);
         assert_eq!(similar_fields("zebra"), Vec::<&str>::new());
-        let error = Field::from_str(&["sort_by"]).unwrap_err().to_string();
+        let error = Field::from_str("sort_by").unwrap_err().to_string();
         assert_eq!(
             error,
             "Unknown field `sort_by`: did you mean `sort_by_asc` or `sort_by_desc`?"
@@ -2197,10 +2252,15 @@ mod tests {
             "c.suspended>2", // Booleans do not have an order
             // String as field is not allowed
             "\"test\"=2",
-            // Custom data with field, but no comparison op
-            "custom_data:\"$.x.y[1]\"",
-            "-custom_data:\"$.x.y[1]\"",
-            "custom_data:\"$.x.y[1]\" and",
+            // The old form of custom data paths
+            "custom_data:\"$.x.y[1]\"=1",
+            // Malformed custom data paths
+            "custom_data.x.=1",
+            "custom_data..x=1",
+            "custom_data[x]=1",
+            "custom_data[]",
+            r#"custom_data["a\"b"]=1"#,
+            "custom_data.x and",
             // Dangling operator
             "tag=math and",
             "or tag=math",
@@ -2521,6 +2581,48 @@ mod tests {
             search(&format!("created_at>{}", today.format("%Y"))).await,
             Vec::<String>::new()
         );
+    }
+
+    #[sqlx::test]
+    async fn searches_custom_data(pool: SqlitePool) {
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let notes = [
+            ("a", r#"{"flag": true, "n": 0, "x": {"y": ["z", "zz"]}}"#),
+            ("b", r#"{"flag": false, "s": ""}"#),
+            ("c", "{}"),
+            ("d", r#"{"flag": null, "a's key": 2}"#),
+        ];
+        for (letters, custom_data) in notes {
+            sqlx::query(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, ?, 1)",
+            )
+            .bind(letters.parse::<NoteId>().unwrap())
+            .bind(custom_data)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let search = async |query: &str| {
+            Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(search("custom_data.flag").await, ["a"]);
+        assert_eq!(search("-custom_data.flag").await, ["b", "c", "d"]);
+        assert_eq!(search("not custom_data.flag").await, ["b", "c", "d"]);
+        // `0` and `""` are there.
+        assert_eq!(search("custom_data.n or custom_data.s").await, ["a", "b"]);
+        assert_eq!(search("custom_data.x.y[1]=zz").await, ["a"]);
+        assert_eq!(search("-custom_data.x.y[1]=zz").await, ["b", "c", "d"]);
+        assert_eq!(search("custom_data.flag=false").await, ["b"]);
+        assert_eq!(search(r#"custom_data["a's key"]>=1"#).await, ["d"]);
     }
 
     #[test]

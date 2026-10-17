@@ -167,7 +167,16 @@
 //!
 //! ### JSON
 //!
-//! JSON data can be queried using [JSONPath syntax](https://jsonpath.com/). The query result must be a boolean, number, or string. Use corresponding operators to filter results.
+//! A value in a note's custom data is written as a path after `custom_data` (or `c.custom_data`
+//! for a card's), the way `c.due` and `note[gir].created_at` are: `.key` steps into an object and
+//! `[n]` into an array. A key that isn't a plain word goes in quotes inside brackets, as in
+//! `custom_data["a's key"]`. The path goes to SQLite's `json_extract`, which has only these two
+//! kinds of steps, so there are no filters or `..`.
+//!
+//! Compare the value with the operators of its type. A path on its own means the key is there and
+//! its value is not `false` or `null`, so `custom_data.flag` skips `"flag": false`, like a bare
+//! `c.suspended` means `=true`, and `0` and `""` count as there. `-` matches the notes without the
+//! key too: `-custom_data.flag` and `-custom_data.a.b=true` match a note with no custom data.
 //!
 //! **Example JSON:**
 //! ```json
@@ -182,14 +191,20 @@
 //!         {
 //!             "key": 1
 //!         }
-//!     ]
+//!     ],
+//!     "a's key": 2
 //! }
 //! ```
 //!
 //! **Examples:**
-//! - `custom_data:"$.x.y[1]"=zz`
-//! - `-custom_data:"$.a.b"=true`
-//! - `custom_data:"$.array[0].key">=1`
+//! - `custom_data.x.y[1]=zz`
+//! - `-custom_data.a.b=true`
+//! - `custom_data.array[0].key>=1`
+//! - `custom_data["a's key"]>=1`
+//! - `custom_data.x`: the note has an `x`.
+//! - `custom_data.card_key="preflop-hand|SB|K5o|default"`
+//!
+//! Before October 2026, paths were written `custom_data:"$.x.y[1]"`. That form is now an error.
 //!
 //! ### Sorting
 //!
@@ -386,7 +401,6 @@ pub(crate) enum TokenKind {
     LessThanEqual,
     /// `!=`, which the parser turns into `-(field=value)`.
     NotEqual,
-    Colon,
     Tilde,
     // Grouping
     LeftParen,
@@ -413,7 +427,6 @@ impl TokenKind {
             TokenKind::LessThan => "`<`",
             TokenKind::LessThanEqual => "`<=`",
             TokenKind::NotEqual => "`!=`",
-            TokenKind::Colon => "`:`",
             TokenKind::Tilde => "`~`",
             TokenKind::LeftParen => "`(`",
             TokenKind::RightParen => "`)`",
@@ -497,7 +510,6 @@ pub(crate) enum Op {
     GreaterThanEqual,
     LessThan,
     LessThanEqual,
-    Colon,
     Tilde,
     Group, // parens
 }
@@ -516,7 +528,6 @@ impl fmt::Display for Op {
                 Op::GreaterThanEqual => ">=",
                 Op::LessThan => "<",
                 Op::LessThanEqual => "<=",
-                Op::Colon => ":",
                 Op::Tilde => "~",
                 Op::Group => "group",
             }

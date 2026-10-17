@@ -85,7 +85,7 @@ impl Iterator for Lexer<'_> {
             Some('>') if self.s.eat_if('=') => just(TokenKind::GreaterThanEqual, self.s.cursor()),
             Some('>') => just(TokenKind::GreaterThan, self.s.cursor()),
             Some('!') if self.s.eat_if('=') => just(TokenKind::NotEqual, self.s.cursor()),
-            Some(':') => just(TokenKind::Colon, self.s.cursor()),
+            Some(':') => return Some(Err(self.colon_error(cursor_start))),
             Some('~') => just(TokenKind::Tilde, self.s.cursor()),
             Some(open) if is_quote(open) => match self.parse_string(open, false) {
                 Ok(close_len) => Ok(Token {
@@ -124,7 +124,13 @@ impl Iterator for Lexer<'_> {
                 }
                 let kind = match self.eat_reference(cursor_start) {
                     Ok(true) => TokenKind::RelativeDate,
-                    Ok(false) => self.classify_word(cursor_start),
+                    Ok(false) => match self.eat_custom_data_path(cursor_start) {
+                        // A path on its own, like `custom_data.flag`, means the key is there.
+                        Ok(true) if !self.prev_takes_value() => TokenKind::Field,
+                        Ok(true) => TokenKind::String,
+                        Ok(false) => self.classify_word(cursor_start),
+                        Err(e) => return Some(Err(e)),
+                    },
                     Err(e) => return Some(Err(e)),
                 };
                 just(kind, self.s.cursor())
@@ -168,12 +174,11 @@ fn takes_value(kind: TokenKind) -> bool {
             | TokenKind::LessThan
             | TokenKind::LessThanEqual
             | TokenKind::NotEqual
-            | TokenKind::Colon
     )
 }
 
 /// Whether `c` delimits a string. Curly double quotes are accepted since phone keyboards insert them in place of `"`.
-fn is_quote(c: char) -> bool {
+pub(crate) fn is_quote(c: char) -> bool {
     matches!(c, '"' | '\u{201C}' | '\u{201D}')
 }
 
@@ -299,6 +304,55 @@ impl Lexer<'_> {
         }
         self.s.eat_while(is_word_char);
         Ok(true)
+    }
+
+    /// After the word starting at `start`, consumes the rest of a path into custom data, like the
+    /// `[1].z` of `custom_data.x.y[1].z` or the `["a's key"]` of `c.custom_data["a's key"]`,
+    /// returning whether the word is such a path. The evaluator validates the path.
+    fn eat_custom_data_path(&mut self, start: usize) -> Result<bool, Error> {
+        let word = self.s.from(start);
+        let is_path = ["custom_data", "c.custom_data", "card.custom_data"]
+            .iter()
+            .any(|prefix| {
+                word.strip_prefix(prefix).is_some_and(|rest| {
+                    rest.starts_with('.') || (rest.is_empty() && self.s.peek() == Some('['))
+                })
+            });
+        if !is_path {
+            return Ok(false);
+        }
+        while self.s.eat_if('[') {
+            let bracket = self.s.cursor() - 1;
+            match self.s.peek() {
+                Some(open) if is_quote(open) => {
+                    self.s.eat();
+                    self.parse_string(open, false)?;
+                }
+                _ => {
+                    self.s.eat_while(|c: char| c != ']' && !c.is_whitespace());
+                }
+            }
+            if !self.s.eat_if(']') {
+                return Err(miette::miette! {
+                    labels = vec![LabeledSpan::at(bracket..self.s.cursor(), "this `[`")],
+                    "Missing `]`",
+                }
+                .with_source_code(self.s.string().to_string()));
+            }
+            self.s.eat_while(is_word_char);
+        }
+        Ok(true)
+    }
+
+    /// The error for a `:` at `start`, which used to start a path into custom data, as in
+    /// `custom_data:"$.x"`, and is now never valid outside quotes.
+    fn colon_error(&self, start: usize) -> Error {
+        miette::miette! {
+            labels = vec![LabeledSpan::at(start..start + 1, "this `:`")],
+            help = "Compare a field with `=` or `~`, as in `tag=math`, and write a path into custom data after a `.`, as in `custom_data.x=1`. Quote text that has a `:`, as in `tag=\"math:algebra\"`",
+            "Unexpected `:`",
+        }
+        .with_source_code(self.s.string().to_string())
     }
 
     /// Whether the input after `prefix` starts with a quote character.
@@ -674,39 +728,40 @@ mod tests {
     }
 
     #[test]
-    fn test_json_pointer() {
-        let input = r#"custom_data:"$.x.y[1]"=zz and -custom_data:"$.a.b"=true and custom_data:"$.array[0].key">=1"#;
-        let lexer = Lexer::new(input);
-        let tokens = lexer
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .into_iter()
-            .map(|t| (t.kind, &input[t.span]))
-            .collect::<Vec<_>>();
+    fn test_custom_data_paths() {
         assert_eq!(
-            tokens,
+            lex(r#"custom_data.x.y[1]=zz -c.custom_data["a's \"key"][0].b custom_data"#),
             vec![
-                (TokenKind::Field, "custom_data"),
-                (TokenKind::Colon, ":"),
-                (TokenKind::String, "$.x.y[1]"),
+                (TokenKind::Field, "custom_data.x.y[1]"),
                 (TokenKind::Equal, "="),
                 (TokenKind::String, "zz"),
-                (TokenKind::And, "and"),
+                (TokenKind::And, ""),
                 (TokenKind::Minus, "-"),
-                (TokenKind::Field, "custom_data"),
-                (TokenKind::Colon, ":"),
-                (TokenKind::String, "$.a.b"),
-                (TokenKind::Equal, "="),
-                (TokenKind::True, "true"),
-                (TokenKind::And, "and"),
-                (TokenKind::Field, "custom_data"),
-                (TokenKind::Colon, ":"),
-                (TokenKind::String, "$.array[0].key"),
-                (TokenKind::GreaterThanEqual, ">="),
-                (TokenKind::Integer(1), "1"),
+                (TokenKind::Field, r#"c.custom_data["a's \"key"][0].b"#),
+                (TokenKind::And, ""),
+                (TokenKind::Field, ""),
+                (TokenKind::Tilde, ""),
+                (TokenKind::String, "custom_data"),
             ]
         );
+        assert_eq!(
+            lex("sort_by_asc=custom_data.x"),
+            vec![
+                (TokenKind::Field, "sort_by_asc"),
+                (TokenKind::Equal, "="),
+                (TokenKind::String, "custom_data.x"),
+            ]
+        );
+        for input in [
+            "custom_data[0",
+            r#"custom_data["a"=1"#,
+            r#"custom_data:"$.x"=1"#,
+        ] {
+            assert!(
+                Lexer::new(input).collect::<Result<Vec<_>, _>>().is_err(),
+                "{input}"
+            );
+        }
     }
 
     #[test]

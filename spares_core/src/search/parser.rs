@@ -259,10 +259,6 @@ impl<'de> Parser<'de> {
                     kind: TokenKind::Tilde,
                     ..
                 }) => Op::Tilde,
-                Some(Token {
-                    kind: TokenKind::Colon,
-                    ..
-                }) => Op::Colon,
                 Some(token) => {
                     return Err(error_at(
                         self.whole,
@@ -409,7 +405,6 @@ fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
         Op::And => (3, 4),
         Op::LessThan | Op::LessThanEqual | Op::GreaterThan | Op::GreaterThanEqual => (6, 5),
         Op::Equal | Op::Tilde => (11, 10),
-        Op::Colon => (13, 12),
         // Op::Field => (16, 15),
         _ => return None,
     };
@@ -561,23 +556,14 @@ mod tests {
 
     #[test]
     fn test_parser_equals_associativity() {
-        let input = r#"custom_data:"$.array[0].key">=1"#;
-        let parser = Parser::new(input);
-        let token_tree_res = parser.parse_expression();
-        assert!(token_tree_res.is_ok());
-        let token_tree = token_tree_res.unwrap();
+        let input = r"custom_data.array[0].key>=1";
+        let token_tree = Parser::new(input).parse_expression().unwrap();
         assert_eq!(
             token_tree,
             TokenTree::Cons(
                 Op::GreaterThanEqual,
                 vec![
-                    TokenTree::Cons(
-                        Op::Colon,
-                        vec![
-                            TokenTree::Atom(Atom::Field(Cow::Borrowed("custom_data"))),
-                            TokenTree::Atom(Atom::String(Cow::Borrowed("$.array[0].key"))),
-                        ]
-                    ),
+                    TokenTree::Atom(Atom::Field(Cow::Borrowed("custom_data.array[0].key"))),
                     TokenTree::Atom(Atom::Integer(1)),
                 ]
             )
