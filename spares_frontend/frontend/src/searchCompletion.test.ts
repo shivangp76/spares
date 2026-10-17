@@ -2,8 +2,11 @@ import { expect, test } from 'bun:test';
 import { applyCompletion, needsQuotes, searchCompletions } from './searchCompletion';
 import type { SearchField } from './types/spares';
 
-const field = (name: string, sortable = true): SearchField => ({ name, kind: '', example: '', about: '', sortable });
-const fields = [field('tag'), field('c.due'), field('c.state'), field('c.stability'), field('created_at'), field('c.cloze', false)];
+const field = (name: string, sortable = true, values: string[] = []): SearchField => ({ name, kind: '', example: '', about: '', sortable, values });
+const fields = [
+  field('tag'), field('c.due'), field('c.state', true, ['new', 'learning', 'review', 'relearning']), field('c.stability'), field('created_at'),
+  field('c.cloze', false),
+];
 const tags = ['math', 'math:algebra', 'physics', 'Mathematics'];
 
 /** The labels suggested with the caret at `|` in `query`. */

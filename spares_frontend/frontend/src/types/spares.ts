@@ -529,6 +529,8 @@ export interface SearchField {
   example: string;
   about: string;
   sortable: boolean;
+  /** The values it can hold, if they are a few names, like `review` for `c.state`. */
+  values: string[];
 }
 
 /** An example query, from `/api/search/examples`. */

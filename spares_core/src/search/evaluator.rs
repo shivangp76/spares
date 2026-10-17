@@ -1634,6 +1634,12 @@ pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
                 kind: field.as_ref().map_or("", Field::kind_name),
                 example: doc.example,
                 about: doc.about,
+                values: match field {
+                    Ok(Field::Card(CardField::State)) => {
+                        CARD_STATES.iter().map(|(name, _)| *name).collect()
+                    }
+                    _ => Vec::new(),
+                },
                 sortable: field.is_ok_and(|field| Field::to_order_by_expr(&field).is_ok()),
             }
         })
@@ -2959,6 +2965,18 @@ mod tests {
     fn field_names_are_fields() {
         for field in FIELDS {
             assert!(Field::from_str(field.name).is_ok(), "{}", field.name);
+        }
+    }
+
+    #[test]
+    fn state_field_names_every_state() {
+        let state = field_infos()
+            .into_iter()
+            .find(|f| f.name == "c.state")
+            .unwrap();
+        assert_eq!(state.values, ["new", "learning", "review", "relearning"]);
+        for name in state.values {
+            assert!(state.about.contains(name), "{name}");
         }
     }
 

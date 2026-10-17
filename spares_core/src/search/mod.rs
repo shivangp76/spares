@@ -597,6 +597,8 @@ pub struct FieldInfo {
     pub about: &'static str,
     /// Whether `sort_by_asc` and `sort_by_desc` can sort by it.
     pub sortable: bool,
+    /// The values it can hold, if they are a few names, like `review` for `c.state`.
+    pub values: Vec<&'static str>,
 }
 
 /// Every field that queries can use, in the order they are documented.

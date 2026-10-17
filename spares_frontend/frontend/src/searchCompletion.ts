@@ -13,9 +13,14 @@ export interface Completions {
   items: Completion[];
 }
 
-const CARD_STATES = ['new', 'learning', 'review', 'relearning'];
 const KEYWORDS = ['and', 'or', 'not'];
 const OPERATOR = /^([\p{L}\p{N}_.[\]]+?)(!=|<=|>=|=|~|<|>)(.*)$/su;
+
+/** The names a field can hold, like the card states of `c.state`, which is also written `card.state`. */
+function valuesOf(field: string, fields: SearchField[]): string[] {
+  const name = field.replace(/^card\./, 'c.');
+  return fields.find(f => f.name === name)?.values ?? [];
+}
 
 /** Whether `c` ends a term, outside quotes. */
 const endsTerm = (c: string) => /[\s()"]/.test(c);
@@ -32,8 +37,8 @@ function written(value: string): string {
 
 /**
  * The suggestions for the term the caret is at in `query`: field names while a field is typed,
- * and after `tag=`, `c.state=` or a sort, the tags, states or sortable fields. Null when there are
- * none.
+ * and after `tag=`, a field of a few values like `c.state=`, or a sort, the tags, values or sortable
+ * fields. Null when there are none.
  */
 export function searchCompletions(
   query: string,
@@ -76,8 +81,8 @@ export function searchCompletions(
   if (field === 'tag' && ['=', '!=', '~'].includes(op)) {
     const contains = (tag: string) => op === '~' ? tag.toLowerCase().includes(typed.toLowerCase()) : startsWith(tag, typed);
     candidates = tags.filter(t => t !== typed && contains(t)).map(t => ({ label: t, insert: written(t) }));
-  } else if ((field === 'c.state' || field === 'card.state') && ['=', '!='].includes(op)) {
-    candidates = CARD_STATES.filter(s => s !== typed && startsWith(s, typed)).map(s => ({ label: s, insert: s }));
+  } else if (valuesOf(field, fields).length > 0 && ['=', '!='].includes(op)) {
+    candidates = valuesOf(field, fields).filter(s => s !== typed && startsWith(s, typed)).map(s => ({ label: s, insert: s }));
   } else if ((field === 'sort_by_asc' || field === 'sort_by_desc') && op === '=' && openQuote === null) {
     // A sort lists fields separated by `,`, and the last one is being typed
     const last = typed.slice(typed.lastIndexOf(',') + 1);
