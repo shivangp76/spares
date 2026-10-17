@@ -15,7 +15,8 @@ use crate::api::browser_render::sync_render_assets;
 use crate::api::execute_batched_query;
 use crate::api::note::create_note_links;
 use crate::api::note::get_keywords;
-use crate::api::note::keyword_distance::weighted_levenshtein;
+use crate::api::note::keyword_distance::NormalizedKeyword;
+use crate::api::note::keyword_distance::keyword_distance;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::config::SparesExternalConfig;
@@ -49,28 +50,57 @@ pub struct RenderNoteData {
     pub tags_value: Value,
 }
 
+/// Keywords of all notes, normalized once so that many searched keywords can be matched
+/// against them.
+pub struct KeywordMatcher<'a> {
+    keywords: Vec<(NoteId, &'a str, NormalizedKeyword)>,
+}
+
+impl<'a> KeywordMatcher<'a> {
+    pub fn new(keywords: &'a [(NoteId, String)]) -> Self {
+        Self {
+            keywords: keywords
+                .par_iter()
+                .map(|(id, keyword)| (*id, keyword.as_str(), NormalizedKeyword::new(keyword)))
+                .collect(),
+        }
+    }
+
+    /// All keywords matching `searched_keyword`, in no particular order.
+    pub fn matches(&self, searched_keyword: &str) -> Vec<MatchedKeywordResponse> {
+        let searched = NormalizedKeyword::new(searched_keyword);
+        self.keywords
+            .par_iter()
+            .filter_map(|(note_id, keyword, normalized)| {
+                keyword_distance(&searched, normalized).map(|score| MatchedKeywordResponse {
+                    matched_keyword: (*keyword).to_string(),
+                    note_id: *note_id,
+                    score,
+                })
+            })
+            .collect()
+    }
+
+    /// The closest keyword to `searched_keyword`. Ties go to a keyword with the same case, then
+    /// to the lowest note id.
+    pub fn best_match(&self, searched_keyword: &str) -> Option<MatchedKeywordResponse> {
+        self.matches(searched_keyword).into_iter().min_by(|a, b| {
+            a.score
+                .total_cmp(&b.score)
+                .then_with(|| {
+                    (a.matched_keyword != searched_keyword)
+                        .cmp(&(b.matched_keyword != searched_keyword))
+                })
+                .then_with(|| a.note_id.cmp(&b.note_id))
+        })
+    }
+}
+
 pub fn match_keyword(
     searched_keyword: &str,
     keywords: &[(NoteId, String)],
 ) -> Vec<MatchedKeywordResponse> {
-    let searched_keyword_lower = searched_keyword.to_ascii_lowercase();
-    keywords
-        .par_iter()
-        .filter_map(|(id, keyword)| {
-            weighted_levenshtein(
-                searched_keyword_lower.as_str(),
-                keyword.to_ascii_lowercase().as_str(),
-            )
-            .map(|score| ((id, keyword), score))
-        })
-        .map(
-            |((note_id, matched_keyword), score)| MatchedKeywordResponse {
-                matched_keyword: matched_keyword.clone(),
-                note_id: *note_id,
-                score,
-            },
-        )
-        .collect::<Vec<_>>()
+    KeywordMatcher::new(keywords).matches(searched_keyword)
 }
 
 pub async fn get_render_note_data(
@@ -145,17 +175,11 @@ fn rematch_note_links(
     existing_note_links: &[NoteLink],
     keywords: &[(NoteId, String)],
 ) -> Vec<NoteLink> {
+    let matcher = KeywordMatcher::new(keywords);
     existing_note_links
         .par_iter()
         .filter_map(|existing_link| {
-            let matched_keyword_data = match_keyword(&existing_link.searched_keyword, keywords)
-                .into_iter()
-                .min_by(|a, b| {
-                    a.score
-                        .partial_cmp(&b.score)
-                        // ignore NaN and always rank it last (i.e., treat NaN as largest)
-                        .unwrap_or(std::cmp::Ordering::Greater)
-                });
+            let matched_keyword_data = matcher.best_match(&existing_link.searched_keyword);
             if matched_keyword_data.as_ref().map(|x| x.score) == existing_link.score
                 && (matched_keyword_data
                     .as_ref()
