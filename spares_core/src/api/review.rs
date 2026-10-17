@@ -36,6 +36,7 @@ use crate::api::preset::cap_counts;
 use crate::api::preset::limited_preset_sql;
 use crate::api::preset::preset_index;
 use crate::api::queue::QueueCaps;
+use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
 use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
@@ -545,9 +546,11 @@ pub(crate) fn daily_limits_clause(left: &DailyLimitsLeft, preset: &str) -> Strin
 }
 
 /// The cards an unfiltered review would show on `requested_date`, as a SQL condition with the due
-/// limit inlined. Matches the default `where_clause` built in [`build_review_filter_query`].
+/// limit inlined. Matches the default `where_clause` built in [`build_review_filter_query`], for
+/// a review of `query`.
 async fn review_eligibility_clause(
     db: &SqlitePool,
+    query: &str,
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
@@ -556,9 +559,21 @@ async fn review_eligibility_clause(
         &daily_limits_left_with(db, &config, requested_date).await?,
         &limited_preset_sql(&config.queue),
     );
+    // Only the cards of the query hold others back, which needs the query on its own first
+    let linked_notes_str =
+        if !config.queue.new_after_linked_notes && !config.queue.reviews_after_linked_notes {
+            String::new()
+        } else {
+            let card_ids = Evaluator::new(query).get_card_ids(db).await?;
+            linked_notes_clause(
+                &config.queue,
+                card_due_limit,
+                Some(&card_ids.into_iter().join(", ")),
+            )
+        };
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     Ok(format!(
-        "(c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})",
+        "((c.special_state IS NULL AND c.due <= {}{not_new_card_str}) OR (c.special_state = {buried_state})){linked_notes_str}",
         card_due_limit.timestamp()
     ))
 }
@@ -615,7 +630,7 @@ pub async fn create_review_snapshot_tag(
     };
 
     if rebuilt {
-        let scope = review_eligibility_clause(db, requested_date).await?;
+        let scope = review_eligibility_clause(db, &query, requested_date).await?;
         let card_ids = Evaluator::new(&query)
             .with_scope(scope)
             .get_card_ids(db)
@@ -701,14 +716,17 @@ pub(crate) async fn build_review_filter_query(
     let preset_sql = limited_preset_sql(&config.queue);
     let not_new_card_str = daily_limits_clause(&limits_left, &preset_sql);
     let mut query_sort = Vec::new();
-    let card_id_query_str = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
+    let query_card_ids = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
         query_sort = Evaluator::new(query).card_order_by()?;
         let evaluator = Evaluator::new(query);
-        let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
-        format!("\nAND c.id IN ({})", card_ids_str)
+        Some(evaluator.get_card_ids(db).await?.into_iter().join(", "))
     } else {
-        String::new()
+        None
     };
+    let card_id_query_str = query_card_ids
+        .as_ref()
+        .map(|ids| format!("\nAND c.id IN ({ids})"))
+        .unwrap_or_default();
     let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     let learning_states = learning_states().iter().join(", ");
@@ -742,8 +760,10 @@ pub(crate) async fn build_review_filter_query(
         } else {
             String::new()
         };
+        let linked_notes_str =
+            linked_notes_clause(&config.queue, card_due_limit, query_card_ids.as_deref());
         format!(
-            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}{learn_ahead_str}"
+            "((c.special_state IS NULL AND c.due <= ?{not_new_card_str})\n    OR (c.special_state = {buried_state})){card_id_query_str}{learn_ahead_str}{linked_notes_str}"
         )
     };
     let held_back_clause = (!is_filtered_tag).then(|| {

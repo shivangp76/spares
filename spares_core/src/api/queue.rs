@@ -6,6 +6,7 @@ use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Local;
 use chrono::Utc;
+use indoc::formatdoc;
 use itertools::Itertools;
 
 use crate::api::preset::PresetLimitsLeft;
@@ -17,6 +18,7 @@ use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::model::NEW_CARD_STATE;
+use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::learning_states;
 use crate::schedulers::review_state;
@@ -307,6 +309,59 @@ pub(crate) fn queue_order_by(
     // Groups 0, 2 and 3, and any remaining tie
     keys.extend([asc("c.due"), asc("n.created_at"), asc("c.id")]);
     render(&keys)
+}
+
+/// The cards [`QueueConfig::new_after_linked_notes`] and
+/// [`QueueConfig::reviews_after_linked_notes`] hold back, as a SQL condition over the `c` and `n`
+/// aliases starting with `AND NOT`, to append to a review's `WHERE` clause. Empty when both are
+/// off.
+///
+/// `card_due_limit` is the end of the day, by which a relearning card holds reviews back.
+/// `query_card_ids` are the ids, comma separated, of the cards matching the review's query, if it
+/// has one: only those hold other cards back.
+pub(crate) fn linked_notes_clause(
+    config: &QueueConfig,
+    card_due_limit: DateTime<Utc>,
+    query_card_ids: Option<&str>,
+) -> String {
+    let review = review_state();
+    let [learning, relearning] = learning_states();
+    let mut holds = Vec::new();
+    if config.new_after_linked_notes {
+        holds.push(format!(
+            "(c.state = {NEW_CARD_STATE} AND lc.state IN ({NEW_CARD_STATE}, {learning}))"
+        ));
+    }
+    if config.reviews_after_linked_notes {
+        holds.push(format!(
+            "(c.state = {review} AND lc.state = {relearning} AND lc.due <= {})",
+            card_due_limit.timestamp()
+        ));
+    }
+    if holds.is_empty() {
+        return String::new();
+    }
+    let in_query = query_card_ids
+        .map(|ids| format!("\n        AND lc.id IN ({ids})"))
+        .unwrap_or_default();
+    // Only older notes hold newer ones back, which is a strict order, so there are no cycles
+    formatdoc! {"
+
+        AND NOT EXISTS (
+            SELECT 1 FROM note_link nl
+            JOIN note ln ON ln.id = nl.linked_note_id
+            JOIN card lc ON lc.note_id = ln.id
+            WHERE nl.parent_note_id = c.note_id
+                AND nl.score <= {max_score}
+                AND (ln.created_at, ln.id) < (n.created_at, n.id)
+                AND (lc.special_state IS NULL OR lc.special_state IN ({scheduler_buried}, {buried_until_later_today}))
+                AND ({holds}){in_query}
+        )",
+        max_score = config.linked_note_max_score,
+        scheduler_buried = SpecialState::SchedulerBuried as u8,
+        buried_until_later_today = SpecialState::BuriedUntilLaterToday as u8,
+        holds = holds.join("\n                    OR "),
+    }
 }
 
 #[cfg(test)]
@@ -1262,6 +1317,254 @@ mod sibling_tests {
 }
 
 #[cfg(test)]
+mod linked_note_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::tests::LEARNING;
+    use super::tests::NEW;
+    use super::tests::RELEARNING;
+    use super::tests::REVIEW;
+    use super::tests::create_cards;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::review::ReviewFilterQuery;
+    use crate::api::review::get_cards_left_by_state_and_time_estimate;
+    use crate::helpers::get_start_end_local_date;
+    use crate::model::CardId;
+
+    fn holding(new: bool, reviews: bool) -> QueueConfig {
+        QueueConfig {
+            new_after_linked_notes: new,
+            reviews_after_linked_notes: reviews,
+            ..QueueConfig::default()
+        }
+    }
+
+    /// Links the note of `from` to the note of `to`, with `score`, or to no note if `to` is `None`.
+    async fn link(pool: &SqlitePool, from: CardId, to: Option<CardId>, score: f64) {
+        sqlx::query(
+            r#"INSERT INTO note_link
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+            VALUES (
+                (SELECT note_id FROM card WHERE id = ?),
+                (SELECT note_id FROM card WHERE id = ?),
+                0, 'keyword', 'keyword', ?
+            )"#,
+        )
+        .bind(from)
+        .bind(to)
+        .bind(score)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn set_special_state(pool: &SqlitePool, card: CardId, state: Option<SpecialState>) {
+        sqlx::query(r"UPDATE card SET special_state = ? WHERE id = ?")
+            .bind(state)
+            .bind(card)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// The `where_clause` of an unfiltered review, as `build_review_filter_query` builds it.
+    fn where_clause(
+        config: &QueueConfig,
+        now: DateTime<Utc>,
+        query_card_ids: Option<&str>,
+    ) -> String {
+        let (_, card_due_limit) = get_start_end_local_date(&now);
+        format!(
+            "c.special_state IS NULL AND c.due <= ?{}",
+            linked_notes_clause(config, card_due_limit, query_card_ids)
+        )
+    }
+
+    /// The cards a review would show today.
+    async fn shown_with(
+        pool: &SqlitePool,
+        config: &QueueConfig,
+        now: DateTime<Utc>,
+        query_card_ids: Option<&str>,
+    ) -> Vec<CardId> {
+        let (_, card_due_limit) = get_start_end_local_date(&now);
+        sqlx::query_scalar(&format!(
+            "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
+            where_clause(config, now, query_card_ids)
+        ))
+        .bind(card_due_limit.timestamp())
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn shown(pool: &SqlitePool, config: &QueueConfig, now: DateTime<Utc>) -> Vec<CardId> {
+        shown_with(pool, config, now, None).await
+    }
+
+    #[sqlx::test]
+    async fn new_cards_wait_until_linked_notes_are_learned(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b] = create_cards(&pool, 2, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        let config = holding(true, false);
+
+        assert_eq!(shown(&pool, &config, now).await, [a]);
+        set_card(&pool, a, LEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [a]);
+        set_card(&pool, a, REVIEW, now + Duration::days(3), 5.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [b]);
+        // A lapse holds back new cards no more, only reviews
+        set_card(&pool, a, RELEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [a, b]);
+    }
+
+    #[sqlx::test]
+    async fn only_close_matches_hold_cards_back(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, c] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        // A shared stem only, and a link that matched nothing
+        link(&pool, b, Some(a), 4.5).await;
+        link(&pool, c, None, 0.0).await;
+        let config = holding(true, true);
+        assert_eq!(shown(&pool, &config, now).await, [a, b, c]);
+
+        let loose = QueueConfig {
+            linked_note_max_score: 5.0,
+            ..config
+        };
+        assert_eq!(shown(&pool, &loose, now).await, [a, c]);
+    }
+
+    #[sqlx::test]
+    async fn only_older_notes_hold_newer_ones_back(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, c] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, a, Some(b), 0.0).await;
+        link(&pool, b, Some(a), 0.0).await;
+        link(&pool, c, Some(c), 0.0).await;
+        assert_eq!(shown(&pool, &holding(true, false), now).await, [a, c]);
+    }
+
+    #[sqlx::test]
+    async fn only_cards_that_come_back_hold_cards_back(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b] = create_cards(&pool, 2, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        let config = holding(true, false);
+
+        for state in [SpecialState::Suspended, SpecialState::UserBuried] {
+            set_special_state(&pool, a, Some(state)).await;
+            assert_eq!(shown(&pool, &config, now).await, [b], "{state:?}");
+        }
+        for state in [
+            SpecialState::SchedulerBuried,
+            SpecialState::BuriedUntilLaterToday,
+        ] {
+            set_special_state(&pool, a, Some(state)).await;
+            assert!(shown(&pool, &config, now).await.is_empty(), "{state:?}");
+        }
+        set_special_state(&pool, a, None).await;
+        assert_eq!(shown(&pool, &config, now).await, [a]);
+    }
+
+    #[sqlx::test]
+    async fn cards_outside_the_query_hold_nothing_back(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b] = create_cards(&pool, 2, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        let config = holding(true, false);
+        let only_b = b.to_string();
+        assert_eq!(shown_with(&pool, &config, now, Some(&only_b)).await, [a, b]);
+        let both = format!("{a}, {b}");
+        assert_eq!(shown_with(&pool, &config, now, Some(&both)).await, [a]);
+    }
+
+    #[sqlx::test]
+    async fn reviews_wait_while_linked_notes_relearn_today(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, new] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        link(&pool, new, Some(a), 0.0).await;
+        set_card(&pool, a, REVIEW, now + Duration::days(3), 5.0, 5.0).await;
+        set_card(&pool, b, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        let config = holding(false, true);
+        assert_eq!(shown(&pool, &config, now).await, [b, new]);
+
+        set_card(&pool, a, RELEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [a, new]);
+        // Due tomorrow, so b is let through today
+        set_card(&pool, a, RELEARNING, now + Duration::days(1), 1.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [b, new]);
+        // A new card of a note in review does not wait for its relearning cards
+        set_card(&pool, b, NEW, now - Duration::days(1), 0.0, 0.0).await;
+        set_card(&pool, a, LEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [a, b, new]);
+    }
+
+    #[sqlx::test]
+    async fn counts_match_the_cards_shown(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = create_cards(&pool, 4, now - Duration::days(30)).await;
+        let [a, b, c, d] = ids[..] else {
+            unreachable!()
+        };
+        link(&pool, b, Some(a), 0.0).await;
+        link(&pool, c, Some(a), 0.0).await;
+        link(&pool, d, Some(c), 0.0).await;
+        set_card(&pool, c, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        set_card(&pool, a, RELEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        let config = holding(true, true);
+        let shown = shown(&pool, &config, now).await;
+        assert_eq!(shown, [a, b, d]);
+
+        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let filter = ReviewFilterQuery {
+            where_clause: where_clause(&config, now, None),
+            is_filtered_tag: false,
+            card_due_limit,
+            caps: QueueCaps::default(),
+            preset_sql: "NULL".to_string(),
+            held_back_clause: None,
+            query_sort: Vec::new(),
+        };
+        let (by_state, _) = get_cards_left_by_state_and_time_estimate(&pool, &filter)
+            .await
+            .unwrap();
+        let state = |s: i64| StateId::try_from(s).unwrap();
+        assert_eq!(
+            by_state,
+            HashMap::from([(state(NEW), 2), (state(RELEARNING), 1)])
+        );
+    }
+
+    #[test]
+    fn nothing_is_held_back_by_default() {
+        let now = Utc::now();
+        assert_eq!(
+            linked_notes_clause(&QueueConfig::default(), now, Some("1")),
+            ""
+        );
+        // Only the half whose setting is on
+        assert!(!linked_notes_clause(&holding(true, false), now, None).contains("lc.due"));
+    }
+}
+
+#[cfg(test)]
 mod leech_tests {
     use chrono::Duration;
     use sqlx::SqlitePool;
@@ -1746,6 +2049,24 @@ mod preset_tests {
         // Written back as read
         let written = toml_edit::ser::to_string_pretty(&config).unwrap();
         assert_eq!(parse(&written).queue.presets, config.queue.presets);
+    }
+
+    #[test]
+    fn linked_note_settings_parse() {
+        let config = parse("");
+        assert!(!config.queue.new_after_linked_notes);
+        assert!(!config.queue.reviews_after_linked_notes);
+        assert_eq!(config.queue.linked_note_max_score, 1.5);
+        let config = parse(
+            "[queue]\nnew_after_linked_notes = true\nreviews_after_linked_notes = true\nlinked_note_max_score = 2.5\n",
+        );
+        assert!(config.queue.new_after_linked_notes);
+        assert!(config.queue.reviews_after_linked_notes);
+        assert_eq!(config.queue.linked_note_max_score, 2.5);
+        // Global only
+        let error =
+            invalid("[queue.presets.math]\ntags = [\"math\"]\nnew_after_linked_notes = true\n");
+        assert!(error.contains("new_after_linked_notes"), "{error}");
     }
 
     #[test]

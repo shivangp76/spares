@@ -397,6 +397,10 @@ impl Default for EasyDaysConfig {
 #[serde_with::serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent setting of config.toml"
+)]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
     /// [`ReviewOrder::Due`].
@@ -442,6 +446,55 @@ pub struct QueueConfig {
     /// to begin with; this handles the ones that are anyway, such as after a backlog. Learning
     /// and relearning siblings are never buried, since that would break their steps.
     pub bury_review_siblings: bool,
+    /// Whether a new card waits until the older notes its note links to are learned. Defaults to
+    /// `false`.
+    ///
+    /// A note on the chain rule that links to the note defining derivatives, by its keyword,
+    /// is hard to learn before the definition was ever seen. With this set, the chain rule's new
+    /// cards are not shown while the derivative note has new cards, or cards in learning. Once
+    /// they all reach review, the chain rule's cards come up on the next card fetched, in the
+    /// same session.
+    ///
+    /// This matters most when new cards are not shown in the order their notes were created, as
+    /// with [`NewCardOrder::Random`], [`NewCardOrder::RandomNote`], [`NewCardOrder::NewestFirst`]
+    /// or presets. With [`NewCardOrder::Created`], the derivative note already comes first, unless
+    /// its cards are still in learning.
+    ///
+    /// So that no card waits for good:
+    ///
+    /// - Only links to older notes hold cards back. A link from an older note to a newer one
+    ///   holds nothing back, so two notes that link to each other cannot hold each other back.
+    /// - Only links scoring within [`Self::linked_note_max_score`] count, and links that matched
+    ///   no note never do.
+    /// - Suspended and user buried cards hold nothing back. Cards buried by the scheduler, or
+    ///   until later today, do, since they come back on their own.
+    /// - When reviewing a query, only cards matching the query hold cards back.
+    ///
+    /// Filtered tags are not affected: they show every card in them. Links are only matched when
+    /// notes are rendered with linked notes, so a new note holds nothing back until then, and a
+    /// sync does not match them. The count of new cards can go up during a session, as the notes
+    /// they wait for are learned.
+    pub new_after_linked_notes: bool,
+    /// Whether a review card waits while a card of an older note its note links to is
+    /// relearning and due today. Defaults to `false`. See [`Self::new_after_linked_notes`],
+    /// whose rules apply here too.
+    ///
+    /// When the derivative card lapses, the chain rule's reviews due today wait until it is
+    /// relearned, since they likely depend on it. A relearning card due on a later day holds
+    /// nothing back, so reviews never wait past the day. Learning and relearning cards never
+    /// wait, since that would break their steps.
+    pub reviews_after_linked_notes: bool,
+    /// The highest score a link can have and still hold cards back, for
+    /// [`Self::new_after_linked_notes`] and [`Self::reviews_after_linked_notes`]. Defaults to
+    /// `1.5`.
+    ///
+    /// Scores are how far the link's text is from the keyword it matched: 0 when they are equal
+    /// ignoring case, 0.5 for punctuation, accents or a possessive, 1 for a plural, a stop word
+    /// or words run together, 1.5 and 2.5 for one or two typos in a long word, and 2.5 and up for
+    /// words that only share a long stem. The default counts every match up to one typo, and
+    /// leaves out the matches on a shared stem, which are the most likely to be links to a
+    /// related note rather than to the note itself.
+    pub linked_note_max_score: f64,
     /// Settings for the cards of notes with some tags, in place of the top-level ones, by name:
     /// `[queue.presets.<name>]`. Empty by default. See [`QueuePreset`].
     ///
@@ -459,6 +512,9 @@ impl Default for QueueConfig {
             learn_ahead_limit: Duration::minutes(20),
             bury_new_siblings: false,
             bury_review_siblings: false,
+            new_after_linked_notes: false,
+            reviews_after_linked_notes: false,
+            linked_note_max_score: 1.5,
             presets: IndexMap::new(),
         }
     }
