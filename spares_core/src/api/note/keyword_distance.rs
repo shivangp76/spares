@@ -54,6 +54,11 @@
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
+/// Version of the matching rules. Bump it whenever they change which keyword a searched keyword
+/// matches, so that the next render with linked notes rematches every stored note link, including
+/// exact matches, which are otherwise never rematched.
+pub const MATCHER_VERSION: u32 = 2;
+
 /// Words that may be present in one keyword but not the other.
 const STOP_WORDS: &[&str] = &[
     "a", "an", "and", "for", "in", "of", "on", "the", "to", "with",
