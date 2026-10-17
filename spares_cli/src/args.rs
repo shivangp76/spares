@@ -676,15 +676,19 @@ pub(crate) enum OutputFormat {
 pub(crate) struct SearchArgs {
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
-    /// The query, like `tag=spanish c.due<=today`. `--fields` lists the fields it can use.
-    #[arg(required_unless_present_any = ["fields", "saved"])]
+    /// The query, like `tag=spanish c.due<=today`. `--fields` lists the fields it can use, and
+    /// `--examples` example queries.
+    #[arg(required_unless_present_any = ["fields", "examples", "saved"])]
     pub(crate) query: Option<String>,
     /// Run the search saved under this name (see `spares saved-search`) in place of a query
-    #[arg(long, conflicts_with_all = ["query", "fields"])]
+    #[arg(long, conflicts_with_all = ["query", "fields", "examples"])]
     pub(crate) saved: Option<String>,
     /// List the fields a query can use, with the kind of value each holds and an example
-    #[arg(long, conflicts_with = "query")]
+    #[arg(long, conflicts_with_all = ["query", "examples"])]
     pub(crate) fields: bool,
+    /// List example queries, each with what it finds
+    #[arg(long, conflicts_with = "query")]
+    pub(crate) examples: bool,
     /// Print how the query was parsed and the SQL it runs, instead of searching
     #[arg(long, conflicts_with = "fields")]
     pub(crate) explain: bool,

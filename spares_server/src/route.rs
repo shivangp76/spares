@@ -45,6 +45,7 @@ use crate::handlers::note::get_note_links_handler;
 use crate::handlers::note::get_note_render_handler;
 use crate::handlers::note::get_unmatched_keywords_handler;
 use crate::handlers::note::list_notes_handler;
+use crate::handlers::note::search_examples_handler;
 use crate::handlers::note::search_fields_handler;
 use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
@@ -252,6 +253,7 @@ pub(crate) fn create_router(
         .route("/api/notes/search", post(search_notes_handler))
         .route("/api/notes/search/page", post(search_page_handler))
         .route("/api/search/fields", get(search_fields_handler))
+        .route("/api/search/examples", get(search_examples_handler))
         .route("/api/saved-searches", get(list_saved_searches_handler))
         .route("/api/saved-searches", put(save_search_handler))
         .route("/api/saved-searches/{name}", get(get_saved_search_handler))

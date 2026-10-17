@@ -135,6 +135,10 @@ pub(crate) async fn search_fields_handler() -> impl IntoResponse {
     Json(spares_core::search::fields())
 }
 
+pub(crate) async fn search_examples_handler() -> impl IntoResponse {
+    Json(spares_core::search::examples())
+}
+
 pub(crate) async fn search_keyword_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<SearchKeywordRequest>,

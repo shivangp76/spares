@@ -16,6 +16,7 @@ import type {
   NoteResponse,
   NotesSelector,
   ParserResponse,
+  QueryExample,
   Rating,
   RedoEventResponse,
   ReviewConfig,
@@ -755,6 +756,17 @@ export function getSearchFields(): Promise<SearchField[]> {
     throw e;
   });
   return searchFields;
+}
+
+let searchExamples: Promise<QueryExample[]> | null = null;
+
+/** Example queries, each with what it finds, fetched once. */
+export function getSearchExamples(): Promise<QueryExample[]> {
+  searchExamples ??= apiFetch<QueryExample[]>('Search examples fetch', '/api/search/examples').catch(e => {
+    searchExamples = null;
+    throw e;
+  });
+  return searchExamples;
 }
 
 // Tags

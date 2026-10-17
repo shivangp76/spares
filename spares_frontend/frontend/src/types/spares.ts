@@ -531,6 +531,15 @@ export interface SearchField {
   sortable: boolean;
 }
 
+/** An example query, from `/api/search/examples`. */
+export interface QueryExample {
+  /** The group it is listed under. */
+  section: string;
+  query: string;
+  /** What it finds. Text in backticks is code. */
+  about: string;
+}
+
 /** A note a search found, and where its text has what the search looks for, as `[start, end)` string indices. */
 export interface NoteMatch {
   note: NoteResponse;

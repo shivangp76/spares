@@ -1,6 +1,8 @@
 //! # Searching
 //!
-//! `spares note search --fields` lists the fields with their kind and an example.
+//! `spares note search --fields` lists the fields with their kind and an example, and
+//! `spares note search --examples` example queries (see [`examples`]). The web app's search box
+//! shows both under "Syntax".
 //! `spares note search --explain '<query>'` (or `spares card search --explain`) prints how the
 //! query was parsed, with `and` and `or` grouped as they apply, and the SQL it runs, without
 //! searching. A card state in the SQL is followed by its name, as in `c.state = 2 /* review */`.
@@ -415,9 +417,13 @@ use serde::Deserialize;
 use serde::Serialize;
 
 pub(crate) mod evaluator;
+mod examples;
 pub(crate) mod lexer;
 mod parser;
 mod relative_date;
+
+pub use examples::QueryExample;
+pub use examples::examples;
 
 use relative_date::RelativeDate;
 

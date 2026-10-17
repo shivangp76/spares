@@ -41,6 +41,27 @@ pub(crate) fn print_fields() {
     }
 }
 
+/// Prints the example queries, under the heading of each section, with the queries aligned.
+pub(crate) fn print_examples() {
+    let examples = spares_core::search::examples();
+    let width = examples
+        .iter()
+        .map(|example| example.query.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut section = "";
+    for example in examples {
+        if example.section != section {
+            if !section.is_empty() {
+                println!();
+            }
+            section = example.section;
+            println!("{section}");
+        }
+        println!("  {:width$}  {}", example.query, example.about);
+    }
+}
+
 async fn search_notes(
     query: String,
     output_type: QueryReturnItemType,

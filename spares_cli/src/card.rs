@@ -29,6 +29,7 @@ use crate::history::print_history;
 use crate::review::forget_card;
 use crate::review::review_cards;
 use crate::saved_search::saved_query;
+use crate::search::print_examples;
 use crate::search::print_fields;
 use crate::search::search;
 use crate::search::search_cards;
@@ -148,13 +149,18 @@ pub(crate) async fn handle(
             query,
             output_format,
             fields: _,
+            examples,
             explain,
             saved,
         }) => {
-            // Clap requires a query unless `--fields` or `--saved` is given.
+            // Clap requires a query unless `--fields`, `--examples` or `--saved` is given.
             let query = match (query, saved) {
                 (Some(query), _) => query,
                 (None, Some(name)) => saved_query(&name, base_url, client).await?,
+                (None, None) if examples => {
+                    print_examples();
+                    return Ok(());
+                }
                 (None, None) => {
                     print_fields();
                     return Ok(());
