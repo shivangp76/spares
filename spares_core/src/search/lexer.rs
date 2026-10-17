@@ -239,11 +239,7 @@ impl Lexer<'_> {
             "not" | "NOT" if !self.prev_takes_value() => TokenKind::Minus,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
-            _ if matches!(self.s.peek(), Some('=' | '>' | '<' | '~' | ':'))
-                || self.s.after().starts_with("!=") =>
-            {
-                TokenKind::Field
-            }
+            _ if self.operator_follows() => TokenKind::Field,
             // A boolean field on its own, like `c.suspended`, means it is true.
             _ if !self.prev_takes_value() && is_boolean_field(word) => {
                 let end = self.s.cursor();
@@ -259,6 +255,15 @@ impl Lexer<'_> {
             }
             _ => TokenKind::String,
         }
+    }
+
+    /// Whether a comparison comes next, as in `c.due<=today`. Spaces may come before it, as in
+    /// `c.due <= today`, unless the word is itself a value.
+    fn operator_follows(&self) -> bool {
+        let is_operator =
+            |rest: &str| rest.starts_with(['=', '>', '<', '~', ':']) || rest.starts_with("!=");
+        let rest = self.s.after();
+        is_operator(rest) || (!self.prev_takes_value() && is_operator(rest.trim_start()))
     }
 
     /// After the word starting at `start`, consumes the rest of a reference like
@@ -928,6 +933,14 @@ mod tests {
                 (TokenKind::String, "not"),
             ]
         );
+    }
+
+    #[test]
+    fn spaces_around_operators() {
+        assert_eq!(lex("c.due <= today tag = math"), lex("c.due<=today tag=math"));
+        assert_eq!(lex("c.state != new"), lex("c.state!=new"));
+        assert_eq!(lex("c.suspended = false"), lex("c.suspended=false"));
+        assert_eq!(lex("c.stability >= -2"), lex("c.stability>=-2"));
     }
 
     #[test]

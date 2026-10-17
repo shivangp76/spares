@@ -245,6 +245,7 @@
 //!   bound equally from left to right, so a query mixing them without parentheses may now match
 //!   differently.
 //! - **Grouping:** Use parentheses for grouping expressions.
+//! - **Spaces** may go around a comparison, so `c.due <= today` is the same as `c.due<=today`.
 //!
 //! ## Examples
 //!
