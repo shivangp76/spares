@@ -3,15 +3,15 @@ import type { SearchField } from '../types/spares';
 
 /** Queries shown by the search help, each with what it finds. */
 const EXAMPLES: [string, string][] = [
-  ['dog', 'a word starting with "dog", like "dogs"'],
-  ['"hot dog"', 'the text "hot dog" anywhere'],
-  ['dog or cat', 'either word'],
-  ['tag=math -tag=math:algebra', 'tagged math, but not math:algebra'],
+  ['verb', 'a word starting with "verb", like "verbs"'],
+  ['"past tense"', 'the text "past tense" anywhere'],
+  ['Paris or Rome', 'either word'],
+  ['tag=spanish -tag=spanish:verbs', 'tagged spanish, but not spanish:verbs'],
   ['c.due<=today', 'cards due by the end of today'],
   ['c.state=new created_at>=today-7d', 'new cards of notes created this week'],
   ['c.rated[>=today-7d]=1', 'cards forgotten this week'],
   ['sort_by_asc=c.retrievability limit=20', 'the 20 cards you are least likely to recall'],
-  ['linked_to_note=(tag=math)', 'notes linking to a note tagged math'],
+  ['linked_to_note=(tag=history)', 'notes linking to a note tagged history'],
   ['(tag=a limit=5) or (tag=b limit=5)', 'up to 5 of each tag'],
 ];
 

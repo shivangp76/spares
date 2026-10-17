@@ -107,7 +107,7 @@
 //! - `field~"value"`: Searches if `field` contains `value`, ignoring case and accents in any
 //!   script, so `cafe` and `CAFÉ` both find `Café`. Every other character is matched literally,
 //!   including `%`, `_` and `.`.
-//!   - Example: `tag~"math test"` finds notes with tags containing `math test`.
+//!   - Example: `tag~"world history"` finds notes with tags containing `world history`.
 //!
 //! **With a Regex String**:
 //! - `field~re:"value"`: Searches if `field` matches the regex `value` (case sensitive).
@@ -115,23 +115,23 @@
 //!
 //! #### Exact Match (`=`)
 //! - `field="value"`: Searches for notes where `field` is exactly `value`.
-//!   - Example: `keyword="Integration by parts"` finds notes with that keyword.
+//!   - Example: `keyword="Irregular verbs"` finds notes with that keyword.
 //! - `tag=value` finds notes and cards tagged `value` or one of its descendants (case insensitive
 //!   for ASCII letters).
-//!   - Example: `tag=math` finds the tags `math` and `math:algebra`, but not `physics:math` or
-//!     `mathematics`.
+//!   - Example: `tag=history` finds the tags `history` and `history:rome`, but not `art:history`
+//!     or `prehistory`.
 //!
 //! **Words and quoted text in the note's text:**
-//! - A value without quotes, like `data~cat`, finds words that start with it: `cat`, `cats` and
-//!   `Catalan`, but not `concatenate`. Quoted, as in `data~"cat"`, it is found anywhere, and
-//!   `data~"black cat"` finds that phrase. This applies to `data` and `c.cloze`. For other fields,
-//!   like `tag~math`, the value is found anywhere either way.
+//! - A value without quotes, like `data~verb`, finds words that start with it: `verb`, `verbs` and
+//!   `verbal`, but not `adverb`. Quoted, as in `data~"verb"`, it is found anywhere, and
+//!   `data~"past tense"` finds that phrase. This applies to `data` and `c.cloze`. For other fields,
+//!   like `tag~history`, the value is found anywhere either way.
 //!
 //! #### Default Field
 //! - If no field is specified, `data~` is used by default, so a bare word searches the note's
 //!   text for words starting with it.
-//!   - Example: `-dog` or `-"dog"` finds notes not containing `dog`.
-//!   - Example: `"-dog"` finds notes containing `-dog`. This follows the quoting rule for non-alphanumeric characters like `-`.
+//!   - Example: `-verb` or `-"verb"` finds notes not containing `verb`.
+//!   - Example: `"-ing"` finds notes containing `-ing`. This follows the quoting rule for non-alphanumeric characters like `-`.
 //!
 //! ### Numbers
 //!
@@ -257,12 +257,11 @@
 //! `linked_to_note=gir` finds the notes that link to note `gir`, and `linked_from_note=gir` the
 //! notes `gir` links to. In place of a note, either can take a query in parentheses, which
 //! searches notes, to find the notes linked to or from any note it matches:
-//! - `linked_to_note=(tag=math)`: notes that link to a note tagged `math`.
-//! - `linked_from_note=(keyword="Integration by parts")`: notes linked from a note with that
-//!   keyword.
-//! - `-linked_to_note=(tag=math)`: notes that link to no note tagged `math`.
-//! - `linked_to_note=(linked_to_note=(tag=math))`: queries nest, so this is notes that link to a
-//!   note that links to a note tagged `math`.
+//! - `linked_to_note=(tag=history)`: notes that link to a note tagged `history`.
+//! - `linked_from_note=(keyword="Irregular verbs")`: notes linked from a note with that keyword.
+//! - `-linked_to_note=(tag=history)`: notes that link to no note tagged `history`.
+//! - `linked_to_note=(linked_to_note=(tag=history))`: queries nest, so this is notes that link to
+//!   a note that links to a note tagged `history`.
 //!
 //! The query in parentheses can't have a sort, a limit or `c.cloze`, and no other field takes one.
 //!
@@ -282,9 +281,9 @@
 //!   the same each time.
 //! - Notes found by words or quoted text, with no sort, come in order of relevance instead: the
 //!   notes with more of the words, and with the rarer ones, first, by SQLite's full-text search
-//!   (`bm25`), with a word in a note's keywords counting double. So `dog limit=5` keeps the 5 notes
-//!   that match `dog` best. Words under `-` don't count, and nor do regexes. The ranking only orders
-//!   the notes the search finds: which notes match is decided as described above.
+//!   (`bm25`), with a word in a note's keywords counting double. So `Paris limit=5` keeps the 5
+//!   notes that match `Paris` best. Words under `-` don't count, and nor do regexes. The ranking
+//!   only orders the notes the search finds: which notes match is decided as described above.
 //! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
 //!   limited branch sets the order new and review cards are shown in, together, in place of the
 //!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see
@@ -294,31 +293,31 @@
 //! ### Limit
 //!
 //! - Use `limit=N` to return at most `N` results, where `N` is a non-negative integer.
-//!   - Example: `dog limit=5` returns at most 5 notes containing `dog`.
+//!   - Example: `Paris limit=5` returns at most 5 notes containing `Paris`.
 //! - The limit is applied after filtering and sorting, so it combines with sorting to get the "top N" results.
 //!   - Example: `c.stability>=2 sort_by_desc=c.due limit=100`
 //! - It applies to whatever is being searched (notes or cards).
 //! - Restrictions:
 //!   - Only the `=` operator is allowed (`limit>=10` and `limit~10` are errors).
 //!   - It can only be specified once per group (`limit=10 limit=20` is an error).
-//!   - It cannot be negated (`-limit=10` and `-(dog limit=5)` are errors).
+//!   - It cannot be negated (`-limit=10` and `-(Paris limit=5)` are errors).
 //!
 //! #### Limits per `or` branch
 //!
 //! - Each parenthesized branch of an `or` can have its own limit, and each branch keeps at most
 //!   that many results.
-//!   - Example: `(tag=chess limit=5) or (tag="measure-theory:grad" limit=30)`
+//!   - Example: `(tag=chess limit=5) or (tag="spanish:verbs" limit=30)`
 //! - Combine this with `c.state` to limit by card state.
 //!   - Example: `(tag=a c.state=new limit=10) or (tag=a c.state=review limit=10) or (tag=b c.state=new limit=20)`
 //! - A sort inside a branch decides which results its limit keeps. Without one, a branch keeps the
 //!   cards due the longest (`c.due`, then the note's `created_at`), or, when searching notes, the
 //!   lowest note ids. A sort inside a branch does not change the order cards are reviewed in.
-//!   - Example: `(tag=chess sort_by_desc=c.difficulty limit=5) or (tag=math limit=5)`
+//!   - Example: `(tag=chess sort_by_desc=c.difficulty limit=5) or (tag=history limit=5)`
 //! - A limit outside the parentheses still caps the combined result:
 //!   `((tag=a limit=5) or (tag=b limit=5)) limit=8`.
 //! - A sort or limit applies to the parentheses it is written in, or to the whole query, wherever
 //!   it appears in them, so the limited conditions must be wrapped in parentheses:
-//!   `dog limit=5 or cat` limits the whole `dog or cat` to 5.
+//!   `Paris limit=5 or Rome` limits the whole `Paris or Rome` to 5.
 //! - A parenthesized `or` branch with a sort but no limit is an error.
 //! - `c.cloze` cannot be used inside a limited branch, since cloze matching runs after the
 //!   database query.
@@ -338,7 +337,7 @@
 //! ### Other Operators
 //!
 //! - **Exclusion:** `-QUALIFIER`, or `not QUALIFIER` (also `NOT`)
-//!   - Example: `-tag=math` or `not tag=math`
+//!   - Example: `-tag=history` or `not tag=history`
 //!   - `field!=value` is short for `-field=value`, as in `c.state!=0`.
 //! - **Logical Operators:** `and`, `or` (also `AND`, `OR`). `and`, whether written or implied by a
 //!   space, binds tighter than `or`, so `a or b c` means `a or (b and c)`. Before October 2026 they
@@ -349,35 +348,35 @@
 //!
 //! ## Examples
 //!
-//! **Search for notes with a word starting with "dog", like "dog" or "dogs"**
-//! - `dog`
+//! **Search for notes with a word starting with "verb", like "verb" or "verbs"**
+//! - `verb`
 //!
-//! **Search for notes containing "dog" anywhere, as in "hotdog"**
-//! - `"dog"`
+//! **Search for notes containing "verb" anywhere, as in "adverb"**
+//! - `"verb"`
 //!
 //! **Search for notes containing "multiword \"query" with an escaped quote inside**
 //! - `"multiword \"query"`
 //!
-//! **Search for notes NOT containing "dog"**
-//! - `-dog`
+//! **Search for notes NOT containing "verb"**
+//! - `-verb`
 //!
-//! **Search for notes containing both "dog" AND "cat"**
-//! - `dog and cat`
+//! **Search for notes containing both "capital" AND "France"**
+//! - `capital and France`
 //!
-//! **Search for notes containing "dog" OR "cat"**
-//! - `dog or cat`
+//! **Search for notes containing "Paris" OR "Rome"**
+//! - `Paris or Rome`
 //!
-//! **Search for "dog" AND either "cat" OR "mouse"**
-//! - `dog and (cat or mouse)`
+//! **Search for "capital" AND either "France" OR "Italy"**
+//! - `capital and (France or Italy)`
 //!
-//! **Search for notes with the tag "math"**
-//! - `tag=math`
+//! **Search for notes with the tag "spanish"**
+//! - `tag=spanish`
 //!
-//! **Search for notes with the tag "-math"**
-//! - `tag=-math`
+//! **Search for notes with the tag "-draft"**
+//! - `tag=-draft`
 //!
-//! **Search for notes NOT tagged "math"**
-//! - `-tag=math`
+//! **Search for notes NOT tagged "spanish"**
+//! - `-tag=spanish`
 //!
 //! **Search for notes tagged exactly `a`, with no descendants. In other words, notes tagged `a:b` won't match**
 //! - `spares note search 'tag~re:"^a$"'`
@@ -385,13 +384,13 @@
 //! **Search for cards with stability ≥ 2**
 //! - `c.stability>=2`
 //!
-//! **Get the 10 most recently created notes tagged "math"**
-//! - `tag=math sort_by_desc=created_at limit=10`
+//! **Get the 10 most recently created notes tagged "spanish"**
+//! - `tag=spanish sort_by_desc=created_at limit=10`
 //!
 //! ### Equivalences
-//! - `dog` is equivalent to `data~dog`, and `"dog"` to `data~"dog"`.
-//! - `-cat -mouse` is equivalent to `-(cat or mouse)` (De Morgan's Laws).
-//! - `dog cat` is equivalent to `dog and cat`. A space between terms implies an `and` operator unless part of a quoted string.
+//! - `verb` is equivalent to `data~verb`, and `"verb"` to `data~"verb"`.
+//! - `-Paris -Rome` is equivalent to `-(Paris or Rome)`.
+//! - `capital France` is equivalent to `capital and France`. A space between terms implies an `and` operator unless part of a quoted string.
 //!
 //! ## Inspiration
 //! - <https://github.com/github/docs/blob/main/content/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax.md>
@@ -638,9 +637,9 @@ pub(crate) enum Atom<'de> {
     // Field identifiers
     Field(Cow<'de, str>),
     // Literals
-    /// Text written in quotes, like `"dog"`.
+    /// Text written in quotes, like `"verb"`.
     String(Cow<'de, str>),
-    /// Text written without quotes, like `dog`, which `data~` matches as the start of a word.
+    /// Text written without quotes, like `verb`, which `data~` matches as the start of a word.
     Word(Cow<'de, str>),
     Integer(i64),
     Float(f64),

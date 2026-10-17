@@ -167,7 +167,7 @@ fn is_word_char(c: char) -> bool {
     char::is_alphanumeric(c) || c == '.' || c == '_' || c == '-' || c == '+'
 }
 
-/// Whether a token of `kind` is followed by a value, like the `=` in `tag=math`.
+/// Whether a token of `kind` is followed by a value, like the `=` in `tag=spanish`.
 fn takes_value(kind: TokenKind) -> bool {
     matches!(
         kind,
@@ -190,7 +190,7 @@ impl Lexer<'_> {
     fn normalize(&mut self, current_token: &mut Token) {
         if self.normalize {
             // A value with no field before it is searched for in the note's text. That includes
-            // numbers, dates and `true`, so `dog 2024` finds notes containing both words.
+            // numbers, dates and `true`, so `Olympics 2024` finds notes containing both words.
             if matches!(
                 current_token.kind,
                 TokenKind::String
@@ -223,7 +223,7 @@ impl Lexer<'_> {
                 current_token.kind,
                 TokenKind::Field | TokenKind::LeftParen | TokenKind::Minus
             ) && self.prev.is_some()
-                // A value in parentheses, as in `linked_to_note=(tag=math)`, follows an operator.
+                // A value in parentheses, as in `linked_to_note=(tag=history)`, follows an operator.
                 && !self.prev_takes_value()
                 && !matches!(self.prev, Some(ref token) if matches!(token.kind, TokenKind::And | TokenKind::Or | TokenKind::Minus | TokenKind::LeftParen));
             if add_implied_and {
@@ -236,7 +236,7 @@ impl Lexer<'_> {
         }
     }
 
-    /// Whether the previous token is followed by a value, like the `=` in `tag=math`.
+    /// Whether the previous token is followed by a value, like the `=` in `tag=spanish`.
     fn prev_takes_value(&self) -> bool {
         self.prev
             .as_ref()
@@ -374,7 +374,7 @@ impl Lexer<'_> {
     fn colon_error(&self, start: usize) -> Error {
         miette::miette! {
             labels = vec![LabeledSpan::at(start..start + 1, "this `:`")],
-            help = "Compare a field with `=` or `~`, as in `tag=math`, and write a path into custom data after a `.`, as in `custom_data.x=1`. Quote text that has a `:`, as in `tag=\"math:algebra\"`",
+            help = "Compare a field with `=` or `~`, as in `tag=spanish`, and write a path into custom data after a `.`, as in `custom_data.x=1`. Quote text that has a `:`, as in `tag=\"spanish:verbs\"`",
             "Unexpected `:`",
         }
         .with_source_code(self.s.string().to_string())
@@ -422,7 +422,7 @@ impl Lexer<'_> {
 
     /// Lexes a word starting with a digit or `-`, whose first character `c` was consumed. A `-`
     /// negates what follows, except right after an operator like `>=`, where it starts a value
-    /// such as `-2` or `-math`. A number or date running into other word characters, like `3d`
+    /// such as `-2` or `-draft`. A number or date running into other word characters, like `3d`
     /// or `2024-25`, is an ordinary word.
     fn parse_date_or_number(&mut self, c: char) -> TokenKind {
         let start = self.s.cursor() - 1;

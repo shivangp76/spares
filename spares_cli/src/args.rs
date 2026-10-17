@@ -676,7 +676,7 @@ pub(crate) enum OutputFormat {
 pub(crate) struct SearchArgs {
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
-    /// The query, like `tag=math c.due<=today`. `--fields` lists the fields it can use.
+    /// The query, like `tag=spanish c.due<=today`. `--fields` lists the fields it can use.
     #[arg(required_unless_present_any = ["fields", "saved"])]
     pub(crate) query: Option<String>,
     /// Run the search saved under this name (see `spares saved-search`) in place of a query

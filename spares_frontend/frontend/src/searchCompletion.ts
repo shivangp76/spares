@@ -20,7 +20,7 @@ const OPERATOR = /^([\p{L}\p{N}_.[\]]+?)(!=|<=|>=|=|~|<|>)(.*)$/su;
 /** Whether `c` ends a term, outside quotes. */
 const endsTerm = (c: string) => /[\s()"]/.test(c);
 
-/** Whether a tag has to be quoted to be written as a value, as `tag="math:algebra"` does. */
+/** Whether a tag has to be quoted to be written as a value, as `tag="spanish:verbs"` does. */
 export function needsQuotes(value: string): boolean {
   return !/^[\p{L}\p{N}._+][\p{L}\p{N}._+-]*$/u.test(value);
 }

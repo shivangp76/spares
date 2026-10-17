@@ -552,15 +552,15 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 #[rustfmt::skip]
 pub(crate) const FIELDS: [FieldDoc; 35] = [
     doc("id", "id=gir", "The note's id"),
-    doc("data", "data~dog", "The note's text, which a word on its own searches"),
+    doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
     doc("updated_at", "updated_at>=now-12h", "When the note was last changed"),
     doc("parser_name", "parser_name=markdown", "The parser the note is written for"),
-    doc("tag", "tag=math", "A tag of the note or card, including its descendants"),
-    doc("keyword", "keyword=\"Integration by parts\"", "A keyword of the note"),
+    doc("tag", "tag=spanish", "A tag of the note or card, including its descendants"),
+    doc("keyword", "keyword=\"Irregular verbs\"", "A keyword of the note"),
     doc("custom_data", "custom_data.key=1", "A value in the note's custom data"),
     doc("linked_to_note", "linked_to_note=gir", "A note the note links to"),
-    doc("linked_to_keyword", "linked_to_keyword=\"Integration by parts\"", "A keyword the note links to"),
+    doc("linked_to_keyword", "linked_to_keyword=\"Irregular verbs\"", "A keyword the note links to"),
     doc("linked_from_note", "linked_from_note=gir", "A note that links to the note"),
     doc("c.id", "c.id=12", "The card's id"),
     doc("c.created_at", "c.created_at>=today", "When the card was created"),
@@ -582,7 +582,7 @@ pub(crate) const FIELDS: [FieldDoc; 35] = [
     doc("c.interval", "c.interval>=30", "Days from the card's last review to when it is due"),
     doc("c.retrievability", "c.retrievability<0.8", "How likely you are to recall the card now, from 0 to 1, as FSRS predicts"),
     doc("c.count", "c.count>=2", "How many cards the note has"),
-    doc("c.cloze", "c.cloze~proof", "The text of the card's cloze"),
+    doc("c.cloze", "c.cloze~Paris", "The text of the card's cloze"),
     doc("sort_by_asc", "sort_by_asc=c.due", "Sorts by a field, smallest first"),
     doc("sort_by_desc", "sort_by_desc=created_at", "Sorts by a field, largest first"),
     doc("limit", "limit=10", "Returns at most this many results"),
@@ -1491,7 +1491,7 @@ fn evaluate_bare_field(name: &str, context: &mut EvaluationContext) -> Result<()
             return Ok(());
         }
         _ => {
-            let example = field_example(name).unwrap_or("tag=math");
+            let example = field_example(name).unwrap_or("tag=spanish");
             return Err(miette!(
                 "`{name}` needs a comparison and a value, as in `{example}`"
             ));
@@ -1636,7 +1636,7 @@ fn evaluate_field_value(
 }
 
 /// Adds the condition that the note links to, or is linked from, a note matching `query`, as in
-/// `linked_to_note=(tag=math)`. `query` always searches notes.
+/// `linked_to_note=(tag=history)`. `query` always searches notes.
 fn evaluate_link_query(
     field: &Field,
     field_name: &str,
@@ -1649,14 +1649,14 @@ fn evaluate_link_query(
         Field::Note(NoteField::LinkedFromNote) => ("linked_note_id", "parent_note_id"),
         _ => {
             return Err(miette!(
-                help = "Only `linked_to_note` and `linked_from_note` take a query, as in `linked_to_note=(tag=math)`",
+                help = "Only `linked_to_note` and `linked_from_note` take a query, as in `linked_to_note=(tag=history)`",
                 "`{field_name}` can't be compared with a query in parentheses",
             ));
         }
     };
     if !matches!(op, Op::Equal) {
         return Err(miette!(
-            "A query in parentheses can only follow `=` or `!=`, as in `{field_name}=(tag=math)`"
+            "A query in parentheses can only follow `=` or `!=`, as in `{field_name}=(tag=history)`"
         ));
     }
     let [query] = query else {
@@ -1664,7 +1664,7 @@ fn evaluate_link_query(
     };
     if matches!(query, TokenTree::Atom(Atom::Nil)) {
         return Err(miette!(
-            "The parentheses after `{field_name}=` are empty. Write a query in them, as in `{field_name}=(tag=math)`"
+            "The parentheses after `{field_name}=` are empty. Write a query in them, as in `{field_name}=(tag=history)`"
         ));
     }
     if tree_has_modifier(query) {
@@ -1919,7 +1919,7 @@ fn evaluate_comparison(
                         _ => unreachable!("by the outer match"),
                     });
                 } else if matches!(field, Field::Note(NoteField::Tag)) && matches!(op, Op::Equal) {
-                    // The tag and its descendants, like `math` and `math:algebra`.
+                    // The tag and its descendants, like `history` and `history:rome`.
                     let name = escape_like(&value_param);
                     value_context.params.push(format!(
                         "(t.name LIKE {} OR t.name LIKE {})",
@@ -2240,7 +2240,7 @@ fn text_regex(text: &str, word_start: bool) -> String {
 
 /// The regexes of what `query` searches the note's text for, to mark where a note matches: its
 /// words, quoted text and regexes compared with `data` by `~`. Terms under `-`, and in the query of
-/// a link like `linked_to_note=(dog)`, are left out, since the note need not contain them. A query
+/// a link like `linked_to_note=(verb)`, are left out, since the note need not contain them. A query
 /// that can't be parsed has none.
 pub(crate) fn text_patterns(query: &str) -> Vec<String> {
     let Ok(tree) = Parser::new(query).parse_expression() else {
