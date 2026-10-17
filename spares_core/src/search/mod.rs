@@ -105,6 +105,9 @@
 //! - `<`
 //! - `<=`
 //!
+//! Numbers with a fraction are equal when they are within a millionth of each other (relative to
+//! the larger of the value and 1), since a stored `0.9` may be `0.8999999761581421`.
+//!
 //! **Example:**
 //! - `c.stability>=5`
 //!

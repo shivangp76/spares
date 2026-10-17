@@ -1683,6 +1683,18 @@ fn evaluate_field_value(
                         like_pattern(&name),
                         like_pattern(&format!("{name}:%")),
                     ));
+                } else if matches!(field_type, FieldType::Float)
+                    && matches!(op, Op::Equal)
+                    && let Ok(value) = value_param.parse::<f64>()
+                {
+                    // Stored numbers may have passed through `f32`, so `0.9` can be stored as
+                    // `0.8999999761581421`. Equal means within a millionth of the value.
+                    let tolerance = 1e-6 * value.abs().max(1.0);
+                    value_context.params.push(format!(
+                        "BETWEEN {} AND {}",
+                        value - tolerance,
+                        value + tolerance
+                    ));
                 } else {
                     if matches!(field_type, FieldType::String)
                         || (matches!(field_type, FieldType::Json)
@@ -2008,9 +2020,14 @@ mod tests {
                 "c.stability>=2.1",
                 "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability >= 2.1 ORDER BY n.id ASC",
             ),
+            // Numbers are equal within a millionth.
             (
                 "c.stability=2.1",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability = 2.1 ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.stability BETWEEN 2.0999979 AND 2.1000021 ORDER BY n.id ASC",
+            ),
+            (
+                "c.desired_retention!=0.9",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.desired_retention BETWEEN 0.899999 AND 0.900001) ORDER BY n.id ASC",
             ),
             // Only data search - no joins needed
             (
@@ -2568,6 +2585,14 @@ mod tests {
         assert_eq!(search(&format!("created_at={yesterday}")).await, ["b", "c"]);
         assert_eq!(search(&format!("created_at>{yesterday}")).await, ["a", "d"]);
         assert_eq!(search("created_at<today").await, ["b", "c"]);
+        // `0.9` as an `f32` is still `0.9`.
+        exec(&format!(
+            "UPDATE card SET desired_retention = {} WHERE note_id = {}",
+            f64::from(0.9_f32),
+            "a".parse::<NoteId>().unwrap().packed()
+        ))
+        .await;
+        assert_eq!(search("c.desired_retention=0.9").await, ["a", "b", "c"]);
         // `a` and `d` were created this month and year, and `b` and `c` too unless yesterday was in
         // the last one.
         let today = chrono::Local::now().date_naive();
