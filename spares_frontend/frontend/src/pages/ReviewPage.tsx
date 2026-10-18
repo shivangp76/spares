@@ -40,6 +40,7 @@ import {
 } from '../offline/review';
 import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
+import CodeText from '../components/CodeText';
 import { RedoIcon, UndoIcon } from '../components/Icons';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
@@ -181,6 +182,14 @@ function filterParams(mode: FilterMode, input: string): URLSearchParams {
 }
 
 interface RecentFilter { mode: FilterMode; input: string }
+
+/** What a session reviews, shown above its cards when nothing more specific was resolved for it. */
+function describeFilter(mode: FilterMode, input: string): string {
+  if (!input) return 'Reviewing all due cards';
+  if (mode === 'query') return `Reviewing \`${input}\``;
+  if (mode === 'tagName') return `Reviewing filtered tag \`${input}\``;
+  return `Reviewing filtered tag with id ${input}`;
+}
 
 const RECENT_FILTER_PREFIX: Record<FilterMode, string> = { query: '', tagName: 'tag: ', tagId: 'tag id: ' };
 const sameFilter = (a: RecentFilter, b: RecentFilter) => a.mode === b.mode && a.input === b.input;
@@ -398,7 +407,7 @@ export default function ReviewPage() {
           if (queryHasLimit(input)) {
             const snapshot = await createReviewSnapshot(input);
             filter = { FilteredTag: { tag_id: snapshot.tag_id } };
-            info = `Reviewing filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? 'built for today' : 'resumed from earlier today'}, ${snapshot.card_count} cards left)`;
+            info = `Reviewing \`${input}\` as filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? 'built for today' : 'resumed from earlier today'}, ${snapshot.card_count} cards left)`;
           } else {
             filter = { Query: input };
           }
@@ -430,7 +439,7 @@ export default function ReviewPage() {
       setPhase('error');
       return;
     }
-    setSessionInfo(info);
+    setSessionInfo(info ?? describeFilter(mode, input));
     sessionKey.current = key;
     if (input) recentFilters.save({ mode, input });
     setSearchParams(filterParams(mode, input), { replace: true });
@@ -1023,7 +1032,7 @@ export default function ReviewPage() {
 
       {(phase === 'front' || phase === 'back') && card && (
         <>
-          {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>{sessionInfo}</div>}
+          {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}><CodeText text={sessionInfo} /></div>}
           <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>Note {formatNoteId(card.note_id)} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
             {offline && <span style={{ color: 'var(--warning)' }} title="The server cannot be reached. Ratings are saved and sent once it can.">Offline</span>}
