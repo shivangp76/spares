@@ -52,6 +52,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   // Bumped after each save so the compiled note is refetched
   const [renderVersion, setRenderVersion] = useState(0);
   const [render, setRender] = useState<{ version: number; result: NoteRenderResponse } | { version: number; error: string } | null>(null);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +152,17 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     }
   }
 
+  /** Copies the data as shown, with any unsaved edits, e.g. to paste into an LLM. */
+  async function copyData() {
+    try {
+      await navigator.clipboard.writeText(dataContent);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('error');
+    }
+    setTimeout(() => setCopyStatus('idle'), 2000);
+  }
+
   function close() {
     if (!unsaved || window.confirm('Discard the unsaved changes to this note?')) onClose();
   }
@@ -178,23 +190,33 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
-          {!live && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <NoteSyntaxButton
-                parserId={note.parser_id}
-                tips={vimEnabled ? [...EDITOR_TIPS, VIM_TIP] : EDITOR_TIPS}
-                onInsert={source => setDataContent(insertSource(dataEditorRef.current?.view, dataContent, source))}
-              />
-              <InsertAudioButton
-                parserId={note.parser_id}
-                onInsert={snippet => setDataContent(insertInline(dataEditorRef.current?.view, dataContent, snippet))}
-              />
-              <InsertImageOcclusionButton
-                parserId={note.parser_id}
-                onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
-              />
-            </div>
-          )}
+          {/* Wraps on phones rather than pushing the page sideways */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              onClick={copyData}
+              title="Copy the note's data to the clipboard"
+              style={{ padding: '2px 8px', fontSize: 12, color: copyStatus === 'error' ? 'var(--error)' : undefined }}
+            >
+              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
+            </button>
+            {!live && (
+              <>
+                <NoteSyntaxButton
+                  parserId={note.parser_id}
+                  tips={vimEnabled ? [...EDITOR_TIPS, VIM_TIP] : EDITOR_TIPS}
+                  onInsert={source => setDataContent(insertSource(dataEditorRef.current?.view, dataContent, source))}
+                />
+                <InsertAudioButton
+                  parserId={note.parser_id}
+                  onInsert={snippet => setDataContent(insertInline(dataEditorRef.current?.view, dataContent, snippet))}
+                />
+                <InsertImageOcclusionButton
+                  parserId={note.parser_id}
+                  onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
+                />
+              </>
+            )}
+          </div>
         </div>
         <CodeMirror
           ref={dataEditorRef}
