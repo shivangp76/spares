@@ -1,13 +1,14 @@
 import { expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOGIN_DOCS, PAGE_HELP, headingAnchor, type DocLink } from './pages';
+import { LOGIN_DOCS, MANUAL_PAGES, PAGE_HELP, headingAnchor, manualHref, type DocLink } from './pages';
 
 const ROOT = join(import.meta.dir, '../../../..');
+const MANUAL = join(import.meta.dir, '../manual');
 
 /** The anchors of the headings of a file of the manual, leaving out code blocks. */
 function anchors(file: string): string[] {
-  const text = readFileSync(join(ROOT, 'docs/src', file), 'utf8');
+  const text = readFileSync(join(MANUAL, file), 'utf8');
   const withoutCode = text.replace(/^```[\s\S]*?^```/gm, '');
   return [...withoutCode.matchAll(/^#+\s+(.*)$/gm)].map(m => headingAnchor(m[1]));
 }
@@ -25,9 +26,36 @@ test('the manual has every linked section', () => {
     ['/login', LOGIN_DOCS],
   ];
   for (const [path, link] of links) {
-    expect(existsSync(join(ROOT, 'docs/src', link.file)), `${path}: ${link.file}`).toBe(true);
+    expect(MANUAL_PAGES.map(p => p.file), `${path}: ${link.file}`).toContain(link.file);
     if (link.heading) expect(anchors(link.file), `${path}: ${link.heading}`).toContain(headingAnchor(link.heading));
   }
+});
+
+test('the manual lists every file in it', () => {
+  const files = readdirSync(MANUAL).filter(file => file.endsWith('.md')).sort();
+  expect(MANUAL_PAGES.map(p => p.file).sort()).toEqual(files);
+});
+
+test("the manual's links to its own pages go to sections that exist", () => {
+  for (const { file } of MANUAL_PAGES) {
+    // Links in code, such as `[Pacific](li)`, are examples
+    const text = readFileSync(join(MANUAL, file), 'utf8').replace(/^```[\s\S]*?^```/gm, '').replace(/`[^`]*`/g, '');
+    for (const [, href] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+      if (/^(https?:|mailto:)/.test(href)) continue;
+      const path = manualHref(href);
+      expect(path, `${file}: ${href}`).toMatch(/^\/manual\//);
+      const [page, anchor] = path.slice('/manual/'.length).split('#');
+      const target = `${page}.md`;
+      expect(MANUAL_PAGES.map(p => p.file), `${file}: ${href}`).toContain(target);
+      if (anchor) expect(anchors(target), `${file}: ${href}`).toContain(anchor);
+    }
+  }
+});
+
+test('manualHref', () => {
+  expect(manualHref('./workflows.md#jj')).toBe('/manual/workflows#jj');
+  expect(manualHref('concepts.md')).toBe('/manual/concepts');
+  expect(manualHref('https://tailscale.com')).toBe('https://tailscale.com');
 });
 
 test('the queries in the help use fields that exist', () => {

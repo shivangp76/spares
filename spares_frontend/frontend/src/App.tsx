@@ -6,6 +6,7 @@ const CardsPage = lazy(() => import('./pages/CardsPage'))
 const ImageOcclusionPage = lazy(() => import('./pages/ImageOcclusionPage'))
 const KeywordsPage = lazy(() => import('./pages/KeywordsPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
+const ManualPage = lazy(() => import('./pages/ManualPage'))
 const NotesPage = lazy(() => import('./pages/NotesPage'))
 const ParsersPage = lazy(() => import('./pages/ParsersPage'))
 const ReviewPage = lazy(() => import('./pages/ReviewPage'))
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/statistics" element={<StatisticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/manual/:page?" element={<ManualPage />} />
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>
     </Suspense>

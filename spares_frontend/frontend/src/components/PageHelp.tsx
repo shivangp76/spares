@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { GLOBAL_SHORTCUTS, docUrl, type PageHelp as PageHelpContent } from '../help/pages';
 import type { Keybinding } from '../help/shortcuts';
 import CodeText from './CodeText';
@@ -40,7 +41,7 @@ export default function PageHelp({ help, bindings = [], onClose }: {
           <h4 style={{ margin: '16px 0 4px' }}>In the manual</h4>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14 }}>
             {help.docs.map(link => (
-              <li key={link.label}><a href={docUrl(link)} target="_blank" rel="noreferrer">{link.label}</a></li>
+              <li key={link.label}><Link to={docUrl(link)}>{link.label}</Link></li>
             ))}
           </ul>
         </>

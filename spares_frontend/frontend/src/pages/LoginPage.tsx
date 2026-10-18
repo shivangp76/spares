@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { NetworkError, getCredentials, getSchedulerNames, saveCredentials } from '../api/client';
 import { LOGIN_DOCS, docUrl } from '../help/pages';
 import { errorMessage } from '../utils';
@@ -79,7 +79,7 @@ export default function LoginPage() {
         </button>
         {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
         {unreachable && <button type="button" onClick={save} className="touch-target">Log in anyway</button>}
-        <a href={docUrl(LOGIN_DOCS)} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</a>
+        <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</Link>
       </form>
     </div>
   );

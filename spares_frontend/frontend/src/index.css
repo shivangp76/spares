@@ -657,3 +657,72 @@ html:has(.review-answer-bar) {
 .syntax-example-answer {
   color: var(--tone-blue-fg);
 }
+
+/* The manual: its pages beside the one shown, or above it on phones */
+.manual {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+}
+
+.manual-contents {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 190px;
+  font-size: 14px;
+}
+
+.manual-contents [aria-current] {
+  font-weight: 600;
+}
+
+.manual-text {
+  flex: 1;
+  min-width: 0;
+  max-width: 760px;
+  line-height: 1.55;
+}
+
+.manual-text h1 {
+  margin-top: 0;
+}
+
+.manual-text pre {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 13px;
+  overflow-x: auto;
+}
+
+.manual-text table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.manual-text th,
+.manual-text td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+@media (max-width: 768px) {
+  .manual {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .manual-contents {
+    position: static;
+    flex: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+}

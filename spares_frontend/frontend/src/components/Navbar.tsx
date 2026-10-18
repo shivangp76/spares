@@ -27,6 +27,7 @@ const NAV_LINKS = [
   { to: '/image-occlusion', label: 'Image Occlusion' },
   { to: '/statistics', label: 'Statistics' },
   { to: '/settings', label: 'Settings' },
+  { to: '/manual', label: 'Manual' },
 ];
 
 export default function Navbar({ onLogout, extra, help }: NavbarProps) {
@@ -89,7 +90,7 @@ export default function Navbar({ onLogout, extra, help }: NavbarProps) {
     <nav className="navbar">
       <div className="navbar-links">
         {NAV_LINKS.map(({ to, label }) =>
-          pathname === to ? (
+          pathname === to || pathname.startsWith(`${to}/`) ? (
             <span key={to} ref={currentLinkRef} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
           ) : (
             <Link key={to} to={to} className="navbar-link">{label}</Link>

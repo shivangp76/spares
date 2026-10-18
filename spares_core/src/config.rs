@@ -1468,7 +1468,7 @@ mod tests {
         assert_eq!(config.queue.learn_ahead_limit, Duration::minutes(20));
     }
 
-    /// The example in `docs/src/concepts.md`.
+    /// A typical scheduling setup.
     #[test]
     fn documented_scheduling_example_parses() {
         let config = parse(indoc::indoc! {r#"

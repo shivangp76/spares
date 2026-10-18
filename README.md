@@ -2,7 +2,7 @@
 
 **Spa**ced **Re**petition **S**ystem - A file-based note system built for programmers.
 
-Spares was built to address the numerous drawbacks of Anki. See [this](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md) for a more detailed comparison with Anki.
+Spares was built to address the numerous drawbacks of Anki. See [this](spares_frontend/frontend/src/manual/comparison.md) for a more detailed comparison with Anki.
 
 > [!WARNING]
 > Spares is in alpha. Expect frequent breaking changes.
@@ -41,19 +41,22 @@ Spares was built to address the numerous drawbacks of Anki. See [this](https://g
 
 ## Quick Start
 
-See our [Getting Started Guide](https://github.com/shivangp76/spares/blob/main/docs/src/getting_started.md).
+See our [Getting Started Guide](spares_frontend/frontend/src/manual/getting_started.md).
 
 ## Documentation
 
-- [Getting Started](https://github.com/shivangp76/spares/blob/main/docs/src/getting_started.md)
-- [Concepts](https://github.com/shivangp76/spares/blob/main/docs/src/concepts.md)
-- [Workflows](https://github.com/shivangp76/spares/blob/main/docs/src/workflows.md)
-- [Comparison with Anki](https://github.com/shivangp76/spares/blob/main/docs/src/comparison.md)
+The manual is also in the web app, under Manual.
+
+- [Getting Started](spares_frontend/frontend/src/manual/getting_started.md)
+- [Deploying a Sync Server](spares_frontend/frontend/src/manual/deploying.md)
+- [Concepts](spares_frontend/frontend/src/manual/concepts.md)
+- [Workflows](spares_frontend/frontend/src/manual/workflows.md)
+- [Comparison with Anki](spares_frontend/frontend/src/manual/comparison.md)
 - API docs, with every setting and how each part works: `cargo doc --workspace --no-deps --document-private-items --open`
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](https://github.com/shivangp76/spares/blob/main/docs/src/contributing.md) for details.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
 ## License
 

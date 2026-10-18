@@ -5,10 +5,10 @@ import {
   type Shortcut,
 } from './shortcuts';
 
-/** A section of the manual, in `docs/src`. `pages.test.ts` checks that each one exists. */
+/** A section of the manual, in `src/manual`. `pages.test.ts` checks that each one exists. */
 export interface DocLink {
   label: string;
-  /** The file in `docs/src`, like `concepts.md`. */
+  /** The file in `src/manual`, like `concepts.md`. */
   file: string;
   /** The heading, as written in the file. */
   heading?: string;
@@ -23,15 +23,35 @@ export interface PageHelp {
   docs: DocLink[];
 }
 
-const DOCS_URL = 'https://github.com/shivangp76/spares/blob/main/docs/src/';
+/** The pages of the manual, in the order it lists them. */
+export const MANUAL_PAGES: { file: string; title: string }[] = [
+  { file: 'getting_started.md', title: 'Getting Started' },
+  { file: 'deploying.md', title: 'Deploying a Sync Server' },
+  { file: 'concepts.md', title: 'Main Concepts' },
+  { file: 'workflows.md', title: 'Workflows' },
+  { file: 'comparison.md', title: 'Comparison with Anki' },
+];
 
-/** The anchor GitHub gives a heading: lowercase, without punctuation, with `-` for spaces. */
+/** The anchor of a heading, as GitHub gives it, so the files' links work there too: lowercase,
+    without punctuation, with `-` for spaces. */
 export function headingAnchor(heading: string): string {
   return heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 }
 
+/** The app's path of a page of the manual, as in `/manual/concepts`. */
+export function manualPath(file: string): string {
+  return `/manual/${file.replace(/\.md$/, '')}`;
+}
+
+/** Where a link in a page of the manual goes: the app's page for one to another file, as in
+    `./workflows.md#jj`, and the link itself otherwise. */
+export function manualHref(href: string): string {
+  const match = /^(?:\.\/)?([\w-]+\.md)(#.*)?$/.exec(href);
+  return match ? manualPath(match[1]) + (match[2] ?? '') : href;
+}
+
 export function docUrl(link: DocLink): string {
-  return DOCS_URL + link.file + (link.heading ? `#${headingAnchor(link.heading)}` : '');
+  return manualPath(link.file) + (link.heading ? `#${headingAnchor(link.heading)}` : '');
 }
 
 const NOTE_VS_CARD: DocLink = { label: 'Note vs Card', file: 'concepts.md', heading: 'Note vs Card' };
