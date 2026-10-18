@@ -13,11 +13,11 @@ export default function InsertImageOcclusionButton({ parserId, onInsert }: { par
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
-        className="button-tool"
+        className="button-tool tool-purple"
         title={parserId === null ? 'Select a parser first' : 'Draw clozes over an image and insert them at the cursor'}
         style={{ padding: '2px 8px', fontSize: 12 }}
       >
-        Insert image occlusion
+        <span aria-hidden="true">🖼️</span> Insert image occlusion
       </button>
       {open && parserId !== null && (
         <ImageOcclusionEditor

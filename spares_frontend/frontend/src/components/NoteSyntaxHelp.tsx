@@ -17,11 +17,11 @@ export default function NoteSyntaxButton({ parserId, onInsert, tips }: {
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
-        className="button-tool"
+        className="button-tool tool-teal"
         title={parserId === null ? 'Select a parser first' : 'How to write clozes and the rest of a note, with the cards each makes'}
         style={{ padding: '2px 8px', fontSize: 12 }}
       >
-        Syntax
+        <span aria-hidden="true">📖</span> Syntax
       </button>
       {open && (
         <HelpDialog

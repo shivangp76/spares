@@ -150,17 +150,38 @@ a:visited {
   background: color-mix(in srgb, var(--accent) 85%, var(--text));
 }
 
-/* Tools for the text being edited, e.g. inserting audio */
+/* Tools for the text being edited, e.g. inserting audio. Grey unless a `tool-*` class gives the
+   tool its own colour. */
 .button-tool {
-  background: var(--tone-gray-bg);
-  border: 1px solid var(--tone-gray-border);
+  --tool-fg: var(--tone-gray-fg);
+  --tool-border: var(--tone-gray-border);
+  --tool-bg: var(--tone-gray-bg);
+  background: var(--tool-bg);
+  border: 1px solid var(--tool-border);
   border-radius: 4px;
-  color: var(--tone-gray-fg);
+  color: var(--tool-fg);
 }
 
 .button-tool:hover:not(:disabled) {
-  background: var(--hover);
-  border-color: var(--border-strong);
+  border-color: var(--tool-fg);
+}
+
+.tool-teal {
+  --tool-fg: var(--tone-teal-fg);
+  --tool-border: var(--tone-teal-border);
+  --tool-bg: var(--tone-teal-bg);
+}
+
+.tool-orange {
+  --tool-fg: var(--tone-orange-fg);
+  --tool-border: var(--tone-orange-border);
+  --tool-bg: var(--tone-orange-bg);
+}
+
+.tool-purple {
+  --tool-fg: var(--tone-purple-fg);
+  --tool-border: var(--tone-purple-border);
+  --tool-bg: var(--tone-purple-bg);
 }
 
 /* Goes somewhere else, e.g. a linked note */

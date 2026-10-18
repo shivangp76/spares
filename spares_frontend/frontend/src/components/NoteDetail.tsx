@@ -211,7 +211,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
               className="button-tool"
               style={{ padding: '2px 8px', fontSize: 12, color: copyStatus === 'error' ? 'var(--error)' : undefined }}
             >
-              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
+              <span aria-hidden="true">📋</span> {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
             </button>
             {!live && (
               <>
@@ -298,10 +298,10 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
                 // The server edits the saved text, which would drop unsaved edits
                 disabled={live || dataContent !== savedData}
                 title={dataContent !== savedData ? 'Save or undo your changes to the data first' : occlusion.original_image_filepath}
-                className="button-tool"
+                className="button-tool tool-purple"
                 style={{ padding: '4px 8px', fontSize: 12 }}
               >
-                Edit image occlusion {index + 1}
+                <span aria-hidden="true">🖼️</span> Edit image occlusion {index + 1}
               </button>
             ))}
           </div>
