@@ -30,6 +30,7 @@ export const NOTE_EDITOR_SHORTCUTS: Shortcut[] = [
   { keys: [':q'], description: 'Close the note, unless it has unsaved changes' },
   { keys: [':q!'], description: 'Close the note, dropping its unsaved changes' },
   { keys: [':wq', ':x'], description: 'Save and close the note' },
+  { keys: [':e!'], description: 'Undo the changes made since the note was last saved (or clear the new note)' },
 ];
 
 /** In the answer boxes of a typed answer, as `TypedAnswerInputs` handles them. */

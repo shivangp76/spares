@@ -16,7 +16,7 @@ const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13, background: 'var(--bg)' };
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
-const VIM_TIP = 'With Vim keybindings, :w, :wq or :x creates the note, and :q cancels it (:q! drops what has been typed).';
+const VIM_TIP = 'With Vim keybindings, :w, :wq or :x creates the note, and :q cancels it (:q! drops what has been typed). :e! clears the form.';
 
 function lines(value: string): string[] {
   return value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -53,7 +53,17 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const rootRef = useRef<HTMLDivElement>(null);
   // Creating the note closes the form, so each way of writing it also quits
   useVimCommands(rootRef, ({ command, force, warn }) => {
-    if (command === 'quit' || (command === 'exit' && !unsaved)) {
+    if (command === 'edit') {
+      if (force) {
+        setData('');
+        setTags('');
+        setKeywords('');
+        setIsSuspended(false);
+        setError(null);
+      } else if (unsaved) {
+        warn(NO_WRITE_WARNING);
+      }
+    } else if (command === 'quit' || (command === 'exit' && !unsaved)) {
       if (force || !unsaved) onCancel();
       else warn(NO_WRITE_WARNING);
     } else if (!saving) {
