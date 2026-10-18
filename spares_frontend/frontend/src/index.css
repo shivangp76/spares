@@ -74,9 +74,12 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* The OS's own UI font, so nothing is downloaded. Without this, browsers fall back to their
+   default font, which is serif (Times) in Safari on iOS. */
 body {
   background: var(--bg);
   color: var(--text);
+  font-family: system-ui, sans-serif;
 }
 
 a {
