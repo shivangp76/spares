@@ -584,6 +584,24 @@ html:has(.review-answer-bar) {
     white-space: nowrap;
   }
 
+  /* The buttons also stay on one row and scroll sideways, so a status appearing beside them
+     (`Downloading cards 3/40`) can't squeeze them onto two lines and push the page down */
+  .navbar-actions {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .navbar-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .navbar-actions > * {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
   /* Each query sits above what it does, and long ones wrap, so the popup never scrolls sideways */
   .search-help-table,
   .search-help-table tbody,
