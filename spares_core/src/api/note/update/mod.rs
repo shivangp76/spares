@@ -1981,4 +1981,58 @@ mod tests {
         .unwrap();
         assert_eq!(nt_count, 1);
     }
+
+    /// Removing a tag from one note must leave it on the other notes.
+    #[sqlx::test]
+    async fn test_update_note_remove_tag_only_from_that_note(pool: SqlitePool) {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNoteRequest {
+            data: "{{ note }}".to_string(),
+            keywords: vec![],
+            tags: vec!["shared".to_string()],
+            is_suspended: false,
+            custom_data: Map::new(),
+        };
+        let res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![request.clone(), request],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let (first, second) = (res.notes[0].id, res.notes[1].id);
+
+        update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![first]),
+                data: None,
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::ModifyTags {
+                    tags_to_remove: Some(vec!["shared".to_string()]),
+                    tags_to_add: None,
+                },
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let tagged: Vec<NoteId> = sqlx::query_scalar(
+            r"SELECT nt.note_id FROM note_tag nt JOIN tag t ON t.id = nt.tag_id WHERE t.name = 'shared'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tagged, vec![second]);
+    }
 }

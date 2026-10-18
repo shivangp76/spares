@@ -184,10 +184,11 @@ pub(super) async fn update_tags(
 
         for chunk in tags_to_remove.chunks(MAX_ROWS_IN_QUERY) {
             let query_str = format!(
-                "DELETE FROM note_tag WHERE tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
+                "DELETE FROM note_tag WHERE note_id = ? AND tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
                 placeholders(chunk.len())
             );
             let mut query = sqlx::query(query_str.as_str());
+            query = query.bind(note_id);
             for tag_name in chunk {
                 query = query.bind(tag_name);
             }
