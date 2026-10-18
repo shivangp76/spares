@@ -169,13 +169,26 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
 
   return (
     <div ref={rootRef} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: 'var(--surface)' }}>
-      <button
-        onClick={close}
-        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
-        aria-label="Close detail"
-        className="tap-area"
-      >×</button>
-      <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>Note {formatNoteId(note.id)}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: saveStatus === 'error' ? 8 : 16 }}>
+        <h3 style={{ margin: 0, fontSize: 16, flex: 1 }}>Note {formatNoteId(note.id)}</h3>
+        {saveStatus === 'saved' && <span style={{ fontSize: 13, color: 'var(--success)' }}>Saved</span>}
+        <button
+          onClick={handleSave}
+          disabled={saveStatus === 'saving'}
+          className="touch-target-small"
+          style={{ padding: '5px 14px', fontSize: 13, cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer' }}
+        >
+          {saveStatus === 'saving' ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={close}
+          style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
+          aria-label="Close detail"
+          className="tap-area"
+        >×</button>
+      </div>
+      {/* Below the header so a long error wraps instead of squeezing the title */}
+      {saveStatus === 'error' && <div style={{ marginBottom: 16, fontSize: 13, color: 'var(--error)' }}>{saveError}</div>}
       {note.tags.includes(SYNC_CONFLICT_TAG) && (
         <div style={{ marginBottom: 12, fontSize: 13 }}>
           <span className="sync-conflict-badge">conflict</span> A sync could not merge this note. Resolve it on the laptop with <code>spares sync conflicts</code>.
@@ -322,19 +335,6 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
           </div>
         </div>
       )}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <button
-          onClick={handleSave}
-          disabled={saveStatus === 'saving'}
-          className="touch-target-small"
-          style={{ padding: '5px 14px', fontSize: 13, cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer' }}
-        >
-          {saveStatus === 'saving' ? 'Saving…' : 'Save'}
-        </button>
-        {saveStatus === 'saved' && <span style={{ fontSize: 13, color: 'var(--success)' }}>Saved</span>}
-        {saveStatus === 'error' && <span style={{ fontSize: 13, color: 'var(--error)' }}>{saveError}</span>}
-      </div>
 
       <div>
         <div style={fieldLabel}>Compiled</div>
