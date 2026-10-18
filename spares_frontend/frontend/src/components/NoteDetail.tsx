@@ -161,7 +161,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
             <div style={{ display: 'flex', gap: 6 }}>
               <NoteSyntaxButton
                 parserId={note.parser_id}
-                tips={vimEnabled ? [...VIM_WRITE_TIP] : EDITOR_TIPS}
+                tips={vimEnabled ? [...EDITOR_TIPS, VIM_WRITE_TIP] : EDITOR_TIPS}
                 onInsert={source => setDataContent(insertSource(dataEditorRef.current?.view, dataContent, source))}
               />
               <InsertAudioButton
