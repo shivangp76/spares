@@ -134,6 +134,61 @@ a:visited {
   opacity: 1;
 }
 
+/* Button kinds, so each does what it looks like. The inline padding and font size still set the
+   size. */
+
+/* The main action, e.g. saving a note */
+.button-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: light-dark(#fff, #0d1424);
+  font-weight: 600;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+}
+
+/* Tools for the text being edited, e.g. inserting audio */
+.button-tool {
+  background: var(--tone-gray-bg);
+  border: 1px solid var(--tone-gray-border);
+  border-radius: 4px;
+  color: var(--tone-gray-fg);
+}
+
+.button-tool:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+/* Goes somewhere else, e.g. a linked note */
+.button-link {
+  background: var(--tone-blue-bg);
+  border: 1px solid var(--tone-blue-border);
+  border-radius: 999px;
+  color: var(--tone-blue-fg);
+}
+
+.button-link:hover:not(:disabled) {
+  border-color: var(--tone-blue-fg);
+}
+
+/* A bare symbol, e.g. a close button */
+.button-icon {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.button-icon:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 /* Inline-coloured buttons lose the browser's disabled styling, so dim them here */
 /* A toggle that is on, e.g. the statistics page's period */
 button[aria-pressed="true"] {

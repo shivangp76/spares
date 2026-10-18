@@ -175,16 +175,16 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
         <button
           onClick={handleSave}
           disabled={saveStatus === 'saving'}
-          className="touch-target-small"
+          className="button-primary touch-target-small"
           style={{ padding: '5px 14px', fontSize: 13, cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer' }}
         >
           {saveStatus === 'saving' ? 'Saving…' : 'Save'}
         </button>
         <button
           onClick={close}
-          style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
+          style={{ fontSize: 18, lineHeight: 1, padding: '4px 8px' }}
           aria-label="Close detail"
-          className="tap-area"
+          className="button-icon tap-area"
         >×</button>
       </div>
       {/* Below the header so a long error wraps instead of squeezing the title */}
@@ -208,6 +208,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
             <button
               onClick={copyData}
               title="Copy the note's data to the clipboard"
+              className="button-tool"
               style={{ padding: '2px 8px', fontSize: 12, color: copyStatus === 'error' ? 'var(--error)' : undefined }}
             >
               {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
@@ -297,6 +298,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
                 // The server edits the saved text, which would drop unsaved edits
                 disabled={live || dataContent !== savedData}
                 title={dataContent !== savedData ? 'Save or undo your changes to the data first' : occlusion.original_image_filepath}
+                className="button-tool"
                 style={{ padding: '4px 8px', fontSize: 12 }}
               >
                 Edit image occlusion {index + 1}
@@ -326,7 +328,8 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
                   onClick={id === null ? undefined : () => onOpenNote(id)}
                   disabled={id === null}
                   title={id === null ? 'No note matches this keyword' : ln.matched_keyword ?? undefined}
-                  style={{ padding: '4px 8px', fontSize: 12 }}
+                  className="button-link"
+                  style={{ padding: '4px 10px', fontSize: 12 }}
                 >
                   {ln.searched_keyword} ({id === null ? 'unmatched' : formatNoteId(id)})
                 </button>

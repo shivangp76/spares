@@ -17,6 +17,7 @@ export default function NoteSyntaxButton({ parserId, onInsert, tips }: {
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
+        className="button-tool"
         title={parserId === null ? 'Select a parser first' : 'How to write clozes and the rest of a note, with the cards each makes'}
         style={{ padding: '2px 8px', fontSize: 12 }}
       >

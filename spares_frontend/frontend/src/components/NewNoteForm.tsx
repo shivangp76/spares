@@ -144,7 +144,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
       </label>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={create} disabled={saving || parserId === null} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>
+        <button onClick={create} disabled={saving || parserId === null} className="button-primary touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>
           {saving ? 'Creating…' : 'Create'}
         </button>
         <button onClick={cancel} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
