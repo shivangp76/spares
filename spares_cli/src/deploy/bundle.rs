@@ -198,12 +198,16 @@ fn compile(progress: &Progress, repo: &Path, target: Target) -> Result<(), Error
         .args(["target", "add", triple])
         .stdout(Stdio::null()))?;
     // glibc 2.31 (Debian 11, Ubuntu 20.04) or newer runs it. Without debuginfo, which is stripped
-    // anyway, it compiles about a quarter faster.
+    // anyway, it compiles about a quarter faster. Fat LTO and one codegen unit make the server
+    // faster at the cost of a longer compile, here rather than in the workspace's release
+    // profile so local builds and ones on a small VPS stay quick.
     run(Command::new("cargo")
         .args(["zigbuild", "--release", "-p", "spares_server", "--target"])
         .arg(format!("{triple}.2.31"))
         .env("CARGO_PROFILE_RELEASE_DEBUG", "false")
         .env("CARGO_PROFILE_RELEASE_STRIP", "debuginfo")
+        .env("CARGO_PROFILE_RELEASE_LTO", "fat")
+        .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
         .current_dir(repo))
 }
 
