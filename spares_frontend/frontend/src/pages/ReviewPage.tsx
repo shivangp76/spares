@@ -760,6 +760,17 @@ export default function ReviewPage() {
     return () => clearTimeout(timer);
   }, [landingQueueKey]);
 
+  // Likewise compile the card likely to come next while this one is shown, once its back has had
+  // time to compile first, so rating it shows the next card at once
+  const shownCardId = frontRendered ? card?.card_id : undefined;
+  useEffect(() => {
+    if (shownCardId === undefined) return;
+    const timer = setTimeout(() => {
+      precompileNextCard(sessionKey.current, shownCardId).catch(e => { if (!isNetworkError(e)) console.error(e); });
+    }, PRECOMPILE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [shownCardId]);
+
   // Load the note editor while a card is shown, so opening the note isn't delayed by it
   const reviewing = phase === 'front' || phase === 'back';
   useEffect(() => {
@@ -994,7 +1005,7 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {phase === 'loading' && <div>Loading…</div>}
+      {phase === 'loading' && <div className="loading-delayed">Loading…</div>}
 
       {phase === 'waiting' && waitingUntil !== null && (
         <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>

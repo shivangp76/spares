@@ -38,6 +38,6 @@ function RenderedFile({ path, version, onReady }: Pick<Props, 'path' | 'version'
   }, [error, onReady]);
 
   if (error) return <div style={{ color: 'var(--error)' }}>Error loading card: {error}</div>;
-  if (url === null) return <div>Loading…</div>;
+  if (url === null) return <div className="loading-delayed">Loading…</div>;
   return <PdfViewer url={url} onReady={onReady} />;
 }

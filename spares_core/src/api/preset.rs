@@ -45,6 +45,12 @@ fn sql_string(text: &str) -> String {
 /// A tag matches itself and its children, compared exactly: `lang` matches `lang` and
 /// `lang:german`, but not `Lang` or `language`. `substr` rather than `LIKE`, since `_` and `%` are
 /// wildcards in a `LIKE` pattern and `LIKE` ignores case.
+///
+/// The first preset that matches is the lowest index that any of the note's tags matches, so the
+/// note's tags are read once rather than once per preset.
+///
+/// SQLite evaluates the subquery each time it appears in a query, so a query that refers to the
+/// preset more than once should select from [`cards_with_preset`] instead.
 pub(crate) fn preset_sql(presets: &IndexMap<String, QueuePreset>) -> String {
     if presets.is_empty() {
         return "NULL".to_string();
@@ -66,13 +72,23 @@ pub(crate) fn preset_sql(presets: &IndexMap<String, QueuePreset>) -> String {
                     )
                 })
                 .join(" OR ");
-            format!(
-                "WHEN EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON t.id = nt.tag_id \
-                 WHERE nt.note_id = c.note_id AND ({tags})) THEN {index}"
-            )
+            format!("WHEN {tags} THEN {index}")
         })
         .join(" ");
-    format!("(CASE {whens} END)")
+    format!(
+        "(SELECT MIN(CASE {whens} END) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id \
+         WHERE nt.note_id = c.note_id)"
+    )
+}
+
+/// The `card` table with each card's preset ([`preset_sql`]) as a `preset` column, to select
+/// from as `c`. A query that refers to `c.preset` several times, like the queue's `ORDER BY`,
+/// then looks up each card's preset once.
+pub(crate) fn cards_with_preset(presets: &IndexMap<String, QueuePreset>) -> String {
+    format!(
+        "(SELECT c.*, {} AS preset FROM card c)",
+        preset_sql(presets)
+    )
 }
 
 /// [`preset_sql`] if some preset has daily limits of its own, and `NULL` otherwise, so queries that

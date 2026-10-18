@@ -726,3 +726,13 @@ html:has(.review-answer-bar) {
     gap: 6px 14px;
   }
 }
+
+/* Shown only once loading takes long enough to notice, so a quick load does not flash it */
+.loading-delayed {
+  animation: loading-delayed-appear 0s 400ms both;
+}
+
+@keyframes loading-delayed-appear {
+  from { visibility: hidden; }
+  to { visibility: visible; }
+}

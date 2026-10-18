@@ -10,7 +10,6 @@ use indoc::formatdoc;
 use itertools::Itertools;
 
 use crate::api::preset::PresetLimitsLeft;
-use crate::api::preset::preset_sql;
 use crate::api::review::DailyLimitsLeft;
 use crate::config::NewCardOrder;
 use crate::config::NewReviewMix;
@@ -177,11 +176,7 @@ fn keys_by_preset<O: Copy + PartialEq>(
         .enumerate()
         .map(|(index, order)| format!("WHEN {index} THEN {}", position(order)))
         .join(" ");
-    let order_index = format!(
-        "(CASE {} {whens} ELSE {} END)",
-        preset_sql(presets),
-        position(&top_level)
-    );
+    let order_index = format!("(CASE c.preset {whens} ELSE {} END)", position(&top_level));
     let mut all_keys = vec![asc(order_index.clone())];
     for (index, order) in orders.iter().enumerate() {
         all_keys.extend(keys(*order).into_iter().map(|(expr, descending)| {
@@ -202,7 +197,8 @@ fn render(keys: &[Key]) -> String {
 
 /// The `ORDER BY` expressions (without the keyword) that put the cards matching a review's
 /// `WHERE` clause in the order [`QueueConfig`] describes, as of `now`. The query must select
-/// `FROM card c JOIN note n JOIN parser p`.
+/// `FROM {cards_with_preset} c JOIN note n JOIN parser p`, with
+/// [`cards_with_preset`](crate::api::preset::cards_with_preset) of `config`'s presets.
 ///
 /// `query_sort` is the sort the review's query asks for (see
 /// [`Evaluator::card_order_by`](crate::search::evaluator::Evaluator::card_order_by)). Unless it is
@@ -501,9 +497,10 @@ pub(crate) mod tests {
         query_sort: &[String],
     ) -> Vec<CardId> {
         let query = format!(
-            "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id JOIN parser p ON n.parser_id = p.id
+            "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id JOIN parser p ON n.parser_id = p.id
             WHERE c.special_state IS NULL OR c.special_state = {}
             ORDER BY {}",
+            crate::api::preset::cards_with_preset(&config.presets),
             SpecialState::BuriedUntilLaterToday as u8,
             queue_order_by(config, now, &caps, query_sort)
         );
@@ -955,6 +952,7 @@ mod daily_limit_tests {
         }
         let counts = async |caps: QueueCaps| {
             let filter = ReviewFilterQuery {
+                cards: "card".to_string(),
                 where_clause: "c.due <= ?".to_string(),
                 is_filtered_tag: false,
                 card_due_limit: now,
@@ -1545,6 +1543,7 @@ mod linked_note_tests {
 
         let (_, card_due_limit) = get_start_end_local_date(&now);
         let filter = ReviewFilterQuery {
+            cards: "card".to_string(),
             where_clause: where_clause(&config, now, None),
             is_filtered_tag: false,
             card_due_limit,
@@ -2004,6 +2003,8 @@ mod preset_tests {
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::preset::CardConfigs;
     use crate::api::preset::card_presets;
+    use crate::api::preset::cards_with_preset;
+    use crate::api::preset::preset_sql;
     use crate::api::review::DailyLimitsLeft;
     use crate::api::review::daily_limits_left_with;
     use crate::api::review::rate_card_with_config;
@@ -2288,7 +2289,8 @@ mod preset_tests {
         .queue;
         let order = async |config: &QueueConfig| {
             let query = format!(
-                "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id ORDER BY {}",
+                "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
+                cards_with_preset(&config.presets),
                 queue_order_by(config, now, &QueueCaps::default(), &[])
             );
             sqlx::query_scalar::<_, CardId>(&query)

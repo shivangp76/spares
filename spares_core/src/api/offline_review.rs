@@ -147,6 +147,7 @@ pub async fn get_review_queue(
     let (cards_left_by_state, time_estimate) =
         get_cards_left_by_state_and_time_estimate(db, &review_filter).await?;
     let ReviewFilterQuery {
+        cards,
         where_clause,
         is_filtered_tag,
         card_due_limit,
@@ -167,7 +168,7 @@ pub async fn get_review_queue(
     );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}, c.due as due, {preset_sql} as preset
-        FROM card c
+        FROM {cards} c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
         WHERE {where_clause}

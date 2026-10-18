@@ -13,6 +13,10 @@ resolver = "2"
 [profile.release]
 debug = true
 
+# SQLite unoptimized makes queries several times slower, e.g. picking the next card to review
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
 [workspace.package]
 authors = ["Shivang Patel <shivangp76@gmail.com>"]
 edition = "2024"

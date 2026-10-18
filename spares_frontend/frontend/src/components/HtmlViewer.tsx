@@ -108,7 +108,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
   }, [theme]);
 
   if (current?.error !== undefined) return <div style={{ color: 'var(--error)' }}>Error loading card: {current.error}</div>;
-  if (current === null) return <div>Loading…</div>;
+  if (current === null) return <div className="loading-delayed">Loading…</div>;
   return (
     <iframe
       ref={iframeRef}

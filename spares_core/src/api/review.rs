@@ -33,6 +33,7 @@ use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::cap_counts;
+use crate::api::preset::cards_with_preset;
 use crate::api::preset::limited_preset_sql;
 use crate::api::preset::preset_index;
 use crate::api::queue::QueueCaps;
@@ -678,14 +679,17 @@ pub async fn create_review_snapshot_tag(
 }
 
 pub(crate) struct ReviewFilterQuery {
+    /// The cards to select from as `c`, with the `preset` column `where_clause`, `preset_sql` and
+    /// [`queue_order_by`] refer to: [`cards_with_preset`].
+    pub(crate) cards: String,
     /// Binds `card_due_limit` unless `is_filtered_tag`.
     pub(crate) where_clause: String,
     pub(crate) is_filtered_tag: bool,
     pub(crate) card_due_limit: DateTime<Utc>,
     /// What is left of today's limits. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
-    /// The SQL of a card's preset, for the presets' own limits in `caps` (see
-    /// [`limited_preset_sql`]).
+    /// The SQL of a card's preset, for the presets' own limits in `caps`: `c.preset`, or `NULL`
+    /// if no preset has limits of its own (see [`limited_preset_sql`]).
     pub(crate) preset_sql: String,
     /// The learning and relearning cards due later today that match the filter but are held back
     /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit), as a
@@ -713,7 +717,13 @@ pub(crate) async fn build_review_filter_query(
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
     let config = read_external_config()?;
     let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
-    let preset_sql = limited_preset_sql(&config.queue);
+    let cards = cards_with_preset(&config.queue.presets);
+    let preset_sql = if limited_preset_sql(&config.queue) == "NULL" {
+        "NULL"
+    } else {
+        "c.preset"
+    }
+    .to_string();
     let not_new_card_str = daily_limits_clause(&limits_left, &preset_sql);
     let mut query_sort = Vec::new();
     let query_card_ids = if let Some(GetReviewCardFilterRequest::Query(query)) = filter {
@@ -778,6 +788,7 @@ pub(crate) async fn build_review_filter_query(
         QueueCaps::from_limits(&limits_left)
     };
     Ok(Some(ReviewFilterQuery {
+        cards,
         where_clause,
         is_filtered_tag,
         card_due_limit,
@@ -810,6 +821,7 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
     let ReviewFilterQuery {
+        cards,
         where_clause,
         is_filtered_tag,
         card_due_limit,
@@ -829,7 +841,7 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
             {} AS preset,
             COUNT(*) as count,
             SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
-        FROM card c
+        FROM {} c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
         LEFT JOIN (
@@ -843,6 +855,7 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
         },
         if *is_filtered_tag { "NULL" } else { preset_sql },
         DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS,
+        cards,
         ReviewLogKind::Review as u8,
         where_clause
     );
@@ -920,6 +933,7 @@ pub async fn get_review_card(
     let (cards_left_by_state, time_estimate) =
         get_cards_left_by_state_and_time_estimate(db, &review_filter).await?;
     let ReviewFilterQuery {
+        cards,
         where_clause,
         is_filtered_tag,
         card_due_limit,
@@ -937,7 +951,7 @@ pub async fn get_review_card(
     );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}
-        FROM card c
+        FROM {cards} c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
         WHERE {where_clause}

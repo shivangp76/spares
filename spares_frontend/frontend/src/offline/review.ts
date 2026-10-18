@@ -386,13 +386,17 @@ export async function nextOfflineCardAvailableAt(key: string, now: Date = new Da
 }
 
 /**
- * Compiles both sides of the next card in the queue for `key`, at the width review cards were last
- * shown at, so that the card shows at once if the server gives it next.
+ * Compiles both sides of the next card in the queue for `key`, other than `shownCardId`, at the
+ * width review cards were last shown at, so that the card shows at once if the server gives it
+ * next. `shownCardId` is the card being reviewed, which stays in the queue until it is rated.
  */
-export async function precompileNextCard(key: string): Promise<void> {
+export async function precompileNextCard(key: string, shownCardId?: number): Promise<void> {
   const width = lastReviewWidth();
-  const card = width === null ? null : await nextOfflineCard(key);
-  if (width === null || !card?.browser_sources) return;
+  if (width === null) return;
+  const now = new Date();
+  const queue = await getOfflineQueue(key);
+  const card = queue && dueToday(queue.cards, now).find(c => c.card_id !== shownCardId && isShownAt(c, now));
+  if (!card?.browser_sources) return;
   const { precompileTypst } = await import('../typst/compiler');
   const inputs = widthInputs(width);
   await Promise.all([precompileTypst(card.browser_sources.card_front, inputs), precompileTypst(card.browser_sources.card_back, inputs)]);
