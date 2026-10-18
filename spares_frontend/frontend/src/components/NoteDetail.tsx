@@ -49,7 +49,10 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   const [imageOcclusionsError, setImageOcclusionsError] = useState<string | null>(null);
   const [editingOcclusion, setEditingOcclusion] = useState<{ index: number; occlusion: ImageOcclusionData } | null>(null);
   const [tagsContent, setTagsContent] = useState(note.tags.join('\n'));
+  const [savedTags, setSavedTags] = useState(tagsContent);
   const [keywordsContent, setKeywordsContent] = useState(note.keywords.join('\n'));
+  const [savedKeywords, setSavedKeywords] = useState(keywordsContent);
+  const unsaved = dataContent !== savedData || tagsContent !== savedTags || keywordsContent !== savedKeywords;
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   // Bumped after each save so the compiled note is refetched
@@ -120,6 +123,8 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       const updated = await updateNote(note.id, dataContent, tags, keywords);
       // The editor keeps the text as typed, though the server may have added card orders to it
       setSavedData(dataContent);
+      setSavedTags(tagsContent);
+      setSavedKeywords(keywordsContent);
       const renderError = await renderAndNotify(updated);
       if (renderError) {
         setSaveError(`Saved, but ${renderError}`);
@@ -134,10 +139,14 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     }
   }
 
+  function close() {
+    if (!unsaved || window.confirm('Discard the unsaved changes to this note?')) onClose();
+  }
+
   return (
     <div ref={rootRef} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: 'var(--surface)' }}>
       <button
-        onClick={onClose}
+        onClick={close}
         style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1 }}
         aria-label="Close detail"
         className="tap-area"

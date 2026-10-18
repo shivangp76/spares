@@ -32,6 +32,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const [isSuspended, setIsSuspended] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const unsaved = [data, tags, keywords].some(s => s.trim() !== '');
   // The first example shows what to write while the data is empty
   const firstExample = useParserSyntax(parserId).examples?.[0]?.source;
 
@@ -40,6 +41,10 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
       .then(list => { setParsers(list); setParserId(list[0]?.id ?? null); })
       .catch(e => setError(errorMessage(e)));
   }, []);
+
+  function cancel() {
+    if (!unsaved || window.confirm('Discard this new note?')) onCancel();
+  }
 
   async function create() {
     if (parserId === null) { setError('Select a parser'); return; }
@@ -117,7 +122,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         <button onClick={create} disabled={saving || parserId === null} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>
           {saving ? 'Creating…' : 'Create'}
         </button>
-        <button onClick={onCancel} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
+        <button onClick={cancel} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
         {error && <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>}
       </div>
     </div>
