@@ -38,7 +38,7 @@ export default function SearchHelp({ fields, onPick, onClose }: {
     >
       {close => (
         // One table, so the examples and the fields line up
-        <table>
+        <table className="search-help-table">
           <tbody>
             {sections.map(([section, rows], i) => [
               <tr key={section}>

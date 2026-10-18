@@ -505,6 +505,38 @@ html:has(.review-answer-bar) {
     white-space: nowrap;
   }
 
+  /* Each query sits above what it does, and long ones wrap, so the popup never scrolls sideways */
+  .search-help-table,
+  .search-help-table tbody,
+  .search-help-table tr,
+  .search-help-table th,
+  .search-help-table td {
+    display: block;
+  }
+
+  .search-help-table td:first-child {
+    width: auto;
+    white-space: normal;
+    padding-bottom: 0;
+  }
+
+  .search-help-table td:first-child button {
+    max-width: 100%;
+  }
+
+  .search-help-table td:last-child {
+    padding-top: 2px;
+    padding-bottom: 8px;
+  }
+
+  .search-help-table code {
+    overflow-wrap: anywhere;
+  }
+
+  .help-dialog-content {
+    padding: 12px 14px 16px;
+  }
+
   .review-answer-bar {
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   }
