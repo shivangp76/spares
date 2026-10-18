@@ -65,7 +65,7 @@ import {
   type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { backPath, backWebPath, errorMessage, formatDuration, formatNoteId, sectionLabel } from '../utils';
+import { backPath, backWebPath, errorMessage, formatDuration, formatNoteId, keepShown, sectionLabel } from '../utils';
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -805,7 +805,7 @@ export default function ReviewPage() {
 
   /** Mirrors the CLI's Sync Note: re-render the note, then refresh the current card in place. */
   async function onNoteUpdated(updated: NoteResponse) {
-    setPanelNote(updated);
+    setPanelNote(prev => keepShown(prev, updated));
     if (!card || updated.id !== card.note_id) return;
     try {
       // NoteDetail has already regenerated the note's rendered files

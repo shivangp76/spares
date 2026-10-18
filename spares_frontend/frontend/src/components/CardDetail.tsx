@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
 import { useFieldAbout } from '../hooks/useFieldAbout';
-import { backPath, backWebPath, errorMessage, formatNoteId, sectionLabel } from '../utils';
+import { backPath, backWebPath, errorMessage, formatNoteId, keepShown, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
@@ -210,7 +210,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
             note={panelNote}
             onClose={() => setPanelNote(null)}
             onNoteUpdated={updated => {
-              setPanelNote(updated);
+              setPanelNote(prev => keepShown(prev, updated));
               // The note was re-rendered, which may have changed this card or its files
               if (updated.id === card.note_id) {
                 setVersion(v => v + 1);

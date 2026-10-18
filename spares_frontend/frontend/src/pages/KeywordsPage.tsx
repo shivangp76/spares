@@ -8,7 +8,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
-import { errorMessage, formatNoteId, td, th } from '../utils';
+import { errorMessage, formatNoteId, keepShown, td, th } from '../utils';
 
 type Tab = 'all' | 'search' | 'unmatched' | 'duplicate' | 'links';
 
@@ -349,7 +349,7 @@ export default function KeywordsPage() {
                 key={panelNote.id}
                 note={panelNote}
                 onClose={detail.back}
-                onNoteUpdated={setPanelNote}
+                onNoteUpdated={updated => setPanelNote(prev => keepShown(prev, updated))}
                 onOpenNote={openNote}
               />
             : !detail.isNarrow && <div style={{ color: 'var(--text-faint)', fontSize: 14, paddingTop: 8 }}>Select a note id to see it.</div>

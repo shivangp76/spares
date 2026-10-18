@@ -11,7 +11,7 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, keepShown, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
@@ -300,7 +300,7 @@ export default function NotesPage() {
                 note={selectedNote}
                 onClose={detail.back}
                 onNoteUpdated={(updated) => {
-                  setSelectedNote(updated);
+                  setSelectedNote(prev => keepShown(prev, updated));
                   setNotes(prev => prev.map(n => n.id === updated.id ? updated : n));
                   setSearchResults(prev => prev ? prev.map(n => n.id === updated.id ? updated : n) : prev);
                 }}

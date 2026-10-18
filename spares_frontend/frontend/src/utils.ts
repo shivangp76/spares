@@ -14,6 +14,13 @@ export function isLiveNote(note: { custom_data: Record<string, unknown> }): bool
   return typeof note.custom_data.live_sync_name === 'string';
 }
 
+/** The note to show once `updated` is saved: `updated` if it is still the one shown. A note's pane
+    hands its update over only after rendering it, by which time the pane may have been closed or
+    moved to another note, which showing `updated` would undo. */
+export function keepShown<T extends { id: number }>(shown: T | null, updated: T): T | null {
+  return shown?.id === updated.id ? updated : shown;
+}
+
 const NOTE_ID_PLACES = 8;
 const NOTE_ID_RADIX = 27;
 
