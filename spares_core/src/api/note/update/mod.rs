@@ -1927,4 +1927,58 @@ mod tests {
             "duplicate names must not create duplicate note_tag rows"
         );
     }
+
+    /// Adding a tag the note already has (e.g. flagging an already flagged note) is a no-op.
+    #[sqlx::test]
+    async fn test_update_note_add_existing_tag(pool: SqlitePool) {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "{{ note }}".to_string(),
+                    keywords: vec![],
+                    tags: vec!["flagged".to_string(), "flagged".to_string()],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let id = res.notes[0].id;
+
+        update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![id]),
+                data: None,
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::ModifyTags {
+                    tags_to_remove: None,
+                    tags_to_add: Some(vec!["flagged".to_string()]),
+                },
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let nt_count: i64 = sqlx::query_scalar(
+            r"SELECT COUNT(*) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name = 'flagged'",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(nt_count, 1);
+    }
 }

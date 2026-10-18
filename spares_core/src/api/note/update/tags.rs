@@ -211,11 +211,13 @@ pub(super) async fn update_tags(
                 .fetch_all(&mut *conn)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
+            // Skip tags the note already has (re-inserting them would violate `note_tag`'s
+            // primary key), and ancestors of tags it already has.
             tags_to_add.retain(|tag| {
                 let prefix = format!("{}:", tag);
                 !existing_note_tag_names
                     .iter()
-                    .any(|existing| existing.starts_with(&prefix))
+                    .any(|existing| existing == tag || existing.starts_with(&prefix))
             });
         }
         new_tag_payloads.extend(

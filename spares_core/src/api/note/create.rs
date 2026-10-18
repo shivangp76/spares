@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Utc;
+use itertools::Itertools;
 use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
@@ -548,9 +549,12 @@ pub async fn create_note_tags(
     db: &SqlitePool,
     note_tag_entries: &[(NoteId, TagId)],
 ) -> Result<(), Error> {
+    // A repeated tag name resolves to the same pair, which would violate `note_tag`'s primary key.
+    let note_tag_entries: Vec<(NoteId, TagId)> =
+        note_tag_entries.iter().unique().copied().collect();
     execute_batched_query(
         db,
-        note_tag_entries,
+        &note_tag_entries,
         MAX_ROWS_IN_QUERY,
         async |db, chunk| {
             let query_str = format!(
