@@ -1061,8 +1061,12 @@ export default function ReviewPage() {
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
                 <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{card.cli.surrounding}</pre>
                 <p style={{ color: 'var(--warning)', fontSize: 13, marginBottom: 0 }}>
-                  This card is reviewed by running <code>{card.cli.exec}</code>, which only the CLI can do. Bury it or review it with <code>spares card review</code>.
+                  This card is reviewed by running <code>{card.cli.exec}</code>, which only the CLI can do. Bury it or review it in the terminal with:
                 </p>
+                {/* `user-select: all` so a click or double-click selects the whole command, not one word */}
+                <pre style={{ margin: '8px 0 0', padding: '6px 10px', background: 'var(--surface)', borderRadius: 4, overflowX: 'auto', userSelect: 'all' }}>
+                  <code>spares card review -q c.id={card.card_id}</code>
+                </pre>
               </div>
             ) : (
               <>
