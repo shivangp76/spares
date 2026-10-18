@@ -23,9 +23,13 @@ export const SEARCH_BOX_SHORTCUTS: Shortcut[] = [
   { keys: ['Esc'], description: 'Hide the completions' },
 ];
 
-/** In a note's editor, as `NoteDetail` handles them. */
+/** In the editors of a note or a new note, with Vim keybindings on, as `NoteDetail` and
+    `NewNoteForm` handle the commands of `vimCommands`. */
 export const NOTE_EDITOR_SHORTCUTS: Shortcut[] = [
-  { keys: [':w'], description: 'Save the note, with Vim keybindings on (in Settings)' },
+  { keys: [':w'], description: 'Save the note (or create the new note), with Vim keybindings on (in Settings)' },
+  { keys: [':q'], description: 'Close the note, unless it has unsaved changes' },
+  { keys: [':q!'], description: 'Close the note, dropping its unsaved changes' },
+  { keys: [':wq', ':x'], description: 'Save and close the note' },
 ];
 
 /** In the answer boxes of a typed answer, as `TypedAnswerInputs` handles them. */

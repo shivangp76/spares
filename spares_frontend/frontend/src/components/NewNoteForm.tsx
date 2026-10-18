@@ -3,9 +3,11 @@ import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { createNotes, listParsers, renderNote } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
 import { useParserSyntax } from '../hooks/useParserSyntax';
+import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
 import type { NoteResponse, ParserResponse } from '../types/spares';
 import { errorMessage, formatNoteId, insertBlock, insertInline, insertSource } from '../utils';
+import { NO_WRITE_WARNING, useVimCommands } from '../vimCommands';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 import NoteSyntaxButton from './NoteSyntaxHelp';
@@ -14,6 +16,7 @@ const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13, background: 'var(--bg)' };
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
+const VIM_TIP = 'With Vim keybindings, :w, :wq or :x creates the note, and :q cancels it (:q! drops what has been typed).';
 
 function lines(value: string): string[] {
   return value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -25,6 +28,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
   const editor = useEditorSetup(parsers?.find(p => p.id === parserId)?.name, parserId);
+  const vimEnabled = useVimKeybindings();
   const [data, setData] = useState('');
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
   const [tags, setTags] = useState('');
@@ -45,6 +49,17 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   function cancel() {
     if (!unsaved || window.confirm('Discard this new note?')) onCancel();
   }
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Creating the note closes the form, so each way of writing it also quits
+  useVimCommands(rootRef, ({ command, force, warn }) => {
+    if (command === 'quit' || (command === 'exit' && !unsaved)) {
+      if (force || !unsaved) onCancel();
+      else warn(NO_WRITE_WARNING);
+    } else if (!saving) {
+      void create();
+    }
+  });
 
   async function create() {
     if (parserId === null) { setError('Select a parser'); return; }
@@ -74,7 +89,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   }
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, backgroundColor: 'var(--surface)' }}>
+    <div ref={rootRef} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, backgroundColor: 'var(--surface)' }}>
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>New Note</h3>
 
       <div style={{ marginBottom: 16 }}>
@@ -94,7 +109,7 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <NoteSyntaxButton parserId={parserId} tips={EDITOR_TIPS} onInsert={source => setData(insertSource(dataEditorRef.current?.view, data, source))} />
+            <NoteSyntaxButton parserId={parserId} tips={vimEnabled ? [...EDITOR_TIPS, VIM_TIP] : EDITOR_TIPS} onInsert={source => setData(insertSource(dataEditorRef.current?.view, data, source))} />
             <InsertAudioButton parserId={parserId} onInsert={snippet => setData(insertInline(dataEditorRef.current?.view, data, snippet))} />
             <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
           </div>

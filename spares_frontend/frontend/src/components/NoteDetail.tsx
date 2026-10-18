@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
-import { Vim } from '@replit/codemirror-vim';
 import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -8,6 +7,7 @@ import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, insertBlock, insertInline, insertSource, isLiveNote } from '../utils';
+import { NO_WRITE_WARNING, useVimCommands } from '../vimCommands';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
@@ -18,13 +18,7 @@ const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13 };
 
-// `:w` saves the note being edited (listed in the help popup as `NOTE_EDITOR_SHORTCUTS`). Ex
-// commands are global, so the editor reaches its note's NoteDetail through a DOM event.
-const VIM_WRITE_EVENT = 'spares-vim-write';
-const VIM_WRITE_TIP = 'With Vim keybindings, :w saves the note.';
-Vim.defineEx('write', 'w', cm => {
-  cm.cm6.dom.dispatchEvent(new Event(VIM_WRITE_EVENT, { bubbles: true }));
-});
+const VIM_TIP = 'With Vim keybindings, :w saves the note, :q closes it (:q! drops unsaved changes), and :wq or :x saves and closes it.';
 
 interface Props {
   note: NoteResponse;
@@ -77,14 +71,19 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     return () => { cancelled = true; };
   }, [note.id, savedData]);
 
-  // Re-bound on every render so the handler sees the current contents
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const onWrite = () => { if (saveStatus !== 'saving') handleSave(); };
-    root.addEventListener(VIM_WRITE_EVENT, onWrite);
-    return () => root.removeEventListener(VIM_WRITE_EVENT, onWrite);
+  useVimCommands(rootRef, ({ command, force, warn }) => {
+    if (command === 'quit') {
+      if (force || !unsaved) onClose();
+      else warn(NO_WRITE_WARNING);
+      return;
+    }
+    if (saveStatus === 'saving') return;
+    if (command === 'write') void handleSave();
+    // `:x` only saves if there is something to save, as in Vim
+    else if (command === 'exit' && !unsaved) onClose();
+    // Left open on an error, to show it
+    else void handleSave().then(saved => { if (saved) onClose(); });
   });
 
   /** Renders the updated note and hands it to the caller. Returns the render error, if any. */
@@ -114,7 +113,8 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
     }
   }
 
-  async function handleSave() {
+  /** Returns whether the note was saved and rendered. */
+  async function handleSave(): Promise<boolean> {
     setSaveStatus('saving');
     setSaveError(null);
     const tags = tagsContent.split('\n').map(s => s.trim()).filter(Boolean);
@@ -129,13 +129,15 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
       if (renderError) {
         setSaveError(`Saved, but ${renderError}`);
         setSaveStatus('error');
-        return;
+        return false;
       }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
+      return true;
     } catch (e) {
       setSaveError(errorMessage(e));
       setSaveStatus('error');
+      return false;
     }
   }
 
@@ -170,7 +172,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
             <div style={{ display: 'flex', gap: 6 }}>
               <NoteSyntaxButton
                 parserId={note.parser_id}
-                tips={vimEnabled ? [...EDITOR_TIPS, VIM_WRITE_TIP] : EDITOR_TIPS}
+                tips={vimEnabled ? [...EDITOR_TIPS, VIM_TIP] : EDITOR_TIPS}
                 onInsert={source => setDataContent(insertSource(dataEditorRef.current?.view, dataContent, source))}
               />
               <InsertAudioButton
