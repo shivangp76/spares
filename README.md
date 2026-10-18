@@ -18,11 +18,12 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
 - **Flexible Architecture**:
   - All cards are fundamentally cloze-based
   - Decks implemented as tags
-  - Swappable spaced repetition algorithms
+  - Pluggable scheduler (FSRS built in)
 
 ### Advanced Features
 - **Image Occlusion**:
   - Integrated as a cloze type (not a separate note type)
+  - Drawn in the web app's note editor
   - Support for interweaving image occlusion with text clozes
   - Hint display over image clozes
 - **Cross-note Referencing**:
@@ -34,8 +35,29 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
   - File-based templates that automatically update
   - Background parallel rendering
 
+### Search and Scheduling
+- **Search Queries**:
+  - Query language with relative dates, review history fields and note links
+  - Results ranked by relevance, with `--explain` to show how a query is read
+  - Saved searches, synced across devices
+- **FSRS Scheduling**:
+  - Optimizer that fits FSRS's parameters to your review history (`spares card optimize`)
+  - Load balancing of due dates across days
+- **Review Queue**:
+  - Daily limits, review order, presets by tag, sibling burying and leech handling, as in Anki
+  - Cards held back until the notes they link to are learned
+
+### Sync
+- **Self-hosted Sync Server**: Two-way sync that merges notes changed on both sides, tagging conflicts with `sync-conflict`
+- **Deployment**: `spares deploy` sets up a VPS reached over Tailscale (see [Deploying a Sync Server](spares_frontend/frontend/src/manual/deploying.md))
+
 ### Interface and Tools
-- **CLI Interface**: Full-featured command-line interface (GUI optional)
+- **CLI**: Full-featured command-line interface, including reviewing
+- **Web App**:
+  - Installable on a phone, with offline reviewing
+  - Note editor with Vim mode, image occlusion, image and audio uploads
+  - Statistics graphs and a built-in manual
+- **Neovim Plugin**: Tag and keyword completion (see [nvim](nvim/README.md))
 - **Anki Migration**: Easy import from Anki decks
 - **Customizable**: Create your own parsers and workflows
 
