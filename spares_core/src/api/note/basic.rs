@@ -495,6 +495,29 @@ pub(crate) mod tests {
     }
 
     #[sqlx::test]
+    async fn test_delete_missing_note_deletes_nothing(pool: SqlitePool) -> () {
+        let created_notes = create_note_helper(&pool).await;
+        let existing = created_notes[0].id;
+        let missing = NoteId::from_letters("zzzz").unwrap();
+
+        let request = DeleteNotesRequest {
+            selector: NotesSelector::Ids(vec![existing, missing]),
+        };
+        let err = delete_notes(&pool, request, &get_all_parsers(), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "No note has id zzzz");
+
+        // The note that does exist is kept, since the request as a whole failed
+        let count: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM note WHERE id = ?")
+            .bind(existing)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[sqlx::test]
     async fn test_list_notes(pool: SqlitePool) -> () {
         // Create notes
         let created_notes = create_note_helper(&pool).await;

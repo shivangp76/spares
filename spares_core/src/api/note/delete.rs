@@ -8,6 +8,8 @@ use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::LibraryError;
+use crate::NoteErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::fetch_batched_query;
@@ -224,6 +226,21 @@ pub async fn delete_notes(
             },
         )
         .await?;
+
+        // Fail before deleting anything, rather than reporting success for notes that are not there.
+        let found: HashSet<NoteId> = rows.iter().map(|row| row.id).collect();
+        let missing: Vec<NoteId> = note_ids
+            .iter()
+            .filter(|id| !found.contains(id))
+            .copied()
+            .sorted()
+            .dedup()
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::Library(LibraryError::Note(
+                NoteErrorKind::NotFound { ids: missing },
+            )));
+        }
 
         let mut snapshots = Vec::with_capacity(rows.len());
         for row in &rows {

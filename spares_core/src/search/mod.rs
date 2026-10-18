@@ -424,7 +424,6 @@ mod relative_date;
 
 pub use examples::QueryExample;
 pub use examples::examples;
-
 use relative_date::RelativeDate;
 
 /// Design note: There is no need to store the token's value here. Value parsing

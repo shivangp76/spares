@@ -119,6 +119,17 @@ pub enum NoteErrorKind {
     },
     #[error("{description}")]
     Other { description: String },
+    /// Notes that were named by id but do not exist.
+    #[error("{}", missing_notes_message(ids))]
+    NotFound { ids: Vec<model::NoteId> },
+}
+
+fn missing_notes_message(ids: &[model::NoteId]) -> String {
+    let letters = ids.iter().map(|id| id.letters()).collect::<Vec<_>>();
+    match letters.as_slice() {
+        [id] => format!("No note has id {id}"),
+        _ => format!("No notes have ids {}", letters.join(", ")),
+    }
 }
 
 #[derive(Clone, Debug, Diagnostic, Error)]

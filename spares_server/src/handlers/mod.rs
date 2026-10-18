@@ -13,6 +13,7 @@ use serde_json::Value;
 use serde_json::json;
 use spares_core::Error;
 use spares_core::LibraryError;
+use spares_core::NoteErrorKind;
 
 use crate::AppState;
 
@@ -60,6 +61,9 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
             );
         }
         Error::Sync(_) => Some(StatusCode::BAD_REQUEST),
+        Error::Library(LibraryError::Note(NoteErrorKind::NotFound { .. })) => {
+            Some(StatusCode::NOT_FOUND)
+        }
         _ => None,
     };
     if let Some(status) = status {
