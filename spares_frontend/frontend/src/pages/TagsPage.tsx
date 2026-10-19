@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/client';
 import Navbar from '../components/Navbar';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
+import { useRowKeys } from '../hooks/useRowKeys';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 
@@ -142,14 +143,20 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
     }
   }
 
+  // As in the parsers' rename box
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') void save();
+    if (e.key === 'Escape') onCancel();
+  }
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginBottom: 16, background: 'var(--surface)' }}>
       <h3 style={{ marginTop: 0, fontSize: 16 }}>{tag ? `Edit tag #${tag.id}` : 'New tag'}</h3>
       <div className="label-grid" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center', fontSize: 14 }}>
         <label htmlFor="tag-name">Name</label>
-        <input id="tag-name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. math:algebra" style={input} />
+        <input id="tag-name" autoFocus value={name} onChange={e => setName(e.target.value)} onKeyDown={handleKeyDown} placeholder="e.g. math:algebra" style={input} />
         <label htmlFor="tag-description">Description</label>
-        <input id="tag-description" value={description} onChange={e => setDescription(e.target.value)} style={input} />
+        <input id="tag-description" value={description} onChange={e => setDescription(e.target.value)} onKeyDown={handleKeyDown} style={input} />
         <label htmlFor="tag-query">Query</label>
         <SearchInput
           id="tag-query"
@@ -246,15 +253,26 @@ export default function TagsPage() {
   const needle = filter.trim().toLowerCase();
   const shown = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
 
+  const tableBody = useRef<HTMLTableSectionElement>(null);
+  const filterInput = useRef<HTMLInputElement>(null);
+  const keys = useRowKeys({
+    // The tree has no rows to highlight
+    count: view === 'table' ? shown.length : 0,
+    body: tableBody,
+    edit: { description: 'Edit the highlighted tag', run: i => setEditing({ tag: shown[i] }) },
+    remove: { description: 'Delete the highlighted tag, after asking', run: i => void remove(shown[i]) },
+    filter: filterInput,
+  });
+
   return (
     <div className="page" style={{ maxWidth: 1000 }}>
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
-        <Navbar onLogout={logout} />
+        <Navbar onLogout={logout} help={keys.help} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Tags</h2>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
+        <input ref={filterInput} value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
         <label style={{ fontSize: 14 }}>
           <input type="radio" name="tag-view" checked={view === 'table'} onChange={() => setView('table')} style={{ marginRight: 4 }} />Table
         </label>
@@ -292,9 +310,9 @@ export default function TagsPage() {
                 <th style={th} />
               </tr>
             </thead>
-            <tbody>
-              {shown.map(tag => (
-                <tr key={tag.id}>
+            <tbody ref={tableBody}>
+              {shown.map((tag, i) => (
+                <tr key={tag.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
                   <td style={td} className="hide-narrow">{tag.id}</td>
                   <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
                   <td style={td} className="hide-narrow">{tag.description || '—'}</td>

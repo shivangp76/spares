@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
+import { useRowKeys } from '../hooks/useRowKeys';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 
@@ -72,9 +73,17 @@ export default function ParsersPage() {
     });
   }
 
+  const tableBody = useRef<HTMLTableSectionElement>(null);
+  const keys = useRowKeys({
+    count: parsers?.length ?? 0,
+    body: tableBody,
+    edit: { description: 'Rename the highlighted parser', run: i => setRenaming({ id: parsers![i].id, name: parsers![i].name }) },
+    remove: { description: 'Delete the highlighted parser, after asking', run: i => remove(parsers![i]) },
+  });
+
   return (
     <div className="page">
-      <Navbar onLogout={logout} />
+      <Navbar onLogout={logout} help={keys.help} />
       <h2 style={{ marginBottom: 16 }}>Parsers</h2>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -104,9 +113,9 @@ export default function ParsersPage() {
                 <th style={th} />
               </tr>
             </thead>
-            <tbody>
-              {parsers.map(parser => (
-                <tr key={parser.id}>
+            <tbody ref={tableBody}>
+              {parsers.map((parser, i) => (
+                <tr key={parser.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
                   <td style={td}>{parser.id}</td>
                   <td style={td}>
                     {renaming?.id === parser.id ? (
