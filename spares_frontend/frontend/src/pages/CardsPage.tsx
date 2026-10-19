@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedCardsPage, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
+import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
@@ -97,6 +98,7 @@ const BULK_ACTIONS: BulkAction[] = [
     confirm: (count, tags) => `Remove ${tagList(tags)} from the notes of ${count} card(s)?`,
     run: (selector, tags) => tagNotesOf(selector, [], tags),
   },
+  FILTERED_TAG_ACTION,
 ];
 
 /** Replaces `card` in `cards` by id, keeping everything else. */

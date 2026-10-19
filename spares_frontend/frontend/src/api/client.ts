@@ -706,6 +706,20 @@ export async function deleteNotes(selector: NotesSelector): Promise<void> {
   await apiSend('Delete notes', '/api/notes', { method: 'DELETE', body: JSON.stringify({ selector }) });
 }
 
+/** Changes the parser the notes `selector` picks are written for. Their text must be valid for it. */
+export async function changeNotesParser(selector: NotesSelector, parserId: number): Promise<{ notes: NoteResponse[]; eventId: number | null }> {
+  const body = await apiFetch<{ notes: NoteResponse[]; event_id: number | null }>('Change parser', '/api/notes', {
+    method: 'PATCH',
+    body: JSON.stringify({ selector, parser_id: parserId, tags: 'None' }),
+  });
+  return { notes: body.notes, eventId: body.event_id };
+}
+
+/** The notes `query` finds, as files to import, keyed by their file extension, as `spares note export` writes them. */
+export async function exportNotes(query: string): Promise<Record<string, string>> {
+  return apiFetch('Export notes', '/api/notes/export', { method: 'POST', body: JSON.stringify({ query }) });
+}
+
 // Cards
 
 export async function listCards(page: number, limit: number): Promise<CardResponse[]> {

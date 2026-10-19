@@ -6,6 +6,16 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Saves `text` as a file named `name`, as the browser saves downloads. */
+export function downloadText(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Tags as a message lists them. */
 export function tagList(tags: string[]): string {
   return tags.map(t => `\`${t}\``).join(', ');

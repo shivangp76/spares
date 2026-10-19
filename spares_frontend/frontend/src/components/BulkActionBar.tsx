@@ -6,6 +6,8 @@ import ActionResult, { type ActionOutcome } from './ActionResult';
 /** What an action asks for before it runs. */
 export type BulkInput =
   | { kind: 'tags'; suggestions: () => Promise<string[]> }
+  | { kind: 'choice'; options: () => Promise<{ value: string; label: string }[]> }
+  | { kind: 'text'; placeholder: string }
   | { kind: 'datetime' }
   | { kind: 'number'; placeholder: string; min: number; max: number; step: number };
 
@@ -14,11 +16,16 @@ export interface BulkAction {
   /** Shown in red, as for deleting. */
   danger?: boolean;
   input?: BulkInput;
-  /** The question confirmed before running, given how many rows it acts on and what was asked for. */
-  confirm: (count: number, value: string[]) => string;
+  /** Whether it acts on a search rather than on rows, so needs the whole of one selected. */
+  wholeSearch?: boolean;
+  /**
+   * The question confirmed before running, given how many rows it acts on and what was asked for.
+   * Without one, it runs straight away, as for an action that changes nothing.
+   */
+  confirm?: (count: number, value: string[]) => string;
   /**
    * Runs the action on `selector`, which has `count` rows. `value` holds the tags asked for, or the
-   * one value typed.
+   * one value typed or chosen.
    */
   run: (selector: IdsOrQuery, value: string[], count: number) => Promise<ActionOutcome>;
 }
@@ -117,7 +124,14 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   onDone: () => void;
 }) {
   const count = selectedCount(selection, total);
-  const [pending, setPending] = useState<{ action: BulkAction; tags: string[]; text: string; suggestions: string[] } | null>(null);
+  // The action asking for its input, with what has been given, and the suggestions or options it offers
+  const [pending, setPending] = useState<{
+    action: BulkAction;
+    tags: string[];
+    text: string;
+    suggestions: string[];
+    options: { value: string; label: string }[];
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
@@ -128,10 +142,15 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   function choose(action: BulkAction) {
     setError(null);
     if (!action.input) { void run(action, []); return; }
-    setPending({ action, tags: [], text: '', suggestions: [] });
+    setPending({ action, tags: [], text: '', suggestions: [], options: [] });
     if (action.input.kind === 'tags') {
       action.input.suggestions().then(
         suggestions => setPending(prev => (prev?.action === action ? { ...prev, suggestions } : prev)),
+        (e: unknown) => setError(errorMessage(e)),
+      );
+    } else if (action.input.kind === 'choice') {
+      action.input.options().then(
+        options => setPending(prev => (prev?.action === action ? { ...prev, options } : prev)),
         (e: unknown) => setError(errorMessage(e)),
       );
     }
@@ -144,7 +163,7 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
       const n = Number(value[0]);
       if (!(n >= min && n <= max)) { setError(`${value[0]} isn't from ${min} to ${max}`); return; }
     }
-    if (!window.confirm(action.confirm(count, value))) return;
+    if (action.confirm && !window.confirm(action.confirm(count, value))) return;
     setBusy(true);
     setError(null);
     try {
@@ -160,6 +179,7 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
     }
   }
 
+  const wholeSearch = query !== null && selection.all && selection.ids.size === 0;
   const scope = selection.all
     ? selection.ids.size
       ? `All ${plural(total)} found except ${selection.ids.size}: ${count}`
@@ -172,14 +192,15 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
     <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 13 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ color: 'var(--text-secondary)' }}>{scope}</span>
-        {query !== null && !(selection.all && selection.ids.size === 0) && <button onClick={onSelectAll} style={small}>Select all found</button>}
+        {query !== null && !wholeSearch && <button onClick={onSelectAll} style={small}>Select all found</button>}
         {count > 0 && <button onClick={onSelectNone} style={small}>Select none</button>}
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
           {actions.map(action => (
             <button
               key={action.label}
               onClick={() => choose(action)}
-              disabled={busy || count === 0}
+              disabled={busy || count === 0 || (action.wholeSearch && !wholeSearch)}
+              title={action.wholeSearch && !wholeSearch ? `Search, with every ${noun} found checked` : undefined}
               aria-pressed={pending?.action === action}
               style={{ ...small, ...(action.danger ? { color: 'var(--danger)' } : {}), ...(pending?.action === action ? { background: 'var(--selected)' } : {}) }}
             >
@@ -199,17 +220,25 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
               suggestions={pending.suggestions}
               onSubmit={tags => { setPending({ ...pending, tags }); void run(pending.action, tags); }}
             />
+          ) : pending.action.input.kind === 'choice' ? (
+            <>
+              <select value={pending.text} autoFocus onChange={e => setPending({ ...pending, text: e.target.value })} style={input}>
+                <option value="" disabled>Choose…</option>
+                {pending.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <button onClick={() => void run(pending.action, [pending.text])} disabled={busy} style={small}>Apply</button>
+            </>
           ) : (
             <>
               <input
-                type={pending.action.input.kind === 'datetime' ? 'datetime-local' : 'number'}
+                type={{ datetime: 'datetime-local', number: 'number', text: 'text' }[pending.action.input.kind]}
                 value={pending.text}
                 autoFocus
                 onChange={e => setPending({ ...pending, text: e.target.value })}
                 onKeyDown={e => { if (e.key === 'Enter') void run(pending.action, [pending.text]); }}
                 {...(pending.action.input.kind === 'number'
                   ? { placeholder: pending.action.input.placeholder, min: pending.action.input.min, max: pending.action.input.max, step: pending.action.input.step }
-                  : {})}
+                  : pending.action.input.kind === 'text' ? { placeholder: pending.action.input.placeholder } : {})}
                 style={input}
               />
               <button onClick={() => void run(pending.action, [pending.text])} disabled={busy} style={small}>Apply</button>

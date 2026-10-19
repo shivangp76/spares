@@ -78,7 +78,8 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     about: [
       "A note holds what you want to remember. Each cloze in it, or group of clozes, makes a card: Syntax, by a note's text, shows how to write them.",
       'Tags group notes, as in `tag=spanish`. Keywords name what a note is about, as in `keyword="Irregular verbs"`, so that other notes can link to it.',
-      'Check notes to add or remove tags of them, or delete them, at once. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
+      'Check notes to act on them at once: add or remove tags, change their parser, export them to a file to import, or delete them. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
+      'Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.',
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS, ...NOTE_EDITOR_SHORTCUTS],
     docs: [
@@ -94,6 +95,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     about: [
       "Each card asks for part of its note, and is scheduled on its own. Cards are searched for with the same queries as notes, and the card's own fields start with `c.`, as in `c.due<=today`.",
       'Check cards to suspend, bury, reschedule or forget them, or tag their notes, at once. A search starts with every card it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
+      'Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.',
       'The bulk tools act on the cards a query finds, and list leeches.',
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedNotesPage, deleteNotes, getNote, isNetworkError, listManualTagNames, listNotes, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
+import { ApiError, cachedNotesPage, changeNotesParser, deleteNotes, exportNotes, getNote, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
+import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
@@ -14,12 +15,17 @@ import { ALL_SELECTED, NO_SELECTION, type IdsOrQuery, type RowSelection } from '
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
+
+/** A query that finds the notes `selector` picks, for an endpoint that only takes a query. */
+function queryOf(selector: IdsOrQuery): string {
+  return 'Query' in selector ? selector.Query : selector.Ids.map(id => `id=${formatNoteId(id)}`).join(' or ');
+}
 
 /** The tags of `notes`, most used first, leaving out filtered tags, which can't be added or removed by hand. */
 async function tagsByUse(notes: NoteResponse[]): Promise<string[]> {
@@ -208,6 +214,26 @@ export default function NotesPage() {
       confirm: (count, tags) => `Remove ${tagList(tags)} from ${count} note(s)?`,
       run: (selector, tags) => tagNotes(selector, [], tags),
     },
+    {
+      label: 'Change parser',
+      input: { kind: 'choice', options: async () => (await listParsers(1, 1_000)).map(p => ({ value: p.name, label: p.name })) },
+      confirm: (count, [name]) => `Change the parser of ${count} note(s) to ${name}? Their text must be valid for it, and cards it no longer makes are deleted.`,
+      run: async (selector, [name]) => {
+        const parser = (await listParsers(1, 1_000)).find(p => p.name === name);
+        if (!parser) throw new Error(`No parser named ${name}`);
+        const { notes: changed, eventId } = await changeNotesParser(selector, parser.id);
+        return { message: `Changed the parser of ${changed.length} note(s) to ${name}.`, eventIds: eventId === null ? [] : [eventId] };
+      },
+    },
+    {
+      label: 'Export',
+      run: async (selector, _, count) => {
+        const files = Object.entries(await exportNotes(queryOf(selector)));
+        for (const [extension, text] of files) downloadText(`export.${extension}`, text);
+        return { message: `Exported ${count} note(s) to ${files.map(([extension]) => `export.${extension}`).join(', ') || 'no files'}.`, eventIds: [] };
+      },
+    },
+    FILTERED_TAG_ACTION,
     {
       label: 'Delete',
       danger: true,
