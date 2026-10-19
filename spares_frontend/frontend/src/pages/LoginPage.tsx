@@ -11,7 +11,8 @@ export default function LoginPage() {
   // A built app is served by the server it talks to
   const [serverUrl, setServerUrl] = useState(import.meta.env.PROD ? window.location.origin : '');
   const [apiKey, setApiKey] = useState('');
-  const [schedulerName, setSchedulerName] = useState('fsrs');
+  // Empty for the server's default scheduler
+  const [schedulerName, setSchedulerName] = useState('');
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Offline, the server can't check them, so they can be saved as they are
@@ -26,7 +27,7 @@ export default function LoginPage() {
     }
   }, [navigate]);
 
-  function save() {
+  function save(schedulerName: string) {
     saveCredentials({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey, schedulerName });
     navigate('/review');
   }
@@ -39,9 +40,11 @@ export default function LoginPage() {
     setError(null);
     setUnreachable(false);
     try {
+      // The server lists its default first
       const schedulers = await getSchedulerNames({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey });
-      if (schedulers.includes(schedulerName)) save();
-      else setError(`The server has no scheduler named “${schedulerName}”. Its schedulers are ${schedulers.join(', ')}.`);
+      const name = schedulerName.trim() || schedulers[0];
+      if (schedulers.includes(name)) save(name);
+      else setError(`The server has no scheduler named “${name}”. Its schedulers are ${schedulers.join(', ')}.`);
     } catch (e) {
       setUnreachable(e instanceof NetworkError);
       setError(e instanceof NetworkError ? 'The server could not be reached. Check its URL, or log in anyway to review offline.' : errorMessage(e));
@@ -71,14 +74,18 @@ export default function LoginPage() {
         <label>
           Scheduler
           <input type="text" value={schedulerName} onChange={e => setSchedulerName(e.target.value)}
-            style={field} />
+            placeholder="The server's default" style={field} />
           <span style={hint}>What schedules the cards you rate. The server's are checked when you log in.</span>
         </label>
         <button type="submit" disabled={checking} className="touch-target" style={{ padding: '8px 0', marginTop: 4 }}>
           {checking ? 'Checking…' : 'Login'}
         </button>
         {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
-        {unreachable && <button type="button" onClick={save} className="touch-target">Log in anyway</button>}
+        {unreachable && (
+          <button type="button" onClick={() => save(schedulerName.trim())} disabled={!schedulerName.trim()}
+            title={schedulerName.trim() ? undefined : 'Enter a scheduler, since the server cannot say which is its default'}
+            className="touch-target">Log in anyway</button>
+        )}
         <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</Link>
       </form>
     </div>

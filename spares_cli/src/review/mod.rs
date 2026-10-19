@@ -22,6 +22,7 @@ use spares_core::model::RatingId;
 use spares_core::model::TagId;
 use spares_core::parsers::find_parser;
 use spares_core::parsers::get_all_parsers;
+use spares_core::schedulers::get_default_scheduler_name;
 use spares_core::schema::note::NotesSelector;
 use spares_core::schema::note::RenderNotesRequest;
 use spares_core::schema::review::CardBackRenderedPath;
@@ -86,7 +87,7 @@ pub(crate) struct ReviewArgs {
     // Using `Option<FilterArgs>` here instead won't work since they `query` becomes a required parameter.
     #[command(flatten)]
     pub(crate) filter_args: FilterArgs,
-    #[arg(short, long, default_value = "fsrs")]
+    #[arg(short, long, default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
     pub(crate) open_command: Option<String>,

@@ -94,7 +94,7 @@ Running `init` again is safe if something fails partway: it keeps the server's A
 With Tailscale on, open the address `init` printed, e.g. `https://spares.tail6814bc.ts.net`, and log in:
 - **Server URL:** that same address.
 - **API key:** the server's key. To show it on the laptop: `security find-generic-password -s spares-sync -w`.
-- **Scheduler:** `fsrs`, unless you use another one on the laptop.
+- **Scheduler:** leave it empty for the server's default, unless you use another one on the laptop.
 
 To review without a connection, add the page to the home screen (see [Reviewing offline](./getting_started.md#reviewing-offline)).
 
