@@ -30,6 +30,7 @@ use super::git::nul_split;
 use super::git::rev_parse;
 use super::lock::NotesGuard;
 use super::lock::exclusive_guard;
+use super::note_file::ParsedNoteFile;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
@@ -50,7 +51,6 @@ use crate::api::undo::undo_event;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::Parseable;
-use crate::parsers::add_cloze_uid_to_note_data;
 use crate::parsers::get_all_parsers;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::UpdateNotesRequest;
@@ -576,14 +576,20 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             continue;
         }
         match parse_note_file(parser.as_ref(), &new_blob, id, false) {
-            Ok(parsed) => warnings.extend(
-                parsed
-                    .settings
-                    .errors_and_warnings
-                    .iter()
-                    .filter(|e| is_warning(e))
-                    .map(|e| format!("{path}: {e}")),
-            ),
+            Ok(parsed) => {
+                if let Some(reason) = live_note_edit(parser.as_ref(), id, &old_blob, &parsed) {
+                    errors.push(format!("{path}: {reason}"));
+                    continue;
+                }
+                warnings.extend(
+                    parsed
+                        .settings
+                        .errors_and_warnings
+                        .iter()
+                        .filter(|e| is_warning(e))
+                        .map(|e| format!("{path}: {e}")),
+                );
+            }
             Err(problems) => {
                 for problem in problems {
                     errors.push(format!("{path}: {problem}"));
@@ -764,21 +770,7 @@ async fn import(
             .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        let mut contents = note.new_blob.clone();
-        let validated = parse_note_file(note.parser.as_ref(), &contents, note.id, false)
-            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
-        // Live notes get ids for new clozes, as `spares import` gives them.
-        if validated
-            .settings
-            .custom_data
-            .contains_key("live_sync_name")
-        {
-            let (enriched, minted) = add_cloze_uid_to_note_data(note.parser.as_ref(), &contents)?;
-            if !minted.is_empty() {
-                contents = enriched;
-            }
-        }
-        let parsed = parse_note_file(note.parser.as_ref(), &contents, note.id, true)
+        let parsed = parse_note_file(note.parser.as_ref(), &note.new_blob, note.id, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let request = UpdateNotesRequest {
             selector: NotesSelector::Ids(vec![note.id]),
@@ -795,6 +787,33 @@ async fn import(
         }
     }
     Ok(())
+}
+
+/// Why a pushed change to a note is refused because the note is live, or would become live. A
+/// live note's data and custom data come from its source file, so an edit here would be overwritten
+/// by the next `spares import` of that file. Its tags and keywords stay editable, as on the web.
+fn live_note_edit(
+    parser: &dyn Parseable,
+    id: NoteId,
+    old_blob: &[u8],
+    new: &ParsedNoteFile,
+) -> Option<String> {
+    let old = std::str::from_utf8(old_blob)
+        .ok()
+        .and_then(|old| file_note_fields(parser, old, id))?;
+    let mut new = new.fields(parser);
+    let live_sync_name = [&old, &new]
+        .into_iter()
+        .find_map(|fields| fields.custom_data.get("live_sync_name")?.as_str())?
+        .to_string();
+    new.tags.clone_from(&old.tags);
+    new.keywords.clone_from(&old.keywords);
+    if same_note(parser, id, &old, &new) {
+        return None;
+    }
+    Some(format!(
+        "note {id} is a live note (live-sync-name `{live_sync_name}`), so only its tags and keywords can be changed here; edit it in its source file and run `spares import`"
+    ))
 }
 
 /// The 1-based line number of the first git or jj conflict marker in `contents`.

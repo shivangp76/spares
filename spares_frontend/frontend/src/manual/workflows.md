@@ -158,6 +158,7 @@ The reason a push was rejected is printed on lines starting with `spares:` (pref
 | spares has newer notes than your push is based on | Pull and rebase (`jj spares-pull` / `git pull --rebase`), resolve conflicts, push again |
 | notes … changed in spares since the commit your push is based on | Spares committed their current version: pull and rebase, then push again |
 | a path is not a note file, adds or deletes a note, has a conflict marker or fails to parse | Fix the listed files and push again |
+| note … is a live note, so only its tags and keywords can be changed here | Undo the edit, make it in the note's source file and run `spares import` there |
 | the spares server is not running; start it to push | Start the spares server (a version with `spares note init-vcs`) and push again |
 | this repository … does not belong to the spares server at … | Run `spares note init-vcs --repair-hooks` with the settings of the instance the repository belongs to |
 | only `main` can be pushed | Move `main` to your commit and push it (`jj spares-push`, or `git push origin HEAD:main`) |

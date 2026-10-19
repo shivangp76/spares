@@ -879,3 +879,106 @@ async fn test_startup_updates_gitignore(pool: SqlitePool) {
     // Nothing more to do the next time
     assert!(!notes_vcs::sync_gitignore().unwrap());
 }
+
+/// A live note's data and custom data come from its source file, so a push may only change its
+/// tags and keywords.
+#[sqlx::test]
+async fn test_push_live_note(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let mut custom_data = Map::new();
+    custom_data.insert("live_sync_name".to_string(), "lecture".into());
+    custom_data.insert("live_block_order".to_string(), 0.into());
+    update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![ids[0]]),
+            parser_id: None,
+            data: None,
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: Some(custom_data),
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+    let clone = clone();
+    let original = note_data(&pool, ids[0]).await;
+    let original_head = head(&repo());
+
+    let cases: Vec<(&str, Box<Change>)> = vec![
+        (
+            "edits the data",
+            Box::new(move |c: &Path| {
+                let path = note_path(c, first());
+                std::fs::write(&path, read(&path).replace("Cloze here", "Edited")).unwrap();
+            }),
+        ),
+        (
+            "drops liveness",
+            Box::new(move |c: &Path| {
+                let path = note_path(c, first());
+                let s = read(&path).replace(
+                    "<!--- # custom-data: {\"live_sync_name\":\"lecture\",\"live_block_order\":0} --->\n",
+                    "",
+                );
+                std::fs::write(&path, s).unwrap();
+            }),
+        ),
+        (
+            "makes a note live",
+            Box::new(move |c: &Path| {
+                let path = note_path(c, second());
+                let s = read(&path).replace(
+                    "<!--- # tags: tag 1, tag 2 --->\n",
+                    "<!--- # tags: tag 1, tag 2 --->\n<!--- # custom-data: {\"live_sync_name\":\"lecture\",\"live_block_order\":1} --->\n",
+                );
+                std::fs::write(&path, s).unwrap();
+            }),
+        ),
+    ];
+    for (case, change) in cases {
+        reset_clone(&clone);
+        change(&clone);
+        git(&clone, &["commit", "-qam", case]);
+        let pushed = push(&pool, &clone, true).await;
+        assert!(!pushed.receive.ok, "{case}: was accepted");
+        assert!(
+            pushed.receive.message.contains("is a live note"),
+            "{case}: {}",
+            pushed.receive.message
+        );
+        assert_eq!(head(&repo()), original_head, "{case}");
+        assert_eq!(note_data(&pool, ids[0]).await, original, "{case}");
+    }
+
+    // Tags and keywords stay editable.
+    reset_clone(&clone);
+    commit_edit(&clone, ids[0], |s| {
+        s.replace("tags: tag 1", "tags: tag 1, zz pushed").replace(
+            "keywords: first keyword",
+            "keywords: first keyword, pushed keyword",
+        )
+    });
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let note = get_note(&pool, ids[0]).await.unwrap();
+    assert_eq!(note.data, original);
+    assert!(
+        note.tags.contains(&"zz pushed".to_string()),
+        "{:?}",
+        note.tags
+    );
+    assert!(
+        note.keywords.contains(&"pushed keyword".to_string()),
+        "{:?}",
+        note.keywords
+    );
+    assert_eq!(
+        note.custom_data.get("live_sync_name"),
+        Some(&"lecture".into())
+    );
+}
