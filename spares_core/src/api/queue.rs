@@ -2212,7 +2212,7 @@ mod preset_tests {
             left(&config).await,
             DailyLimitsLeft {
                 new: 4,
-                reviews: 9999,
+                reviews: u32::MAX,
                 presets: vec![
                     PresetLimitsLeft {
                         new: Some(2),

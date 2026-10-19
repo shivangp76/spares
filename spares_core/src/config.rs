@@ -848,7 +848,7 @@ pub struct SparesExternalConfig {
     /// The most review cards to study each day. A card counts once it is rated while in review,
     /// that is, after it graduated from its learning steps. Cards in learning or relearning steps
     /// are never held back, so a card forgotten today can still be relearned once the limit is
-    /// reached. Defaults to 9999, which in practice means no limit.
+    /// reached. Defaults to the largest allowed, 4294967295, so reviews are never held back.
     ///
     /// When the limit is reached, review cards still due wait until the next day, when they are
     /// shown in [`QueueConfig::review_order`]. Ordering by
@@ -918,7 +918,7 @@ impl Default for SparesExternalConfig {
             maximum_interval: Duration::days(180),
             minimum_interval: Duration::days(2),
             new_cards_daily_limit: 20,
-            reviews_daily_limit: 9999,
+            reviews_daily_limit: u32::MAX,
             new_cards_ignore_review_limit: false,
             flagged_tag_name: "flagged".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
