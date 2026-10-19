@@ -12,7 +12,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
-import { useSelectionKeys } from '../hooks/useSelectionKeys';
+import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import type { IdsOrQuery } from '../selection';
 import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
@@ -128,6 +128,7 @@ export default function CardsPage() {
   const [reloadCount, setReloadCount] = useState(0);
   // Whether the next search refetches it after a bulk action, so keeps the card shown
   const reloading = useRef(false);
+  const tableBody = useRef<HTMLTableSectionElement>(null);
   const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
@@ -230,7 +231,22 @@ export default function CardsPage() {
   }
 
   const header = rows.header(displayedCards);
-  const keys = useSelectionKeys({ rows, displayed: displayedCards, openIndex: selected ? displayedCards.findIndex(c => c.id === selected.id) : -1, searching: searchQuery !== null });
+  function goToPage(n: number) {
+    setBrowse(null);
+    setSearchParams(prev => withPage(prev, n));
+  }
+  const prevPage = page > 1 ? () => goToPage(page - 1) : null;
+  const nextPage = hasNextPage ? () => goToPage(page + 1) : null;
+  const keys = useListKeys({
+    rows,
+    displayed: displayedCards,
+    openIndex: selected ? displayedCards.findIndex(c => c.id === selected.id) : -1,
+    open: index => setBrowse({ cards: displayedCards, index }),
+    prevPage,
+    nextPage,
+    searching: searchQuery !== null,
+    body: tableBody,
+  });
 
   return (
     <div className="page-wide">
@@ -319,7 +335,7 @@ export default function CardsPage() {
                     <th style={th} className="hide-narrow">Special</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={tableBody}>
                   {displayedCards.map((card, i) => (
                     <tr
                       key={card.id}
@@ -354,9 +370,9 @@ export default function CardsPage() {
           )}
 
           <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button disabled={page <= 1} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams(prev => withPage(prev, page - 1)); }}>Prev</button>
+            <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
             <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
-            <button disabled={!hasNextPage} className="touch-target-small" onClick={() => { setBrowse(null); setSearchParams(prev => withPage(prev, page + 1)); }}>Next</button>
+            <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
           </div>
         </div>
 

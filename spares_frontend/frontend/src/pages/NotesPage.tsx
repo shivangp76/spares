@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
-import { useSelectionKeys } from '../hooks/useSelectionKeys';
+import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
@@ -66,6 +66,7 @@ export default function NotesPage() {
   const [detailVersion, setDetailVersion] = useState(0);
   // The notes seen on any page, to find the tags of those checked
   const seenNotes = useRef(new Map<number, NoteResponse>());
+  const tableBody = useRef<HTMLTableSectionElement>(null);
   const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
@@ -259,7 +260,19 @@ export default function NotesPage() {
   }
 
   const header = rows.header(displayedNotes);
-  const keys = useSelectionKeys({ rows, displayed: displayedNotes, openIndex: selectedIndex, searching: searchQuery !== null });
+  const goToPage = (n: number) => setSearchParams(prev => withPage(prev, n));
+  const prevPage = page > 1 ? () => goToPage(page - 1) : null;
+  const nextPage = hasNextPage ? () => goToPage(page + 1) : null;
+  const keys = useListKeys({
+    rows,
+    displayed: displayedNotes,
+    openIndex: selectedIndex,
+    open: i => selectNote(displayedNotes[i]),
+    prevPage,
+    nextPage,
+    searching: searchQuery !== null,
+    body: tableBody,
+  });
 
   return (
     <div className="page-wide">
@@ -342,7 +355,7 @@ export default function NotesPage() {
                     <th style={th} className="hide-narrow">Cards</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={tableBody}>
                   {displayedNotes.map((note, i) => (
                     <tr
                       key={note.id}
@@ -387,9 +400,9 @@ export default function NotesPage() {
           )}
 
           <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button disabled={page <= 1} className="touch-target-small" onClick={() => setSearchParams(prev => withPage(prev, page - 1))}>Prev</button>
+            <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
             <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
-            <button disabled={!hasNextPage} className="touch-target-small" onClick={() => setSearchParams(prev => withPage(prev, page + 1))}>Next</button>
+            <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
           </div>
         </div>
 
