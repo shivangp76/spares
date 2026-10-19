@@ -42,18 +42,3 @@ Leave the reviews that `reviews_after_linked_notes` holds back out of the review
   relearns. Only 5 new cards are allowed, though 85 reviews are shown and 15 could be.
 - **How.** Add `linked_notes_clause` to the due reviews query in `daily_limits_left_with`. The
   difference is small, since a review is only held while a card it links to relearns that day.
-
-## Lapses by the scheduler's pass rating
-
-Count a lapse as any failed review of a card in the Review state, using `SrsScheduler::is_pass`,
-rather than FSRS's `Again` rating specifically.
-
-- **Use case.** Statistics already decide pass and fail with `is_pass`, so true retention and
-  answer buttons work for any scheduler. Leeches don't: under a scheduler whose lowest rating is
-  not FSRS's id 1, a card's lapse count stays at 0 and it never becomes a leech.
-- **Example.** A scheduler with ratings Fail and Pass, where Fail has id 0. Failing a review card
-  8 times never counts a lapse, so the leech tag is never added and the card is never suspended.
-- **How.** `get_leeches` and `lapses` in `schedulers/fsrs/mod.rs` bind
-  `rating_to_number(FsrsRating::Again)`. Bind the ratings `is_pass` rejects instead
-  (`rating IN (SELECT value FROM json_each(?))`), which gives the same result for FSRS, and move
-  both into default methods on `SrsScheduler` so other schedulers get them.

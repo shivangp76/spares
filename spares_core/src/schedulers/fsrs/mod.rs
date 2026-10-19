@@ -51,7 +51,6 @@ use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
-use crate::model::CardId;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
@@ -127,46 +126,6 @@ impl SrsScheduler for Fsrs {
         Some(Box::new(move |stability, elapsed_days| {
             retrievability(elapsed_days.max(0.0), stability, decay)
         }))
-    }
-
-    async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
-        let config = read_external_config()?;
-        // A lapse is forgetting a card that had graduated to review, so `Again` during learning
-        // or relearning steps does not count.
-        let cards = sqlx::query_as(
-            r"SELECT * FROM card
-              WHERE special_state IS NULL
-                AND id IN (
-                  SELECT card_id FROM review_log
-                  WHERE kind = ? AND rating = ? AND previous_state = ?
-                  GROUP BY card_id
-                  HAVING COUNT(*) >= ?
-                )
-              ORDER BY due ASC",
-        )
-        .bind(ReviewLogKind::Review)
-        .bind(rating_to_number(FsrsRating::Again))
-        .bind(state_to_number(State::Review))
-        .bind(config.leech.lapses_threshold)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(cards)
-    }
-
-    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error> {
-        // Counted like `get_leeches`
-        sqlx::query_scalar(
-            r"SELECT COUNT(*) FROM review_log
-              WHERE card_id = ? AND kind = ? AND rating = ? AND previous_state = ?",
-        )
-        .bind(card_id)
-        .bind(ReviewLogKind::Review)
-        .bind(rating_to_number(FsrsRating::Again))
-        .bind(state_to_number(State::Review))
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })
     }
 
     // Note that this can be optimized to account for the correlation between retention amongst siblings. The ratings can also be chosen better to better reflect human tendencies.

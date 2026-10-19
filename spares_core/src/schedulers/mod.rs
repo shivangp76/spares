@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use itertools::Itertools;
 use placement::PlacementContext;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -15,6 +16,7 @@ use crate::SchedulerErrorKind;
 use crate::api::preset::CardConfigs;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::config::SparesExternalConfig;
+use crate::config::read_external_config;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::RatingId;
@@ -43,6 +45,11 @@ pub struct MoveCardsResult {
 /// See [`SrsScheduler::retrievability`]. Takes a card's stability and the days elapsed since its
 /// last review.
 pub type RetrievabilityFn = Box<dyn Fn(f64, f64) -> f64 + Send + Sync>;
+
+/// `ids` as a JSON array, for SQL to read with `json_each`.
+fn json_ids(ids: &[RatingId]) -> String {
+    format!("[{}]", ids.iter().join(","))
+}
 
 #[async_trait]
 pub trait SrsScheduler: Send + Sync {
@@ -105,11 +112,59 @@ pub trait SrsScheduler: Send + Sync {
         None
     }
 
-    async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error>;
+    /// The ratings [`Self::is_pass`] rejects.
+    fn failing_ratings(&self) -> Vec<RatingId> {
+        self.get_ratings()
+            .into_iter()
+            .map(|rating| rating.id)
+            .filter(|id| !self.is_pass(*id))
+            .collect()
+    }
+
+    /// The cards that are not suspended or buried and lapsed at least
+    /// [`crate::config::LeechConfig::lapses_threshold`] times, counted like [`Self::lapses`].
+    async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
+        let config = read_external_config()?;
+        let cards = sqlx::query_as(
+            r"SELECT * FROM card
+              WHERE special_state IS NULL
+                AND id IN (
+                  SELECT card_id FROM review_log
+                  WHERE kind = ? AND rating IN (SELECT value FROM json_each(?))
+                    AND previous_state = ?
+                  GROUP BY card_id
+                  HAVING COUNT(*) >= ?
+                )
+              ORDER BY due ASC",
+        )
+        .bind(ReviewLogKind::Review)
+        .bind(json_ids(&self.failing_ratings()))
+        .bind(review_state())
+        .bind(config.leech.lapses_threshold)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(cards)
+    }
 
     /// How many times `card_id` lapsed: was forgotten after it had graduated from its learning
-    /// steps. [`crate::config::LeechConfig`] acts on this.
-    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error>;
+    /// steps. A lapse is a review in the review state with a rating [`Self::is_pass`] rejects, so
+    /// failing during learning or relearning steps does not count.
+    /// [`crate::config::LeechConfig`] acts on this.
+    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error> {
+        sqlx::query_scalar(
+            r"SELECT COUNT(*) FROM review_log
+              WHERE card_id = ? AND kind = ? AND rating IN (SELECT value FROM json_each(?))
+                AND previous_state = ?",
+        )
+        .bind(card_id)
+        .bind(ReviewLogKind::Review)
+        .bind(json_ids(&self.failing_ratings()))
+        .bind(review_state())
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+    }
 
     /// Returns a rating and when it was reviewed at
     fn generate_review_history(
@@ -455,6 +510,7 @@ mod tests {
     use serde_json::Map;
 
     use super::*;
+    use crate::config::LeechConfig;
     use crate::model::DEFAULT_DESIRED_RETENTION;
     use crate::model::NEW_CARD_STATE;
 
@@ -514,6 +570,155 @@ mod tests {
             previous_state: 2,
             custom_data: Value::Object(Map::new()),
         }
+    }
+
+    /// A scheduler whose only ratings are Fail (id 0) and Pass (id 1). Only its ratings are used.
+    struct PassFail;
+
+    #[async_trait]
+    impl SrsScheduler for PassFail {
+        fn get_scheduler_name(&self) -> &'static str {
+            "pass_fail"
+        }
+
+        fn get_ratings(&self) -> Vec<Rating> {
+            ["Fail", "Pass"]
+                .into_iter()
+                .zip(0..)
+                .map(|(description, id)| Rating {
+                    id,
+                    description: description.to_string(),
+                })
+                .collect()
+        }
+
+        fn generate_review_history(
+            &self,
+            _num_siblings: u32,
+            _num_reviews: u32,
+            _first_review_date: DateTime<Utc>,
+            _rng: &mut ThreadRng,
+        ) -> Vec<Vec<(RatingSubmission, DateTime<Utc>)>> {
+            unimplemented!()
+        }
+
+        fn schedule(
+            &self,
+            _config: &SparesExternalConfig,
+            _card: &Card,
+            _previous_review_log: Option<ReviewLog>,
+            _rating: RatingId,
+            _reviewed_at: DateTime<Utc>,
+            _recall_duration: Duration,
+            _rate_duration: Duration,
+        ) -> Result<(Card, ReviewLog), Error> {
+            unimplemented!()
+        }
+
+        fn filtered_tag_schedule(
+            &self,
+            _filtered_tag_scheduler_data: Option<&Value>,
+            _card: &Card,
+            _rating: RatingId,
+            _reviewed_at: DateTime<Utc>,
+            _recall_duration: Duration,
+        ) -> Result<Option<Value>, Error> {
+            unimplemented!()
+        }
+
+        async fn get_advance_safe_count(
+            &self,
+            _db: &SqlitePool,
+            _requested_date: DateTime<Utc>,
+        ) -> Result<u32, Error> {
+            unimplemented!()
+        }
+
+        async fn get_postpone_safe_count(
+            &self,
+            _db: &SqlitePool,
+            _requested_date: DateTime<Utc>,
+        ) -> Result<u32, Error> {
+            unimplemented!()
+        }
+
+        async fn advance(
+            &self,
+            _db: &SqlitePool,
+            _config: &SparesExternalConfig,
+            _count: u32,
+            _query: Option<String>,
+            _requested_date: DateTime<Utc>,
+        ) -> Result<MoveCardsResult, Error> {
+            unimplemented!()
+        }
+
+        async fn postpone(
+            &self,
+            _db: &SqlitePool,
+            _config: &SparesExternalConfig,
+            _count: u32,
+            _query: Option<String>,
+            _requested_date: DateTime<Utc>,
+        ) -> Result<MoveCardsResult, Error> {
+            unimplemented!()
+        }
+
+        fn due_candidates(
+            &self,
+            _config: &SparesExternalConfig,
+            _card: &Card,
+            _review_logs: &[ReviewLog],
+            _at: DateTime<Utc>,
+        ) -> Vec<DateTime<Utc>> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn failing_ratings_are_the_ones_is_pass_rejects() {
+        assert_eq!(scheduler().failing_ratings(), vec![1], "FSRS's Again");
+        assert_eq!(PassFail.failing_ratings(), vec![0]);
+    }
+
+    #[sqlx::test]
+    async fn lapses_count_any_failing_rating(pool: SqlitePool) {
+        let exec = async |sql: &str| {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        };
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)").await;
+        sqlx::query(
+            r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+               desired_retention, state, custom_data) VALUES (1, 1, 1, 1, 0, 1, 5, 0.9, ?, '{}')"#,
+        )
+        .bind(review_state())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let threshold = LeechConfig::default().lapses_threshold;
+        // Failed `threshold` times in review. Failing in relearning and passing are not lapses.
+        let reviews = std::iter::repeat_n((0, review_state()), threshold as usize)
+            .chain([(0, relearning_state()), (1, review_state())]);
+        for (i, (rating, previous_state)) in (0_i64..).zip(reviews) {
+            sqlx::query(
+                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (1, ?, ?, ?, 'pass_fail', ?, '{}')",
+            )
+            .bind(i)
+            .bind(ReviewLogKind::Review)
+            .bind(rating)
+            .bind(previous_state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(PassFail.lapses(&pool, 1).await.unwrap(), threshold);
+        let leeches = PassFail.get_leeches(&pool).await.unwrap();
+        assert_eq!(
+            leeches.iter().map(|card| card.id).collect::<Vec<_>>(),
+            vec![1]
+        );
     }
 
     #[test]

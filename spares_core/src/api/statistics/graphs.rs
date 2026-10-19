@@ -143,13 +143,7 @@ struct Context<'a> {
 impl Context<'_> {
     /// SQL that is 1 for a passing rating, else 0.
     fn passed(&self) -> String {
-        let failing = self
-            .scheduler
-            .get_ratings()
-            .into_iter()
-            .map(|rating| rating.id)
-            .filter(|id| !self.scheduler.is_pass(*id))
-            .join(", ");
+        let failing = self.scheduler.failing_ratings().into_iter().join(", ");
         if failing.is_empty() {
             "(rating IS NOT NULL)".to_string()
         } else {
