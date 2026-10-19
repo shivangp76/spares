@@ -165,6 +165,7 @@
 //!
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::read_to_string;
 use std::fs::write;
 use std::path::Path;
@@ -395,7 +396,9 @@ fn handle_live_sync(
 
 /// Strips liveness from live notes in a file. Removes `live_sync_name`,
 /// `live_block_order`, the `live:{lsn}` tag, and `id:` keys from cloze syntax.
-/// Sets the note action to `Update` so the existing live note in the DB is patched.
+/// Sets the note action to `Update` so the existing live note in the DB is patched, and adds its id
+/// to `stripped_note_ids`.
+#[expect(clippy::too_many_arguments)]
 async fn handle_strip_liveness(
     parser: &dyn Parseable,
     file_path: &Path,
@@ -404,6 +407,7 @@ async fn handle_strip_liveness(
     adapter: &mut dyn SrsAdapter,
     dry_run: bool,
     deferred_writes: &mut Vec<(PathBuf, String)>,
+    stripped_note_ids: &mut HashSet<NoteId>,
 ) -> Result<Option<ParsedNotes>, Error> {
     let any_live = notes
         .iter()
@@ -432,30 +436,51 @@ async fn handle_strip_liveness(
             .map(|s| s.to_string());
 
         if let Some(ref lsn) = lsn_opt {
-            let bo = counters.entry(lsn.clone()).or_insert(0);
-            let block_order = *bo;
-            *bo += 1;
-
-            // Find the existing live note so we can update (not re-create) it
-            let existing_note_id = adapter
-                .find_live_note_by_block_order(lsn, block_order)
-                .await?;
-
-            match existing_note_id {
-                Some(note_id) => {
-                    stripped_settings.action = NoteImportAction::Update(note_id);
+            // Find the existing live note so we can update (not re-create) it. A file that names
+            // its note, such as a per-note file from `spares note generate`, is trusted, since the
+            // position counter restarts at 0 for every file. Otherwise the note is found by its
+            // position: as the file states it, or as its place among the file's blocks.
+            let explicit_note_id = match stripped_settings.action {
+                NoteImportAction::Update(note_id) => Some(note_id),
+                NoteImportAction::Add | NoteImportAction::Delete(_) => None,
+            };
+            let explicit_block_order = stripped_settings
+                .custom_data
+                .get("live_block_order")
+                .and_then(Value::as_i64);
+            let existing_note_id = if let Some(note_id) = explicit_note_id {
+                if adapter.get_live_sync_name(note_id).await?.as_deref() != Some(lsn) {
+                    return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                        description: format!(
+                            "Cannot strip liveness from note {note_id}: it is not a live note \
+                             of live-sync-name `{lsn}` in the database."
+                        ),
+                    })));
                 }
-                None => {
-                    return Err(Error::Library(LibraryError::Parser(
-                        ParserErrorKind::FailedToGuess(format!(
-                            "Cannot strip liveness from note at \
-                             (live_sync_name: {lsn}, block_order: {block_order}): \
-                             no matching note in the database. Import it first \
-                             with `spares import` without `--strip-liveness`."
-                        )),
-                    )));
-                }
-            }
+                note_id
+            } else {
+                let block_order = explicit_block_order.unwrap_or_else(|| {
+                    let bo = counters.entry(lsn.clone()).or_insert(0);
+                    let block_order = *bo;
+                    *bo += 1;
+                    block_order
+                });
+                adapter
+                    .find_live_note_by_block_order(lsn, block_order)
+                    .await?
+                    .ok_or_else(|| {
+                        Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
+                            format!(
+                                "Cannot strip liveness from note at \
+                                 (live_sync_name: {lsn}, block_order: {block_order}): \
+                                 no matching note in the database. Import it first \
+                                 with `spares import` without `--strip-liveness`."
+                            ),
+                        )))
+                    })?
+            };
+            stripped_settings.action = NoteImportAction::Update(existing_note_id);
+            stripped_note_ids.insert(existing_note_id);
 
             // Remove the synthetic live tag
             let live_tag = format!("live:{lsn}");
@@ -490,7 +515,7 @@ async fn aggregate_note_into_parser_group(
     agg: &mut ParserAggregate<'_>,
     adapter: &mut dyn SrsAdapter,
     file_counters: &mut HashMap<String, i64>,
-    strip_liveness: bool,
+    stripped_note_ids: &HashSet<NoteId>,
 ) -> Result<(), Error> {
     let lsn_opt = local_settings
         .custom_data
@@ -501,12 +526,12 @@ async fn aggregate_note_into_parser_group(
     // A live note is imported only from its source file, whose blocks carry neither a note id nor
     // a `live_block_order`, since their position within the file is their identity. Any other
     // file, such as a per-note file from `spares note generate`, would be overwritten by the next
-    // import of the source file. Stripping liveness names the notes it strips, so it is exempt.
-    if !strip_liveness {
-        let explicit_note_id = match local_settings.action {
-            NoteImportAction::Update(note_id) => Some(note_id),
-            NoteImportAction::Add | NoteImportAction::Delete(_) => None,
-        };
+    // import of the source file. A note whose liveness was just stripped is exempt.
+    let explicit_note_id = match local_settings.action {
+        NoteImportAction::Update(note_id) => Some(note_id),
+        NoteImportAction::Add | NoteImportAction::Delete(_) => None,
+    };
+    if !explicit_note_id.is_some_and(|note_id| stripped_note_ids.contains(&note_id)) {
         let explicit_block_order = local_settings
             .custom_data
             .get("live_block_order")
@@ -605,6 +630,7 @@ where
     let mut aggregates: HashMap<&str, ParserAggregate<'_>> = HashMap::new();
     let mut skipped_note_count: usize = 0;
     let mut deferred_writes: Vec<(PathBuf, String)> = Vec::new();
+    let mut stripped_note_ids: HashSet<NoteId> = HashSet::new();
 
     for file_path in file_paths.iter().progress_with(progress_bar) {
         let file_contents = read_to_string(file_path).map_err(|e| Error::Io {
@@ -644,6 +670,7 @@ where
                 adapter,
                 dry_run,
                 &mut deferred_writes,
+                &mut stripped_note_ids,
             )
             .await?
             {
@@ -693,7 +720,7 @@ where
                 agg,
                 adapter,
                 &mut file_counters,
-                strip_liveness,
+                &stripped_note_ids,
             )
             .await?;
         }
@@ -1385,6 +1412,155 @@ mod tests {
                 "{case}: no note may change"
             );
         }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--strip-liveness` on a per-note file strips the note the file names. The position counter
+    /// restarts at 0 for every file, so before this was fixed it stripped block 0 of the sync group
+    /// instead, and overwrote that note with the file's data.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn test_strip_liveness_from_per_note_file(pool: SqlitePool) {
+        enable_test_mode();
+        let mut adapter =
+            SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
+        let all_parsers = get_all_parsers()
+            .into_iter()
+            .map(|x| x())
+            .collect::<Vec<_>>();
+        let markdown = all_parsers
+            .iter()
+            .find(|p| p.get_parser_name() == "markdown")
+            .unwrap();
+
+        let dir =
+            std::env::temp_dir().join(format!("spares_test_strip_per_note_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live_file = dir.join("live_source.md");
+        std::fs::write(&live_file, test_file_three_live_notes()).unwrap();
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &[live_file.as_path()],
+            false,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let list = || {
+            list_notes(
+                &pool,
+                FilterOptions {
+                    page: Some(1),
+                    limit: Some(9999),
+                },
+            )
+        };
+        let notes_before = list().await.unwrap();
+        let note_at = |block_order: i64| {
+            notes_before
+                .iter()
+                .find(|n| {
+                    n.custom_data
+                        .get("live_block_order")
+                        .and_then(|v| v.as_i64())
+                        == Some(block_order)
+                })
+                .unwrap_or_else(|| panic!("expected a note at block_order {block_order}"))
+                .clone()
+        };
+        let block_zero = note_at(0);
+        let block_two = note_at(2);
+
+        let import_strip = |file: PathBuf| {
+            let mut adapter =
+                SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+            async move {
+                import_from_files(
+                    &mut adapter,
+                    Some(markdown.as_ref()),
+                    None,
+                    &[file.as_path()],
+                    false,
+                    true,
+                    true,
+                )
+                .await
+            }
+        };
+        let note = "<!--- spares: note start --->\n\
+                    Block two {{ gamma }} and {{ delta }} and {{ epsilon }}\n\
+                    <!--- spares: note end --->\n";
+
+        // Naming a live note without its live custom data is not a strip, so it is still refused.
+        let unnamed_live = dir.join("unnamed_live.md");
+        std::fs::write(
+            &unnamed_live,
+            format!(
+                "<!--- spares: start --->\n<!--- # note-id: {} --->\n{note}<!--- spares: end --->\n",
+                block_two.id.letters()
+            ),
+        )
+        .unwrap();
+        let err = import_strip(unnamed_live)
+            .await
+            .expect_err("was accepted")
+            .to_string();
+        assert!(
+            err.contains("can only be imported from its source file"),
+            "{err}"
+        );
+
+        // A per-note file as `spares note generate` writes it.
+        let per_note_file = dir.join("block_two.md");
+        std::fs::write(
+            &per_note_file,
+            format!(
+                "<!--- spares: start --->\n\
+                 <!--- # note-id: {} --->\n\
+                 <!--- # tags: live:per_note_sync --->\n\
+                 <!--- # custom-data: {{\"live_sync_name\":\"per_note_sync\",\"live_block_order\":2}} --->\n\
+                 {note}<!--- spares: end --->\n",
+                block_two.id.letters()
+            ),
+        )
+        .unwrap();
+        import_strip(per_note_file).await.unwrap();
+
+        let notes_after = list().await.unwrap();
+        assert_eq!(notes_after.len(), 3, "stripping must not create a note");
+        let after = |id| notes_after.iter().find(|n| n.id == id).unwrap();
+        let block_two_after = after(block_two.id);
+        assert!(
+            block_two_after.custom_data.get("live_sync_name").is_none(),
+            "the named note should have been stripped: {:?}",
+            block_two_after.custom_data
+        );
+        assert_eq!(
+            block_two_after.data,
+            "Block two {{[o:1] gamma }} and {{[o:2] delta }} and {{[o:3] epsilon }}",
+            "the named note should hold the file's data, without `id:` keys"
+        );
+        let block_zero_after = after(block_zero.id);
+        assert_eq!(
+            (&block_zero_after.data, &block_zero_after.custom_data),
+            (&block_zero.data, &block_zero.custom_data),
+            "block 0 of the sync group must be left alone"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
