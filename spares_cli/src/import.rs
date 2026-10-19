@@ -142,6 +142,20 @@
 //! > Atlantic cloze `f6e5d4c3b2a1` is untouched). When you insert a new note, its clozes get fresh
 //! > `id:` keys. The non-note content (headings, commentary) stays untouched.
 //!
+//! A cloze whose note moved to another position, or that you moved to another note (say, by
+//! splitting a note in two), takes its card along to the database note now at that position, so
+//! the card keeps its review history. The database notes themselves stay at their positions:
+//! - Database notes are only created at the end of the sync group, even for a note inserted into
+//!   the middle of the file, so reviewing new cards in the order their notes were created
+//!   (`new_order = "created"`) follows the file, even after stripping liveness.
+//! - A note's tags and keywords set outside the file (on the web, say) belong to its position, so
+//!   they apply to whichever note is there after notes are inserted or deleted before it.
+//! - When the file has fewer notes than before, the database notes past its end are deleted, along
+//!   with the cards of their clozes that are no longer in the file.
+//!
+//! Since a note that cannot be parsed would shift the positions of the notes after it, the import of
+//! a file with one is refused.
+//!
 //! ## 4. Strip liveness (finalize)
 //!
 //! Once the notes are stable, remove all live-sync machinery:
@@ -176,6 +190,7 @@ use clap::Args;
 use colored::Colorize;
 use indicatif::ProgressBar;
 use indicatif::ProgressIterator;
+use itertools::Itertools;
 use serde_json::Value;
 use spares_core::Error;
 use spares_core::LibraryError;
@@ -303,6 +318,8 @@ struct ParserAggregate<'a> {
     parser: &'a dyn Parseable,
     notes: Vec<(NoteSettings, Option<String>)>,
     update_note_ids: Vec<NoteId>,
+    /// Live notes past the end of their sync group, which no note of its file matches any more
+    stale_live_note_ids: Vec<NoteId>,
 }
 
 fn parse_blocks(
@@ -707,11 +724,35 @@ where
                 parser,
                 notes: Vec::new(),
                 update_note_ids: Vec::new(),
+                stale_live_note_ids: Vec::new(),
             });
 
         let mut file_counters: HashMap<String, i64> = HashMap::new();
         for (local_settings, note_data_res) in max_parser_all_notes {
             if note_data_res.is_none() {
+                // Skipping a live note would match every later note of its sync group to the
+                // database note of the one before it.
+                if let Some(lsn) = local_settings
+                    .custom_data
+                    .get("live_sync_name")
+                    .and_then(Value::as_str)
+                {
+                    let block_order = file_counters.get(lsn).copied().unwrap_or(0);
+                    let errors = local_settings
+                        .errors_and_warnings
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                        description: format!(
+                            "The note at block {block_order} of live-sync-name `{lsn}` in {} \
+                             could not be parsed: {errors}. Live notes are matched by position, \
+                             so fix it before importing the file.",
+                            file_path.as_ref().display()
+                        ),
+                    })));
+                }
                 skipped_note_count += 1;
                 continue;
             }
@@ -724,6 +765,19 @@ where
                 &stripped_note_ids,
             )
             .await?;
+        }
+
+        // A sync group with fewer notes than before leaves database notes past its end. The cards
+        // of their clozes that moved to other notes go along with them (see `process_data`).
+        for (lsn, count) in &file_counters {
+            let mut block_order = *count;
+            while let Some(note_id) = adapter
+                .find_live_note_by_block_order(lsn, block_order)
+                .await?
+            {
+                agg.stale_live_note_ids.push(note_id);
+                block_order += 1;
+            }
         }
     }
 
@@ -738,6 +792,23 @@ where
     let at = Utc::now();
     for (_name, mut agg) in aggregates {
         print_notes(&agg.notes, quiet, dry_run);
+        if !agg.stale_live_note_ids.is_empty() {
+            if !quiet {
+                println!(
+                    "Deleting {} live note(s) past the end of their sync group: {}",
+                    agg.stale_live_note_ids.len(),
+                    agg.stale_live_note_ids.iter().join(", ")
+                );
+            }
+            agg.notes
+                .extend(agg.stale_live_note_ids.iter().map(|&note_id| {
+                    let settings = NoteSettings {
+                        action: NoteImportAction::Delete(note_id),
+                        ..NoteSettings::default()
+                    };
+                    (settings, Some(String::new()))
+                }));
+        }
         let mut update_ids = std::mem::take(&mut agg.update_note_ids);
         update_ids.sort_unstable();
         update_ids.dedup();
@@ -1922,6 +1993,194 @@ mod tests {
         assert!(on_disk.contains(" C "), "missing ' C '");
         assert!(on_disk.contains("D E"), "missing 'D E'");
         assert!(on_disk.contains(" post"), "missing ' post'");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn live_file(notes: &[&str]) -> String {
+        let mut file =
+            "<!--- spares: start --->\n<!--- # g-live-sync-name: moving --->\n".to_string();
+        for note in notes {
+            file.push_str("<!--- spares: note start --->\n");
+            file.push_str(note);
+            file.push_str("\n<!--- spares: note end --->\n");
+        }
+        file.push_str("<!--- spares: end --->\n");
+        file
+    }
+
+    async fn import_live_file(pool: &SqlitePool, file_path: &Path) -> Result<(), Error> {
+        let mut adapter =
+            SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+        let markdown = get_all_parsers()
+            .into_iter()
+            .map(|x| x())
+            .find(|p| p.get_parser_name() == "markdown")
+            .unwrap();
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &[file_path],
+            false,
+            true,
+            false,
+        )
+        .await
+    }
+
+    /// The live notes' cards by cloze uid: (card id, note's block order, card order, stability).
+    async fn live_cards_by_uid(pool: &SqlitePool) -> HashMap<String, (i64, i64, u32, f64)> {
+        let rows: Vec<(String, i64, i64, u32, f64)> = sqlx::query_as(
+            r#"SELECT json_extract(c.custom_data, '$.cloze_uid'), c.id,
+                      json_extract(n.custom_data, '$.live_block_order'), c."order", c.stability
+               FROM card c JOIN note n ON n.id = c.note_id"#,
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let count = rows.len();
+        let cards: HashMap<_, _> = rows
+            .into_iter()
+            .map(|(uid, id, block_order, order, stability)| {
+                (uid, (id, block_order, order, stability))
+            })
+            .collect();
+        assert_eq!(cards.len(), count, "a cloze uid has more than one card");
+        cards
+    }
+
+    /// Inserting, splitting, or deleting a live note moves the clozes after it into other notes of
+    /// the sync group, since notes are matched by position. Their cards move along, keeping their
+    /// review history, and notes left past the end of the group are deleted.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn test_live_cards_follow_their_clozes_to_other_notes(pool: SqlitePool) {
+        enable_test_mode();
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("spares_test_moving_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("moving.md");
+
+        std::fs::write(&file_path, live_file(&["A {{ a }}", "B {{ b1 }} {{ b2 }}"])).unwrap();
+        import_live_file(&pool, &file_path).await.unwrap();
+        let uids = std::fs::read_to_string(&file_path)
+            .unwrap()
+            .split("[id:")
+            .skip(1)
+            .map(|rest| rest[..12].to_string())
+            .collect::<Vec<_>>();
+        let [a, b1, b2] = uids.as_slice() else {
+            panic!("expected 3 minted uids, got {uids:?}");
+        };
+        // Stand-in for review history
+        sqlx::query("UPDATE card SET stability = id")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let before = live_cards_by_uid(&pool).await;
+        let card_id = |uid: &String| before[uid].0;
+
+        // Insert a note with a new cloze before B, and split B in two: B's clozes move to notes
+        // the import creates.
+        std::fs::write(
+            &file_path,
+            live_file(&[
+                &format!("A {{{{[id:{a}] a }}}}"),
+                "N {{ n }}",
+                &format!("B {{{{[id:{b1}] b1 }}}}"),
+                &format!("C {{{{[id:{b2}] b2 }}}}"),
+            ]),
+        )
+        .unwrap();
+        import_live_file(&pool, &file_path).await.unwrap();
+        let after = live_cards_by_uid(&pool).await;
+        assert_eq!(after.len(), 4, "{after:?}");
+        for (uid, block_order) in [(a, 0), (b1, 2), (b2, 3)] {
+            let (id, actual_block_order, order, stability) = after[uid];
+            assert_eq!(id, card_id(uid), "card of {uid} was recreated");
+            assert_eq!(stability, before[uid].3, "card of {uid} lost its history");
+            assert_eq!(
+                (actual_block_order, order),
+                (block_order, 1),
+                "card of {uid}"
+            );
+        }
+
+        // Delete N: the clozes after it move up into existing notes, and the last note is left
+        // past the end of the group.
+        std::fs::write(
+            &file_path,
+            live_file(&[
+                &format!("A {{{{[id:{a}] a }}}}"),
+                &format!("B {{{{[id:{b1}] b1 }}}}"),
+                &format!("C {{{{[id:{b2}] b2 }}}}"),
+            ]),
+        )
+        .unwrap();
+        import_live_file(&pool, &file_path).await.unwrap();
+        let after = live_cards_by_uid(&pool).await;
+        assert_eq!(after.len(), 3, "{after:?}");
+        for (uid, block_order) in [(a, 0), (b1, 1), (b2, 2)] {
+            let (id, actual_block_order, order, stability) = after[uid];
+            assert_eq!(id, card_id(uid), "card of {uid} was recreated");
+            assert_eq!(stability, before[uid].3, "card of {uid} lost its history");
+            assert_eq!(
+                (actual_block_order, order),
+                (block_order, 1),
+                "card of {uid}"
+            );
+        }
+        let block_orders: Vec<i64> = sqlx::query_scalar(
+            r"SELECT json_extract(custom_data, '$.live_block_order') FROM note ORDER BY 1",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(block_orders, [0, 1, 2]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Skipping a live note that cannot be parsed would shift every later note of its sync group
+    /// onto the database note before it, so the import is refused instead.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn test_unparseable_live_note_is_refused(pool: SqlitePool) {
+        enable_test_mode();
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("spares_test_unparseable_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("unparseable.md");
+        std::fs::write(&file_path, live_file(&["A {{ a }}", "B {{}}", "C {{ c }}"])).unwrap();
+
+        let error = import_live_file(&pool, &file_path).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("block 1 of live-sync-name `moving`"),
+            "{error}"
+        );
+        let note_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(note_count, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

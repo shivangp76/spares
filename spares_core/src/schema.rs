@@ -409,6 +409,28 @@ pub mod note {
     pub struct FindLiveNoteResponse {
         pub id: Option<NoteId>,
     }
+
+    /// The notes of one live sync group as an import is about to leave them. See
+    /// [`crate::api::note::relocate_live_cards`].
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RelocateLiveCardsRequest {
+        pub live_sync_name: String,
+        pub notes: Vec<LiveNoteClozes>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct LiveNoteClozes {
+        pub note_id: NoteId,
+        /// The `id:` keys of the clozes of the note's new data.
+        pub cloze_uids: Vec<String>,
+        /// Whether the import just created the note, so its cards were made from its new data.
+        pub created: bool,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RelocateLiveCardsResponse {
+        pub moved_card_count: usize,
+    }
 }
 
 pub mod card {

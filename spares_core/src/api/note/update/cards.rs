@@ -13,6 +13,7 @@ use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::note::apply_srs_inheritance_on;
 use crate::api::note::copy_review_logs_on;
 use crate::api::note::create_cards_on;
+use crate::api::note::live::PARKED_CARD_ORDER_START;
 use crate::api::placeholders;
 use crate::model::AUTO_FIX_MISSING_CARDS;
 use crate::model::Card;
@@ -264,6 +265,61 @@ pub(super) async fn update_cards(
             .execute(&mut *conn)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+    }
+
+    // Take in the cards `relocate_live_cards` parked in this note for clozes that moved here from
+    // another live note, rather than creating cards without their history.
+    let parked_cards: Vec<(CardId, String, Option<SpecialState>)> = sqlx::query_as(
+        r#"SELECT id, json_extract(custom_data, '$.cloze_uid'), special_state FROM card
+           WHERE note_id = ? AND "order" >= ? AND json_extract(custom_data, '$.cloze_uid') IS NOT NULL
+           ORDER BY "order""#,
+    )
+    .bind(note_id)
+    .bind(PARKED_CARD_ORDER_START)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    if !parked_cards.is_empty() {
+        let mut parked_by_uid: HashMap<String, VecDeque<(CardId, Option<SpecialState>)>> =
+            HashMap::new();
+        for (card_id, uid, special_state) in parked_cards {
+            parked_by_uid
+                .entry(uid)
+                .or_default()
+                .push_back((card_id, special_state));
+        }
+        let mut adopted = Vec::new();
+        create_card_indices.retain(|&i| {
+            let parked = new_cards[i - 1]
+                .cloze_uid
+                .and_then(|uid| parked_by_uid.get_mut(&uid.to_string())?.pop_front());
+            if let Some(parked) = parked {
+                adopted.push((i, parked));
+            }
+            parked.is_none()
+        });
+        for (i, (card_id, mut special_state)) in adopted {
+            let new_card = &new_cards[i - 1];
+            // NOTE: Suspending overwrites a buried card
+            if let Some(is_suspended) = new_card.is_suspended {
+                if is_suspended {
+                    special_state = Some(SpecialState::Suspended);
+                } else if matches!(special_state, Some(SpecialState::Suspended)) {
+                    special_state = None;
+                }
+            }
+            sqlx::query(
+                r#"UPDATE card SET "order" = ?, back_type = ?, special_state = ?, updated_at = ? WHERE id = ?"#,
+            )
+            .bind(i as u32)
+            .bind(new_card.back_type)
+            .bind(special_state)
+            .bind(at.timestamp())
+            .bind(card_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        }
     }
 
     // Create new cards

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -17,6 +19,7 @@ use crate::adapters::SrsAdapter;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+use crate::api::note::relocate_live_cards;
 use crate::api::note::render_notes;
 use crate::api::note::update_notes;
 use crate::api::parser::list_parsers;
@@ -24,11 +27,13 @@ use crate::config::Environment;
 use crate::config::get_env_config;
 use crate::config::is_test_mode;
 use crate::config::local_api_key;
+use crate::config::read_external_config;
 use crate::model::CustomData;
 use crate::model::NoteId;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
+use crate::parsers::add_order_to_note_data;
 use crate::parsers::get_all_parsers;
 use crate::schema::FilterOptions;
 use crate::schema::note::CreateNoteRequest;
@@ -36,13 +41,23 @@ use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::FindLiveNoteRequest;
 use crate::schema::note::FindLiveNoteResponse;
+use crate::schema::note::LiveNoteClozes;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
 use crate::schema::note::NotesSelector;
+use crate::schema::note::RelocateLiveCardsRequest;
+use crate::schema::note::RelocateLiveCardsResponse;
 use crate::schema::note::RenderNotesRequest;
 use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateTags;
 use crate::schema::parser::ParserResponse;
+
+/// A note of an import: one it updates, or the one it creates for that index of its create
+/// requests.
+enum ImportedNote {
+    Updated(NoteId),
+    Created(usize),
+}
 
 #[derive(Debug)]
 pub struct SparesAdapter {
@@ -115,6 +130,64 @@ impl SparesAdapter {
         Ok(response)
     }
 
+    async fn update_note(
+        &self,
+        update_note_request: UpdateNotesRequest,
+        at: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes", base_url);
+                let response = authed(client.patch(url), api_key.as_deref())
+                    .json(&update_note_request)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                self.handle_response(response).await?;
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                let _notes_res =
+                    update_notes(pool, update_note_request, at, &get_all_parsers(), false).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn relocate_live_cards(
+        &self,
+        request: RelocateLiveCardsRequest,
+        at: DateTime<Utc>,
+    ) -> Result<RelocateLiveCardsResponse, Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes/live/relocate-cards", base_url);
+                let response = authed(client.post(url), api_key.as_deref())
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                relocate_live_cards(pool, request, at).await
+            }
+        }
+    }
+
     pub async fn update_custom_data(
         &self,
         note_id: NoteId,
@@ -131,26 +204,7 @@ impl SparesAdapter {
             tags: UpdateTags::None,
         };
         if !dry_run {
-            match &self.request_processor {
-                SparesRequestProcessorInternal::Server {
-                    base_url,
-                    client,
-                    api_key,
-                } => {
-                    let url = format!("{}/api/notes", base_url);
-                    let response = authed(client.patch(url), api_key.as_deref())
-                        .json(&update_note_request)
-                        .send()
-                        .await
-                        .map_err(Error::ApiRequest)?;
-                    self.handle_response(response).await?;
-                }
-                SparesRequestProcessorInternal::Database { pool } => {
-                    let _notes_res =
-                        update_notes(pool, update_note_request, at, &get_all_parsers(), false)
-                            .await?;
-                }
-            }
+            self.update_note(update_note_request, at).await?;
         }
         Ok(())
     }
@@ -211,14 +265,28 @@ impl SrsAdapter for SparesAdapter {
         let parser_id = parser_response.id;
 
         let mut create_note_requests: Vec<CreateNoteRequest> = Vec::new();
+        let mut update_note_requests: Vec<UpdateNotesRequest> = Vec::new();
         let mut delete_note_ids: Vec<NoteId> = Vec::new();
+        // The live notes by live-sync-name, with their new data
+        let mut live_notes: BTreeMap<String, Vec<(ImportedNote, String)>> = BTreeMap::new();
         for (local_settings, note_data_res) in notes {
             if note_data_res.is_none() {
                 continue;
             }
             let note_data = note_data_res.unwrap();
+            let live_sync_name = local_settings
+                .custom_data
+                .get("live_sync_name")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             match local_settings.action {
                 NoteImportAction::Add => {
+                    if let Some(live_sync_name) = live_sync_name {
+                        live_notes.entry(live_sync_name).or_default().push((
+                            ImportedNote::Created(create_note_requests.len()),
+                            note_data.clone(),
+                        ));
+                    }
                     let create_note_request = CreateNoteRequest {
                         data: note_data,
                         keywords: local_settings.keywords,
@@ -229,6 +297,12 @@ impl SrsAdapter for SparesAdapter {
                     create_note_requests.push(create_note_request);
                 }
                 NoteImportAction::Update(note_id) => {
+                    if let Some(live_sync_name) = live_sync_name {
+                        live_notes
+                            .entry(live_sync_name)
+                            .or_default()
+                            .push((ImportedNote::Updated(note_id), note_data.clone()));
+                    }
                     let update_note_request = UpdateNotesRequest {
                         selector: NotesSelector::Ids(vec![note_id]),
                         parser_id: Some(parser_id),
@@ -237,33 +311,7 @@ impl SrsAdapter for SparesAdapter {
                         tags: UpdateTags::SetTags(local_settings.tags),
                         custom_data: Some(local_settings.custom_data),
                     };
-                    if !dry_run {
-                        match &self.request_processor {
-                            SparesRequestProcessorInternal::Server {
-                                base_url,
-                                client,
-                                api_key,
-                            } => {
-                                let url = format!("{}/api/notes", base_url);
-                                let response = authed(client.patch(url), api_key.as_deref())
-                                    .json(&update_note_request)
-                                    .send()
-                                    .await
-                                    .map_err(Error::ApiRequest)?;
-                                self.handle_response(response).await?;
-                            }
-                            SparesRequestProcessorInternal::Database { pool } => {
-                                let _notes_res = update_notes(
-                                    pool,
-                                    update_note_request,
-                                    at,
-                                    &get_all_parsers(),
-                                    false,
-                                )
-                                .await?;
-                            }
-                        }
-                    }
+                    update_note_requests.push(update_note_request);
                 }
                 NoteImportAction::Delete(note_id) => {
                     delete_note_ids.push(note_id);
@@ -271,8 +319,81 @@ impl SrsAdapter for SparesAdapter {
             }
         }
 
+        if dry_run {
+            return Ok(());
+        }
+
+        // Notes are created first, so that every note a live note's cloze can move to exists when
+        // the cards are relocated, before the updates.
+        let create_notes_request = CreateNotesRequest {
+            parser_id,
+            requests: create_note_requests,
+        };
+        let created_note_ids = match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes", base_url);
+                let response = authed(client.post(url), api_key.as_deref())
+                    .json(&create_notes_request)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                let response: NotesResponse = response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })?;
+                response.notes.into_iter().map(|n| n.id).collect::<Vec<_>>()
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                let notes_res =
+                    create_notes(pool, create_notes_request, at, &get_all_parsers(), false).await?;
+                notes_res
+                    .notes
+                    .into_iter()
+                    .map(|n| n.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        let overlapper = read_external_config().ok().map(|c| c.overlapper);
+        for (live_sync_name, notes) in live_notes {
+            let notes = notes
+                .into_iter()
+                .map(|(note, data)| {
+                    let (note_id, created) = match note {
+                        ImportedNote::Updated(note_id) => (note_id, false),
+                        ImportedNote::Created(i) => (created_note_ids[i], true),
+                    };
+                    let (_, cards) = add_order_to_note_data(parser, &data, overlapper.as_ref())?;
+                    Ok(LiveNoteClozes {
+                        note_id,
+                        cloze_uids: cards
+                            .iter()
+                            .filter_map(|c| c.cloze_uid.map(|uid| uid.to_string()))
+                            .collect(),
+                        created,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            let request = RelocateLiveCardsRequest {
+                live_sync_name,
+                notes,
+            };
+            self.relocate_live_cards(request, at).await?;
+        }
+
+        for update_note_request in update_note_requests {
+            self.update_note(update_note_request, at).await?;
+        }
+
         // Issue a single bulk delete for all collected note IDs.
-        if !delete_note_ids.is_empty() && !dry_run {
+        if !delete_note_ids.is_empty() {
             let request = DeleteNotesRequest {
                 selector: NotesSelector::Ids(delete_note_ids),
             };
@@ -296,78 +417,40 @@ impl SrsAdapter for SparesAdapter {
             }
         }
 
-        let create_notes_request = CreateNotesRequest {
-            parser_id,
-            requests: create_note_requests,
-        };
-        // Create notes and render created notes + live-updated notes
+        // Render created notes + live-updated notes
         // We cannot render non-live updated notes since that might overwrite unsaved changes.
-        if !dry_run {
-            let created_note_ids = match &self.request_processor {
-                SparesRequestProcessorInternal::Server {
-                    base_url,
-                    client,
-                    api_key,
-                } => {
-                    let url = format!("{}/api/notes", base_url);
-                    let response = authed(client.post(url), api_key.as_deref())
-                        .json(&create_notes_request)
-                        .send()
-                        .await
-                        .map_err(Error::ApiRequest)?;
-                    let response = self.handle_response(response).await?;
-                    let response: NotesResponse = response.json().await.map_err(|e| {
-                        Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
-                            adapter_name: self.get_adapter_name().to_string(),
-                            error: e.to_string(),
-                        }))
-                    })?;
-                    response.notes.into_iter().map(|n| n.id).collect::<Vec<_>>()
-                }
-                SparesRequestProcessorInternal::Database { pool } => {
-                    let notes_res =
-                        create_notes(pool, create_notes_request, at, &get_all_parsers(), false)
-                            .await?;
-                    notes_res
-                        .notes
-                        .into_iter()
-                        .map(|n| n.id)
-                        .collect::<Vec<_>>()
-                }
-            };
-            // If testing, then we
-            // - do not want to render notes to save time. We can explicitly call render notes if we need to.
-            // - want to render notes in a different directory, so we don't overwrite user data.
-            if !is_test_mode() {
-                let mut all_render_ids = created_note_ids;
-                all_render_ids.extend(live_update_note_ids);
-                if !all_render_ids.is_empty() {
-                    let request = RenderNotesRequest {
-                        selector: NotesSelector::Ids(all_render_ids),
-                        immutable_note_ids: None,
-                        overridden_output_raw_dir: None,
-                        include_linked_notes: true,
-                        include_cards: true,
-                        generate_rendered: true,
-                        force_generate_rendered: false,
-                    };
-                    match &self.request_processor {
-                        SparesRequestProcessorInternal::Server {
-                            base_url,
-                            client,
-                            api_key,
-                        } => {
-                            let url = format!("{}/api/notes/generate_files", base_url);
-                            let response = authed(client.post(url), api_key.as_deref())
-                                .json(&request)
-                                .send()
-                                .await
-                                .map_err(Error::ApiRequest)?;
-                            let _response = self.handle_response(response).await?;
-                        }
-                        SparesRequestProcessorInternal::Database { pool } => {
-                            render_notes(pool, request, &get_all_parsers()).await?;
-                        }
+        // If testing, then we
+        // - do not want to render notes to save time. We can explicitly call render notes if we need to.
+        // - want to render notes in a different directory, so we don't overwrite user data.
+        if !is_test_mode() {
+            let mut all_render_ids = created_note_ids;
+            all_render_ids.extend(live_update_note_ids);
+            if !all_render_ids.is_empty() {
+                let request = RenderNotesRequest {
+                    selector: NotesSelector::Ids(all_render_ids),
+                    immutable_note_ids: None,
+                    overridden_output_raw_dir: None,
+                    include_linked_notes: true,
+                    include_cards: true,
+                    generate_rendered: true,
+                    force_generate_rendered: false,
+                };
+                match &self.request_processor {
+                    SparesRequestProcessorInternal::Server {
+                        base_url,
+                        client,
+                        api_key,
+                    } => {
+                        let url = format!("{}/api/notes/generate_files", base_url);
+                        let response = authed(client.post(url), api_key.as_deref())
+                            .json(&request)
+                            .send()
+                            .await
+                            .map_err(Error::ApiRequest)?;
+                        let _response = self.handle_response(response).await?;
+                    }
+                    SparesRequestProcessorInternal::Database { pool } => {
+                        render_notes(pool, request, &get_all_parsers()).await?;
                     }
                 }
             }

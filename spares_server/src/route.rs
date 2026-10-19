@@ -45,6 +45,7 @@ use crate::handlers::note::get_note_links_handler;
 use crate::handlers::note::get_note_render_handler;
 use crate::handlers::note::get_unmatched_keywords_handler;
 use crate::handlers::note::list_notes_handler;
+use crate::handlers::note::relocate_live_cards_handler;
 use crate::handlers::note::search_examples_handler;
 use crate::handlers::note::search_fields_handler;
 use crate::handlers::note::search_keyword_handler;
@@ -277,6 +278,10 @@ pub(crate) fn create_router(
         .route("/api/notes/keywords", get(get_keywords_handler))
         .route("/api/notes/search/note-links", post(get_note_links_handler))
         .route("/api/notes/live", post(find_live_note_handler))
+        .route(
+            "/api/notes/live/relocate-cards",
+            post(relocate_live_cards_handler),
+        )
         .route(
             "/api/notes/latest-event-id",
             get(get_latest_note_event_id_handler),

@@ -17,6 +17,7 @@ use spares_core::api::note::get_note;
 use spares_core::api::note::get_note_links;
 use spares_core::api::note::get_unmatched_keywords;
 use spares_core::api::note::list_notes;
+use spares_core::api::note::relocate_live_cards;
 use spares_core::api::note::render_notes;
 use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
@@ -32,6 +33,7 @@ use spares_core::schema::note::ExportNotesRequest;
 use spares_core::schema::note::FindLiveNoteRequest;
 use spares_core::schema::note::FindLiveNoteResponse;
 use spares_core::schema::note::NoteLinksRequest;
+use spares_core::schema::note::RelocateLiveCardsRequest;
 use spares_core::schema::note::RenderNotesRequest;
 use spares_core::schema::note::SearchKeywordRequest;
 use spares_core::schema::note::SearchNotesRequest;
@@ -168,6 +170,17 @@ pub(crate) async fn find_live_note_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(FindLiveNoteResponse { id }))
+}
+
+pub(crate) async fn relocate_live_cards_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<RelocateLiveCardsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = data.db.clone();
+    let response = run_shared(async move { relocate_live_cards(&db, body, Utc::now()).await })
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
 }
 
 pub(crate) async fn get_unmatched_keywords_handler(
