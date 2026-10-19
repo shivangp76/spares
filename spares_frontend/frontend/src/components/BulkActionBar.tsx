@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { resolveSelection, selectedCount, type IdsOrQuery, type RowSelection } from '../selection';
 import { errorMessage } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
@@ -103,11 +103,17 @@ function TagsInput({ tags, setTags, suggestions, onSubmit }: {
   );
 }
 
+/** What a page's keys do to its `BulkActionBar`. */
+export interface BulkActionBarHandle {
+  /** Starts the action labelled `label`, as its button does, unless the button is disabled. */
+  choose: (label: string) => void;
+}
+
 /**
  * Runs actions on the rows of a list that are checked, or on all that a search finds. Undoable
  * actions offer Undo once done.
  */
-export default function BulkActionBar({ noun, selection, query, total, onSelectAll, onSelectNone, onInvert, search, actions, onDone }: {
+export default function BulkActionBar({ noun, selection, query, total, onSelectAll, onSelectNone, onInvert, search, actions, onDone, ref }: {
   /** What the rows are, as in `note`. */
   noun: string;
   selection: RowSelection;
@@ -124,6 +130,7 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   actions: BulkAction[];
   /** Called once an action has run, or been undone or redone, as it may change any row. */
   onDone: () => void;
+  ref?: React.Ref<BulkActionBarHandle>;
 }) {
   const count = selectedCount(selection, total);
   // The action asking for its input, with what has been given, and the suggestions or options it offers
@@ -182,6 +189,14 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   }
 
   const wholeSearch = query !== null && selection.all && selection.ids.size === 0;
+  const disabled = (action: BulkAction) => busy || count === 0 || (action.wholeSearch && !wholeSearch);
+
+  useImperativeHandle(ref, () => ({
+    choose: label => {
+      const action = actions.find(a => a.label === label);
+      if (action && !disabled(action)) choose(action);
+    },
+  }));
   const scope = selection.all
     ? selection.ids.size
       ? `All ${plural(total)} found except ${selection.ids.size}: ${count}`
@@ -202,7 +217,7 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
             <button
               key={action.label}
               onClick={() => choose(action)}
-              disabled={busy || count === 0 || (action.wholeSearch && !wholeSearch)}
+              disabled={disabled(action)}
               title={action.wholeSearch && !wholeSearch ? `Search, with every ${noun} found checked` : undefined}
               aria-pressed={pending?.action === action}
               style={{ ...small, ...(action.danger ? { color: 'var(--danger)' } : {}), ...(pending?.action === action ? { background: 'var(--selected)' } : {}) }}

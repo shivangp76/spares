@@ -14,6 +14,8 @@ const renderBox: React.CSSProperties = { border: '1px solid var(--border)', bord
 
 /** What the Cards page's keys do to the card shown. */
 export interface CardDetailHandle {
+  toggleSuspend: () => void;
+  toggleBury: () => void;
   /** Opens the card's note below it, or closes it, asking first if that drops unsaved changes. */
   toggleNote: () => void;
   /** Closes the card, or first its note if open, as `toggleNote` does. */
@@ -66,12 +68,23 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
     }
   }
 
+  // Buried by the user or the scheduler, until tomorrow or later today
+  const buried = card.special_state !== null && card.special_state !== 'Suspended';
+
   function toggleSuspend() {
     const suspended = card.special_state === 'Suspended';
     run(async () => {
       const res = await updateCards({ selector: { Ids: [card.id] }, special_state: suspended ? null : 'Suspended' });
       onCardChanged(res.cards[0]);
       return { message: suspended ? 'Card unsuspended.' : 'Card suspended.', eventIds: res.event_id === null ? [] : [res.event_id] };
+    });
+  }
+
+  function toggleBury() {
+    run(async () => {
+      const res = await updateCards({ selector: { Ids: [card.id] }, special_state: buried ? null : 'Buried' });
+      onCardChanged(res.cards[0]);
+      return { message: buried ? 'Card unburied.' : 'Card buried.', eventIds: res.event_id === null ? [] : [res.event_id] };
     });
   }
 
@@ -115,6 +128,8 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
 
   const notePane = useRef<NotePaneHandle>(null);
   useImperativeHandle(ref, () => ({
+    toggleSuspend,
+    toggleBury,
     toggleNote: () => (panelNote?.id === card.note_id ? notePane.current?.close() : void openNote(card.note_id)),
     close: () => (panelNote ? notePane.current?.close() : onClose()),
   }));
@@ -189,6 +204,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
           {panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'}
         </button>
         <button onClick={toggleSuspend} style={actionButton}>{card.special_state === 'Suspended' ? 'Unsuspend Card' : 'Suspend Card'}</button>
+        <button onClick={toggleBury} style={actionButton}>{buried ? 'Unbury Card' : 'Bury Card'}</button>
         <button onClick={forget} style={actionButton}>Forget Card</button>
       </div>
 

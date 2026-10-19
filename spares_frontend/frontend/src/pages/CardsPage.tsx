@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedCardsPage, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
-import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
+import BulkActionBar, { Checkbox, type BulkAction, type BulkActionBarHandle } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
 import CardTools from '../components/CardTools';
@@ -14,7 +14,7 @@ import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
 import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
-import type { IdsOrQuery } from '../selection';
+import { selectedCount, type IdsOrQuery } from '../selection';
 import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -131,6 +131,7 @@ export default function CardsPage() {
   const tableBody = useRef<HTMLTableSectionElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const cardPane = useRef<CardDetailHandle>(null);
+  const bulkBar = useRef<BulkActionBarHandle>(null);
   const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
@@ -233,6 +234,7 @@ export default function CardsPage() {
   }
 
   const header = rows.header(displayedCards);
+  const checkedCount = selectedCount(rows.selection, searchTotal);
   function goToPage(n: number) {
     setBrowse(null);
     setSearchParams(prev => withPage(prev, n));
@@ -251,6 +253,14 @@ export default function CardsPage() {
     searching: searchQuery !== null,
     body: tableBody,
     search: searchInput,
+    // As the review page's keys, while the capitals act on the checked cards, which a search
+    // checks all of, so that a slip of the Shift key asks first
+    extra: [
+      { keys: ['s'], codes: ['s'], description: 'Suspend or unsuspend the open card', available: selected !== null, run: () => cardPane.current?.toggleSuspend() },
+      { keys: ['b'], codes: ['b'], description: 'Bury or unbury the open card', available: selected !== null, run: () => cardPane.current?.toggleBury() },
+      { keys: ['S'], codes: ['S'], description: 'Suspend the checked cards, after asking', available: checkedCount > 0, run: () => bulkBar.current?.choose('Suspend') },
+      { keys: ['B'], codes: ['B'], description: 'Bury the checked cards, after asking', available: checkedCount > 0, run: () => bulkBar.current?.choose('Bury') },
+    ],
   });
 
   return (
@@ -304,6 +314,7 @@ export default function CardsPage() {
           )}
 
           <BulkActionBar
+            ref={bulkBar}
             noun="card"
             selection={rows.selection}
             query={searchQuery}
