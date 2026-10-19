@@ -1,21 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedNotesPage, deleteNotes, getNote, listNotes, searchNotesPage } from '../api/client';
+import { ApiError, cachedNotesPage, deleteNotes, getNote, isNetworkError, listManualTagNames, listNotes, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { useRowSelection } from '../hooks/useRowSelection';
 import { useSavedSearches } from '../hooks/useSavedSearches';
+import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
+import { ALL_SELECTED, NO_SELECTION, type IdsOrQuery, type RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, keepShown, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
+
+/** The tags of `notes`, most used first, leaving out filtered tags, which can't be added or removed by hand. */
+async function tagsByUse(notes: NoteResponse[]): Promise<string[]> {
+  const manual = new Set(await listManualTagNames());
+  const uses = new Map<string, number>();
+  for (const tag of notes.flatMap(n => n.tags)) {
+    if (manual.has(tag)) uses.set(tag, (uses.get(tag) ?? 0) + 1);
+  }
+  return [...uses].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag);
+}
 
 export default function NotesPage() {
   const { credentials, logout } = useAuth();
@@ -39,6 +53,13 @@ export default function NotesPage() {
   // contents are still there when New note is clicked again
   const [hasDraft, setHasDraft] = useState(false);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
+  // Bumped after a bulk action, to refetch the notes it may have changed
+  const [reloadCount, setReloadCount] = useState(0);
+  // Bumped when the shown note is changed by a bulk action, so its editor starts again from it
+  const [detailVersion, setDetailVersion] = useState(0);
+  // The notes seen on any page, to find the tags of those checked
+  const seenNotes = useRef(new Map<number, NoteResponse>());
+  const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -53,6 +74,7 @@ export default function NotesPage() {
       .then(data => {
         if (cancelled) return;
         setNotes(data);
+        for (const note of data) seenNotes.current.set(note.id, note);
         setError(null);
         // Prefetch the next page so Next shows it straight away
         if (data.length === PAGE_SIZE) listNotes(page + 1, PAGE_SIZE).catch(() => {});
@@ -60,7 +82,7 @@ export default function NotesPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, searchQuery]);
+  }, [credentials, navigate, page, searchQuery, reloadCount]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_notes_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -78,6 +100,7 @@ export default function NotesPage() {
       .then(data => {
         if (cancelled) return;
         setSearchResults(data.items.map(m => m.note));
+        for (const { note } of data.items) seenNotes.current.set(note.id, note);
         setSearchTotal(data.total);
         setSearchMatches(new Map(data.items.map(m => [m.note.id, m.matches])));
         saveRecentSearch(searchQuery);
@@ -91,7 +114,7 @@ export default function NotesPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, searchCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, searchCount, reloadCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -159,6 +182,57 @@ export default function NotesPage() {
     }
   }
 
+  /** The notes `selection` has, for the tags they have. */
+  async function selectedNotes(selection: RowSelection): Promise<NoteResponse[]> {
+    if (!selection.all) return [...selection.ids].flatMap(id => seenNotes.current.get(id) ?? []);
+    if (searchQuery === null) return [];
+    return (await searchNotes(searchQuery)).filter(n => !selection.ids.has(n.id));
+  }
+
+  async function tagNotes(selector: IdsOrQuery, add: string[], remove: string[]) {
+    const { notes: changed, eventId } = await modifyNoteTags(selector, add, remove);
+    const message = add.length ? `Added ${tagList(add)} to ${changed.length} note(s).` : `Removed ${tagList(remove)} from ${changed.length} note(s).`;
+    return { message, eventIds: eventId === null ? [] : [eventId] };
+  }
+
+  const bulkActions: BulkAction[] = [
+    {
+      label: 'Add tags',
+      input: { kind: 'tags', suggestions: listManualTagNames },
+      confirm: (count, tags) => `Add ${tagList(tags)} to ${count} note(s)?`,
+      run: (selector, tags) => tagNotes(selector, tags, []),
+    },
+    {
+      label: 'Remove tags',
+      input: { kind: 'tags', suggestions: async () => tagsByUse(await selectedNotes(rows.selection)) },
+      confirm: (count, tags) => `Remove ${tagList(tags)} from ${count} note(s)?`,
+      run: (selector, tags) => tagNotes(selector, [], tags),
+    },
+    {
+      label: 'Delete',
+      danger: true,
+      confirm: count => `Delete ${count} note(s) and their cards?`,
+      run: async (selector, _, count) => {
+        await deleteNotes(selector);
+        // The server doesn't return the event it records, so no Undo is offered
+        return { message: `Deleted ${count} note(s).`, eventIds: [] };
+      },
+    },
+  ];
+
+  /** Shows what a bulk action, or undoing it, changed. */
+  function afterBulkAction() {
+    rows.reset();
+    setReloadCount(n => n + 1);
+    if (!selectedNote) return;
+    getNote(selectedNote.id).then(
+      note => { setSelectedNote(note); setDetailVersion(v => v + 1); },
+      (e: unknown) => { if (!isNetworkError(e)) setSelectedNote(null); },
+    );
+  }
+
+  const header = rows.header(displayedNotes);
+
   return (
     <div className="page-wide">
       <style>{`
@@ -204,6 +278,18 @@ export default function NotesPage() {
             </div>
           )}
 
+          <BulkActionBar
+            noun="note"
+            selection={rows.selection}
+            query={searchQuery}
+            total={searchTotal}
+            onSelectAll={() => rows.setSelection(ALL_SELECTED)}
+            onSelectNone={() => rows.setSelection(NO_SELECTION)}
+            search={async q => (await searchNotes(q)).map(n => n.id)}
+            actions={bulkActions}
+            onDone={afterBulkAction}
+          />
+
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {loading && <div>Loading…</div>}
 
@@ -212,6 +298,14 @@ export default function NotesPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
+                    <th style={{ ...th, width: 1, paddingRight: 0 }}>
+                      <Checkbox
+                        checked={header.checked}
+                        indeterminate={header.indeterminate}
+                        onClick={header.toggle}
+                        label={searchQuery !== null ? 'Select all notes found' : 'Select the notes on this page'}
+                      />
+                    </th>
                     <th style={th}>ID</th>
                     <th style={th}>Data</th>
                     <th style={th}>Tags</th>
@@ -220,13 +314,16 @@ export default function NotesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedNotes.map(note => (
+                  {displayedNotes.map((note, i) => (
                     <tr
                       key={note.id}
                       className={`notes-row${selectedNote?.id === note.id ? ' notes-row-selected' : ''}`}
                       onClick={() => selectNote(selectedNote?.id === note.id ? null : note)}
                       style={{ cursor: 'pointer' }}
                     >
+                      <td style={checkTd} onClick={e => { e.stopPropagation(); rows.toggleRow(displayedNotes, i, e.shiftKey); }}>
+                        <Checkbox checked={rows.isSelected(note.id)} onClick={e => rows.toggleRow(displayedNotes, i, e.shiftKey)} label={`Select note ${note.id}`} />
+                      </td>
                       <td style={td}>
                         {formatNoteId(note.id)}
                         {note.tags.includes(SYNC_CONFLICT_TAG) && <span className="sync-conflict-badge" title="A sync could not merge this note. Resolve it with `spares sync conflicts`." style={{ marginLeft: 6 }}>conflict</span>}
@@ -248,7 +345,7 @@ export default function NotesPage() {
                   ))}
                   {displayedNotes.length === 0 && (
                     <tr>
-                      <td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                      <td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
                         {searchResults === null && page === 1 ? (
                           <>No notes yet. <button onClick={startNewNote} style={{ padding: '2px 8px', fontSize: 12 }}>Write one</button>, or press <kbd>?</kbd> to learn how.</>
                         ) : 'No notes found'}
@@ -296,7 +393,7 @@ export default function NotesPage() {
                 <button onClick={deleteSelected} className="touch-target-small" style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
               </div>
               <NoteDetail
-                key={selectedNote.id}
+                key={`${selectedNote.id}:${detailVersion}`}
                 note={selectedNote}
                 onClose={detail.back}
                 onNoteUpdated={(updated) => {

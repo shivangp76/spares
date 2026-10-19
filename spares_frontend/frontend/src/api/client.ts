@@ -471,14 +471,23 @@ export async function forgetCard(cardId: number): Promise<ForgetCardResponse> {
 
 /** Adds a tag to a note, leaving its other tags unchanged. Returns the event id. */
 export async function tagNote(noteId: number, tag: string): Promise<number | null> {
-  const body = await apiFetch<{ event_id: number | null }>('Tag note', '/api/notes', {
+  return (await modifyNoteTags({ Ids: [noteId] }, [tag], [])).eventId;
+}
+
+/** Adds and removes tags of the notes `selector` picks, leaving their other tags unchanged. */
+export async function modifyNoteTags(
+  selector: NotesSelector,
+  tagsToAdd: string[],
+  tagsToRemove: string[],
+): Promise<{ notes: NoteResponse[]; eventId: number | null }> {
+  const body = await apiFetch<{ notes: NoteResponse[]; event_id: number | null }>('Tag notes', '/api/notes', {
     method: 'PATCH',
     body: JSON.stringify({
-      selector: { Ids: [noteId] },
-      tags: { ModifyTags: { tags_to_remove: null, tags_to_add: [tag] } },
+      selector,
+      tags: { ModifyTags: { tags_to_remove: tagsToRemove.length ? tagsToRemove : null, tags_to_add: tagsToAdd.length ? tagsToAdd : null } },
     }),
   });
-  return body.event_id;
+  return { notes: body.notes, eventId: body.event_id };
 }
 
 /** Regenerates a note's rendered files (and its cards' and linked notes'), as the CLI does after syncing a note. */
@@ -787,6 +796,11 @@ export function getSearchExamples(): Promise<QueryExample[]> {
 /** The name of every tag, for completing them in a search. */
 export async function listTagNames(): Promise<string[]> {
   return (await listTags(1, 1_000_000)).map(t => t.name);
+}
+
+/** The name of every tag that isn't filtered, so can be added to and removed from notes by hand. */
+export async function listManualTagNames(): Promise<string[]> {
+  return (await listTags(1, 1_000_000)).filter(t => t.query === null).map(t => t.name);
 }
 
 export async function listTags(page: number, limit: number): Promise<TagResponse[]> {

@@ -78,6 +78,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     about: [
       "A note holds what you want to remember. Each cloze in it, or group of clozes, makes a card: Syntax, by a note's text, shows how to write them.",
       'Tags group notes, as in `tag=spanish`. Keywords name what a note is about, as in `keyword="Irregular verbs"`, so that other notes can link to it.',
+      'Check notes to add or remove tags of them, or delete them, at once. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS, ...NOTE_EDITOR_SHORTCUTS],
     docs: [

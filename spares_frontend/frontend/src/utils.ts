@@ -6,6 +6,11 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Tags as a message lists them. */
+export function tagList(tags: string[]): string {
+  return tags.map(t => `\`${t}\``).join(', ');
+}
+
 /** The tag sync puts on notes that need a look (see `spares sync conflicts`). */
 export const SYNC_CONFLICT_TAG = 'sync-conflict';
 
