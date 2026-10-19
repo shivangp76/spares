@@ -88,9 +88,9 @@
 //!
 //! A live note can only be imported from its source file. Importing it from any other file, such as
 //! a per-note file from `spares note generate` (which names its note by id), is refused, since the
-//! next import of the source file would overwrite the edit. The notes repository likewise refuses
-//! pushes that change a live note's data or custom data; its tags and keywords stay editable there
-//! and on the web.
+//! next import of the source file would overwrite the edit. `spares note edit` and the notes
+//! repository likewise refuse changes to a live note's data or custom data; its tags and keywords
+//! stay editable there and on the web.
 //!
 //! Matching is **positional**: the first note in the file matches DB entry `(live_sync_name, 0)`,
 //! the second matches `(live_sync_name, 1)`, and so on. This means you can freely adjust note

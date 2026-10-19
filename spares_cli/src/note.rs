@@ -4,6 +4,7 @@ use miette::IntoDiagnostic;
 use miette::miette;
 use reqwest::Client;
 use serde_json::Map;
+use spares_core::model::NoteId;
 use spares_core::schema::note::CreateNoteRequest;
 use spares_core::schema::note::CreateNotesRequest;
 use spares_core::schema::note::DeleteNotesRequest;
@@ -26,6 +27,7 @@ use crate::saved_search::saved_query;
 use crate::search::print_examples;
 use crate::search::print_fields;
 use crate::search::search;
+use crate::search::search_note_responses;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::utils::parse_custom_data;
@@ -86,6 +88,21 @@ pub(crate) async fn handle(
             let selector = selector
                 .get_notes_selector()
                 .map_err(|e| miette!("{}", e))?;
+            // A live note's data comes from its source file, which the next `spares import` of it
+            // would restore. Its tags and keywords stay editable, as on the web.
+            if data.is_some() || parser_id.is_some() || custom_data.is_some() {
+                let live = live_notes(&selector, base_url, client).await?;
+                if !live.is_empty() {
+                    return Err(miette!(
+                        "Only the tags and keywords of a live note can be edited here: {}. Edit \
+                         the note in its source file and run `spares import` instead.",
+                        live.iter()
+                            .map(|(id, lsn)| format!("note {id} is live (live-sync-name `{lsn}`)"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
             let tags = if remove_all_tags {
                 // If `tags_to_add` is empty, this will just set all tags to nothing which will remove all tags. Otherwise, it will remove all tags and then add `tags_to_add`
                 UpdateTags::SetTags(tags_to_add.unwrap_or_default())
@@ -281,4 +298,44 @@ pub(crate) async fn handle(
         }
     }
     Ok(())
+}
+
+/// The live notes among those `selector` selects, with their `live_sync_name`.
+async fn live_notes(
+    selector: &NotesSelector,
+    base_url: &str,
+    client: &Client,
+) -> Result<Vec<(NoteId, String)>, Error> {
+    let notes = match selector {
+        NotesSelector::Ids(ids) => {
+            let mut notes = Vec::with_capacity(ids.len());
+            for id in ids {
+                let url = format!("{}/api/notes/{}", base_url, id.packed());
+                let response = client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                let note: NoteResponse = response.json().await.map_err(|e| miette!("{}", e))?;
+                notes.push(note);
+            }
+            notes
+        }
+        NotesSelector::Query(query) => {
+            search_note_responses(query.clone(), base_url, client).await?
+        }
+        NotesSelector::All => unreachable!("`NotesSelectorLocal` never selects all notes"),
+    };
+    Ok(notes
+        .into_iter()
+        .filter_map(|note| {
+            let lsn = note
+                .custom_data
+                .get("live_sync_name")?
+                .as_str()?
+                .to_string();
+            Some((note.id, lsn))
+        })
+        .collect())
 }

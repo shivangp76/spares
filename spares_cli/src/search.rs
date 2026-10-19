@@ -8,6 +8,7 @@ use spares_core::parsers::generate_files::RenderOutputType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_output_raw_dir;
 use spares_core::schema::card::CardResponse;
+use spares_core::schema::note::NoteResponse;
 use spares_core::schema::note::SearchNotesRequest;
 use spares_core::schema::note::SearchNotesResponse;
 use spares_core::search::FieldInfo;
@@ -78,6 +79,21 @@ async fn search_notes(
         .map_err(|e| miette!("{}", e))?;
     let response = ensure_ok(response).await?;
     response.json().await.map_err(|e| miette!("{}", e))
+}
+
+pub(crate) async fn search_note_responses(
+    query: String,
+    base_url: &str,
+    client: &Client,
+) -> Result<Vec<NoteResponse>, Error> {
+    match search_notes(query, QueryReturnItemType::Notes, base_url, client).await? {
+        SearchNotesResponse::Notes(note_responses) => {
+            Ok(note_responses.into_iter().map(|(note, _)| note).collect())
+        }
+        SearchNotesResponse::Cards(_) => {
+            unreachable!("search with Notes output type returns notes")
+        }
+    }
 }
 
 pub(crate) async fn search_cards(

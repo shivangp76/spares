@@ -9,7 +9,7 @@ Live notes let you write notes in a source file, such as lecture notes with pros
 <!--- # live-sync-name: lecture_notes_501 --->
 ```
 
-Then import the file with `spares import` after every edit, and finalize it with `spares import --strip-liveness` once the notes are stable. Edit a live note only in its source file: importing it from any other file, such as one from `spares note generate`, and pushing a change to its text from the notes repository are both refused, since the next import of the source file would overwrite them. Its tags and keywords can still be changed in the web app, the notes repository or with `spares note edit`. How notes are matched, with a worked example, is in the module docs of `spares_cli::import`.
+Then import the file with `spares import` after every edit, and finalize it with `spares import --strip-liveness` once the notes are stable. Edit a live note only in its source file: importing it from any other file, such as one from `spares note generate`, changing its text with `spares note edit`, and pushing a change to its text from the notes repository are all refused, since the next import of the source file would overwrite them. Its tags and keywords can still be changed in the web app, the notes repository or with `spares note edit`. How notes are matched, with a worked example, is in the module docs of `spares_cli::import`.
 
 ## Inheriting SRS data from another card
 
