@@ -14,7 +14,7 @@ import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
-import NoteDetail from '../components/NoteDetail';
+import NoteDetail, { type NotePaneHandle } from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -67,6 +67,9 @@ export default function NotesPage() {
   // The notes seen on any page, to find the tags of those checked
   const seenNotes = useRef(new Map<number, NoteResponse>());
   const tableBody = useRef<HTMLTableSectionElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const notePane = useRef<NotePaneHandle>(null);
+  const newNotePane = useRef<NotePaneHandle>(null);
   const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
@@ -145,6 +148,7 @@ export default function NotesPage() {
     setPaneStatus(null);
     setCreating(true);
     setHasDraft(true);
+    requestAnimationFrame(() => newNotePane.current?.focus());
   }
 
   function handleClear() {
@@ -268,10 +272,18 @@ export default function NotesPage() {
     displayed: displayedNotes,
     openIndex: selectedIndex,
     open: i => selectNote(displayedNotes[i]),
+    close: creating ? () => newNotePane.current?.close() : selectedNote ? () => notePane.current?.close() : null,
+    edit: { description: "Go to the open note's text", run: creating || selectedNote ? () => (creating ? newNotePane : notePane).current?.focus() : null },
     prevPage,
     nextPage,
     searching: searchQuery !== null,
     body: tableBody,
+    search: searchInput,
+    extra: [
+      { keys: ['c'], codes: ['c'], description: 'Write a new note', available: !creating, run: startNewNote },
+      // A Mac's Delete key is Backspace
+      { keys: ['Delete', '#'], codes: ['Delete', 'Backspace', '#'], description: 'Delete the open note (Backspace on a Mac)', available: selectedNote !== null && !creating, run: () => void deleteSelected() },
+    ],
   });
 
   return (
@@ -291,6 +303,7 @@ export default function NotesPage() {
         <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.length > 0 ? 8 : 16 }}>
             <SearchInput
+              ref={searchInput}
               value={query}
               onChange={setQuery}
               onSubmit={handleSearch}
@@ -412,6 +425,7 @@ export default function NotesPage() {
           {hasDraft && (
             <div style={{ display: creating ? undefined : 'none' }}>
               <NewNoteForm
+                ref={newNotePane}
                 onCreated={note => {
                   setHasDraft(false);
                   selectNote(note);
@@ -435,6 +449,7 @@ export default function NotesPage() {
                 <button onClick={deleteSelected} className="touch-target-small" style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
               </div>
               <NoteDetail
+                ref={notePane}
                 key={`${selectedNote.id}:${detailVersion}`}
                 note={selectedNote}
                 onClose={detail.back}

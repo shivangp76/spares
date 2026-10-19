@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
 import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
 import { useFieldAbout } from '../hooks/useFieldAbout';
@@ -6,11 +6,19 @@ import { backPath, backWebPath, errorMessage, formatNoteId, keepShown, sectionLa
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import CardInfo from './CardInfo';
 import CardRenderer from './CardRenderer';
-import NoteDetail from './NoteDetail';
+import NoteDetail, { type NotePaneHandle } from './NoteDetail';
 
 const actionButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 };
 const renderBox: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 4, padding: 4, marginBottom: 12, background: 'var(--bg)' };
+
+/** What the Cards page's keys do to the card shown. */
+export interface CardDetailHandle {
+  /** Opens the card's note below it, or closes it, asking first if that drops unsaved changes. */
+  toggleNote: () => void;
+  /** Closes the card, or first its note if open, as `toggleNote` does. */
+  close: () => void;
+}
 
 interface Props {
   card: CardResponse;
@@ -20,10 +28,11 @@ interface Props {
   onClose: () => void;
   /** Called with the card's new state after an action on it, or after undoing one. */
   onCardChanged: (card: CardResponse) => void;
+  ref?: React.Ref<CardDetailHandle>;
 }
 
 /** One card of a list being stepped through, like `spares card view`. */
-export default function CardDetail({ card, index, total, onGoTo, onClose, onCardChanged }: Props) {
+export default function CardDetail({ card, index, total, onGoTo, onClose, onCardChanged, ref }: Props) {
   // Bumped after the note is saved so the rendered files are refetched
   const [version, setVersion] = useState(0);
   // Bumped after the card's review log may have changed, so Card Info is refetched
@@ -103,6 +112,12 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
     setGoTo('');
     onGoTo(n - 1);
   }
+
+  const notePane = useRef<NotePaneHandle>(null);
+  useImperativeHandle(ref, () => ({
+    toggleNote: () => (panelNote?.id === card.note_id ? notePane.current?.close() : void openNote(card.note_id)),
+    close: () => (panelNote ? notePane.current?.close() : onClose()),
+  }));
 
   const reviewCard = loaded && 'result' in loaded ? loaded.result : null;
 
@@ -206,6 +221,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
       {panelNote && (
         <div style={{ marginTop: 16 }}>
           <NoteDetail
+            ref={notePane}
             key={panelNote.id}
             note={panelNote}
             onClose={() => setPanelNote(null)}

@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedCardsPage, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
-import CardDetail from '../components/CardDetail';
+import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
@@ -129,6 +129,8 @@ export default function CardsPage() {
   // Whether the next search refetches it after a bulk action, so keeps the card shown
   const reloading = useRef(false);
   const tableBody = useRef<HTMLTableSectionElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const cardPane = useRef<CardDetailHandle>(null);
   const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
@@ -242,10 +244,13 @@ export default function CardsPage() {
     displayed: displayedCards,
     openIndex: selected ? displayedCards.findIndex(c => c.id === selected.id) : -1,
     open: index => setBrowse({ cards: displayedCards, index }),
+    close: selected ? () => cardPane.current?.close() : null,
+    edit: { description: "Open or close the open card's note", run: selected ? () => cardPane.current?.toggleNote() : null },
     prevPage,
     nextPage,
     searching: searchQuery !== null,
     body: tableBody,
+    search: searchInput,
   });
 
   return (
@@ -270,6 +275,7 @@ export default function CardsPage() {
 
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.length > 0 ? 8 : 16 }}>
             <SearchInput
+              ref={searchInput}
               value={query}
               onChange={setQuery}
               onSubmit={handleSearch}
@@ -380,6 +386,7 @@ export default function CardsPage() {
           {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to cards</button>}
           {browse && selected
             ? <CardDetail
+                ref={cardPane}
                 key={selected.id}
                 card={selected}
                 index={browse.index}

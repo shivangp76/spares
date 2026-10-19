@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
@@ -20,15 +20,24 @@ const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fon
 
 const VIM_TIP = 'With Vim keybindings, :w saves the note, :q closes it (:q! drops unsaved changes), and :wq or :x saves and closes it. :e! undoes the changes since the note was last saved.';
 
+/** What a page's keys do to a note pane (`NoteDetail` or `NewNoteForm`). */
+export interface NotePaneHandle {
+  /** Puts the caret in the note's text. */
+  focus: () => void;
+  /** Closes the pane, as its close button does, asking first if that drops unsaved changes. */
+  close: () => void;
+}
+
 interface Props {
   note: NoteResponse;
   onClose: () => void;
   onNoteUpdated: (updated: NoteResponse) => void;
   /** Opens a linked note. The note's links are listed iff this is given. */
   onOpenNote?: (noteId: number) => void;
+  ref?: React.Ref<NotePaneHandle>;
 }
 
-export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }: Props) {
+export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, ref }: Props) {
   const theme = useResolvedTheme();
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
@@ -166,6 +175,8 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote }:
   function close() {
     if (!unsaved || window.confirm('Discard the unsaved changes to this note?')) onClose();
   }
+
+  useImperativeHandle(ref, () => ({ focus: () => dataEditorRef.current?.view?.focus(), close }));
 
   return (
     <div ref={rootRef} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 20, position: 'relative', backgroundColor: 'var(--surface)' }}>

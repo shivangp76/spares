@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { createNotes, listParsers, renderNote } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
@@ -10,6 +10,7 @@ import { errorMessage, formatNoteId, insertBlock, insertInline, insertSource } f
 import { NO_WRITE_WARNING, useVimCommands } from '../vimCommands';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
+import type { NotePaneHandle } from './NoteDetail';
 import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -23,7 +24,7 @@ function lines(value: string): string[] {
 }
 
 /** `spares note add`, followed by rendering the note as the CLI does when syncing it. */
-export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note: NoteResponse) => void; onCancel: () => void }) {
+export default function NewNoteForm({ onCreated, onCancel, ref }: { onCreated: (note: NoteResponse) => void; onCancel: () => void; ref?: React.Ref<NotePaneHandle> }) {
   const theme = useResolvedTheme();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
@@ -49,6 +50,8 @@ export default function NewNoteForm({ onCreated, onCancel }: { onCreated: (note:
   function cancel() {
     if (!unsaved || window.confirm('Discard this new note?')) onCancel();
   }
+
+  useImperativeHandle(ref, () => ({ focus: () => dataEditorRef.current?.view?.focus(), close: cancel }));
 
   const rootRef = useRef<HTMLDivElement>(null);
   // Creating the note closes the form, so each way of writing it also quits

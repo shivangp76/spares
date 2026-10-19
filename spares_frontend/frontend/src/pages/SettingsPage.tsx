@@ -101,7 +101,7 @@ export default function SettingsPage() {
             checked={vimKeybindings}
             onChange={e => setVimKeybindings(e.target.checked)}
           />
-          Vim keybindings in the note editor and typed answers
+          Vim keybindings in the note editor and typed answers, and j and k to move through lists
         </label>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Off by default on touchscreens, since a phone keyboard can't leave Vim's normal mode to type.

@@ -25,6 +25,12 @@ export function useRowSelection(query: string | null) {
     setSelection(prev => setSelected(prev, ids, select));
   }
 
+  /** Checks the `indexes`th of `rows`, of which the last is where a shift-click extends from. */
+  function checkRows(rows: { id: number }[], indexes: number[]) {
+    anchor.current = indexes[indexes.length - 1];
+    setSelection(prev => setSelected(prev, indexes.map(i => rows[i].id), true));
+  }
+
   /** The header checkbox: the whole search, or without one, the rows of this page. */
   function header(rows: { id: number }[]): { checked: boolean; indeterminate: boolean; toggle: () => void } {
     const onPage = rows.filter(r => isSelected(selection, r.id)).length;
@@ -60,6 +66,7 @@ export function useRowSelection(query: string | null) {
     reset: () => { anchor.current = null; setSelection(initialSelection(query)); },
     isSelected: (id: number) => isSelected(selection, id),
     toggleRow,
+    checkRows,
     selectAll,
     selectNone: () => setSelection(NO_SELECTION),
     invert,
