@@ -12,8 +12,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
+import { useSelectionKeys } from '../hooks/useSelectionKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
-import { ALL_SELECTED, NO_SELECTION, type IdsOrQuery } from '../selection';
+import type { IdsOrQuery } from '../selection';
 import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -229,6 +230,7 @@ export default function CardsPage() {
   }
 
   const header = rows.header(displayedCards);
+  const keys = useSelectionKeys({ rows, displayed: displayedCards, openIndex: selected ? displayedCards.findIndex(c => c.id === selected.id) : -1, searching: searchQuery !== null });
 
   return (
     <div className="page-wide">
@@ -238,7 +240,7 @@ export default function CardsPage() {
       `}</style>
 
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
-        <Navbar onLogout={logout} />
+        <Navbar onLogout={logout} help={keys} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Cards</h2>
 
@@ -284,8 +286,9 @@ export default function CardsPage() {
             selection={rows.selection}
             query={searchQuery}
             total={searchTotal}
-            onSelectAll={() => rows.setSelection(ALL_SELECTED)}
-            onSelectNone={() => rows.setSelection(NO_SELECTION)}
+            onSelectAll={() => rows.selectAll(displayedCards)}
+            onSelectNone={rows.selectNone}
+            onInvert={() => rows.invert(displayedCards)}
             search={async q => (await searchCards(q)).map(c => c.id)}
             actions={BULK_ACTIONS}
             onDone={afterBulkAction}

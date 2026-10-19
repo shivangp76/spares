@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ALL_SELECTED, NO_SELECTION, initialSelection, isSelected, rangeIds, setSelected, type RowSelection } from '../selection';
+import { ALL_SELECTED, NO_SELECTION, initialSelection, invertSelection, isSelected, rangeIds, setSelected } from '../selection';
 
 /**
  * The rows of a list checked for a bulk action, kept across its pages and started again by each
@@ -44,13 +44,25 @@ export function useRowSelection(query: string | null) {
     };
   }
 
+  /** Checks the whole search, or without one, the rows of this page. */
+  function selectAll(rows: { id: number }[]) {
+    setSelection(prev => (query !== null ? ALL_SELECTED : setSelected(prev, rows.map(r => r.id), true)));
+  }
+
+  /** Inverts the whole search, or without one, the rows of this page. */
+  function invert(rows: { id: number }[]) {
+    setSelection(prev => invertSelection(prev, query !== null ? null : rows.map(r => r.id)));
+  }
+
   return {
     selection,
-    setSelection: (next: RowSelection) => setSelection(next),
     /** Starts again as if the search had just been made, e.g. after an action changed what it finds. */
     reset: () => { anchor.current = null; setSelection(initialSelection(query)); },
     isSelected: (id: number) => isSelected(selection, id),
     toggleRow,
+    selectAll,
+    selectNone: () => setSelection(NO_SELECTION),
+    invert,
     header,
   };
 }

@@ -36,6 +36,20 @@ export function setSelected(selection: RowSelection, ids: number[], select: bool
   return { all: selection.all, ids: next };
 }
 
+/**
+ * `selection` with what is checked unchecked, and the other way round: of the whole search, or
+ * without one, of the rows with `ids`.
+ */
+export function invertSelection(selection: RowSelection, ids: number[] | null): RowSelection {
+  if (ids === null) return { all: !selection.all, ids: selection.ids };
+  const next = new Set(selection.ids);
+  for (const id of ids) {
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+  }
+  return { all: selection.all, ids: next };
+}
+
 /** How many rows `selection` has, given that the search finds `total`. */
 export function selectedCount(selection: RowSelection, total: number): number {
   return selection.all ? total - selection.ids.size : selection.ids.size;

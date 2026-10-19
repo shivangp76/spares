@@ -5,13 +5,14 @@ import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
+import { useSelectionKeys } from '../hooks/useSelectionKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
-import { ALL_SELECTED, NO_SELECTION, type IdsOrQuery, type RowSelection } from '../selection';
+import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail from '../components/NoteDetail';
 import type { NoteResponse } from '../types/spares';
@@ -258,6 +259,7 @@ export default function NotesPage() {
   }
 
   const header = rows.header(displayedNotes);
+  const keys = useSelectionKeys({ rows, displayed: displayedNotes, openIndex: selectedIndex, searching: searchQuery !== null });
 
   return (
     <div className="page-wide">
@@ -267,7 +269,7 @@ export default function NotesPage() {
       `}</style>
 
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
-        <Navbar onLogout={logout} />
+        <Navbar onLogout={logout} help={keys} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
 
@@ -309,8 +311,9 @@ export default function NotesPage() {
             selection={rows.selection}
             query={searchQuery}
             total={searchTotal}
-            onSelectAll={() => rows.setSelection(ALL_SELECTED)}
-            onSelectNone={() => rows.setSelection(NO_SELECTION)}
+            onSelectAll={() => rows.selectAll(displayedNotes)}
+            onSelectNone={rows.selectNone}
+            onInvert={() => rows.invert(displayedNotes)}
             search={async q => (await searchNotes(q)).map(n => n.id)}
             actions={bulkActions}
             onDone={afterBulkAction}

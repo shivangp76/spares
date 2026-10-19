@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { ALL_SELECTED, NO_SELECTION, initialSelection, isSelected, rangeIds, resolveSelection, selectedCount, setSelected } from './selection';
+import { ALL_SELECTED, NO_SELECTION, initialSelection, invertSelection, isSelected, rangeIds, resolveSelection, selectedCount, setSelected } from './selection';
 
 test('a search starts with all of it selected', () => {
   expect(initialSelection('tag=a')).toEqual(ALL_SELECTED);
@@ -22,6 +22,16 @@ test('unchecking rows of a whole search leaves them out', () => {
   expect(selectedCount(allBut, 10)).toBe(8);
   // Checking a left out row again puts it back
   expect(setSelected(allBut, [5], true).ids).toEqual(new Set([6]));
+});
+
+test('inverting a search, or the rows of a page', () => {
+  const allBut = setSelected(ALL_SELECTED, [5], false);
+  const inverted = invertSelection(allBut, null);
+  expect(isSelected(inverted, 5)).toBe(true);
+  expect(isSelected(inverted, 6)).toBe(false);
+  expect(selectedCount(inverted, 10)).toBe(1);
+  const page = invertSelection(setSelected(NO_SELECTION, [1, 9], true), [1, 2, 3]);
+  expect([...page.ids].sort()).toEqual([2, 3, 9]);
 });
 
 test('shift-click ranges go either way', () => {

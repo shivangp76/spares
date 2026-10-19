@@ -107,7 +107,7 @@ function TagsInput({ tags, setTags, suggestions, onSubmit }: {
  * Runs actions on the rows of a list that are checked, or on all that a search finds. Undoable
  * actions offer Undo once done.
  */
-export default function BulkActionBar({ noun, selection, query, total, onSelectAll, onSelectNone, search, actions, onDone }: {
+export default function BulkActionBar({ noun, selection, query, total, onSelectAll, onSelectNone, onInvert, search, actions, onDone }: {
   /** What the rows are, as in `note`. */
   noun: string;
   selection: RowSelection;
@@ -117,6 +117,8 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   total: number;
   onSelectAll: () => void;
   onSelectNone: () => void;
+  /** Checks what isn't, and unchecks what is: in the whole search, or without one, on this page. */
+  onInvert: () => void;
   /** The ids of the rows `query` finds, for leaving some out of them. */
   search: (query: string) => Promise<number[]>;
   actions: BulkAction[];
@@ -194,6 +196,7 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
         <span style={{ color: 'var(--text-secondary)' }}>{scope}</span>
         {query !== null && !wholeSearch && <button onClick={onSelectAll} style={small}>Select all found</button>}
         {count > 0 && <button onClick={onSelectNone} style={small}>Select none</button>}
+        {(query !== null || count > 0) && <button onClick={onInvert} style={small} title="Check the unchecked, and uncheck the checked">Invert</button>}
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
           {actions.map(action => (
             <button
