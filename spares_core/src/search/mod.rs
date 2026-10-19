@@ -71,8 +71,10 @@
 //!   that rated it) after it had been learned, counted as for leeches.
 //! - `c.interval`: the days from its last review to when it is due, as in statistics, as in
 //!   `c.interval>=30`. A postponed card's interval includes the postponement.
-//! - `c.retrievability`: how likely you are to recall it now, from 0 to 1, as FSRS predicts from its
-//!   stability and the time since its last review, as in `c.retrievability<0.8`.
+//! - `c.retrievability`: how likely you are to recall it now, from 0 to 1, as the scheduler that
+//!   last reviewed it predicts (FSRS from its stability and the time since its last review), as in
+//!   `c.retrievability<0.8`. Cards of a scheduler with no forgetting curve have none. Sorting
+//!   orders cards by it only among those of the same scheduler.
 //!
 //! A time in brackets after `c.rated` limits it to the reviews at that time: a date, which means
 //! any time in it, or a comparison with a date, written with no spaces. With no value, it is any

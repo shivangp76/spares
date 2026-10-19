@@ -944,7 +944,7 @@ pub async fn get_review_card(
 
     let config = read_external_config()?;
     let order_by = queue_order_by(
-        &config.queue,
+        &config,
         requested_date,
         &caps.showable(&cards_left_by_state),
         &query_sort,

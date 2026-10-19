@@ -57,6 +57,7 @@ use crate::model::ReviewLogKind;
 use crate::model::StateId;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::RetrievabilityFn;
+use crate::schedulers::RetrievabilityKey;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schema::review::OptimizeResponse;
@@ -126,6 +127,24 @@ impl SrsScheduler for Fsrs {
         Some(Box::new(move |stability, elapsed_days| {
             retrievability(elapsed_days.max(0.0), stability, decay)
         }))
+    }
+
+    /// Days since the last review over stability: retrievability falls as it grows, on the same
+    /// curve for every card, so a bound on one is a bound on the other. NULL for a new card.
+    fn retrievability_key(
+        &self,
+        config: &SparesExternalConfig,
+        elapsed: &str,
+    ) -> Option<RetrievabilityKey> {
+        let decay = f64::from(decay(config));
+        let factor = 0.9_f64.powf(-1.0 / decay) - 1.0;
+        Some(RetrievabilityKey {
+            sql: format!(
+                "(CASE WHEN c.state != {} THEN MAX({elapsed}, 0) / 86400.0 / MAX(c.stability, 0.0001) END)",
+                state_to_number(State::New),
+            ),
+            at: Box::new(move |recall| (recall.max(0.0).powf(-1.0 / decay) - 1.0) / factor),
+        })
     }
 
     // Note that this can be optimized to account for the correlation between retention amongst siblings. The ratings can also be chosen better to better reflect human tendencies.
@@ -546,6 +565,17 @@ impl SrsScheduler for Fsrs {
 mod tests {
     use super::*;
     use crate::api::tests::generate_review_logs;
+
+    #[test]
+    fn retrievability_key_inverts_the_forgetting_curve() {
+        let config = SparesExternalConfig::default();
+        let key = Fsrs.retrievability_key(&config, "0").unwrap();
+        let elapsed_over_stability = (key.at)(0.8);
+        let recall = retrievability(elapsed_over_stability, 1.0, decay(&config));
+        assert!((recall - 0.8).abs() < 1e-6, "{recall}");
+        assert_eq!((key.at)(1.0), 0.0);
+        assert!((key.at)(0.0).is_infinite());
+    }
 
     /// Random histories, each ending with the review that produced the card.
     fn random_cards(count: usize) -> Vec<(Card, Vec<ReviewLog>)> {

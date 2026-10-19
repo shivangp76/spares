@@ -16,10 +16,12 @@ use crate::config::NewReviewMix;
 use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
+use crate::config::SparesExternalConfig;
 use crate::model::NEW_CARD_STATE;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::learning_states;
+use crate::schedulers::retrievability_key_sql;
 use crate::schedulers::review_state;
 
 /// What is left of today's limits, which [`NewReviewMix::Interleaved`] spreads cards over. `None`
@@ -106,14 +108,15 @@ fn daily_hash(id_expr: &str, now: DateTime<Utc>) -> String {
 const LAST_REVIEW: &str =
     "(SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind < 16)";
 
-fn review_keys(order: ReviewOrder, now: DateTime<Utc>) -> Vec<Key> {
+fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<Utc>) -> Vec<Key> {
     let now_ts = now.timestamp();
     match order {
         ReviewOrder::Due => vec![asc("c.due"), asc("n.created_at")],
-        // FSRS's retrievability falls as elapsed time over stability grows, with the same curve
-        // for every card, so sorting by that ratio sorts by retrievability.
-        ReviewOrder::Retrievability => vec![desc(format!(
-            "({now_ts} - COALESCE({LAST_REVIEW}, c.due)) * 1.0 / MAX(c.stability, 0.0001)"
+        // The scheduler's key falls as retrievability rises.
+        ReviewOrder::Retrievability => vec![desc(retrievability_key_sql(
+            config,
+            &format!("({now_ts} - COALESCE({LAST_REVIEW}, c.due))"),
+            |key| key.sql.clone(),
         ))],
         ReviewOrder::RelativeOverdueness => vec![desc(format!(
             "({now_ts} - c.due) * 1.0 / MAX(c.due - COALESCE({LAST_REVIEW}, c.due), 1)"
@@ -211,11 +214,12 @@ fn render(keys: &[Key]) -> String {
 /// [`QueuePreset::review_order`] describes. `caps` should be [`QueueCaps::showable`], so the new
 /// cards a preset's limit holds back are not counted when spreading them over the reviews.
 pub(crate) fn queue_order_by(
-    config: &QueueConfig,
+    external_config: &SparesExternalConfig,
     now: DateTime<Utc>,
     caps: &QueueCaps,
     query_sort: &[String],
 ) -> String {
+    let config = &external_config.queue;
     let now_ts = now.timestamp();
     let [learning, relearning] = learning_states();
     // The groups listed on `QueueConfig`, numbered from 0
@@ -250,7 +254,7 @@ pub(crate) fn queue_order_by(
             &config.presets,
             config.review_order,
             |preset| preset.review_order,
-            |order| review_keys(order, now),
+            |order| review_keys(external_config, order, now),
         ),
     ));
     within_kind.push(asc("c.id"));
@@ -502,7 +506,15 @@ pub(crate) mod tests {
             ORDER BY {}",
             crate::api::preset::cards_with_preset(&config.presets),
             SpecialState::BuriedUntilLaterToday as u8,
-            queue_order_by(config, now, &caps, query_sort)
+            queue_order_by(
+                &SparesExternalConfig {
+                    queue: config.clone(),
+                    ..Default::default()
+                },
+                now,
+                &caps,
+                query_sort
+            )
         );
         sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
     }
@@ -2291,7 +2303,15 @@ mod preset_tests {
             let query = format!(
                 "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
                 cards_with_preset(&config.presets),
-                queue_order_by(config, now, &QueueCaps::default(), &[])
+                queue_order_by(
+                    &SparesExternalConfig {
+                        queue: config.clone(),
+                        ..Default::default()
+                    },
+                    now,
+                    &QueueCaps::default(),
+                    &[]
+                )
             );
             sqlx::query_scalar::<_, CardId>(&query)
                 .fetch_all(&pool)

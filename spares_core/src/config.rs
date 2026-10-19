@@ -659,10 +659,11 @@ pub enum ReviewOrder {
     /// Older notes come first since newer notes may build on them.
     #[default]
     Due,
-    /// `"retrievability"`: the card you are least likely to remember first, as FSRS predicts from
-    /// its stability and the time since its last review. When you are behind, this saves the
-    /// cards that are slipping before the ones that would keep, at the cost of cards with short
-    /// intervals waiting longer than their due date.
+    /// `"retrievability"`: the card you are least likely to remember first, as the scheduler that
+    /// last reviewed it predicts (FSRS from its stability and the time since its last review).
+    /// Only cards of the same scheduler are ordered by retrievability against each other. When you
+    /// are behind, this saves the cards that are slipping before the ones that would keep, at the
+    /// cost of cards with short intervals waiting longer than their due date.
     Retrievability,
     /// `"relative_overdueness"`: the card that is the most overdue compared to its interval
     /// first. A card 3 days late on a 3 day interval (100% overdue) comes before one 10 days late

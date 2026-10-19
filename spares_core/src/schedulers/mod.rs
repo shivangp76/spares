@@ -46,17 +46,24 @@ pub struct MoveCardsResult {
 /// last review.
 pub type RetrievabilityFn = Box<dyn Fn(f64, f64) -> f64 + Send + Sync>;
 
+/// How search compares and sorts cards by retrievability, since SQLite cannot work out a
+/// forgetting curve. See [`SrsScheduler::retrievability_key`].
+pub struct RetrievabilityKey {
+    /// SQL over the card `c` that falls as the card's retrievability rises, or NULL if the card
+    /// has none, like a new card.
+    pub sql: String,
+    /// The value of [`Self::sql`] at which retrievability is the given number: infinite for 0 or
+    /// less, which no card reaches.
+    pub at: Box<dyn Fn(f64) -> f64 + Send + Sync>,
+}
+
 /// SQL that is true for a lapse in the review log row `alias`: a review in the review state with
 /// a rating that the scheduler named in the row's `scheduler_name` rejects with
 /// [`SrsScheduler::is_pass`]. Each review is judged by the scheduler that rated it, so a history
 /// rated by several schedulers counts every review by its own ratings. Failing during learning or
 /// relearning steps is not a lapse.
 pub(crate) fn lapse_sql(alias: &str) -> String {
-    let schedulers = get_all_schedulers()
-        .into_iter()
-        .map(|scheduler| scheduler())
-        .collect::<Vec<_>>();
-    lapse_sql_for(alias, &schedulers)
+    lapse_sql_for(alias, &all_schedulers())
 }
 
 fn lapse_sql_for(alias: &str, schedulers: &[Box<dyn SrsScheduler>]) -> String {
@@ -174,6 +181,18 @@ pub trait SrsScheduler: Send + Sync {
     /// It returns a function rather than taking the card, so statistics can read the config once
     /// and then apply it to every card.
     fn retrievability(&self, _config: &SparesExternalConfig) -> Option<RetrievabilityFn> {
+        None
+    }
+
+    /// [`Self::retrievability`] as a key SQL can compute, for search and the queue's
+    /// [`crate::config::ReviewOrder::Retrievability`], where `elapsed` is SQL for the seconds since
+    /// the card `c` was last reviewed. `None`, the default, if the scheduler has no forgetting
+    /// curve, in which case its cards have no retrievability.
+    fn retrievability_key(
+        &self,
+        _config: &SparesExternalConfig,
+        _elapsed: &str,
+    ) -> Option<RetrievabilityKey> {
         None
     }
 
@@ -504,6 +523,46 @@ fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
     // Schedulers are selected by name via the `--scheduler-name` CLI flag.
     let all_schedulers: Vec<fn() -> Box<dyn SrsScheduler>> = vec![|| Box::<fsrs::Fsrs>::default()];
     all_schedulers
+}
+
+/// SQL that is `sql_for` the [`RetrievabilityKey`] of the scheduler that last reviewed the card
+/// `c` (the default scheduler if none did), or NULL if that scheduler has no forgetting curve.
+/// `elapsed` is passed on to [`SrsScheduler::retrievability_key`]. Each scheduler has its own key,
+/// so sorting by it orders cards by retrievability only among those of the same scheduler.
+pub(crate) fn retrievability_key_sql(
+    config: &SparesExternalConfig,
+    elapsed: &str,
+    sql_for: impl Fn(&RetrievabilityKey) -> String,
+) -> String {
+    let whens = all_schedulers()
+        .into_iter()
+        .filter_map(|scheduler| {
+            let key = scheduler.retrievability_key(config, elapsed)?;
+            Some(format!(
+                "WHEN '{}' THEN {}",
+                scheduler.get_scheduler_name().replace('\'', "''"),
+                sql_for(&key)
+            ))
+        })
+        .join(" ");
+    if whens.is_empty() {
+        return "NULL".to_string();
+    }
+    // Crams are not reviews: they leave the card's schedule alone.
+    format!(
+        "(CASE COALESCE((SELECT rl.scheduler_name FROM review_log rl WHERE rl.card_id = c.id \
+         AND rl.kind = {} ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1), '{}') {whens} END)",
+        ReviewLogKind::Review as u8,
+        get_default_scheduler_name().replace('\'', "''"),
+    )
+}
+
+/// Every scheduler, the default first.
+pub(crate) fn all_schedulers() -> Vec<Box<dyn SrsScheduler>> {
+    get_all_schedulers()
+        .into_iter()
+        .map(|scheduler| scheduler())
+        .collect()
 }
 
 /// The names of the schedulers cards can be rated with, the default first.

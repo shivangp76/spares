@@ -159,9 +159,9 @@ pub async fn get_review_queue(
 
     // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
     // skipped below.
-    let queue_config = read_external_config()?.queue;
+    let config = read_external_config()?;
     let order_by = queue_order_by(
-        &queue_config,
+        &config,
         requested_date,
         &caps.showable(&cards_left_by_state),
         &query_sort,
@@ -216,7 +216,7 @@ pub async fn get_review_queue(
         // Held back like `build_review_filter_query` does with `learn_ahead`, except that the
         // client compares it to its own clock
         let shown_from = (!is_filtered_tag && learning_states().contains(&card.card_state))
-            .then(|| due - queue_config.learn_ahead_limit);
+            .then(|| due - config.queue.learn_ahead_limit);
         let card = review_card_response(
             db,
             card,
