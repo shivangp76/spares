@@ -188,9 +188,10 @@ use spares_core::model::NoteId;
 use spares_core::parsers::NoteImportAction;
 use spares_core::parsers::NoteSettings;
 use spares_core::parsers::Parseable;
-use spares_core::parsers::add_cloze_uid_to_note_data;
+use spares_core::parsers::add_cloze_uid_to_file;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_file_notes;
+use spares_core::parsers::remove_cloze_uid_from_file;
 use spares_core::parsers::remove_cloze_uid_from_note_data;
 
 #[derive(Args, Debug)]
@@ -367,7 +368,7 @@ fn guess_and_parse_notes<'a>(
     }
 }
 
-/// Enriches a file's clozes with `id:` keys if any are missing.
+/// Enriches the clozes between a file's start and end markers with `id:` keys if any are missing.
 /// Returns the enriched file content if any keys were minted, `None` otherwise.
 /// When keys are minted, the enriched content is also queued for deferred file write.
 fn handle_live_sync(
@@ -383,8 +384,8 @@ fn handle_live_sync(
         .any(|(s, _)| s.custom_data.contains_key("live_sync_name"));
 
     if any_live {
-        let (enriched_contents, mint_map) = add_cloze_uid_to_note_data(parser, file_contents)?;
-        if !mint_map.is_empty() {
+        let (enriched_contents, minted_count) = add_cloze_uid_to_file(parser, file_contents)?;
+        if minted_count > 0 {
             if !dry_run {
                 deferred_writes.push((file_path.to_path_buf(), enriched_contents.clone()));
             }
@@ -418,8 +419,8 @@ async fn handle_strip_liveness(
     }
 
     // Strip ids from the full file text
-    let (stripped_contents, strip_map) = remove_cloze_uid_from_note_data(parser, file_contents)?;
-    if !strip_map.is_empty() && !dry_run {
+    let (stripped_contents, stripped_count) = remove_cloze_uid_from_file(parser, file_contents)?;
+    if stripped_count > 0 && !dry_run {
         deferred_writes.push((file_path.to_path_buf(), stripped_contents));
     }
 

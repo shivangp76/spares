@@ -89,6 +89,17 @@ pub fn collect_blocks<'a>(
     parser: &dyn Parseable,
     contents: &'a str,
 ) -> Result<Vec<&'a str>, Error> {
+    Ok(collect_block_ranges(parser, contents)?
+        .into_iter()
+        .map(|range| &contents[range])
+        .collect())
+}
+
+/// The ranges in `contents` of the blocks of [`collect_blocks`].
+pub fn collect_block_ranges(
+    parser: &dyn Parseable,
+    contents: &str,
+) -> Result<Vec<Range<usize>>, Error> {
     let mut blocks = Vec::new();
     for result in parser.start_end_regex().captures_iter(contents) {
         let caps = result.map_err(|e| {
@@ -96,15 +107,12 @@ pub fn collect_blocks<'a>(
                 format!("regex error in collect_blocks: {e}"),
             )))
         })?;
-        let block = caps
-            .get(1)
-            .ok_or_else(|| {
-                Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
-                    "capture group 1 not found in start_end_regex".to_string(),
-                )))
-            })?
-            .as_str();
-        blocks.push(block);
+        let block = caps.get(1).ok_or_else(|| {
+            Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
+                "capture group 1 not found in start_end_regex".to_string(),
+            )))
+        })?;
+        blocks.push(block.range());
     }
     Ok(blocks)
 }

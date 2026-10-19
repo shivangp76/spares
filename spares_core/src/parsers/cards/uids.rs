@@ -9,6 +9,7 @@ use crate::parsers::ClozeGroupingSettings;
 use crate::parsers::ClozeSettings;
 use crate::parsers::ClozeUid;
 use crate::parsers::Parseable;
+use crate::parsers::collect_block_ranges;
 use crate::parsers::construct_cloze_string;
 use crate::parsers::parse_card_settings;
 
@@ -171,6 +172,51 @@ pub fn add_cloze_uid_to_note_data(
             uid
         },
     )
+}
+
+/// Internal: applies `rewrite` to each block of `contents` between the parser's start and end
+/// markers (see [`collect_block_ranges`]), leaving the rest of the file untouched. Returns the
+/// rewritten contents and how many clozes were changed in all.
+fn rewrite_file_blocks<T>(
+    parser: &dyn Parseable,
+    contents: &str,
+    rewrite: impl Fn(&dyn Parseable, &str) -> Result<(String, T), Error>,
+    changed_count: impl Fn(&T) -> usize,
+) -> Result<(String, usize), Error> {
+    let mut edits = Vec::new();
+    let mut count = 0;
+    for range in collect_block_ranges(parser, contents)? {
+        let (block, changed) = rewrite(parser, &contents[range.clone()])?;
+        let changed = changed_count(&changed);
+        if changed > 0 {
+            count += changed;
+            edits.push(RangeReplacement {
+                range,
+                new_text: block,
+            });
+        }
+    }
+    Ok((rewrite_ranges(contents, edits), count))
+}
+
+/// [`add_cloze_uid_to_note_data`] for a whole file: mints `id:` keys only for the clozes between
+/// the parser's start and end markers, since only those notes are imported. Returns the file's
+/// contents and how many keys were minted.
+pub fn add_cloze_uid_to_file(
+    parser: &dyn Parseable,
+    contents: &str,
+) -> Result<(String, usize), Error> {
+    rewrite_file_blocks(parser, contents, add_cloze_uid_to_note_data, HashMap::len)
+}
+
+/// [`remove_cloze_uid_from_note_data`] for a whole file: strips `id:` keys only from the clozes
+/// between the parser's start and end markers. Returns the file's contents and how many keys were
+/// stripped.
+pub fn remove_cloze_uid_from_file(
+    parser: &dyn Parseable,
+    contents: &str,
+) -> Result<(String, usize), Error> {
+    rewrite_file_blocks(parser, contents, remove_cloze_uid_from_note_data, Vec::len)
 }
 
 #[cfg(test)]
@@ -436,6 +482,46 @@ mod tests {
                     "strip {pname}: id: keys should be stripped"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn file_rewrites_only_clozes_between_start_and_end() {
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let pname = parser.get_parser_name();
+            let (Some(no_id), Some(with_id)) = (sample(pname, "no_id"), sample(pname, "with_id"))
+            else {
+                continue;
+            };
+            let file = |inside: &str, outside: &str| {
+                format!(
+                    "{outside}\n{}{inside}\n{}{outside}\n",
+                    parser.construct_comment("spares: start"),
+                    parser.construct_comment("spares: end"),
+                )
+            };
+
+            let original = file(no_id, no_id);
+            let (minted, minted_count) = add_cloze_uid_to_file(parser.as_ref(), &original).unwrap();
+            assert_eq!(minted_count, 1, "add: {pname}");
+            assert_eq!(
+                minted.matches("id:").count(),
+                1,
+                "add: {pname} result: {minted}"
+            );
+            let (stripped, stripped_count) =
+                remove_cloze_uid_from_file(parser.as_ref(), &minted).unwrap();
+            assert_eq!(stripped_count, 1, "strip: {pname}");
+            assert_eq!(stripped, original, "strip: {pname}");
+
+            let original = file(with_id, with_id);
+            let (stripped, stripped_count) =
+                remove_cloze_uid_from_file(parser.as_ref(), &original).unwrap();
+            assert_eq!(stripped_count, 1, "strip: {pname}");
+            let (stripped_note, _) =
+                remove_cloze_uid_from_note_data(parser.as_ref(), with_id).unwrap();
+            assert_eq!(stripped, file(&stripped_note, with_id), "strip: {pname}");
         }
     }
 
