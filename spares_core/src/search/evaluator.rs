@@ -27,11 +27,10 @@ use crate::model::StateId;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
-use crate::schedulers::fsrs::utils::Rating as FsrsRating;
 use crate::schedulers::fsrs::utils::State as FsrsState;
 use crate::schedulers::fsrs::utils::decay;
-use crate::schedulers::fsrs::utils::rating_to_number;
 use crate::schedulers::fsrs::utils::state_to_number;
+use crate::schedulers::lapse_sql;
 use crate::search::Atom;
 use crate::search::Op;
 use crate::search::RelativeDate;
@@ -2108,14 +2107,11 @@ fn reps_sql() -> String {
     )
 }
 
-/// How many times the card lapsed: was forgotten (rated again) in the review state, counted like
-/// the scheduler's `lapses`.
+/// How many times the card lapsed, counted like the scheduler's `lapses`.
 fn lapses_sql() -> String {
     format!(
-        "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {} AND rl.rating = {} AND rl.previous_state = {})",
-        ReviewLogKind::Review as u8,
-        rating_to_number(FsrsRating::Again),
-        state_to_number(FsrsState::Review),
+        "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND {})",
+        lapse_sql("rl")
     )
 }
 

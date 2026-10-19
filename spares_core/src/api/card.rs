@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::DateTime;
 use chrono::Utc;
 use serde_json::Map;
@@ -31,6 +33,7 @@ use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::schedulers::get_default_scheduler_name;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::lapse_sql;
 use crate::schema::FilterOptions;
 use crate::schema::card::CardResponse;
 use crate::schema::card::CardReviewEntry;
@@ -66,11 +69,24 @@ pub async fn get_card_reviews(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     let review_logs = fetch_review_logs(db, card_id).await?;
+    let lapses: HashSet<i64> = sqlx::query_scalar(&format!(
+        "SELECT rl.id FROM review_log rl WHERE rl.card_id = ? AND {}",
+        lapse_sql("rl")
+    ))
+    .bind(card_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?
+    .into_iter()
+    .collect();
     // A log of nothing but forget markers and crams has no memory state to replay.
     let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) else {
         return Ok(review_logs
             .into_iter()
-            .map(|review_log| CardReviewEntry::new(review_log, None))
+            .map(|review_log| {
+                let lapse = lapses.contains(&review_log.id);
+                CardReviewEntry::new(review_log, None, lapse)
+            })
             .collect());
     };
     let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
@@ -88,7 +104,8 @@ pub async fn get_card_reviews(
         .map(|(review_log, card)| {
             let memory_state =
                 (card.state != NEW_CARD_STATE).then_some((card.stability, card.difficulty));
-            CardReviewEntry::new(review_log, memory_state)
+            let lapse = lapses.contains(&review_log.id);
+            CardReviewEntry::new(review_log, memory_state, lapse)
         })
         .collect())
 }
@@ -1160,6 +1177,23 @@ mod forget_tests {
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
         // Forgetting is not a review
         assert_eq!(history.review_count_by_date[&local_date(now)], 2);
+    }
+
+    #[sqlx::test]
+    async fn card_reviews_mark_lapses(pool: SqlitePool) {
+        let card_id = create_single_card(&pool).await;
+        let now = Utc::now();
+        // Easy graduates the card to review, so the first Again is a lapse and the second, in
+        // relearning, is not.
+        rate(&pool, card_id, 4, now - Duration::days(10)).await;
+        rate(&pool, card_id, 1, now - Duration::days(1)).await;
+        rate(&pool, card_id, 1, now).await;
+
+        let entries = get_card_reviews(&pool, card_id).await.unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.lapse).collect::<Vec<_>>(),
+            vec![false, true, false]
+        );
     }
 
     #[sqlx::test]

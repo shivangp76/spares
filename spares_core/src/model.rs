@@ -89,7 +89,7 @@ pub struct Card {
     // pub elapsed_days: i64, // Equivalent to: DateTime::Now - `SELECT time FROM review_log WHERE card_id = ? ORDER BY reviewed_date`
     // pub scheduled_days: i64, // Equivalent to: `SELECT scheduled_days FROM review_log WHERE card_id = ? ORDER BY reviewed_date`
     // pub reps: i64, // Equivalent to: `SELECT COUNT(*) FROM review_log WHERE card_id = ?`
-    // pub lapses: u32, // Equivalent to: `SELECT COUNT(*) FROM review_log WHERE card_id = ? AND state = (State::Review) AND rating = (Rating::Again)`
+    // pub lapses: u32, // Equivalent to: `SrsScheduler::lapses`
     // NOTE: This field is _not_ recoverable from the note data. In other words, this is not serialized in the cloze settings string (even though it is *de*serialized). This is because otherwise, sending a request to update a card and suspend it would require modifying the note's data. Instead, this field now only *de*serialized, not serialized.
     pub special_state: Option<SpecialState>,
     /// The integer value is in relation to the scheduler specified by latest review's `scheduler_id`. If there are no reviews for this card, then it is `NEW_CARD_STATE` to represent the first state.

@@ -12,8 +12,6 @@ use spares_core::schema::review::Rating;
 
 use crate::review::utils::format_duration;
 
-const REVIEW_STATE: StateId = 2;
-
 /// Ratings by scheduler name, since rating ids are relative to the scheduler that recorded them.
 type RatingsByScheduler = HashMap<String, Vec<Rating>>;
 
@@ -135,7 +133,7 @@ fn format_card_info(
     if entries.is_empty() {
         return "This card has not been reviewed yet.\n".to_string();
     }
-    let mut out = format_summary(entries, ratings_by_scheduler);
+    let mut out = format_summary(entries);
     out.push('\n');
     out.push_str(&format_table(entries, ratings_by_scheduler));
     out.push_str(
@@ -144,22 +142,12 @@ fn format_card_info(
     out
 }
 
-fn format_summary(
-    entries: &[CardReviewEntry],
-    ratings_by_scheduler: &RatingsByScheduler,
-) -> String {
+fn format_summary(entries: &[CardReviewEntry]) -> String {
     let reviews = entries
         .iter()
         .filter(|e| e.kind == ReviewLogKind::Review)
         .collect::<Vec<_>>();
-    // Anki's meaning: forgetting a card that had graduated to review
-    let lapses = reviews
-        .iter()
-        .filter(|e| {
-            e.previous_state == REVIEW_STATE
-                && rating_label(e, ratings_by_scheduler) == Some("Again")
-        })
-        .count();
+    let lapses = reviews.iter().filter(|e| e.lapse).count();
     let total_time = reviews.iter().map(|e| time_taken(e)).sum::<i64>();
 
     let mut summary = Vec::new();
@@ -275,6 +263,8 @@ mod tests {
 
     use super::*;
 
+    const REVIEW_STATE: StateId = 2;
+
     fn entry(
         id: i64,
         kind: ReviewLogKind,
@@ -297,6 +287,8 @@ mod tests {
             tag_id: (kind == ReviewLogKind::Cram).then_some(1),
             stability: is_review.then_some(3.0),
             difficulty: is_review.then_some(5.5),
+            // As the server marks them under FSRS: Again in the review state
+            lapse: is_review && rating == Some(1) && previous_state == REVIEW_STATE,
         }
     }
 

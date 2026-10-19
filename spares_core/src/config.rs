@@ -718,8 +718,9 @@ pub enum NewReviewMix {
 
 /// The `[leech]` table of `config.toml`: cards you keep forgetting.
 ///
-/// A card lapses when it is rated Again after it graduated from its learning steps (Again during
-/// learning or relearning steps does not count). A card that has lapsed
+/// A card lapses when it fails a review after it graduated from its learning steps: it is given a
+/// rating its scheduler does not count as a pass, like FSRS's Again (failing during learning or
+/// relearning steps does not count). A card that has lapsed
 /// [`Self::lapses_threshold`] times is a leech: reviewing it again and again costs more time than
 /// it is worth, and the note is usually better rewritten, split up, or dropped. `spares card
 /// leeches` lists them.

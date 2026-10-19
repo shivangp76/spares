@@ -532,10 +532,13 @@ pub mod card {
         pub stability: Option<f64>,
         /// See `stability`.
         pub difficulty: Option<f64>,
+        /// Whether this review was a lapse, as `SrsScheduler::lapses` counts them.
+        #[serde(default)]
+        pub lapse: bool,
     }
 
     impl CardReviewEntry {
-        pub fn new(review_log: ReviewLog, memory_state: Option<(f64, f64)>) -> Self {
+        pub fn new(review_log: ReviewLog, memory_state: Option<(f64, f64)>, lapse: bool) -> Self {
             Self {
                 id: review_log.id,
                 kind: review_log.kind,
@@ -549,6 +552,7 @@ pub mod card {
                 tag_id: review_log.tag_id,
                 stability: memory_state.map(|(stability, _)| stability),
                 difficulty: memory_state.map(|(_, difficulty)| difficulty),
+                lapse,
             }
         }
     }

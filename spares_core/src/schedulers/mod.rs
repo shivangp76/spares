@@ -46,9 +46,74 @@ pub struct MoveCardsResult {
 /// last review.
 pub type RetrievabilityFn = Box<dyn Fn(f64, f64) -> f64 + Send + Sync>;
 
-/// `ids` as a JSON array, for SQL to read with `json_each`.
-fn json_ids(ids: &[RatingId]) -> String {
-    format!("[{}]", ids.iter().join(","))
+/// SQL that is true for a lapse in the review log row `alias`: a review in the review state with
+/// a rating that the scheduler named in the row's `scheduler_name` rejects with
+/// [`SrsScheduler::is_pass`]. Each review is judged by the scheduler that rated it, so a history
+/// rated by several schedulers counts every review by its own ratings. Failing during learning or
+/// relearning steps is not a lapse.
+pub(crate) fn lapse_sql(alias: &str) -> String {
+    let schedulers = get_all_schedulers()
+        .into_iter()
+        .map(|scheduler| scheduler())
+        .collect::<Vec<_>>();
+    lapse_sql_for(alias, &schedulers)
+}
+
+fn lapse_sql_for(alias: &str, schedulers: &[Box<dyn SrsScheduler>]) -> String {
+    let failing = schedulers
+        .iter()
+        .flat_map(|scheduler| {
+            let name = scheduler.get_scheduler_name().replace('\'', "''");
+            scheduler
+                .failing_ratings()
+                .into_iter()
+                .map(move |id| format!("('{name}', {id})"))
+        })
+        .join(", ");
+    if failing.is_empty() {
+        return "0".to_string();
+    }
+    format!(
+        "({alias}.kind = {} AND {alias}.previous_state = {} \
+         AND ({alias}.scheduler_name, {alias}.rating) IN (VALUES {failing}))",
+        ReviewLogKind::Review as u8,
+        review_state(),
+    )
+}
+
+/// The cards that are not suspended or buried and have at least `threshold` review log rows for
+/// which `lapse` is true, with the rows as `rl`.
+async fn cards_with_lapses(
+    db: &SqlitePool,
+    lapse: &str,
+    threshold: u32,
+) -> Result<Vec<Card>, Error> {
+    sqlx::query_as(&format!(
+        r"SELECT * FROM card
+          WHERE special_state IS NULL
+            AND id IN (
+              SELECT rl.card_id FROM review_log rl
+              WHERE {lapse}
+              GROUP BY rl.card_id
+              HAVING COUNT(*) >= ?
+            )
+          ORDER BY due ASC"
+    ))
+    .bind(threshold)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
+}
+
+/// How many review log rows of `card_id` `lapse` is true for, with the rows as `rl`.
+async fn count_lapses(db: &SqlitePool, card_id: CardId, lapse: &str) -> Result<u32, Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = ? AND {lapse}"
+    ))
+    .bind(card_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
 }
 
 #[async_trait]
@@ -125,45 +190,13 @@ pub trait SrsScheduler: Send + Sync {
     /// [`crate::config::LeechConfig::lapses_threshold`] times, counted like [`Self::lapses`].
     async fn get_leeches(&self, db: &SqlitePool) -> Result<Vec<Card>, Error> {
         let config = read_external_config()?;
-        let cards = sqlx::query_as(
-            r"SELECT * FROM card
-              WHERE special_state IS NULL
-                AND id IN (
-                  SELECT card_id FROM review_log
-                  WHERE kind = ? AND rating IN (SELECT value FROM json_each(?))
-                    AND previous_state = ?
-                  GROUP BY card_id
-                  HAVING COUNT(*) >= ?
-                )
-              ORDER BY due ASC",
-        )
-        .bind(ReviewLogKind::Review)
-        .bind(json_ids(&self.failing_ratings()))
-        .bind(review_state())
-        .bind(config.leech.lapses_threshold)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(cards)
+        cards_with_lapses(db, &lapse_sql("rl"), config.leech.lapses_threshold).await
     }
 
     /// How many times `card_id` lapsed: was forgotten after it had graduated from its learning
-    /// steps. A lapse is a review in the review state with a rating [`Self::is_pass`] rejects, so
-    /// failing during learning or relearning steps does not count.
-    /// [`crate::config::LeechConfig`] acts on this.
+    /// steps, as [`lapse_sql`] decides. [`crate::config::LeechConfig`] acts on this.
     async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error> {
-        sqlx::query_scalar(
-            r"SELECT COUNT(*) FROM review_log
-              WHERE card_id = ? AND kind = ? AND rating IN (SELECT value FROM json_each(?))
-                AND previous_state = ?",
-        )
-        .bind(card_id)
-        .bind(ReviewLogKind::Review)
-        .bind(json_ids(&self.failing_ratings()))
-        .bind(review_state())
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })
+        count_lapses(db, card_id, &lapse_sql("rl")).await
     }
 
     /// Returns a rating and when it was reviewed at
@@ -682,7 +715,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn lapses_count_any_failing_rating(pool: SqlitePool) {
+    async fn lapses_count_failing_ratings_of_the_scheduler_that_rated(pool: SqlitePool) {
         let exec = async |sql: &str| {
             sqlx::query(sql).execute(&pool).await.unwrap();
         };
@@ -697,28 +730,46 @@ mod tests {
         .await
         .unwrap();
         let threshold = LeechConfig::default().lapses_threshold;
-        // Failed `threshold` times in review. Failing in relearning and passing are not lapses.
-        let reviews = std::iter::repeat_n((0, review_state()), threshold as usize)
-            .chain([(0, relearning_state()), (1, review_state())]);
-        for (i, (rating, previous_state)) in (0_i64..).zip(reviews) {
+        // Failed `threshold - 1` times in review under `pass_fail`, then once under FSRS. Failing
+        // in relearning and passing are not lapses, and a rating is judged by the scheduler that
+        // gave it: 1 is FSRS's Again but `pass_fail`'s Pass, and 0 is `pass_fail`'s Fail but no
+        // rating of FSRS.
+        let reviews = std::iter::repeat_n(("pass_fail", 0, review_state()), threshold as usize - 1)
+            .chain([
+                ("fsrs", 1, review_state()),
+                ("pass_fail", 0, relearning_state()),
+                ("pass_fail", 1, review_state()),
+                ("fsrs", 0, review_state()),
+            ]);
+        for (i, (scheduler_name, rating, previous_state)) in (0_i64..).zip(reviews) {
             sqlx::query(
-                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (1, ?, ?, ?, 'pass_fail', ?, '{}')",
+                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (1, ?, ?, ?, ?, ?, '{}')",
             )
             .bind(i)
             .bind(ReviewLogKind::Review)
             .bind(rating)
+            .bind(scheduler_name)
             .bind(previous_state)
             .execute(&pool)
             .await
             .unwrap();
         }
 
-        assert_eq!(PassFail.lapses(&pool, 1).await.unwrap(), threshold);
-        let leeches = PassFail.get_leeches(&pool).await.unwrap();
+        let lapse = lapse_sql_for("rl", &[Box::new(PassFail), scheduler()]);
+        assert_eq!(count_lapses(&pool, 1, &lapse).await.unwrap(), threshold);
+        let leeches = cards_with_lapses(&pool, &lapse, threshold).await.unwrap();
         assert_eq!(
             leeches.iter().map(|card| card.id).collect::<Vec<_>>(),
             vec![1]
         );
+        assert!(
+            cards_with_lapses(&pool, &lapse, threshold + 1)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Without `pass_fail`, only the FSRS lapse counts.
+        assert_eq!(count_lapses(&pool, 1, &lapse_sql("rl")).await.unwrap(), 1);
     }
 
     #[test]

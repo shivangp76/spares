@@ -67,8 +67,8 @@
 //! matches none of their comparisons, and `-` matches it.
 //! - `c.reviewed`: when the card was last reviewed, a date, as in `c.reviewed>=today-7d`.
 //! - `c.reps`: how many times it was reviewed.
-//! - `c.lapses`: how many times it was forgotten (rated again) after it had been learned, counted
-//!   as for leeches.
+//! - `c.lapses`: how many times it was forgotten (failed a review, by the ratings of the scheduler
+//!   that rated it) after it had been learned, counted as for leeches.
 //! - `c.interval`: the days from its last review to when it is due, as in statistics, as in
 //!   `c.interval>=30`. A postponed card's interval includes the postponement.
 //! - `c.retrievability`: how likely you are to recall it now, from 0 to 1, as FSRS predicts from its

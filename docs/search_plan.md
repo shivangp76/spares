@@ -28,11 +28,10 @@ A `c.leech` field, true for the cards `get_leeches` lists: those with at least
 - **Example.** A note with 3 clozes, where only `c2` has 9 lapses. `tag=leech c.suspended=false`
   finds all 3 cards, while `c.leech -c.suspended` finds just `c2`. With `action = "none"`,
   `c.leech tag=spanish` finds the Spanish leeches, which no query finds today.
-- **How.** A boolean field in the evaluator that compiles to the `HAVING COUNT(*) >= ?` subquery
-  of `get_leeches` in `schedulers/fsrs/mod.rs`, with `lapses_threshold` read from the config the
-  way `c.waiting_on_links` reads `QueueConfig`. `c.lapses>=8` already gives the count. The field
-  just saves knowing the threshold, so it should be the same expression with the threshold
-  bound. If lapses move to `SrsScheduler::is_pass` (see `queue_plan.md`), both should follow.
+- **How.** A boolean field in the evaluator that compiles to `c.lapses`'s subquery (which counts
+  rows matching `schedulers::lapse_sql`, as `get_leeches` does) compared with `>=` the
+  `lapses_threshold` read from the config, the way `c.waiting_on_links` reads `QueueConfig`.
+  `c.lapses>=8` already gives the same result; the field just saves knowing the threshold.
 
 ## Postponed cards
 

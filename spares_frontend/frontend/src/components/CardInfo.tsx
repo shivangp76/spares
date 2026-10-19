@@ -5,7 +5,6 @@ import { useFieldAbout } from '../hooks/useFieldAbout';
 import { errorMessage, formatDuration, formatInterval, td, th } from '../utils';
 
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 };
-const REVIEW_STATE = 2;
 
 interface Props {
   cardId: number;
@@ -51,8 +50,7 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
   const ratingLabel = (entry: CardReviewEntry) =>
     ratingsByScheduler[entry.scheduler_name]?.find(r => r.id === entry.rating)?.description;
   const reviews = current.entries.filter(e => e.kind === 'Review');
-  // Anki's meaning: forgetting a card that had graduated to review
-  const lapses = reviews.filter(e => e.previous_state === REVIEW_STATE && ratingLabel(e) === 'Again').length;
+  const lapses = reviews.filter(e => e.lapse).length;
   const timeTaken = (e: CardReviewEntry) => (e.recall_duration ?? 0) + (e.rate_duration ?? 0);
   const totalTime = reviews.reduce((sum, e) => sum + timeTaken(e), 0);
   // Ratings in filtered tags that do not reschedule, counted apart since they left the schedule alone

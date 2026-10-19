@@ -258,6 +258,8 @@ export interface CardReviewEntry {
   /** Replayed with the scheduler's current parameters. `null` after a forget. A cram keeps the one before it. */
   stability: number | null;
   difficulty: number | null;
+  /** Whether this review was a lapse: failed, by its scheduler's ratings, after the card was learned. */
+  lapse: boolean;
 }
 
 /** An event that undo or redo reversed. */
