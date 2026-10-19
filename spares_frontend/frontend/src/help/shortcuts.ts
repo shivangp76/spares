@@ -1,3 +1,5 @@
+import { NAV_LINKS } from '../navLinks';
+
 /** Keyboard shortcuts that work beyond one page, for the help popup. Each list is kept by the code
     that handles the keys, which points here. */
 
@@ -14,6 +16,9 @@ export interface Keybinding extends Shortcut {
 
 /** Opens the help popup, from the navbar (`Navbar`). */
 export const HELP_SHORTCUT: Shortcut = { keys: ['?'], description: 'Show or hide this help' };
+
+/** Go to another page, from the navbar (`Navbar`). */
+export const GO_TO_SHORTCUTS: Shortcut[] = NAV_LINKS.map(({ label, key }) => ({ keys: [`g ${key}`], description: `Go to ${label}` }));
 
 /** In a search box, as `SearchInput`'s `handleKeyDown` handles them. */
 export const SEARCH_BOX_SHORTCUTS: Shortcut[] = [

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import { PAGE_HELP } from '../help/pages';
 import type { Keybinding } from '../help/shortcuts';
+import { dialogOpen, keyName, takesKeys } from '../keys';
+import { NAV_LINKS } from '../navLinks';
 import { RedoIcon, UndoIcon } from './Icons';
 import OfflineIndicator from './OfflineIndicator';
 import PageHelp from './PageHelp';
@@ -17,21 +19,12 @@ interface NavbarProps {
   help?: { open: boolean; onOpenChange: (open: boolean) => void; bindings: Keybinding[] };
 }
 
-const NAV_LINKS = [
-  { to: '/review', label: 'Review' },
-  { to: '/notes', label: 'Notes' },
-  { to: '/cards', label: 'Cards' },
-  { to: '/tags', label: 'Tags' },
-  { to: '/parsers', label: 'Parsers' },
-  { to: '/keywords', label: 'Keywords' },
-  { to: '/image-occlusion', label: 'Image Occlusion' },
-  { to: '/statistics', label: 'Statistics' },
-  { to: '/settings', label: 'Settings' },
-  { to: '/manual', label: 'Manual' },
-];
+// How long after `g` its second key can be pressed
+const GO_TO_MS = 1500;
 
 export default function Navbar({ onLogout, extra, help }: NavbarProps) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const [helpOpenHere, setHelpOpenHere] = useState(false);
   const helpOpen = help?.open ?? helpOpenHere;
   const setHelpOpen = help?.onOpenChange ?? setHelpOpenHere;
@@ -42,16 +35,37 @@ export default function Navbar({ onLogout, extra, help }: NavbarProps) {
   useEffect(() => {
     if (!handlesHelpKey) return;
     function handleKey(e: KeyboardEvent) {
-      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return;
-      const target = e.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
-      if (target instanceof Element && target.closest('.cm-editor, [contenteditable="true"]')) return;
+      if (keyName(e) !== '?' || takesKeys(e.target)) return;
       e.preventDefault();
       setHelpOpenHere(open => !open);
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [handlesHelpKey]);
+  // `g` and then a page's key in `NAV_LINKS` goes to it, as in Gmail, listed as `GO_TO_SHORTCUTS`.
+  // They are listened to before the page's own keys, so that the second does nothing else, as `s`
+  // would suspend the card being reviewed.
+  useEffect(() => {
+    let pressedAt = -Infinity;
+    function handleKey(e: KeyboardEvent) {
+      if (takesKeys(e.target) || dialogOpen()) return;
+      const name = keyName(e);
+      if (performance.now() - pressedAt < GO_TO_MS) {
+        pressedAt = -Infinity;
+        const link = NAV_LINKS.find(l => l.key === name);
+        if (!link) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (link.to !== pathname) navigate(link.to);
+      } else if (name === 'g') {
+        pressedAt = performance.now();
+        e.stopPropagation();
+      }
+    }
+    window.addEventListener('keydown', handleKey, { capture: true });
+    return () => window.removeEventListener('keydown', handleKey, { capture: true });
+  }, [navigate, pathname]);
+
   const [undoStatus, setUndoStatus] = useState<string | null>(null);
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);

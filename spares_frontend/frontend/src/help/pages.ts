@@ -1,4 +1,5 @@
 import {
+  GO_TO_SHORTCUTS,
   HELP_SHORTCUT,
   NOTE_EDITOR_SHORTCUTS,
   SEARCH_BOX_SHORTCUTS,
@@ -160,4 +161,4 @@ export const PAGE_HELP: Record<string, PageHelp> = {
 export const LOGIN_DOCS: DocLink = { label: 'Setting up a server to log in to', file: 'deploying.md', heading: '5. Log in on the phone' };
 
 /** The shortcuts every page has, after the page's own. */
-export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT];
+export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT, ...GO_TO_SHORTCUTS];
