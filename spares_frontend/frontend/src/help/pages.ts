@@ -93,7 +93,8 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     title: 'Cards',
     about: [
       "Each card asks for part of its note, and is scheduled on its own. Cards are searched for with the same queries as notes, and the card's own fields start with `c.`, as in `c.due<=today`.",
-      'The bulk tools act on the cards a query finds.',
+      'Check cards to suspend, bury, reschedule or forget them, or tag their notes, at once. A search starts with every card it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
+      'The bulk tools act on the cards a query finds, and list leeches.',
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [NOTE_VS_CARD, SCHEDULING],

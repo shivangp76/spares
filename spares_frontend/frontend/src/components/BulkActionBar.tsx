@@ -139,6 +139,11 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
 
   async function run(action: BulkAction, value: string[]) {
     if (action.input && !value.some(v => v.trim())) { setError(`Nothing to ${action.label.toLowerCase()}`); return; }
+    if (action.input?.kind === 'number') {
+      const { min, max } = action.input;
+      const n = Number(value[0]);
+      if (!(n >= min && n <= max)) { setError(`${value[0]} isn't from ${min} to ${max}`); return; }
+    }
     if (!window.confirm(action.confirm(count, value))) return;
     setBusy(true);
     setError(null);

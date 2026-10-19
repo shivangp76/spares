@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedCardsPage, listCards, searchCardsPage } from '../api/client';
+import { ApiError, cachedCardsPage, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
+import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import CardDetail from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
@@ -9,11 +10,94 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { useRowSelection } from '../hooks/useRowSelection';
 import { useSavedSearches } from '../hooks/useSavedSearches';
-import { STATE_LABELS, type CardResponse } from '../types/spares';
-import { errorMessage, formatNoteId, td, th, withPage, withSearch } from '../utils';
+import { ALL_SELECTED, NO_SELECTION, type IdsOrQuery } from '../selection';
+import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
+import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
 const PAGE_SIZE = 20;
+const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
+
+/** The ids of the cards `selector` picks. */
+async function cardIdsOf(selector: IdsOrQuery): Promise<number[]> {
+  return 'Ids' in selector ? selector.Ids : (await searchCards(selector.Query)).map(c => c.id);
+}
+
+/** The ids of the notes of the cards `selector` picks. */
+async function noteIdsOf(selector: IdsOrQuery): Promise<number[]> {
+  const cards = 'Ids' in selector ? await Promise.all(selector.Ids.map(getCard)) : await searchCards(selector.Query);
+  return [...new Set(cards.map(c => c.note_id))];
+}
+
+/** Sets what `change` gives on the cards `selector` picks, as `spares card edit`. */
+async function editCards(selector: IdsOrQuery, change: Omit<UpdateCardsRequest, 'selector'>, done: string) {
+  const res = await updateCards({ selector, ...change });
+  return { message: `${done} ${res.cards.length} card(s).`, eventIds: res.event_id === null ? [] : [res.event_id] };
+}
+
+/** Adds or removes tags of the notes of the cards `selector` picks. */
+async function tagNotesOf(selector: IdsOrQuery, add: string[], remove: string[]) {
+  const { notes, eventId } = await modifyNoteTags({ Ids: await noteIdsOf(selector) }, add, remove);
+  const message = add.length ? `Added ${tagList(add)} to ${notes.length} note(s).` : `Removed ${tagList(remove)} from ${notes.length} note(s).`;
+  return { message, eventIds: eventId === null ? [] : [eventId] };
+}
+
+const BULK_ACTIONS: BulkAction[] = [
+  {
+    label: 'Suspend',
+    confirm: count => `Suspend ${count} card(s)?`,
+    run: selector => editCards(selector, { special_state: 'Suspended' }, 'Suspended'),
+  },
+  {
+    label: 'Bury',
+    confirm: count => `Bury ${count} card(s)?`,
+    run: selector => editCards(selector, { special_state: 'Buried' }, 'Buried'),
+  },
+  {
+    label: 'Unsuspend',
+    confirm: count => `Unsuspend and unbury ${count} card(s)?`,
+    run: selector => editCards(selector, { special_state: null }, 'Unsuspended and unburied'),
+  },
+  {
+    label: 'Set due',
+    input: { kind: 'datetime' },
+    confirm: (count, [due]) => `Make ${count} card(s) due ${new Date(due).toLocaleString()}?`,
+    run: (selector, [due]) => editCards(selector, { due: new Date(due).toISOString() }, 'Rescheduled'),
+  },
+  {
+    label: 'Set retention',
+    input: { kind: 'number', placeholder: 'e.g. 0.9', min: 0.01, max: 0.99, step: 0.01 },
+    confirm: (count, [retention]) => `Set the desired retention of ${count} card(s) to ${retention}?`,
+    run: (selector, [retention]) => editCards(selector, { desired_retention: Number(retention) }, 'Set the desired retention of'),
+  },
+  {
+    label: 'Forget',
+    danger: true,
+    confirm: count => `Forget ${count} card(s)? Their scheduling is reset; review logs are kept.`,
+    run: async selector => {
+      const ids = await cardIdsOf(selector);
+      const eventIds: number[] = [];
+      for (const id of ids) {
+        const res = await forgetCard(id);
+        if (res.event_id !== null) eventIds.push(res.event_id);
+      }
+      return { message: `Forgot ${ids.length} card(s).`, eventIds };
+    },
+  },
+  {
+    label: 'Add tags to notes',
+    input: { kind: 'tags', suggestions: listManualTagNames },
+    confirm: (count, tags) => `Add ${tagList(tags)} to the notes of ${count} card(s)?`,
+    run: (selector, tags) => tagNotesOf(selector, tags, []),
+  },
+  {
+    label: 'Remove tags from notes',
+    input: { kind: 'tags', suggestions: listManualTagNames },
+    confirm: (count, tags) => `Remove ${tagList(tags)} from the notes of ${count} card(s)?`,
+    run: (selector, tags) => tagNotesOf(selector, [], tags),
+  },
+];
 
 /** Replaces `card` in `cards` by id, keeping everything else. */
 function replaceCard(cards: CardResponse[], card: CardResponse): CardResponse[] {
@@ -37,6 +121,11 @@ export default function CardsPage() {
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   // The list being stepped through, which is the table unless a card was opened from the leeches
   const [browse, setBrowse] = useState<{ cards: CardResponse[]; index: number } | null>(null);
+  // Bumped after a bulk action, to refetch the cards it may have changed
+  const [reloadCount, setReloadCount] = useState(0);
+  // Whether the next search refetches it after a bulk action, so keeps the card shown
+  const reloading = useRef(false);
+  const rows = useRowSelection(searchQuery);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -58,7 +147,7 @@ export default function CardsPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, searchQuery]);
+  }, [credentials, navigate, page, searchQuery, reloadCount]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_cards_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -78,7 +167,8 @@ export default function CardsPage() {
         setSearchResults(data.items);
         setSearchTotal(data.total);
         saveRecentSearch(searchQuery);
-        setBrowse(null);
+        if (!reloading.current) setBrowse(null);
+        reloading.current = false;
         setError(null);
         setSearchError(null);
       })
@@ -89,7 +179,7 @@ export default function CardsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, searchCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, searchCount, reloadCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -125,6 +215,18 @@ export default function CardsPage() {
 
   const displayedCards = searchResults ?? cards;
   const selected = browse ? browse.cards[browse.index] : null;
+
+  /** Shows what a bulk action, or undoing it, changed. */
+  function afterBulkAction() {
+    rows.reset();
+    // Only a search closes the card shown when it is refetched
+    reloading.current = searchQuery !== null;
+    setReloadCount(n => n + 1);
+    if (!selected) return;
+    getCard(selected.id).then(onCardChanged, (e: unknown) => { if (!isNetworkError(e)) setBrowse(null); });
+  }
+
+  const header = rows.header(displayedCards);
 
   return (
     <div className="page-wide">
@@ -175,6 +277,18 @@ export default function CardsPage() {
             </div>
           )}
 
+          <BulkActionBar
+            noun="card"
+            selection={rows.selection}
+            query={searchQuery}
+            total={searchTotal}
+            onSelectAll={() => rows.setSelection(ALL_SELECTED)}
+            onSelectNone={() => rows.setSelection(NO_SELECTION)}
+            search={async q => (await searchCards(q)).map(c => c.id)}
+            actions={BULK_ACTIONS}
+            onDone={afterBulkAction}
+          />
+
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {loading && <div>Loading…</div>}
 
@@ -183,6 +297,14 @@ export default function CardsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                 <thead>
                   <tr>
+                    <th style={{ ...th, width: 1, paddingRight: 0 }}>
+                      <Checkbox
+                        checked={header.checked}
+                        indeterminate={header.indeterminate}
+                        onClick={header.toggle}
+                        label={searchQuery !== null ? 'Select all cards found' : 'Select the cards on this page'}
+                      />
+                    </th>
                     <th style={th}>ID</th>
                     <th style={th}>Note</th>
                     <th style={th} className="hide-narrow">Order</th>
@@ -200,6 +322,9 @@ export default function CardsPage() {
                       onClick={() => setBrowse(selected?.id === card.id ? null : { cards: displayedCards, index: i })}
                       style={{ cursor: 'pointer' }}
                     >
+                      <td style={checkTd} onClick={e => { e.stopPropagation(); rows.toggleRow(displayedCards, i, e.shiftKey); }}>
+                        <Checkbox checked={rows.isSelected(card.id)} onClick={e => rows.toggleRow(displayedCards, i, e.shiftKey)} label={`Select card ${card.id}`} />
+                      </td>
                       <td style={td}>{card.id}</td>
                       <td style={td}>{formatNoteId(card.note_id)}</td>
                       <td style={td} className="hide-narrow">{card.order}</td>
@@ -211,7 +336,7 @@ export default function CardsPage() {
                   ))}
                   {displayedCards.length === 0 && (
                     <tr>
-                      <td colSpan={7} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                      <td colSpan={8} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
                         {searchResults === null && page === 1
                           ? <>No cards yet. Cards are made by the clozes of notes, written on the <Link to="/notes">Notes</Link> page.</>
                           : 'No cards found'}
