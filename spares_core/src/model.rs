@@ -230,12 +230,14 @@ pub struct Tag {
     /// For a filtered tag: whether rating a card while studying the tag reschedules it, as rating
     /// it anywhere else does. `true` by default.
     ///
-    /// Set it to `false` to cram, for example before an exam: cards are shown until they are
-    /// rated Good twice or Easy once, as in any filtered tag, but their due dates and memory
-    /// states are left as they were, so the card's next real review is not pushed back by having
-    /// just seen it. Each rating is logged as a [`ReviewLogKind::Cram`], which counts in
-    /// statistics and the heatmap as a cram, but not toward the daily limits, and which no
-    /// replay of the card's history sees. Undo still takes a rating back.
+    /// Set it to `false` to cram, for example before an exam: cards are shown until their
+    /// scheduler's [`filtered_tag_schedule`](crate::schedulers::SrsScheduler::filtered_tag_schedule)
+    /// lets them go (with FSRS, when rated Good twice or Easy once), as in any filtered tag, but
+    /// their due dates and memory states are left as they were, so the card's next real review is
+    /// not pushed back by having just seen it. Each rating is logged as a
+    /// [`ReviewLogKind::Cram`], which counts in statistics and the heatmap as a cram, but not
+    /// toward the daily limits, and which no replay of the card's history sees. Undo still takes a
+    /// rating back.
     // Tags kept in undo events from before this field read as rescheduling, as they all did.
     #[serde(default = "reschedule_default")]
     pub reschedule: bool,

@@ -169,7 +169,7 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
         {query.trim() && (
           <>
             <span />
-            <label title="Off to cram: cards are shown until rated Good twice or Easy once, without changing when they are next due">
+            <label title="Off to cram: cards are shown until the scheduler lets them go (with FSRS, when rated Good twice or Easy once), without changing when they are next due">
               <input type="checkbox" checked={reschedule} onChange={e => setReschedule(e.target.checked)} style={{ marginRight: 6 }} />
               Reschedule cards rated while studying this tag
             </label>
