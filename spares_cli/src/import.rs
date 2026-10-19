@@ -86,6 +86,12 @@
 //!
 //! Only notes whose content actually changed are updated. Existing cards keep their review history.
 //!
+//! A live note can only be imported from its source file. Importing it from any other file, such as
+//! a per-note file from `spares note generate` (which names its note by id), is refused, since the
+//! next import of the source file would overwrite the edit. The notes repository likewise refuses
+//! pushes that change a live note's data or custom data; its tags and keywords stay editable there
+//! and on the web.
+//!
 //! Matching is **positional**: the first note in the file matches DB entry `(live_sync_name, 0)`,
 //! the second matches `(live_sync_name, 1)`, and so on. This means you can freely adjust note
 //! boundaries and content between them — what matters is each note's ordinal position within its
@@ -172,6 +178,7 @@ use indicatif::ProgressIterator;
 use serde_json::Value;
 use spares_core::Error;
 use spares_core::LibraryError;
+use spares_core::NoteErrorKind;
 use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
 use spares_core::config::SparesExternalConfig;
@@ -477,48 +484,25 @@ async fn handle_strip_liveness(
     Ok(Some(result))
 }
 
-/// Points `local_settings` at the live note occupying `block_order` within `lsn`, or marks it as a
-/// new note when the sync group has nothing at that position.
-async fn resolve_live_note_by_block_order(
-    local_settings: &mut NoteSettings,
-    agg: &mut ParserAggregate<'_>,
-    adapter: &mut dyn SrsAdapter,
-    lsn: &str,
-    block_order: i64,
-) -> Result<(), Error> {
-    match adapter
-        .find_live_note_by_block_order(lsn, block_order)
-        .await?
-    {
-        Some(note_id) => {
-            local_settings.action = NoteImportAction::Update(note_id);
-            agg.update_note_ids.push(note_id);
-        }
-        None => {
-            local_settings.action = NoteImportAction::Add;
-        }
-    }
-    Ok(())
-}
-
 async fn aggregate_note_into_parser_group(
     mut local_settings: NoteSettings,
     note_data_res: Option<String>,
     agg: &mut ParserAggregate<'_>,
     adapter: &mut dyn SrsAdapter,
     file_counters: &mut HashMap<String, i64>,
+    strip_liveness: bool,
 ) -> Result<(), Error> {
-    if let Some(lsn) = local_settings
+    let lsn_opt = local_settings
         .custom_data
         .get("live_sync_name")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        // Position-based matching is only meaningful for the live *source* file, whose blocks
-        // carry neither a note id nor a `live_block_order`. A generated per-note file carries
-        // both, and since `file_counters` restarts at 0 for every file, re-deriving the position
-        // there would resolve a single-note file to whichever note sits at block 0 of the sync
-        // group and overwrite it.
+        .map(|s| s.to_string());
+
+    // A live note is imported only from its source file, whose blocks carry neither a note id nor
+    // a `live_block_order`, since their position within the file is their identity. Any other
+    // file, such as a per-note file from `spares note generate`, would be overwritten by the next
+    // import of the source file. Stripping liveness names the notes it strips, so it is exempt.
+    if !strip_liveness {
         let explicit_note_id = match local_settings.action {
             NoteImportAction::Update(note_id) => Some(note_id),
             NoteImportAction::Add | NoteImportAction::Delete(_) => None,
@@ -527,42 +511,48 @@ async fn aggregate_note_into_parser_group(
             .custom_data
             .get("live_block_order")
             .and_then(Value::as_i64);
+        let named_live_note = match explicit_note_id {
+            Some(note_id) => adapter
+                .get_live_sync_name(note_id)
+                .await?
+                .or_else(|| lsn_opt.clone())
+                .map(|lsn| format!("Note {note_id} is a live note (live-sync-name `{lsn}`)")),
+            None => lsn_opt.as_ref().zip(explicit_block_order).map(|(lsn, block_order)| {
+                format!(
+                    "The note at block {block_order} of live-sync-name `{lsn}` names its position"
+                )
+            }),
+        };
+        if let Some(description) = named_live_note {
+            return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                description: format!(
+                    "{description}, so it can only be imported from its source file. Edit it \
+                     there and import that file instead."
+                ),
+            })));
+        }
+    }
 
-        match (explicit_note_id, explicit_block_order) {
-            // The file names its note: trust it, and leave `live_block_order` as parsed.
-            (Some(note_id), _) => {
+    if let Some(lsn) = lsn_opt {
+        let bo = file_counters.entry(lsn.clone()).or_insert(0);
+        let block_order = *bo;
+        *bo += 1;
+        match adapter
+            .find_live_note_by_block_order(&lsn, block_order)
+            .await?
+        {
+            Some(note_id) => {
+                local_settings.action = NoteImportAction::Update(note_id);
                 agg.update_note_ids.push(note_id);
             }
-            // No note id, but the file states its position: trust that over the counter.
-            (None, Some(block_order)) => {
-                resolve_live_note_by_block_order(
-                    &mut local_settings,
-                    agg,
-                    adapter,
-                    &lsn,
-                    block_order,
-                )
-                .await?;
-            }
-            // A live source file block: its position within the file is its identity.
-            (None, None) => {
-                let bo = file_counters.entry(lsn.clone()).or_insert(0);
-                let block_order = *bo;
-                *bo += 1;
-                resolve_live_note_by_block_order(
-                    &mut local_settings,
-                    agg,
-                    adapter,
-                    &lsn,
-                    block_order,
-                )
-                .await?;
-                local_settings.custom_data.insert(
-                    "live_block_order".to_string(),
-                    Value::Number(block_order.into()),
-                );
+            None => {
+                local_settings.action = NoteImportAction::Add;
             }
         }
+        local_settings.custom_data.insert(
+            "live_block_order".to_string(),
+            Value::Number(block_order.into()),
+        );
 
         let live_tag = format!("live:{lsn}");
         if !local_settings.tags.iter().any(|t| t == &live_tag) {
@@ -703,6 +693,7 @@ where
                 agg,
                 adapter,
                 &mut file_counters,
+                strip_liveness,
             )
             .await?;
         }
@@ -1253,8 +1244,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Three live notes. Block 0 has one cloze, block 2 has three, so routing a per-note file for
-    /// block 2 to block 0 trips `match_cards`' range check rather than failing silently.
     fn test_file_three_live_notes() -> &'static str {
         "<!--- spares: start --->\n\
          <!--- # g-live-sync-name: per_note_sync --->\n\
@@ -1270,11 +1259,10 @@ mod tests {
          <!--- spares: end --->\n"
     }
 
-    /// Importing a generated per-note file must update the note it names. `live_block_order` is
-    /// re-derived from a counter that restarts at 0 for every file, so before this was fixed a
-    /// single-note file always resolved to block 0 of its sync group and overwrote that note.
+    /// A live note can only be imported from its source file: an edit made anywhere else would be
+    /// overwritten by the next import of the source file.
     #[sqlx::test(migrations = "../spares_core/migrations")]
-    async fn test_per_note_file_updates_note_it_names(pool: SqlitePool) {
+    async fn test_live_note_only_imported_from_source_file(pool: SqlitePool) {
         enable_test_mode();
         let mut adapter =
             SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
@@ -1315,104 +1303,88 @@ mod tests {
         .await
         .unwrap();
 
-        let notes = list_notes(
-            &pool,
-            FilterOptions {
-                page: Some(1),
-                limit: Some(9999),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(notes.len(), 3, "expected 3 live notes after first import");
-
-        let note_at = |block_order: i64| {
-            notes
-                .iter()
-                .find(|n| {
-                    n.custom_data
-                        .get("live_block_order")
-                        .and_then(|v| v.as_i64())
-                        == Some(block_order)
-                })
-                .unwrap_or_else(|| panic!("expected a note at block_order {block_order}"))
-                .clone()
+        let list = || {
+            list_notes(
+                &pool,
+                FilterOptions {
+                    page: Some(1),
+                    limit: Some(9999),
+                },
+            )
         };
-        let block_zero = note_at(0);
-        let block_two = note_at(2);
-        let block_zero_data_before = block_zero.data.clone();
-
-        // A per-note file as `spares note generate` writes it: explicit note id plus the live
-        // custom data. It is the only note in the file, so the block counter would say 0.
-        let per_note_file = dir.join("block_two.md");
-        std::fs::write(
-            &per_note_file,
-            format!(
-                "<!--- spares: start --->\n\
-                 <!--- # note-id: {} --->\n\
-                 <!--- # custom-data: {{\"live_sync_name\":\"per_note_sync\",\"live_block_order\":2}} --->\n\
-                 <!--- spares: note start --->\n\
-                 Block two edited {{{{ gamma }}}} and {{{{ delta }}}} and {{{{ epsilon }}}}\n\
-                 <!--- spares: note end --->\n\
-                 <!--- spares: end --->\n",
-                block_two.id.letters()
-            ),
-        )
-        .unwrap();
-
-        import_from_files(
-            &mut adapter,
-            Some(markdown.as_ref()),
-            None,
-            &[per_note_file.as_path()],
-            false,
-            true,
-            false,
-        )
-        .await
-        .unwrap();
-
-        let notes_after = list_notes(
-            &pool,
-            FilterOptions {
-                page: Some(1),
-                limit: Some(9999),
-            },
-        )
-        .await
-        .unwrap();
+        let notes_before = list().await.unwrap();
         assert_eq!(
-            notes_after.len(),
+            notes_before.len(),
             3,
-            "per-note import must not create a new note"
+            "expected 3 live notes after first import"
         );
-
-        let block_two_after = notes_after
+        let block_two = notes_before
             .iter()
-            .find(|n| n.id == block_two.id)
-            .expect("note named by the file should still exist");
-        assert!(
-            block_two_after.data.contains("Block two edited"),
-            "the note named by the file should have been updated, got `{}`",
-            block_two_after.data
-        );
-        assert_eq!(
-            block_two_after
-                .custom_data
-                .get("live_block_order")
-                .and_then(|v| v.as_i64()),
-            Some(2),
-            "live_block_order must not be renumbered by a per-note import"
-        );
+            .find(|n| {
+                n.custom_data
+                    .get("live_block_order")
+                    .and_then(|v| v.as_i64())
+                    == Some(2)
+            })
+            .expect("expected a note at block_order 2");
+        let id = block_two.id.letters();
 
-        let block_zero_after = notes_after
-            .iter()
-            .find(|n| n.id == block_zero.id)
-            .expect("block 0 note should still exist");
-        assert_eq!(
-            block_zero_after.data, block_zero_data_before,
-            "importing a per-note file must leave block 0 of the sync group untouched"
-        );
+        let note = "<!--- spares: note start --->\n\
+                    Block two edited {{ gamma }} and {{ delta }} and {{ epsilon }}\n\
+                    <!--- spares: note end --->\n";
+        let cases = [
+            (
+                "a per-note file, as `spares note generate` writes it",
+                format!(
+                    "<!--- # note-id: {id} --->\n\
+                     <!--- # custom-data: {{\"live_sync_name\":\"per_note_sync\",\"live_block_order\":2}} --->\n"
+                ),
+            ),
+            (
+                "a file naming the note without its live custom data",
+                format!("<!--- # note-id: {id} --->\n"),
+            ),
+            (
+                "a file naming the note's position without its id",
+                "<!--- # custom-data: {\"live_sync_name\":\"per_note_sync\",\"live_block_order\":2} --->\n"
+                    .to_string(),
+            ),
+        ];
+        for (case, settings) in cases {
+            let file = dir.join("not_the_source.md");
+            std::fs::write(
+                &file,
+                format!("<!--- spares: start --->\n{settings}{note}<!--- spares: end --->\n"),
+            )
+            .unwrap();
+            let result = import_from_files(
+                &mut adapter,
+                Some(markdown.as_ref()),
+                None,
+                &[file.as_path()],
+                false,
+                true,
+                false,
+            )
+            .await;
+            let err = result.expect_err(case).to_string();
+            assert!(
+                err.contains("can only be imported from its source file"),
+                "{case}: {err}"
+            );
+            let notes_after = list().await.unwrap();
+            assert_eq!(
+                notes_after
+                    .iter()
+                    .map(|n| (n.id, &n.data))
+                    .collect::<Vec<_>>(),
+                notes_before
+                    .iter()
+                    .map(|n| (n.id, &n.data))
+                    .collect::<Vec<_>>(),
+                "{case}: no note may change"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

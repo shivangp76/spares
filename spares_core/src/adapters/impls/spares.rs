@@ -36,6 +36,7 @@ use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::FindLiveNoteRequest;
 use crate::schema::note::FindLiveNoteResponse;
+use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::RenderNotesRequest;
@@ -415,6 +416,44 @@ impl SrsAdapter for SparesAdapter {
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
                 Ok(note_id)
+            }
+        }
+    }
+
+    async fn get_live_sync_name(&self, note_id: NoteId) -> Result<Option<String>, Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes/{}", base_url, note_id);
+                let response = authed(client.get(url), api_key.as_deref())
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                let response: NoteResponse = response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })?;
+                Ok(response
+                    .custom_data
+                    .get("live_sync_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string))
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                let live_sync_name: Option<Option<String>> = sqlx::query_scalar(
+                    r"SELECT json_extract(custom_data, '$.live_sync_name') FROM note WHERE id = ?",
+                )
+                .bind(note_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+                Ok(live_sync_name.flatten())
             }
         }
     }

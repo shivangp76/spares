@@ -52,6 +52,13 @@ pub trait SrsAdapter: Send + Sync {
     ) -> Result<Option<NoteId>, Error> {
         Ok(None)
     }
+
+    /// The `live_sync_name` of note `note_id`, or `None` if it is not a live note. Default returns
+    /// `None` (non-spares adapters don't support live notes).
+    #[allow(unused_variables)]
+    async fn get_live_sync_name(&self, note_id: NoteId) -> Result<Option<String>, Error> {
+        Ok(None)
+    }
 }
 
 pub fn get_adapter_from_string(adapter_str: &str) -> Result<Box<dyn SrsAdapter>, Error> {
