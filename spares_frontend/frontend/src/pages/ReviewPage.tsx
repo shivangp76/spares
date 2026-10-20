@@ -901,6 +901,7 @@ export default function ReviewPage() {
         .join(' · ')
     : '';
 
+  const sessionButton = toned(TONES.gray, isNarrow ? { padding: '4px 8px', fontSize: 12 } : actionButton);
   const dueInLabel = config ? formatDuration(config.set_card_due_date_duration) : '…';
   const sessionStarted = sessionStart !== null;
 
@@ -926,17 +927,18 @@ export default function ReviewPage() {
   return (
     <div className="page">
       <Navbar onLogout={logout} help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <h2 style={{ marginBottom: 16 }}>Review</h2>
+      {/* On phones the heading, its top margin and the session's actions are kept to one short row,
+          so the card starts near the top of the screen */}
+      <div style={{ display: 'flex', alignItems: isNarrow ? 'center' : 'baseline', gap: 8, marginBottom: isNarrow ? 8 : 0 }}>
+        <h2 style={isNarrow ? { margin: 0 } : { marginBottom: 16 }}>Review</h2>
         {/* The session's actions, out of the way of the card's at the top right */}
         {cardShown && (
-          <div style={{ marginLeft: 'auto', marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button onClick={switchQuery} className="touch-target-small" style={toned(TONES.gray)}>Switch query <span className="key-hint">(q)</span></button>
-            <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} className="touch-target-small" style={toned(TONES.gray)}>
-              {/* Shortened on phones, to fit the three on one row */}
-              {showPreviousCardInfo && previousCard ? 'Hide ' : ''}{isNarrow ? 'Previous Card' : 'Previous Card Info'}
+          <div style={{ marginLeft: 'auto', marginBottom: isNarrow ? 0 : 12, display: 'flex', gap: isNarrow ? 6 : 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button onClick={switchQuery} className="touch-target-small" style={sessionButton}>{isNarrow ? 'Switch' : 'Switch query'} <span className="key-hint">(q)</span></button>
+            <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} className="touch-target-small" style={sessionButton}>
+              {showPreviousCardInfo && previousCard ? 'Hide ' : ''}{isNarrow ? 'Previous' : 'Previous Card Info'}
             </button>
-            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} className="touch-target-small" style={toned(TONES.gray)}>End session</button>
+            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} className="touch-target-small" style={sessionButton}>{isNarrow ? 'End' : 'End session'}</button>
           </div>
         )}
       </div>
