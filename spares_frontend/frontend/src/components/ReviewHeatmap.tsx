@@ -74,6 +74,9 @@ function describeCount(count: number, cram: number): string {
 }
 
 interface Summary {
+  today: number;
+  /** Over the 7 days up to and including today */
+  weekAverage: number;
   dailyAverage: number;
   daysLearnedPercent: number;
   longestStreak: number;
@@ -81,7 +84,7 @@ interface Summary {
   total: number;
 }
 
-/** Statistics over the whole history, like Anki's Review Heatmap add-on shows. */
+/** Statistics over the whole history and the past week, like Anki's Review Heatmap add-on shows. */
 function summarize(counts: Record<string, number>, today: Date): Summary | null {
   const keys = Object.keys(counts).filter(k => counts[k] > 0).sort();
   if (keys.length === 0) return null;
@@ -106,7 +109,12 @@ function summarize(counts: Record<string, number>, today: Date): Summary | null 
     day = addDays(day, -1);
   }
 
+  let weekTotal = 0;
+  for (let i = 0; i < 7; i++) weekTotal += counts[dateKey(addDays(today, -i))] ?? 0;
+
   return {
+    today: counts[dateKey(today)] ?? 0,
+    weekAverage: weekTotal / 7,
     dailyAverage: Math.round(total / span),
     daysLearnedPercent: Math.round((keys.length / span) * 100),
     longestStreak,
@@ -301,7 +309,10 @@ export default function ReviewHeatmap({ counts: reviewCounts, cramCounts }: { co
         </span>
       </div>
       {summary && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12, maxWidth: 560, marginTop: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12, marginTop: 12 }}>
+          <Stat value={summary.today.toLocaleString()} label="Today" />
+          {/* A tenth shown, so a light week doesn't read as none */}
+          <Stat value={summary.weekAverage.toLocaleString(undefined, { maximumFractionDigits: 1 })} label="7-day average" />
           <Stat value={summary.dailyAverage.toLocaleString()} label="Daily average" />
           <Stat value={`${summary.daysLearnedPercent}%`} label="Days learned" />
           <Stat value={plural(summary.longestStreak, 'day')} label="Longest streak" />
