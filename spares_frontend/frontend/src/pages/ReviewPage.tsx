@@ -1107,6 +1107,13 @@ export default function ReviewPage() {
 
           {((phase === 'front' && !card.cli) || phase === 'back') && (
             <div ref={answerBarRef} className="review-answer-bar">
+              {/* Pinned within thumb's reach on phones, rather than below a card that may be long */}
+              {isNarrow && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <button onClick={buryCard} className="touch-target-small" style={toned(TONES.orange, { ...actionButton, flex: 1 })}>Bury Card</button>
+                  <button onClick={buryNote} className="touch-target-small" style={toned(TONES.orange, { ...actionButton, flex: 1 })}>Bury Note</button>
+                </div>
+              )}
               {phase === 'front' ? (
                 <>
                   {/* Pinned with the button, so a card that wants a typed answer shows it however
@@ -1162,7 +1169,9 @@ export default function ReviewPage() {
                 <button onClick={undo} className="touch-target" style={toned(TONES.gray)}><UndoIcon />Undo</button>
                 {lastUndo && <button onClick={redo} className="touch-target" style={toned(TONES.gray)}><RedoIcon />Redo</button>}
                 <button onClick={toggleCardNote} className="touch-target" style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'}</button>
-                <button onClick={buryCard} className="touch-target" style={toned(TONES.orange)}>Bury Card</button>
+                {/* In the answer bar when there is one */}
+                {!hasAnswerBar && <button onClick={buryCard} className="touch-target" style={toned(TONES.orange)}>Bury Card</button>}
+                {!hasAnswerBar && <button onClick={buryNote} className="touch-target" style={toned(TONES.orange)}>Bury Note</button>}
                 <button onClick={suspendCard} className="touch-target" style={toned(TONES.purple)}>Suspend Card</button>
               </div>
             )}
