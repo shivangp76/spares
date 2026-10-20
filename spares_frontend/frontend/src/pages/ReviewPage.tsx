@@ -926,7 +926,20 @@ export default function ReviewPage() {
   return (
     <div className="page">
       <Navbar onLogout={logout} help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
-      <h2 style={{ marginBottom: 16 }}>Review</h2>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <h2 style={{ marginBottom: 16 }}>Review</h2>
+        {/* The session's actions, out of the way of the card's at the top right */}
+        {cardShown && (
+          <div style={{ marginLeft: 'auto', marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button onClick={switchQuery} className="touch-target-small" style={toned(TONES.gray)}>Switch query <span className="key-hint">(q)</span></button>
+            <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} className="touch-target-small" style={toned(TONES.gray)}>
+              {/* Shortened on phones, to fit the three on one row */}
+              {showPreviousCardInfo && previousCard ? 'Hide ' : ''}{isNarrow ? 'Previous Card' : 'Previous Card Info'}
+            </button>
+            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} className="touch-target-small" style={toned(TONES.gray)}>End session</button>
+          </div>
+        )}
+      </div>
 
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>
@@ -1157,25 +1170,14 @@ export default function ReviewPage() {
             <details key={String(isNarrow)} open={!isNarrow} className="review-more-actions">
               <summary>More actions</summary>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: isNarrow ? 8 : 0 }}>
-                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                  <div style={{ flex: 1 }}>
-                    <ActionGroup label="Note" tone={TONES.blue}>
-                      {!isNarrow && <button onClick={undo} style={toned(TONES.gray)}><UndoIcon />Undo <span className="key-hint">(u)</span></button>}
-                      {!isNarrow && lastUndo && <button onClick={redo} style={toned(TONES.gray)}><RedoIcon />Redo <span className="key-hint">(U)</span></button>}
-                      {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
-                      <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
-                        Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''} <span className="key-hint">(f)</span>
-                      </button>
-                    </ActionGroup>
-                  </div>
-                  <ActionGroup label="Session" tone={TONES.gray}>
-                    <button onClick={switchQuery} style={toned(TONES.gray)}>Switch query <span className="key-hint">(q)</span></button>
-                    <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} style={toned(TONES.gray)}>
-                      {showPreviousCardInfo && previousCard ? 'Hide Previous Card Info' : 'Previous Card Info'}
-                    </button>
-                    <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} style={toned(TONES.gray)}>End session</button>
-                  </ActionGroup>
-                </div>
+                <ActionGroup label="Note" tone={TONES.blue}>
+                  {!isNarrow && <button onClick={undo} style={toned(TONES.gray)}><UndoIcon />Undo <span className="key-hint">(u)</span></button>}
+                  {!isNarrow && lastUndo && <button onClick={redo} style={toned(TONES.gray)}><RedoIcon />Redo <span className="key-hint">(U)</span></button>}
+                  {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
+                  <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
+                    Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''} <span className="key-hint">(f)</span>
+                  </button>
+                </ActionGroup>
                 <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
                   {!isNarrow && <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span className="key-hint">(b)</span></button>}
                   <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings) <span className="key-hint">(B)</span></button>
