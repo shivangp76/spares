@@ -850,8 +850,11 @@ export default function ReviewPage() {
     { keys: ['u'], description: phase === 'back' ? 'Undo (hide the answer)' : 'Undo', available: reviewing },
     { keys: ['U'], description: 'Redo', available: reviewing && lastUndo !== null },
     { keys: ['b'], description: 'Bury card', available: cardShown },
+    { keys: ['B'], description: 'Bury note (card + siblings)', available: cardShown },
+    { keys: ['l'], description: 'Bury card until later today', available: cardShown },
     { keys: ['s'], description: 'Suspend card', available: cardShown },
     { keys: ['e'], description: cardShown && panelNote?.id === card.note_id ? 'Close note' : 'Edit note', available: cardShown },
+    { keys: ['f'], description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ''}`, available: cardShown && config !== null },
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
     ...TYPED_ANSWER_SHORTCUTS.map(s => ({ ...s, available: phase === 'front' && !!card?.typed_answer })),
@@ -878,7 +881,8 @@ export default function ReviewPage() {
       const key = e.code === 'Space' ? 'Space' : e.key;
       if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
       const actions: Record<string, () => void> = {
-        Space: showAnswer, u: undo, U: redo, b: buryCard, s: suspendCard, e: toggleCardNote, q: switchQuery, r: replayAudio,
+        Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, s: suspendCard, e: toggleCardNote,
+        f: flagNote, q: switchQuery, r: replayAudio,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
       const action = actions[key];
@@ -1160,7 +1164,7 @@ export default function ReviewPage() {
                       {!isNarrow && lastUndo && <button onClick={redo} style={toned(TONES.gray)}><RedoIcon />Redo <span className="key-hint">(U)</span></button>}
                       {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
                       <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
-                        Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''}
+                        Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''} <span className="key-hint">(f)</span>
                       </button>
                     </ActionGroup>
                   </div>
@@ -1174,8 +1178,8 @@ export default function ReviewPage() {
                 </div>
                 <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
                   {!isNarrow && <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span className="key-hint">(b)</span></button>}
-                  <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings)</button>
-                  <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today</button>
+                  <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings) <span className="key-hint">(B)</span></button>
+                  <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today <span className="key-hint">(l)</span></button>
                   {!isNarrow && <button onClick={suspendCard} style={toned(TONES.purple)}>Suspend Card <span className="key-hint">(s)</span></button>}
                   <button onClick={suspendNote} style={toned(TONES.purple)}>Suspend Note (card + siblings)</button>
                   <button onClick={forget} style={toned(TONES.red)}>Forget Card</button>
