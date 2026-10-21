@@ -3,7 +3,8 @@ import { useAuthedFileUrl } from '../hooks/useAuthedFileUrl';
 import HtmlViewer from './HtmlViewer';
 import PdfViewer from './PdfViewer';
 import TypstViewer from './TypstViewer';
-import { useCardZoom } from '../preferences';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useCardZoom, usePagesPerRow } from '../preferences';
 
 interface Props {
   path: string;
@@ -28,7 +29,10 @@ interface Props {
 export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio, onTypstWidth, scrollToCloze }: Props) {
   // The card text size setting, wherever a card is shown
   const zoom = Number(useCardZoom()) / 100;
-  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} scrollToCloze={scrollToCloze} zoom={zoom} />;
+  // One page to a row on phones, whatever the setting
+  const pagesPerRow = usePagesPerRow();
+  const isNarrow = useMediaQuery('(max-width: 640px)');
+  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} scrollToCloze={scrollToCloze} zoom={zoom} pagesPerRow={isNarrow ? '1' : pagesPerRow} />;
   if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} scrollToCloze={scrollToCloze} zoom={zoom} />;
   return <RenderedFile path={path} version={version} onReady={onReady} />;
 }

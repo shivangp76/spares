@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
-  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, setCardZoom, setPageWidth, setShowReviewTimer, setVimKeybindings, useCardZoom,
-  usePageWidth, useShowReviewTimer, useVimKeybindings, type CardZoom,
+  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
+  setShowReviewTimer, setVimKeybindings, useCardZoom, usePageWidth, usePagesPerRow, useShowReviewTimer, useVimKeybindings,
+  type CardZoom,
 } from '../preferences';
 import {
   setThemePreference, setTypstThemePreference, useThemePreference, useTypstThemePreference,
@@ -34,6 +35,7 @@ export default function SettingsPage() {
   const vimKeybindings = useVimKeybindings();
   const pageWidth = usePageWidth();
   const cardZoom = useCardZoom();
+  const pagesPerRow = usePagesPerRow();
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -90,6 +92,24 @@ export default function SettingsPage() {
         </label>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Wherever cards are shown. Also changed with + and - while reviewing. Typst pages that fit the screen are laid out narrower and scaled up; pages of a fixed size are unchanged.
+        </p>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
+          <span>Typst pages per row:</span>
+          {PAGES_PER_ROW.map(pages => (
+            <label key={pages} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="pages-per-row"
+                value={pages}
+                checked={pagesPerRow === pages}
+                onChange={() => setPagesPerRow(pages)}
+              />
+              {PAGES_PER_ROW_LABELS[pages]}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          For cards of several pages, wherever they are shown. Two When Wide shows two side by side once the card is at least 1000 pixels wide, e.g. with the Wide page width. Always one on phones.
         </p>
       </fieldset>
 

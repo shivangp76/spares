@@ -94,3 +94,11 @@ export type CardZoom = typeof CARD_ZOOMS[number];
 const cardZoom = choicePreference<CardZoom>('spares_card_zoom', CARD_ZOOMS, '100');
 export const setCardZoom = cardZoom.set;
 export const useCardZoom = cardZoom.use;
+
+export const PAGES_PER_ROW = ['1', '2', 'auto'] as const;
+export type PagesPerRow = typeof PAGES_PER_ROW[number];
+export const PAGES_PER_ROW_LABELS: Record<PagesPerRow, string> = { 1: 'One', 2: 'Two', auto: 'Two When Wide' };
+/** How many pages of a multi-page Typst card are shown side by side, wherever cards are shown. */
+const pagesPerRow = choicePreference<PagesPerRow>('spares_pages_per_row', PAGES_PER_ROW, 'auto');
+export const setPagesPerRow = pagesPerRow.set;
+export const usePagesPerRow = pagesPerRow.use;

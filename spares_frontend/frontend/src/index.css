@@ -115,6 +115,13 @@ a:visited {
   max-width: none;
 }
 
+/* Pages of a multi-page Typst card side by side, with `PAGE_GAP` between them */
+.typst-pages {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
 .typst-tools {
   position: absolute;
   top: 4px;

@@ -55,8 +55,8 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
 import {
-  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, setCardZoom, setPageWidth, useCardZoom, usePageWidth, useShowReviewTimer,
-  useVimKeybindings,
+  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
+  useCardZoom, usePageWidth, usePagesPerRow, useShowReviewTimer, useVimKeybindings,
 } from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
@@ -889,6 +889,7 @@ export default function ReviewPage() {
   const zoomIndex = CARD_ZOOMS.indexOf(cardZoom);
   const zoomIn = () => setCardZoom(CARD_ZOOMS[Math.min(zoomIndex + 1, CARD_ZOOMS.length - 1)]);
   const zoomOut = () => setCardZoom(CARD_ZOOMS[Math.max(zoomIndex - 1, 0)]);
+  const pagesPerRow = usePagesPerRow();
   const keybindings: Keybinding[] = [
     { keys: ['Space'], description: 'Show answer', available: phase === 'front' },
     ...ratings.map((r, i) => ({ keys: [String(i + 1)], description: `Rate ${r.description}`, available: phase === 'back' })),
@@ -1294,6 +1295,10 @@ export default function ReviewPage() {
                       <span style={{ fontSize: 13 }}>Width <span className="key-hint">(w)</span></span>
                       {PAGE_WIDTHS.map(width => (
                         <button key={width} onClick={() => setPageWidth(width)} aria-pressed={pageWidth === width} style={actionButton}>{PAGE_WIDTH_LABELS[width]}</button>
+                      ))}
+                      <span style={{ fontSize: 13, marginLeft: 8 }}>Pages per row</span>
+                      {PAGES_PER_ROW.map(pages => (
+                        <button key={pages} onClick={() => setPagesPerRow(pages)} aria-pressed={pagesPerRow === pages} style={actionButton}>{PAGES_PER_ROW_LABELS[pages]}</button>
                       ))}
                     </>
                   )}
