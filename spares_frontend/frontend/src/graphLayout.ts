@@ -110,14 +110,16 @@ export function layeredLayout(ids: number[], edges: GraphEdge[]): Map<number, Po
 
 export interface ForceNode extends SimulationNodeDatum { id: number; radius: number }
 
+export type ForceSimulation = Simulation<ForceNode, SimulationLinkDatum<ForceNode>>;
+
 /**
  * A simulation in which linked notes pull together and all notes push apart, as in Obsidian's graph
- * view, run until it has nearly settled. It is stopped, to be ticked again when a note is dragged.
+ * view, stopped. Notes with a position keep it.
  */
-export function forceLayout(nodes: ForceNode[], edges: GraphEdge[], ticks = 300): Simulation<ForceNode, SimulationLinkDatum<ForceNode>> {
+export function forceSimulationOf(nodes: ForceNode[], edges: GraphEdge[]): ForceSimulation {
   const ids = new Set(nodes.map(n => n.id));
   const links = edges.filter(e => ids.has(e.from) && ids.has(e.to)).map(e => ({ source: e.from, target: e.to }));
-  const simulation = forceSimulation(nodes)
+  return forceSimulation(nodes)
     .force('link', forceLink<ForceNode, SimulationLinkDatum<ForceNode>>(links).id(n => n.id).distance(50))
     .force('charge', forceManyBody().strength(-120).distanceMax(600))
     // Pulls toward the middle, so notes with no links stay near the rest
@@ -125,8 +127,31 @@ export function forceLayout(nodes: ForceNode[], edges: GraphEdge[], ticks = 300)
     .force('y', forceY(0).strength(0.04))
     .force('collide', forceCollide<ForceNode>(n => n.radius + 2))
     .stop();
-  simulation.tick(ticks);
-  return simulation;
+}
+
+/** Places `nodes` by running `forceSimulationOf` until it has nearly settled. */
+export function forceLayout(nodes: ForceNode[], edges: GraphEdge[], ticks = 300): ForceSimulation {
+  return forceSimulationOf(nodes, edges).tick(ticks);
+}
+
+/** What `graphLayout.worker.ts` is asked to lay out. */
+export interface LayoutRequest {
+  layout: 'force' | 'layered';
+  nodes: { id: number; radius: number }[];
+  edges: GraphEdge[];
+}
+
+/** Each note's id and position, as the worker answers. */
+export type LayoutResponse = [number, number, number][];
+
+/** Lays out a graph, as the worker does off the page's thread. */
+export function layOut({ layout, nodes, edges }: LayoutRequest): LayoutResponse {
+  if (layout === 'layered') {
+    return [...layeredLayout(nodes.map(n => n.id), edges)].map(([id, { x, y }]) => [id, x, y]);
+  }
+  const forceNodes: ForceNode[] = nodes.map(n => ({ ...n }));
+  forceLayout(forceNodes, edges);
+  return forceNodes.map(n => [n.id, n.x!, n.y!]);
 }
 
 /** The notes reached from `start` by following `next`, leaving out `start`. */

@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { STUDY_COLORS, bounds, forceLayout, layeredLayout, lineage, nodeLabel, studyState, tagColor, type ForceNode, type Point } from '../graphLayout';
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { STUDY_COLORS, bounds, forceSimulationOf, lineage, nodeLabel, studyState, tagColor, type ForceNode, type ForceSimulation, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
 import type { GraphEdge, GraphNode } from '../types/spares';
 import { formatNoteId } from '../utils';
 
@@ -12,6 +12,8 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 6;
 /** The most a few notes are zoomed in to fit them. */
 const MAX_FIT_ZOOM = 1.5;
+/** How much the zoom buttons and keys zoom by. */
+const ZOOM_STEP = 1.4;
 /** How far the pointer can move and still click rather than drag. */
 const CLICK_SLOP = 4;
 
@@ -30,6 +32,23 @@ function radius(node: GraphNode): number {
 
 interface Transform { x: number; y: number; k: number }
 
+/** What a page's keys do to the graph. */
+export interface NoteGraphHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fit: () => void;
+}
+
+/** A graph as laid out, kept shown while the next one is. */
+interface Placed {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  layout: GraphLayout;
+  at: Map<number, Point>;
+  /** Moves the notes when one is dragged, in the force layout. */
+  simulation: ForceSimulation | null;
+}
+
 interface Props {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -42,6 +61,7 @@ interface Props {
   /** Moves the view to this note when it changes. */
   centerOn: number | null;
   height: number | string;
+  ref?: React.Ref<NoteGraphHandle>;
 }
 
 /**
@@ -49,7 +69,7 @@ interface Props {
  * background to pan, the wheel to zoom, and in the force layout, drag a note to move it.
  * Pointing at a note shows the notes it builds on and those that build on it.
  */
-export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onSelect, marked, centerOn, height }: Props) {
+export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onSelect, marked, centerOn, height, ref }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [view, setView] = useState<Transform>({ x: 400, y: 300, k: 1 });
@@ -58,12 +78,35 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
   const [, setTicks] = useState(0);
   const drag = useRef<{ kind: 'pan' | 'node'; id?: number; startX: number; startY: number; moved: boolean; view: Transform } | null>(null);
 
-  const placed = useMemo(() => {
-    const ids = nodes.map(n => n.id);
-    if (layout === 'layered') return { at: layeredLayout(ids, edges), simulation: null };
-    const forceNodes: ForceNode[] = nodes.map(n => ({ id: n.id, radius: radius(n) }));
-    const simulation = forceLayout(forceNodes, edges);
-    return { at: new Map<number, Point>(forceNodes.map(n => [n.id, n as Point])), simulation };
+  const [placed, setPlaced] = useState<Placed>({ nodes: [], edges: [], layout, at: new Map(), simulation: null });
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const laidOut = placed.nodes === nodes && placed.edges === edges && placed.layout === layout;
+
+  // Laid out in a worker, so the page can still be used meanwhile
+  useEffect(() => {
+    const worker = new Worker(new URL('../graphLayout.worker.ts', import.meta.url), { type: 'module' });
+    const radii = nodes.map(n => ({ id: n.id, radius: radius(n) }));
+    worker.onmessage = (e: MessageEvent<LayoutResponse>) => {
+      worker.terminate();
+      const positions = new Map(e.data.map(([id, x, y]) => [id, { x, y }]));
+      let at = new Map<number, Point>(positions);
+      let simulation: ForceSimulation | null = null;
+      if (layout === 'force') {
+        // Starts where the worker left it, settled, until a note is dragged
+        const forceNodes: ForceNode[] = radii.map(n => ({ ...n, ...positions.get(n.id) }));
+        simulation = forceSimulationOf(forceNodes, edges).alpha(0);
+        at = new Map(forceNodes.map(n => [n.id, n as Point]));
+      }
+      setLayoutError(null);
+      setPlaced({ nodes, edges, layout, at, simulation });
+    };
+    worker.onerror = e => {
+      worker.terminate();
+      setLayoutError(`Couldn't lay out the graph: ${e.message}`);
+    };
+    worker.postMessage({ layout, nodes: radii, edges } satisfies LayoutRequest);
+    // A layout no longer wanted stops, rather than finishing to be thrown away
+    return () => worker.terminate();
   }, [nodes, edges, layout]);
   useEffect(() => () => { placed.simulation?.stop(); }, [placed]);
 
@@ -117,6 +160,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
     const cx = size.width / 2, cy = size.height / 2;
     return { k, x: cx - (cx - v.x) * (k / v.k), y: cy - (cy - v.y) * (k / v.k) };
   });
+  useImperativeHandle(ref, () => ({ zoomIn: () => zoomBy(ZOOM_STEP), zoomOut: () => zoomBy(1 / ZOOM_STEP), fit }));
 
   function onPointerDown(e: React.PointerEvent, id?: number) {
     if (e.button !== 0) return;
@@ -158,13 +202,13 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
     if (!d.moved) onSelect(d.kind === 'node' && d.id !== selected ? d.id! : null);
   }
 
-  const byId = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
+  const byId = useMemo(() => new Map(placed.nodes.map(n => [n.id, n])), [placed.nodes]);
   const focus = hovered ?? selected;
   const family = useMemo(() => {
     if (focus === null) return null;
-    const { ancestors, descendants } = lineage(focus, edges);
+    const { ancestors, descendants } = lineage(focus, placed.edges);
     return new Set([focus, ...ancestors, ...descendants]);
-  }, [focus, edges]);
+  }, [focus, placed.edges]);
   const showAllLabels = view.k >= LABEL_ZOOM;
   const inFamily = (id: number) => family === null || family.has(id);
 
@@ -175,7 +219,8 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
         width="100%"
         height="100%"
         role="img"
-        aria-label={`Graph of ${nodes.length} notes and ${edges.length} links`}
+        aria-label={`Graph of ${placed.nodes.length} notes and ${placed.edges.length} links`}
+        aria-busy={!laidOut}
         style={{ display: 'block', touchAction: 'none', cursor: 'grab', border: '1px solid var(--border-subtle)', borderRadius: 4, background: 'var(--surface)' }}
         onPointerDown={e => onPointerDown(e)}
         onPointerMove={onPointerMove}
@@ -187,8 +232,9 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
             <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
           </marker>
         </defs>
-        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-          {edges.map(edge => {
+        {/* The last graph laid out, faded while the next one is */}
+        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`} opacity={laidOut ? 1 : 0.4}>
+          {placed.edges.map(edge => {
             const from = placed.at.get(edge.to), to = placed.at.get(edge.from), dependent = byId.get(edge.from);
             if (!from || !to || !dependent) return null;
             // Stops at the edge of the note the arrow points to
@@ -211,7 +257,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
               </line>
             );
           })}
-          {nodes.map(node => {
+          {placed.nodes.map(node => {
             const at = placed.at.get(node.id);
             if (!at) return null;
             const r = radius(node);
@@ -262,9 +308,14 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
           })}
         </g>
       </svg>
+      {(!laidOut || layoutError) && (
+        <div style={{ position: 'absolute', top: 8, left: 8, fontSize: 13, color: layoutError ? 'var(--error)' : 'var(--text-secondary)', pointerEvents: 'none' }}>
+          {layoutError ?? `Laying out ${nodes.length} note${nodes.length === 1 ? '' : 's'}…`}
+        </div>
+      )}
       <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
-        <button onClick={() => zoomBy(1.4)} className="touch-target-small" aria-label="Zoom in">+</button>
-        <button onClick={() => zoomBy(1 / 1.4)} className="touch-target-small" aria-label="Zoom out">−</button>
+        <button onClick={() => zoomBy(ZOOM_STEP)} className="touch-target-small" aria-label="Zoom in">+</button>
+        <button onClick={() => zoomBy(1 / ZOOM_STEP)} className="touch-target-small" aria-label="Zoom out">−</button>
         <button onClick={fit} className="touch-target-small" title="Fit every note in view">Fit</button>
       </div>
     </div>

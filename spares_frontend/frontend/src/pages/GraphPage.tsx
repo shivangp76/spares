@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, getNote, getNoteGraph } from '../api/client';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
-import NoteGraph, { type GraphLayout } from '../components/NoteGraph';
+import NoteGraph, { type GraphLayout, type NoteGraphHandle } from '../components/NoteGraph';
 import { STUDY_COLORS, tagColor } from '../graphLayout';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
+import { usePageKeys } from '../hooks/usePageKeys';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import type { NoteGraphResponse, NoteResponse } from '../types/spares';
@@ -121,6 +122,13 @@ export default function GraphPage() {
   }
 
   const detail = useDetailView(selectedNote !== null, () => setSelectedNote(null));
+  const graphView = useRef<NoteGraphHandle>(null);
+  const showingGraph = detail.showList && shown.nodes.length > 0;
+  const keys = usePageKeys([
+    // `=` is `+` without Shift
+    { keys: ['+'], codes: ['+', '='], description: 'Zoom in on the graph', available: showingGraph, run: () => graphView.current?.zoomIn() },
+    { keys: ['-'], codes: ['-'], description: 'Zoom out of the graph', available: showingGraph, run: () => graphView.current?.zoomOut() },
+  ]);
   const inQuery = shown.nodes.filter(n => n.in_query).length;
   const topTags = useMemo(() => {
     const counts = new Map<string, number>();
@@ -134,7 +142,7 @@ export default function GraphPage() {
   return (
     <div className="page-wide">
       <div className="page-navbar">
-        <Navbar onLogout={logout} />
+        <Navbar onLogout={logout} help={keys} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Graph</h2>
 
@@ -238,6 +246,7 @@ export default function GraphPage() {
             <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '24px 0', textAlign: 'center' }}>No notes found</div>
           ) : (
             <NoteGraph
+              ref={graphView}
               nodes={shown.nodes}
               edges={shown.edges}
               layout={layout}

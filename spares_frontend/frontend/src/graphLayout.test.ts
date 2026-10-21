@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { backEdges, bounds, forceLayout, layeredLayout, layers, lineage, studyState } from './graphLayout';
+import { backEdges, bounds, forceLayout, layOut, layeredLayout, layers, lineage, studyState } from './graphLayout';
 import type { GraphEdge } from './types/spares';
 
 const edge = (from: number, to: number): GraphEdge => ({ from, to, keyword: '', score: 0 });
@@ -37,6 +37,15 @@ test('the force layout places every note', () => {
   const nodes = [1, 2, 3].map(id => ({ id, radius: 5 }));
   forceLayout(nodes, [edge(2, 1), edge(3, 1), edge(3, 99)]);
   for (const node of nodes) expect(Number.isFinite(node.x) && Number.isFinite(node.y)).toBe(true);
+});
+
+test('layOut places every note, in either layout', () => {
+  const nodes = [1, 2, 3].map(id => ({ id, radius: 5 }));
+  for (const layout of ['force', 'layered'] as const) {
+    const placed = layOut({ layout, nodes, edges: [edge(2, 1), edge(3, 2)] });
+    expect(placed.map(([id]) => id).sort()).toEqual([1, 2, 3]);
+    for (const [, x, y] of placed) expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
+  }
 });
 
 test('lineage follows links both ways, through cycles', () => {
