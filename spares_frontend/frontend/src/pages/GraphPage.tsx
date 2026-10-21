@@ -69,6 +69,63 @@ function saveSettings(settings: GraphSettings): void {
   }
 }
 
+const GUIDE_KEY = 'spares_graph_guide_open';
+const guideTerm: React.CSSProperties = { fontWeight: 600 };
+const guideList: React.CSSProperties = { margin: '4px 0 8px', paddingLeft: 20, lineHeight: 1.5 };
+
+/**
+ * What the graph shows and what each of its settings does, open until it is first closed. The
+ * help popup says less, to point here.
+ */
+function GraphGuide() {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(GUIDE_KEY) !== 'closed';
+    } catch {
+      return true;
+    }
+  });
+  function toggle(nowOpen: boolean) {
+    setOpen(nowOpen);
+    try {
+      localStorage.setItem(GUIDE_KEY, nowOpen ? 'open' : 'closed');
+    } catch {
+      // Without storage it opens again next time
+    }
+  }
+  return (
+    <details open={open} onToggle={e => toggle(e.currentTarget.open)} style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+      <summary style={{ cursor: 'pointer' }}>What do these mean?</summary>
+      <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '8px 12px', marginTop: 6, background: 'var(--surface)' }}>
+        <div style={guideTerm}>Reading the graph</div>
+        <ul style={guideList}>
+          <li>A note <em>builds on</em> another when it links to one of that note's keywords. An arrow goes from a note to each note that builds on it, so arrows point from what to learn first to what comes after.</li>
+          <li>Filled notes are the ones the query found. Hollow notes are shown because of how they link to those: gray ones are <em>built on</em> by a note found, and purple ones are <em>building on</em> a note found. Dashed ones are keywords notes link to that no note has yet.</li>
+          <li>Point at a note to light up everything it builds on and everything building on it. Click it to open it beside the graph.</li>
+          <li>Drag the background, or use the arrow keys (faster with Shift), to move around. Scroll, or press <kbd>+</kbd> and <kbd>-</kbd>, to zoom. In the Force layout, drag a note to move it.</li>
+        </ul>
+        <div style={guideTerm}>Settings</div>
+        <ul style={guideList}>
+          <li><strong>Force / Layered:</strong> Force pulls linked notes together and pushes the rest apart, as in Obsidian. Layered puts every note below all the notes it builds on, so it reads top to bottom in the order to learn them.</li>
+          <li><strong>Built on:</strong> how many links to follow up from the notes found, to the notes they build on. 1 shows only the notes they link to directly; All follows the whole chain, even to notes the query doesn't find.</li>
+          <li><strong>Building on them:</strong> how many links to follow down from the notes found, to the notes that link to them. None, the default, leaves those out unless the query finds them too. Turn it up to see what a note holds back.</li>
+          <li>
+            <strong>Link score ≤:</strong> links are found by matching a link's text to keywords loosely, and each link's score says how loosely: 0 when they are the same apart from case, 0.5 for punctuation, accents or a possessive, 1 for a plural, a stop word or words run together, 1.5 and 2.5 for one or two typos in a long word, and 2.5 and up for words that only share a stem.
+            Links scoring higher than this aren't shown or followed. <em>Queue's</em> uses <code>linked_note_max_score</code> from the server's <code>config.toml</code> (1.5 unless set), the same cutoff review uses to hold cards back until the notes they build on are learned.
+          </li>
+          <li><strong>Color by:</strong> <em>Found or built on</em> colors notes by why they are shown. <em>How learned</em> colors them by their cards: not studied (all new), partly learned, learned (all in review), suspended, or no cards. <em>Tag</em> colors them by their first tag's top level, so <code>math:algebra</code> and <code>math:calculus</code> match.</li>
+          <li><strong>Hide unlinked notes:</strong> leaves out notes with no links to or from any note shown.</li>
+          <li><strong>Unmatched links:</strong> shows the keywords notes link to that no note has. Writing a note with that keyword gives the links somewhere to go.</li>
+          <li><strong>Find by keyword:</strong> rings the notes with a keyword containing the text, without changing what is shown. Enter opens the first.</li>
+          <li><strong>Groups:</strong> each colors the notes its query finds, over the other colors. A note takes the first group that finds it.</li>
+          <li><strong>Display and forces:</strong> how notes are drawn, and how strongly they pull and push in the Force layout. These are kept in this browser.</li>
+        </ul>
+        <div>At most {MAX_NODES} notes are shown at once: the notes found first, then the nearest ones linked to them.</div>
+      </div>
+    </details>
+  );
+}
+
 /** A slider with its label and value. */
 function Slider({ label, title, value, min, max, step, onChange, disabled }: {
   label: string; title: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean;
@@ -268,6 +325,8 @@ export default function GraphPage() {
               placeholder="Notes to show, with the notes they build on, e.g. tag=calculus"
               ariaLabel="Notes to show"
               error={searchError}
+              style={{ maxWidth: 'none' }}
+              inputStyle={{ fontSize: 15, padding: '8px 12px' }}
             />
             <button onClick={() => search()} className="touch-target-small">Show</button>
             {searchQuery && <button onClick={() => search('')} className="touch-target-small" title="Every note">Clear</button>}
@@ -337,6 +396,8 @@ export default function GraphPage() {
               style={{ ...input, width: 160 }}
             />
           </div>
+
+          <GraphGuide />
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 13 }}>
             <span title="Color the notes a query finds, over the colors above. A note takes the first group that finds it." style={{ color: 'var(--text-secondary)' }}>Groups</span>

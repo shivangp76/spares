@@ -101,6 +101,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       'Built on limits how many links up to follow. Building on them also shows the notes that build on those found, a number of links down, which shows what a weak note holds back. Link score leaves out links that only match a keyword loosely; by default it is the queue\'s `linked_note_max_score`.',
       'Color by How learned shows which notes a topic builds on have not been studied yet. Groups color the notes a query finds, such as `tag=exam`, over the other colors. Unmatched links shows, dashed, the keywords notes link to that no note has yet.',
       'Display and forces sets how notes are drawn and, in the Force layout, how they pull and push, as in Obsidian. They are kept in this browser. The arrow keys move around the graph, faster with Shift.',
+      'What do these mean?, under the settings on the page, explains each of them in full.',
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [
