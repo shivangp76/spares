@@ -309,6 +309,8 @@ export default function NotesPage() {
               onSubmit={handleSearch}
               placeholder="Search notes…"
               error={searchError}
+              style={{ maxWidth: 'none' }}
+              inputStyle={{ fontSize: 15, padding: '8px 12px' }}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>

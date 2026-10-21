@@ -291,6 +291,8 @@ export default function CardsPage() {
               onSubmit={handleSearch}
               placeholder="Search cards, e.g. tag=a c.state=review"
               error={searchError}
+              style={{ maxWidth: 'none' }}
+              inputStyle={{ fontSize: 15, padding: '8px 12px' }}
             />
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares card search --saved`">Save</button>
