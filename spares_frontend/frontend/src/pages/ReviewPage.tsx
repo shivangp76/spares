@@ -54,7 +54,7 @@ import { dayAfter, formatBuryUntil, localDateString, useBuryUntilDate } from '..
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
-import { useShowReviewTimer, useVimKeybindings } from '../preferences';
+import { PAGE_WIDTH_LABELS, PAGE_WIDTHS, setPageWidth, usePageWidth, useShowReviewTimer, useVimKeybindings } from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
   STATE_LABELS,
@@ -878,6 +878,10 @@ export default function ReviewPage() {
   const [showKeybindings, setShowKeybindings] = useState(false);
   const cardShown = reviewing && card !== null;
   const hasAudio = !!card?.audio && (card.audio.front.length > 0 || (phase === 'back' && card.audio.back.length > 0));
+  const pageWidth = usePageWidth();
+  function cyclePageWidth() {
+    setPageWidth(PAGE_WIDTHS[(PAGE_WIDTHS.indexOf(pageWidth) + 1) % PAGE_WIDTHS.length]);
+  }
   const keybindings: Keybinding[] = [
     { keys: ['Space'], description: 'Show answer', available: phase === 'front' },
     ...ratings.map((r, i) => ({ keys: [String(i + 1)], description: `Rate ${r.description}`, available: phase === 'back' })),
@@ -892,6 +896,7 @@ export default function ReviewPage() {
     { keys: ['f'], description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ''}`, available: cardShown && config !== null },
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
+    { keys: ['w'], description: `Change the page width (now ${PAGE_WIDTH_LABELS[pageWidth]})`, available: reviewing && !isNarrow },
     ...TYPED_ANSWER_SHORTCUTS.map(s => ({ ...s, available: phase === 'front' && !!card?.typed_answer })),
   ];
 
@@ -917,7 +922,7 @@ export default function ReviewPage() {
       if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
       const actions: Record<string, () => void> = {
         Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
-        f: flagNote, q: switchQuery, r: replayAudio,
+        f: flagNote, q: switchQuery, r: replayAudio, w: cyclePageWidth,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
       const action = actions[key];
@@ -1272,6 +1277,15 @@ export default function ReviewPage() {
                     </div>
                   )}
                 </ActionGroup>
+                {/* Phones use their whole width already */}
+                {!isNarrow && (
+                  <ActionGroup label="Display" tone={TONES.gray}>
+                    <span style={{ fontSize: 13 }}>Width <span className="key-hint">(w)</span></span>
+                    {PAGE_WIDTHS.map(width => (
+                      <button key={width} onClick={() => setPageWidth(width)} aria-pressed={pageWidth === width} style={actionButton}>{PAGE_WIDTH_LABELS[width]}</button>
+                    ))}
+                  </ActionGroup>
+                )}
               </div>
             </details>
 

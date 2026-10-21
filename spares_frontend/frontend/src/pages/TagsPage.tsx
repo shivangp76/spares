@@ -265,8 +265,8 @@ export default function TagsPage() {
   });
 
   return (
-    <div className="page" style={{ maxWidth: 1000 }}>
-      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+    <div className="page" style={{ maxWidth: 'max(1000px, var(--page-max-width))' }}>
+      <div className="page-navbar">
         <Navbar onLogout={logout} help={keys.help} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Tags</h2>

@@ -14,6 +14,9 @@
       try {
         const theme = localStorage.getItem('spares_theme');
         if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+        // The page width setting (see src/preferences.ts)
+        const pageWidth = localStorage.getItem('spares_page_width');
+        if (pageWidth === 'wide' || pageWidth === 'full') document.documentElement.dataset.pageWidth = pageWidth;
       } catch {}
     </script>
   </head>

@@ -2,7 +2,10 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
-import { setShowReviewTimer, setVimKeybindings, useShowReviewTimer, useVimKeybindings } from '../preferences';
+import {
+  PAGE_WIDTH_LABELS, PAGE_WIDTHS, setPageWidth, setShowReviewTimer, setVimKeybindings, usePageWidth, useShowReviewTimer,
+  useVimKeybindings,
+} from '../preferences';
 import {
   setThemePreference, setTypstThemePreference, useThemePreference, useTypstThemePreference,
   type ThemePreference, type TypstThemePreference,
@@ -29,6 +32,7 @@ export default function SettingsPage() {
   const typstTheme = useTypstThemePreference();
   const showReviewTimer = useShowReviewTimer();
   const vimKeybindings = useVimKeybindings();
+  const pageWidth = usePageWidth();
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -55,6 +59,28 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>
+        <legend style={{ ...sectionLabel, padding: 0 }}>Layout</legend>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span>Page width:</span>
+          {PAGE_WIDTHS.map(width => (
+            <label key={width} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="page-width"
+                value={width}
+                checked={pageWidth === width}
+                onChange={() => setPageWidth(width)}
+              />
+              {PAGE_WIDTH_LABELS[width]}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          For large screens. Also changed with w while reviewing. Typst pages that fit the screen get longer lines, and pages of a fixed size get larger.
+        </p>
       </fieldset>
 
       <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>

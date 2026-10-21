@@ -270,7 +270,7 @@ export default function CardsPage() {
         .cards-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
-      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div className="page-navbar">
         <Navbar onLogout={logout} help={keys} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Cards</h2>

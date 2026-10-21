@@ -314,9 +314,21 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   touch-action: manipulation;
 }
 
-/* The common page wrapper */
+/* The common page wrapper, as wide as the page width setting allows (see `setPageWidth`) */
+:root {
+  --page-max-width: 800px;
+}
+
+:root[data-page-width="wide"] {
+  --page-max-width: 1200px;
+}
+
+:root[data-page-width="full"] {
+  --page-max-width: 100%;
+}
+
 .page {
-  max-width: 800px;
+  max-width: var(--page-max-width);
   margin: 0 auto;
   padding: 24px;
 }
@@ -324,6 +336,12 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 /* The page wrapper for pages with a list beside a detail panel, which use the full width */
 .page-wide {
   padding: 24px;
+}
+
+/* Their navbar, as wide as a common page's, so it stays put between pages */
+.page-navbar {
+  max-width: var(--page-max-width);
+  margin: 0 auto;
 }
 
 /* Wide tables scroll inside their own box instead of widening the page */

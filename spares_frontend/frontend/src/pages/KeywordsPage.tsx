@@ -305,7 +305,7 @@ export default function KeywordsPage() {
   return (
     <div className="page-wide">
 
-      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div className="page-navbar">
         <Navbar onLogout={logout} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Keywords</h2>

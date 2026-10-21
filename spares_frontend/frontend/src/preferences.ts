@@ -30,6 +30,33 @@ function booleanPreference(key: string, defaultValue: () => boolean) {
   return { get, set, use };
 }
 
+/** A setting kept in this browser that is one of `values`, falling back to `defaultValue`. */
+function choicePreference<T extends string>(key: string, values: readonly T[], defaultValue: T) {
+  function get(): T {
+    try {
+      const stored = localStorage.getItem(key);
+      return values.find(v => v === stored) ?? defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  function set(value: T): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Without storage the preference can't be changed, so the default stays
+    }
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  }
+
+  function use(): T {
+    return useSyncExternalStore(subscribe, get);
+  }
+
+  return { get, set, use };
+}
+
 function subscribe(onChange: () => void): () => void {
   window.addEventListener(CHANGE_EVENT, onChange);
   return () => window.removeEventListener(CHANGE_EVENT, onChange);
@@ -45,3 +72,18 @@ export const useShowReviewTimer = showReviewTimer.use;
 const vimKeybindings = booleanPreference('spares_vim_keybindings', () => !window.matchMedia('(pointer: coarse)').matches);
 export const setVimKeybindings = vimKeybindings.set;
 export const useVimKeybindings = vimKeybindings.use;
+
+export const PAGE_WIDTHS = ['normal', 'wide', 'full'] as const;
+export type PageWidth = typeof PAGE_WIDTHS[number];
+export const PAGE_WIDTH_LABELS: Record<PageWidth, string> = { normal: 'Normal', wide: 'Wide', full: 'Full Screen' };
+/** How wide pages of a single column, such as the review page, are on large screens. Pages with
+    a list beside a detail panel already use the full width. Phones use their full width whatever
+    it is. Also read by the inline script in index.html, which applies it before the first paint. */
+const pageWidth = choicePreference<PageWidth>('spares_page_width', PAGE_WIDTHS, 'normal');
+export const usePageWidth = pageWidth.use;
+
+/** Sets `data-page-width` on the root element, which index.css uses to pick `--page-max-width`. */
+export function setPageWidth(width: PageWidth): void {
+  pageWidth.set(width);
+  document.documentElement.dataset.pageWidth = width;
+}

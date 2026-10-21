@@ -293,7 +293,7 @@ export default function NotesPage() {
         .notes-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
-      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div className="page-navbar">
         <Navbar onLogout={logout} help={keys} />
       </div>
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
