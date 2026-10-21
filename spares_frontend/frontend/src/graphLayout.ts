@@ -9,6 +9,16 @@ const LAYER_GAP_X = 60;
 const LAYER_GAP_Y = 90;
 /** Up and down passes ordering each layer by its neighbors. */
 const ORDER_SWEEPS = 8;
+/** Space between the rows a wide layer is split into. */
+const WRAPPED_ROW_GAP = 36;
+
+/**
+ * The most notes a row of the layered layout has before its layer is split into several rows,
+ * so a graph of many notes is about as wide as a screen, not a strip: about √(2n).
+ */
+export function maxRowLength(notes: number): number {
+  return Math.max(20, Math.ceil(Math.sqrt(2 * notes)));
+}
 
 /**
  * The links that close cycles, found depth first, so that leaving them out leaves links that only
@@ -105,7 +115,21 @@ export function layeredLayout(ids: number[], edges: GraphEdge[]): Map<number, Po
     else for (const row of rows.slice(0, -1).reverse()) sweep(row, down);
   }
 
-  return new Map(ids.map(id => [id, { x: position.get(id)! * LAYER_GAP_X, y: layer.get(id)! * LAYER_GAP_Y }]));
+  // A wide layer is split into rows column by column, so its notes keep their order left to right
+  const maxRow = maxRowLength(ids.length);
+  const at = new Map<number, Point>();
+  let top = 0;
+  for (const row of rows) {
+    if (!row) continue;
+    const depth = Math.ceil(row.length / maxRow);
+    const columns = Math.ceil(row.length / depth);
+    row.forEach((id, i) => at.set(id, {
+      x: (Math.floor(i / depth) - (columns - 1) / 2) * LAYER_GAP_X,
+      y: top + (i % depth) * WRAPPED_ROW_GAP,
+    }));
+    top += (depth - 1) * WRAPPED_ROW_GAP + LAYER_GAP_Y;
+  }
+  return at;
 }
 
 export interface ForceNode extends SimulationNodeDatum { id: number; radius: number }

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { backEdges, bounds, forceLayout, layOut, layeredLayout, layers, lineage, studyState } from './graphLayout';
+import { backEdges, bounds, forceLayout, layOut, layeredLayout, layers, lineage, maxRowLength, studyState } from './graphLayout';
 import type { GraphEdge } from './types/spares';
 
 const edge = (from: number, to: number): GraphEdge => ({ from, to, keyword: '', score: 0 });
@@ -31,6 +31,22 @@ test('the layered layout orders a layer to keep linked notes near each other', (
   expect(at.get(1)!.y).toBe(at.get(2)!.y);
   expect(at.get(3)!.y).toBeGreaterThan(at.get(1)!.y);
   expect(Math.sign(at.get(4)!.x - at.get(3)!.x)).toBe(Math.sign(at.get(1)!.x - at.get(2)!.x));
+});
+
+test('a wide layer is split into rows, still below what its notes build on', () => {
+  // 1000 notes linking to none, and a chain of 3 under one of them
+  const ids = Array.from({ length: 1003 }, (_, i) => i);
+  const edges = [edge(1000, 0), edge(1001, 1000), edge(1002, 1001)];
+  const at = layeredLayout(ids, edges);
+  const xs = [...at.values()].map(p => p.x);
+  const width = Math.max(...xs) - Math.min(...xs);
+  expect(width).toBeLessThanOrEqual(maxRowLength(1003) * 60);
+  // No two notes in one place
+  expect(new Set([...at.values()].map(p => `${p.x},${p.y}`)).size).toBe(1003);
+  const top = Math.max(...ids.slice(0, 1000).map(id => at.get(id)!.y));
+  expect(at.get(1000)!.y).toBeGreaterThan(top);
+  expect(at.get(1001)!.y).toBeGreaterThan(at.get(1000)!.y);
+  expect(at.get(1002)!.y).toBeGreaterThan(at.get(1001)!.y);
 });
 
 test('the force layout places every note', () => {
