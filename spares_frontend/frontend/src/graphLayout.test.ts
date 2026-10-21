@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { backEdges, bounds, forceLayout, formatGroup, layOut, layeredLayout, layers, lineage, maxRowLength, parseGroup, studyState, unmatchedNodes } from './graphLayout';
+import { DEFAULT_DISPLAY, backEdges, bounds, forceLayout, formatGroup, labelOpacity, nodeRadius, layOut, layeredLayout, layers, lineage, maxRowLength, parseGroup, studyState, unmatchedNodes } from './graphLayout';
 import type { GraphEdge } from './types/spares';
 
 const edge = (from: number, to: number): GraphEdge => ({ from, to, keyword: '', score: 0 });
@@ -100,4 +100,23 @@ test('unmatched links make one node per keyword, ignoring case', () => {
   ]);
   expect(nodes.map(n => [n.id, n.keywords[0], n.relation])).toEqual([[-1, 'Zeta', 'unmatched'], [-2, 'eta', 'unmatched']]);
   expect(edges.map(e => [e.from, e.to])).toEqual([[1, -1], [2, -1], [1, -2]]);
+});
+
+test('a warm force layout starts where the notes are', () => {
+  const nodes = [1, 2].map(id => ({ id, radius: 5, x: id * 1000, y: 0 }));
+  forceLayout(nodes, [], 300, { center: 0, repel: 0, link: 1, distance: 50 });
+  // With no forces, nothing moves
+  expect(nodes.map(n => Math.round(n.x))).toEqual([1000, 2000]);
+});
+
+test('names fade in as the graph is zoomed in', () => {
+  expect(labelOpacity(0.3, 1)).toBe(0);
+  expect(labelOpacity(0.8, 1)).toBeCloseTo(0.5);
+  expect(labelOpacity(2, 1)).toBe(1);
+});
+
+test('notes are sized by cards or by links', () => {
+  const node = { id: 1, keywords: [], tags: [], relation: 'found' as const, depth: 0, group: null, cards: { new: 4, learning: 0, review: 0, suspended: 0 } };
+  expect(nodeRadius(node, 0, DEFAULT_DISPLAY)).toBe(7);
+  expect(nodeRadius(node, 4, { ...DEFAULT_DISPLAY, sizeBy: 'links', nodeSize: 2 })).toBe(16);
 });

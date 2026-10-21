@@ -4,7 +4,7 @@ import { ApiError, getNote, getNoteGraph } from '../api/client';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import NoteGraph, { type GraphLayout, type NoteGraphHandle } from '../components/NoteGraph';
-import { GROUP_COLORS, RELATION_COLORS, STUDY_COLORS, formatGroup, parseGroup, tagColor, unmatchedNodes, type GraphGroup } from '../graphLayout';
+import { DEFAULT_DISPLAY, DEFAULT_FORCES, GROUP_COLORS, RELATION_COLORS, STUDY_COLORS, formatGroup, parseGroup, tagColor, unmatchedNodes, type GraphDisplay, type GraphForces, type GraphGroup } from '../graphLayout';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
@@ -46,6 +46,42 @@ function countRelations(nodes: GraphNode[]): Record<GraphRelation, number> {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** How this browser draws the graph, kept apart from the URL, which says what it shows. */
+const SETTINGS_KEY = 'spares_graph_settings';
+
+interface GraphSettings { display: GraphDisplay; forces: GraphForces }
+
+function loadSettings(): GraphSettings {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<GraphSettings>;
+    return { display: { ...DEFAULT_DISPLAY, ...stored.display }, forces: { ...DEFAULT_FORCES, ...stored.forces } };
+  } catch {
+    // Without storage, or with something else stored, the defaults are used
+    return { display: DEFAULT_DISPLAY, forces: DEFAULT_FORCES };
+  }
+}
+
+function saveSettings(settings: GraphSettings): void {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Without storage the settings last until the page is left
+  }
+}
+
+/** A slider with its label and value. */
+function Slider({ label, title, value, min, max, step, onChange, disabled }: {
+  label: string; title: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean;
+}) {
+  return (
+    <label title={title} style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: disabled ? 0.5 : 1 }}>
+      <span style={{ minWidth: 92 }}>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled} onChange={e => onChange(Number(e.target.value))} style={{ width: 120 }} />
+      <span style={{ minWidth: 32, color: 'var(--text-muted)' }}>{value}</span>
+    </label>
+  );
+}
+
 export default function GraphPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -78,6 +114,14 @@ export default function GraphPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [find, setFind] = useState('');
+  const [settings, setSettings] = useState(loadSettings);
+  const changeSettings = (change: (s: GraphSettings) => GraphSettings) => setSettings(s => {
+    const next = change(s);
+    saveSettings(next);
+    return next;
+  });
+  const setDisplay = (change: Partial<GraphDisplay>) => changeSettings(s => ({ ...s, display: { ...s.display, ...change } }));
+  const setForces = (change: Partial<GraphForces>) => changeSettings(s => ({ ...s, forces: { ...s.forces, ...change } }));
   const [centerOn, setCenterOn] = useState<number | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   // A keyword no note has, picked in the graph
@@ -330,6 +374,35 @@ export default function GraphPage() {
             </button>
           </div>
 
+          <details style={{ marginBottom: 8, fontSize: 13 }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Display and forces</summary>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label>
+                  Size by{' '}
+                  <select value={settings.display.sizeBy} onChange={e => setDisplay({ sizeBy: e.target.value as GraphDisplay['sizeBy'] })} style={input}>
+                    <option value="cards">Cards</option>
+                    <option value="links">Links</option>
+                  </select>
+                </label>
+                <Slider label="Note size" title="How big notes are drawn" value={settings.display.nodeSize} min={0.5} max={2.5} step={0.1} onChange={nodeSize => setDisplay({ nodeSize })} />
+                <Slider label="Link thickness" title="How thick links are drawn" value={settings.display.linkWidth} min={0.5} max={4} step={0.25} onChange={linkWidth => setDisplay({ linkWidth })} />
+                <Slider label="Names from zoom" title="The zoom from which every note is named. Names fade in on the way to it. Notes in focus are always named." value={settings.display.labelZoom} min={0.1} max={3} step={0.1} onChange={labelZoom => setDisplay({ labelZoom })} />
+                <label>
+                  <input type="checkbox" checked={settings.display.arrows} onChange={e => setDisplay({ arrows: e.target.checked })} /> Arrows
+                </label>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Slider label="Center force" title="How strongly notes are pulled to the middle: higher makes the graph rounder and tighter" value={settings.forces.center} min={0} max={0.3} step={0.01} onChange={center => setForces({ center })} disabled={layout !== 'force'} />
+                <Slider label="Repel force" title="How strongly notes push each other apart" value={settings.forces.repel} min={0} max={600} step={10} onChange={repel => setForces({ repel })} disabled={layout !== 'force'} />
+                <Slider label="Link force" title="How strongly links pull their notes together" value={settings.forces.link} min={0} max={2} step={0.1} onChange={link => setForces({ link })} disabled={layout !== 'force'} />
+                <Slider label="Link distance" title="How long links try to be" value={settings.forces.distance} min={10} max={250} step={5} onChange={distance => setForces({ distance })} disabled={layout !== 'force'} />
+                {layout !== 'force' && <span style={{ color: 'var(--text-muted)' }}>Forces apply to the Force layout.</span>}
+              </div>
+            </div>
+            <button onClick={() => changeSettings(() => ({ display: DEFAULT_DISPLAY, forces: DEFAULT_FORCES }))} style={{ ...chip, marginTop: 8 }}>Restore defaults</button>
+          </details>
+
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {graph && !graph.links_generated && (
             <div style={{ fontSize: 13, color: 'var(--warning)', marginBottom: 8 }}>Links between notes haven't been found yet. Render the notes, as with `spares note render`, to find them.</div>
@@ -381,6 +454,8 @@ export default function GraphPage() {
               marked={marked}
               centerOn={centerOn}
               height="max(360px, calc(100vh - 400px))"
+              display={settings.display}
+              forces={settings.forces}
             />
           )}
         </div>

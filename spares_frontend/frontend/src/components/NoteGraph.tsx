@@ -1,13 +1,11 @@
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { RELATION_COLORS, STUDY_COLORS, bounds, forceSimulationOf, lineage, nodeLabel, studyState, tagColor, type ForceNode, type ForceSimulation, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
+import { DEFAULT_DISPLAY, DEFAULT_FORCES, RELATION_COLORS, STUDY_COLORS, bounds, forceSimulationOf, labelOpacity, lineage, nodeLabel, nodeRadius, studyState, tagColor, type ForceNode, type ForceSimulation, type GraphDisplay, type GraphForces, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
 import type { GraphEdge, GraphNode } from '../types/spares';
 import { formatNoteId } from '../utils';
 
 export type GraphLayout = 'force' | 'layered';
 export type GraphColor = 'scope' | 'study' | 'tag';
 
-/** Zoomed out further than this, only the notes in focus are named. */
-const LABEL_ZOOM = 0.7;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 6;
 /** The most a few notes are zoomed in to fit them. */
@@ -39,9 +37,14 @@ function relationText({ relation, depth }: GraphNode): string {
   }
 }
 
-function radius(node: GraphNode): number {
-  const { new: n, learning, review, suspended } = node.cards;
-  return Math.min(16, 4 + 1.5 * Math.sqrt(n + learning + review + suspended));
+/** How many links each note has, either way. */
+function linkCounts(edges: GraphEdge[]): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const { from, to } of edges) {
+    counts.set(from, (counts.get(from) ?? 0) + 1);
+    counts.set(to, (counts.get(to) ?? 0) + 1);
+  }
+  return counts;
 }
 
 interface Transform { x: number; y: number; k: number }
@@ -79,6 +82,8 @@ interface Props {
   /** Moves the view to this note when it changes. */
   centerOn: number | null;
   height: number | string;
+  display?: GraphDisplay;
+  forces?: GraphForces;
   ref?: React.Ref<NoteGraphHandle>;
 }
 
@@ -87,7 +92,7 @@ interface Props {
  * background to pan, the wheel to zoom, and in the force layout, drag a note to move it.
  * Pointing at a note shows the notes it builds on and those that build on it.
  */
-export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, selected, onSelect, marked, centerOn, height, ref }: Props) {
+export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, selected, onSelect, marked, centerOn, height, display = DEFAULT_DISPLAY, forces = DEFAULT_FORCES, ref }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   // Each graph's own, as a page can have two
   const arrowId = `graph-arrow${useId().replace(/:/g, '')}`;
@@ -101,11 +106,24 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
   const [placed, setPlaced] = useState<Placed>({ nodes: [], edges: [], layout, at: new Map(), simulation: null });
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const laidOut = placed.nodes === nodes && placed.edges === edges && placed.layout === layout;
+  // Read by the layout for where notes are, without laying out again each time they move
+  const placedNow = useRef(placed);
+  useEffect(() => { placedNow.current = placed; });
+  // Strings, so that only a change of them lays out again
+  const forcesKey = layout === 'force' ? JSON.stringify(forces) : '';
+  const sizeKey = `${display.sizeBy} ${display.nodeSize}`;
 
   // Laid out in a worker, so the page can still be used meanwhile
   useEffect(() => {
     const worker = new Worker(new URL('../graphLayout.worker.ts', import.meta.url), { type: 'module' });
-    const radii = nodes.map(n => ({ id: n.id, radius: radius(n) }));
+    const [sizeBy, nodeSize] = sizeKey.split(' ');
+    const sizing = { ...DEFAULT_DISPLAY, sizeBy: sizeBy as GraphDisplay['sizeBy'], nodeSize: Number(nodeSize) };
+    const forceSettings = forcesKey ? JSON.parse(forcesKey) as GraphForces : DEFAULT_FORCES;
+    const links = linkCounts(edges);
+    // New forces or sizes move the notes from where they are, rather than starting over
+    const previous = placedNow.current;
+    const warm = layout === 'force' && previous.layout === 'force' && previous.nodes === nodes;
+    const radii = nodes.map(n => ({ id: n.id, radius: nodeRadius(n, links.get(n.id) ?? 0, sizing), ...(warm ? previous.at.get(n.id) : undefined) }));
     worker.onmessage = (e: MessageEvent<LayoutResponse>) => {
       worker.terminate();
       const positions = new Map(e.data.map(([id, x, y]) => [id, { x, y }]));
@@ -114,7 +132,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
       if (layout === 'force') {
         // Starts where the worker left it, settled, until a note is dragged
         const forceNodes: ForceNode[] = radii.map(n => ({ ...n, ...positions.get(n.id) }));
-        simulation = forceSimulationOf(forceNodes, edges).alpha(0);
+        simulation = forceSimulationOf(forceNodes, edges, forceSettings).alpha(0);
         at = new Map(forceNodes.map(n => [n.id, n as Point]));
       }
       setLayoutError(null);
@@ -124,10 +142,12 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
       worker.terminate();
       setLayoutError(`Couldn't lay out the graph: ${e.message}`);
     };
-    worker.postMessage({ layout, nodes: radii, edges } satisfies LayoutRequest);
+    // Only a note's id and place, not the simulation's other fields
+    const request: LayoutRequest = { layout, nodes: radii.map(({ id, radius, x, y }) => ({ id, radius, x, y })), edges, forces: forceSettings };
+    worker.postMessage(request);
     // A layout no longer wanted stops, rather than finishing to be thrown away
     return () => worker.terminate();
-  }, [nodes, edges, layout]);
+  }, [nodes, edges, layout, forcesKey, sizeKey]);
   useEffect(() => () => { placed.simulation?.stop(); }, [placed]);
 
   useLayoutEffect(() => {
@@ -144,9 +164,9 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
     const k = Math.min(MAX_FIT_ZOOM, Math.max(MIN_ZOOM, Math.min(size.width / box.width, size.height / box.height)));
     setView({ k, x: size.width / 2 - (box.x + box.width / 2) * k, y: size.height / 2 - (box.y + box.height / 2) * k });
   };
-  // Refit only for a new layout or size, not after panning
+  // Refit only for new notes, layout or size, not after panning or changing forces
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- fits the view to the notes laid out
-  useEffect(() => fit(), [placed, size.width, size.height]);
+  useEffect(() => fit(), [placed.nodes, placed.edges, placed.layout, size.width, size.height]);
 
   useEffect(() => {
     const at = centerOn === null ? undefined : placed.at.get(centerOn);
@@ -228,13 +248,15 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
   }
 
   const byId = useMemo(() => new Map(placed.nodes.map(n => [n.id, n])), [placed.nodes]);
+  const links = useMemo(() => linkCounts(placed.edges), [placed.edges]);
+  const radius = (node: GraphNode) => nodeRadius(node, links.get(node.id) ?? 0, display);
   const focus = hovered ?? selected;
   const family = useMemo(() => {
     if (focus === null) return null;
     const { ancestors, descendants } = lineage(focus, placed.edges);
     return new Set([focus, ...ancestors, ...descendants]);
   }, [focus, placed.edges]);
-  const showAllLabels = view.k >= LABEL_ZOOM;
+  const labelFade = labelOpacity(view.k, display.labelZoom);
   const inFamily = (id: number) => family === null || family.has(id);
 
   return (
@@ -274,10 +296,10 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
                 x2={to.x - (to.x - from.x) * cut}
                 y2={to.y - (to.y - from.y) * cut}
                 stroke={lit ? 'var(--accent)' : 'var(--border-strong)'}
-                strokeWidth={lit ? 1.5 : 1}
+                strokeWidth={(lit ? 1.5 : 1) * display.linkWidth}
                 opacity={family === null || lit ? 1 : 0.15}
                 strokeDasharray={edge.to < 0 ? '3 3' : undefined}
-                markerEnd={`url(#${arrowId})`}
+                markerEnd={display.arrows ? `url(#${arrowId})` : undefined}
               >
                 <title>{edge.to < 0
                   ? `${formatNoteId(edge.from)} links to "${edge.keyword}", which no note has`
@@ -291,7 +313,9 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
             const r = radius(node);
             const color = nodeColor(node, colorBy, groupColors);
             const isSelected = node.id === selected;
-            const showLabel = isSelected || node.id === hovered || marked.has(node.id) || (showAllLabels ? inFamily(node.id) : family !== null && family.has(node.id));
+            // Named in full when in focus, and otherwise fading in with the zoom
+            const inFocus = isSelected || node.id === hovered || marked.has(node.id) || (family !== null && family.has(node.id));
+            const labelShown = inFocus ? 1 : inFamily(node.id) ? labelFade : 0;
             const { new: n, learning, review, suspended } = node.cards;
             return (
               <g
@@ -321,8 +345,9 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
                   strokeWidth={isSelected ? 2.5 : 1.5}
                   strokeDasharray={node.relation === 'unmatched' ? '2 2' : undefined}
                 />
-                {showLabel && (
+                {labelShown > 0 && (
                   <text
+                    opacity={labelShown}
                     y={r + 4 + 10 / view.k}
                     textAnchor="middle"
                     fontSize={11 / view.k}

@@ -136,45 +136,70 @@ export interface ForceNode extends SimulationNodeDatum { id: number; radius: num
 
 export type ForceSimulation = Simulation<ForceNode, SimulationLinkDatum<ForceNode>>;
 
+/** The forces of the force layout, as Obsidian's graph view lets them be set. */
+export interface GraphForces {
+  /** How strongly notes are pulled to the middle, which makes the graph rounder. */
+  center: number;
+  /** How strongly notes push each other apart. */
+  repel: number;
+  /** How strongly links pull, as a multiple of d3's default, which is weaker for busy notes. */
+  link: number;
+  /** How long links try to be. */
+  distance: number;
+}
+
+export const DEFAULT_FORCES: GraphForces = { center: 0.04, repel: 120, link: 1, distance: 50 };
+
 /**
  * A simulation in which linked notes pull together and all notes push apart, as in Obsidian's graph
  * view, stopped. Notes with a position keep it.
  */
-export function forceSimulationOf(nodes: ForceNode[], edges: GraphEdge[]): ForceSimulation {
+export function forceSimulationOf(nodes: ForceNode[], edges: GraphEdge[], forces = DEFAULT_FORCES): ForceSimulation {
   const ids = new Set(nodes.map(n => n.id));
   const links = edges.filter(e => ids.has(e.from) && ids.has(e.to)).map(e => ({ source: e.from, target: e.to }));
+  const link = forceLink<ForceNode, SimulationLinkDatum<ForceNode>>(links).id(n => n.id).distance(forces.distance);
+  // d3's default strength, scaled
+  const defaultStrength = link.strength();
+  link.strength((l, i, all) => forces.link * (defaultStrength as (l: SimulationLinkDatum<ForceNode>, i: number, all: SimulationLinkDatum<ForceNode>[]) => number)(l, i, all));
   return forceSimulation(nodes)
-    .force('link', forceLink<ForceNode, SimulationLinkDatum<ForceNode>>(links).id(n => n.id).distance(50))
-    .force('charge', forceManyBody().strength(-120).distanceMax(600))
+    .force('link', link)
+    .force('charge', forceManyBody().strength(-forces.repel).distanceMax(600))
     // Pulls toward the middle, so notes with no links stay near the rest
-    .force('x', forceX(0).strength(0.04))
-    .force('y', forceY(0).strength(0.04))
+    .force('x', forceX(0).strength(forces.center))
+    .force('y', forceY(0).strength(forces.center))
     .force('collide', forceCollide<ForceNode>(n => n.radius + 2))
     .stop();
 }
 
-/** Places `nodes` by running `forceSimulationOf` until it has nearly settled. */
-export function forceLayout(nodes: ForceNode[], edges: GraphEdge[], ticks = 300): ForceSimulation {
-  return forceSimulationOf(nodes, edges).tick(ticks);
+/**
+ * Places `nodes` by running `forceSimulationOf` until it has nearly settled. Notes that already
+ * have positions start from them, with less energy, so new forces move them rather than start
+ * the layout over.
+ */
+export function forceLayout(nodes: ForceNode[], edges: GraphEdge[], ticks = 300, forces = DEFAULT_FORCES): ForceSimulation {
+  const placed = nodes.length > 0 && nodes.every(n => n.x !== undefined);
+  return forceSimulationOf(nodes, edges, forces).alpha(placed ? 0.5 : 1).tick(placed ? ticks / 2 : ticks);
 }
 
 /** What `graphLayout.worker.ts` is asked to lay out. */
 export interface LayoutRequest {
   layout: 'force' | 'layered';
-  nodes: { id: number; radius: number }[];
+  /** With where a note is now, for the force layout to start from. */
+  nodes: { id: number; radius: number; x?: number; y?: number }[];
   edges: GraphEdge[];
+  forces?: GraphForces;
 }
 
 /** Each note's id and position, as the worker answers. */
 export type LayoutResponse = [number, number, number][];
 
 /** Lays out a graph, as the worker does off the page's thread. */
-export function layOut({ layout, nodes, edges }: LayoutRequest): LayoutResponse {
+export function layOut({ layout, nodes, edges, forces }: LayoutRequest): LayoutResponse {
   if (layout === 'layered') {
     return [...layeredLayout(nodes.map(n => n.id), edges)].map(([id, { x, y }]) => [id, x, y]);
   }
   const forceNodes: ForceNode[] = nodes.map(n => ({ ...n }));
-  forceLayout(forceNodes, edges);
+  forceLayout(forceNodes, edges, 300, forces);
   return forceNodes.map(n => [n.id, n.x!, n.y!]);
 }
 
@@ -305,3 +330,34 @@ export const RELATION_COLORS: Record<GraphRelation, { color: string; label: stri
   dependent: { color: 'var(--tone-purple-fg)', label: 'Building on them' },
   unmatched: { color: 'var(--text-muted)', label: 'No such note' },
 };
+
+/** How the graph is drawn, as Obsidian's graph view lets it be set. */
+export interface GraphDisplay {
+  /** What a note's size shows: how many cards it has, or how many links it has either way. */
+  sizeBy: 'cards' | 'links';
+  /** A multiple of the size. */
+  nodeSize: number;
+  /** The width of links. */
+  linkWidth: number;
+  /** The zoom at which every note is named. Names fade in as the graph is zoomed in to it. */
+  labelZoom: number;
+  arrows: boolean;
+}
+
+export const DEFAULT_DISPLAY: GraphDisplay = { sizeBy: 'cards', nodeSize: 1, linkWidth: 1, labelZoom: 0.7, arrows: true };
+
+/** A note's radius, given how many links it has either way. */
+export function nodeRadius(node: GraphNode, links: number, display: GraphDisplay): number {
+  const { new: n, learning, review, suspended } = node.cards;
+  const base = node.relation === 'unmatched'
+    ? 4
+    : display.sizeBy === 'links'
+      ? Math.min(16, 4 + 2 * Math.sqrt(links))
+      : Math.min(16, 4 + 1.5 * Math.sqrt(n + learning + review + suspended));
+  return base * display.nodeSize;
+}
+
+/** How visible notes' names are at zoom `k`: fading in from 60% of `labelZoom` to all of it. */
+export function labelOpacity(k: number, labelZoom: number): number {
+  return Math.min(1, Math.max(0, (k - 0.6 * labelZoom) / (0.4 * labelZoom)));
+}
