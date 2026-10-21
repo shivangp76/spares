@@ -38,6 +38,7 @@ use super::NoteId;
 use super::ids_after;
 use crate::Error;
 use crate::LibraryError;
+use crate::api::browser_render::IMAGE_OCCLUSION_ASSET_PREFIX;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_notes;
@@ -232,12 +233,14 @@ async fn plan_on(conn: &mut SqliteConnection) -> Result<MigrationPlan, Error> {
         }
     }
 
-    let image_occlusion_assets: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM render_asset WHERE path LIKE ? || '%'")
-            .bind(image_occlusion_prefix())
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(sqlx_error)?;
+    let image_occlusion_assets: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM render_asset WHERE path LIKE ? || '%' OR path LIKE ? || '%'",
+    )
+    .bind(image_occlusion_prefix())
+    .bind(IMAGE_OCCLUSION_ASSET_PREFIX)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
     let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event")
         .fetch_one(&mut *conn)
         .await
@@ -316,6 +319,7 @@ fn rewrite_query(query: &str, by_old: &HashMap<i64, NoteId>) -> Result<String, S
     )
 }
 
+/// The prefix of image occlusion images stored before [`IMAGE_OCCLUSION_ASSET_PREFIX`].
 fn image_occlusion_prefix() -> String {
     let mut prefix = get_image_occlusion_rendered_directory()
         .to_string_lossy()
@@ -498,8 +502,9 @@ async fn rewrite_in_transaction(
             )));
         }
     }
-    sqlx::query("DELETE FROM render_asset WHERE path LIKE ? || '%'")
+    sqlx::query("DELETE FROM render_asset WHERE path LIKE ? || '%' OR path LIKE ? || '%'")
         .bind(image_occlusion_prefix())
+        .bind(IMAGE_OCCLUSION_ASSET_PREFIX)
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
