@@ -8,6 +8,7 @@ import { NAV_LINKS } from '../navLinks';
 import { RedoIcon, UndoIcon } from './Icons';
 import OfflineIndicator from './OfflineIndicator';
 import PageHelp from './PageHelp';
+import SavedCopiesNotice from './SavedCopiesNotice';
 import SyncButton from './SyncButton';
 import { errorMessage } from '../utils';
 
@@ -113,6 +114,7 @@ export default function Navbar({ onLogout, extra, help }: NavbarProps) {
       </div>
       <div className="navbar-actions">
         <OfflineIndicator />
+        <SavedCopiesNotice />
         {extra}
         <SyncButton onStatus={setUndoStatus} />
         <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>

@@ -516,6 +516,33 @@ export async function undoEvent(eventId: number | null): Promise<UndoEventRespon
   });
 }
 
+/** A file spares saved before overwriting it in its notes repository, since it did not write it. */
+export interface SavedCopy {
+  /** Relative to `overwritten_dir`: the time it was saved, then its path in the repository */
+  path: string;
+  /** Whether the current file has the same contents, so nothing in the copy is lost */
+  matches_current: boolean;
+}
+
+/** The notes repository's state (`GET /api/notes/vcs/status`), as far as the web UI uses it. */
+export interface NotesVcsStatus {
+  enabled: boolean;
+  overwritten_dir: string | null;
+  saved_copies: SavedCopy[];
+}
+
+export async function getNotesVcsStatus(): Promise<NotesVcsStatus> {
+  return apiFetch('Notes repository status', '/api/notes/vcs/status');
+}
+
+/** Deletes the saved copies at `paths`, once the user checked nothing in them is lost. */
+export async function removeSavedCopies(paths: string[]): Promise<void> {
+  await apiSend('Delete saved copies', '/api/notes/vcs/saved-copies/remove', {
+    method: 'POST',
+    body: JSON.stringify({ paths }),
+  });
+}
+
 /** This server's two-way sync state (`GET /api/sync/status`). */
 export interface SyncStatus {
   role: 'client' | 'server';
