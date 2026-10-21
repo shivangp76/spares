@@ -50,6 +50,7 @@ import ReviewHeatmap from '../components/ReviewHeatmap';
 import Navbar from '../components/Navbar';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useAuth } from '../hooks/useAuth';
+import { dayAfter, formatBuryUntil, localDateString, useBuryUntilDate } from '../hooks/useBuryUntilDate';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
@@ -236,6 +237,9 @@ export default function ReviewPage() {
   const [keywordResults, setKeywordResults] = useState<{ keyword: string; notes: NoteResponse[] } | null>(null);
   const [dueDatePicker, setDueDatePicker] = useState<'card' | 'note' | null>(null);
   const [dueDateValue, setDueDateValue] = useState('');
+  // Asking for the date to bury cards until: to bury the card once it is picked, or only to change it
+  const [buryUntilPicker, setBuryUntilPicker] = useState<'bury' | 'change' | null>(null);
+  const [buryUntilValue, setBuryUntilValue] = useState('');
 
   // Session summary
   const [reviewedCount, setReviewedCount] = useState(0);
@@ -271,6 +275,9 @@ export default function ReviewPage() {
   const lastActionWasRating = useRef(false);
   // The filter as entered, which identifies the queue downloaded for it (see src/offline)
   const sessionKey = useRef(queueKey('query', ''));
+  // The same key, as state so the date to bury cards until is read again for each session
+  const [sessionKeyShown, setSessionKeyShown] = useState(sessionKey.current);
+  const [buryUntil, setBuryUntil] = useBuryUntilDate(sessionKeyShown);
   // Whether the current card came from the downloaded queue because the server could not be reached
   const [offline, setOffline] = useState(false);
   // The last rating or bury if it is yet to be sent, so Undo can take it back before it is
@@ -291,6 +298,7 @@ export default function ReviewPage() {
     setPanelNote(null);
     setKeywordResults(null);
     setDueDatePicker(null);
+    setBuryUntilPicker(null);
     try {
       let next: GetReviewCardResponse | null;
       try {
@@ -441,6 +449,7 @@ export default function ReviewPage() {
     }
     setSessionInfo(info ?? describeFilter(mode, input));
     sessionKey.current = key;
+    setSessionKeyShown(key);
     if (input) recentFilters.save({ mode, input });
     setSearchParams(filterParams(mode, input), { replace: true });
     setActiveFilter(filter);
@@ -589,7 +598,7 @@ export default function ReviewPage() {
     runCardAction(async () => (await forgetCard(card.card_id)).event_id, 'Card forgotten (scheduling reset).');
   }
 
-  function setDueDate(target: 'card' | 'note', due: Date) {
+  function setDueDate(target: 'card' | 'note', due: Date, message = 'Due date updated.') {
     if (!card) return;
     runCardAction(async () => {
       let ids = [card.card_id];
@@ -599,7 +608,7 @@ export default function ReviewPage() {
         ids = cards.filter(c => new Date(c.due) <= due).map(c => c.id);
       }
       return (await updateCards({ selector: { Ids: ids }, due: due.toISOString() })).event_id;
-    }, 'Due date updated.');
+    }, message);
   }
 
   function setDueDateFromPicker() {
@@ -611,6 +620,31 @@ export default function ReviewPage() {
   function setDueDateIn(target: 'card' | 'note') {
     if (!config) return;
     setDueDate(target, new Date(Date.now() + config.set_card_due_date_duration * 1000));
+  }
+
+  /** Pushes the card past the session's bury-until date, e.g. an exam's, asking for it if unset. */
+  function buryCardUntilDate() {
+    if (!buryUntil) {
+      openBuryUntilPicker('bury');
+      return;
+    }
+    buryCardUntil(buryUntil);
+  }
+
+  function buryCardUntil(date: string) {
+    setDueDate('card', dayAfter(date), `Card buried until after ${formatBuryUntil(date)}.`);
+  }
+
+  function openBuryUntilPicker(mode: 'bury' | 'change') {
+    setBuryUntilValue(buryUntil ?? '');
+    setBuryUntilPicker(mode);
+  }
+
+  function saveBuryUntil() {
+    if (!buryUntilValue) return;
+    setBuryUntil(buryUntilValue);
+    setBuryUntilPicker(null);
+    if (buryUntilPicker === 'bury') buryCardUntil(buryUntilValue);
   }
 
   async function flagNote() {
@@ -852,6 +886,7 @@ export default function ReviewPage() {
     { keys: ['b'], description: 'Bury card', available: cardShown },
     { keys: ['B'], description: 'Bury note (card + siblings)', available: cardShown },
     { keys: ['l'], description: 'Bury card until later today', available: cardShown },
+    { keys: ['d'], description: buryUntil ? `Bury card until after ${formatBuryUntil(buryUntil)}` : 'Bury card until after a date, e.g. an exam', available: cardShown },
     { keys: ['s'], description: 'Suspend card', available: cardShown },
     { keys: ['e'], description: cardShown && panelNote?.id === card.note_id ? 'Close note' : 'Edit note', available: cardShown },
     { keys: ['f'], description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ''}`, available: cardShown && config !== null },
@@ -881,7 +916,7 @@ export default function ReviewPage() {
       const key = e.code === 'Space' ? 'Space' : e.key;
       if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
       const actions: Record<string, () => void> = {
-        Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, s: suspendCard, e: toggleCardNote,
+        Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
         f: flagNote, q: switchQuery, r: replayAudio,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
@@ -1114,6 +1149,12 @@ export default function ReviewPage() {
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <button onClick={buryCard} className="touch-target-small" style={toned(TONES.orange, { ...actionButton, flex: 1 })}>Bury Card</button>
                   <button onClick={buryNote} className="touch-target-small" style={toned(TONES.orange, { ...actionButton, flex: 1 })}>Bury Note</button>
+                  {/* Only once a date is picked, so the row stays short when the session has none */}
+                  {buryUntil && (
+                    <button onClick={buryCardUntilDate} className="touch-target-small" style={toned(TONES.orange, { ...actionButton, flex: 1 })}>
+                      Until {formatBuryUntil(buryUntil)}
+                    </button>
+                  )}
                 </div>
               )}
               {phase === 'front' ? (
@@ -1193,6 +1234,22 @@ export default function ReviewPage() {
                   {!isNarrow && <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span className="key-hint">(b)</span></button>}
                   <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings) <span className="key-hint">(B)</span></button>
                   <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today <span className="key-hint">(l)</span></button>
+                  <button onClick={buryCardUntilDate} style={toned(TONES.orange)}>
+                    {buryUntil ? `Bury Card Until After ${formatBuryUntil(buryUntil)}` : 'Bury Card Until After…'} <span className="key-hint">(d)</span>
+                  </button>
+                  {buryUntil && <button onClick={() => openBuryUntilPicker('change')} style={toned(TONES.gray)}>Change Date</button>}
+                  {buryUntilPicker && (
+                    <form
+                      onSubmit={e => { e.preventDefault(); saveBuryUntil(); }}
+                      style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, flexBasis: '100%' }}
+                    >
+                      <span>Bury cards until after (e.g. the exam), remembered for this query or tag:</span>
+                      <input type="date" value={buryUntilValue} min={localDateString()} onChange={e => setBuryUntilValue(e.target.value)} autoFocus />
+                      <button type="submit" disabled={!buryUntilValue} style={toned(TONES.orange)}>{buryUntilPicker === 'bury' ? 'Bury' : 'Save'}</button>
+                      {buryUntilPicker === 'change' && <button type="button" onClick={() => { setBuryUntil(null); setBuryUntilPicker(null); }} style={toned(TONES.gray)}>Clear</button>}
+                      <button type="button" onClick={() => setBuryUntilPicker(null)} style={toned(TONES.gray)}>Cancel</button>
+                    </form>
+                  )}
                   {!isNarrow && <button onClick={suspendCard} style={toned(TONES.purple)}>Suspend Card <span className="key-hint">(s)</span></button>}
                   <button onClick={suspendNote} style={toned(TONES.purple)}>Suspend Note (card + siblings)</button>
                   <button onClick={forget} style={toned(TONES.red)}>Forget Card</button>

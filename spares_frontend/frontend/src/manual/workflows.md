@@ -38,6 +38,12 @@ spares import --to-parser="markdown" aaa.tex aab.tex
 
 See `spares import --help` for converting notes kept in a git or jj repository.
 
+## Putting cards off until after an exam
+
+While reviewing a tag for an exam, some cards, such as long proofs, matter in the long run but not for the exam. On the Review page, **Bury Card Until After…** (`d`) asks for the exam's date the first time, then sets the card due the day after it. The date is remembered in this browser for the query or tag being reviewed, so the next card it is pressed on is put off without asking, and the button sits beside Bury Card and Bury Note above the answer on phones. Since the cards come back on a set date rather than after a set number of days, they land after the exam however close it gets. Change Date picks another one, and a date that has passed is forgotten.
+
+Only the card is put off, not its siblings, since a note's other cards may still matter for the exam.
+
 ## Unbury cards matching query
 
 ```sh
