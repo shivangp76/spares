@@ -17,6 +17,7 @@ import herosBoldUrl from './fonts/texgyreheros-bold.otf?url';
 import herosItalicUrl from './fonts/texgyreheros-italic.otf?url';
 import herosBoldItalicUrl from './fonts/texgyreheros-bolditalic.otf?url';
 import { fetchRenderAsset, listRenderPackages, listRenderSources } from '../api/client';
+import { errorMessage } from '../utils';
 
 // Typst's own fonts, which the service worker keeps (see service-worker.js): New Computer Modern,
 // for text and math, and DejaVu Sans Mono, for code. Not its default text font, Libertinus Serif,
@@ -45,6 +46,8 @@ const MAX_COMPILE_ROUNDS = 10;
 const missingFiles = new Set<string>();
 /** Files already requested from the server, whether or not it had them. */
 const requestedFiles = new Set<string>();
+/** Requested files the server did not have. */
+const unavailableFiles = new Set<string>();
 const packageTarballs = new Map<string, Uint8Array>();
 
 // Package files are extracted under `/@memory/`. Every other path is a local file.
@@ -116,6 +119,13 @@ function prefetchPackages(): Promise<void> {
   return packagesPrefetched;
 }
 
+/** Gives the compiler `path`, as fetched from the server, or records that the server does not have it. */
+async function addFile(path: string, data: Uint8Array | null): Promise<void> {
+  requestedFiles.add(path);
+  if (data) await $typst.mapShadow(path, data);
+  else unavailableFiles.add(path);
+}
+
 let sourcesLoaded: Promise<void> | null = null;
 
 /**
@@ -127,10 +137,7 @@ function loadSources(): Promise<void> {
     const paths = (await listRenderSources()).filter(path => !requestedFiles.has(path));
     const files = await Promise.all(paths.map(async path => [path, await fetchRenderAsset(path)] as const));
     // One at a time, since the first creates the compiler
-    for (const [path, data] of files) {
-      requestedFiles.add(path);
-      if (data) await $typst.mapShadow(path, data);
-    }
+    for (const [path, data] of files) await addFile(path, data);
   })();
   // Allow retrying after e.g. a network error.
   sourcesLoaded.catch(() => { sourcesLoaded = null; });
@@ -149,20 +156,30 @@ async function init(): Promise<void> {
 async function compileNow(source: string, inputs: Record<string, string>): Promise<string> {
   await init();
   await $typst.addSource(MAIN_FILE_PATH, source);
+  const missing = new Set<string>();
   for (let round = 1; ; round++) {
     missingFiles.clear();
     try {
       return await $typst.svg({ mainFilePath: MAIN_FILE_PATH, inputs });
     } catch (e) {
+      missingFiles.forEach(path => missing.add(path));
       const newFiles = [...missingFiles].filter(path => !requestedFiles.has(path));
-      if (newFiles.length === 0 || round >= MAX_COMPILE_ROUNDS) throw e;
-      await Promise.all(newFiles.map(async path => {
-        const data = await fetchRenderAsset(path);
-        requestedFiles.add(path);
-        if (data) await $typst.mapShadow(path, data);
-      }));
+      if (newFiles.length === 0 || round >= MAX_COMPILE_ROUNDS) throw withUnavailableFiles(e, source, missing);
+      await Promise.all(newFiles.map(async path => addFile(path, await fetchRenderAsset(path))));
     }
   }
+}
+
+/**
+ * `error`, the diagnostics of compiling `source`, naming the files it read that the server does not
+ * have. The compiler reports a file it cannot read as "access denied", which does not say which.
+ * It only asks for such a file once, so later compiles find it in `source` instead of `missing`.
+ */
+function withUnavailableFiles(error: unknown, source: string, missing: Set<string>): unknown {
+  const unavailable = [...unavailableFiles].filter(path => missing.has(path) || source.includes(`"${path}"`));
+  if (unavailable.length === 0) return error;
+  const files = unavailable.map(path => `  ${path}`).join('\n');
+  return `The server has no copy of these files the source reads:\n${files}\n\n${errorMessage(error)}`;
 }
 
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
