@@ -468,12 +468,18 @@ export interface NoteGraphRequest {
   max_score: number | null;
   /** Every link up if `null`. */
   ancestor_depth: number | null;
+  /** Links down to the notes that build on those found: every one if `null`, none if 0. */
+  descendant_depth: number | null;
+  /** Queries a note is put in the first group of, to color it by. */
+  groups: string[];
   max_nodes: number;
 }
 
 export interface NoteGraphResponse {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Links matching no note's keyword: notes yet to be written. */
+  unmatched: UnmatchedLink[];
   truncated: boolean;
   links_generated: boolean;
 }
@@ -482,11 +488,22 @@ export interface GraphNode {
   id: number;
   keywords: string[];
   tags: string[];
-  /** Whether the query found it, rather than a note it found linking to it. */
-  in_query: boolean;
-  /** Links up from the nearest note the query found. */
+  /** `unmatched` is never sent: the graph page makes those nodes for unmatched links. */
+  relation: GraphRelation;
+  /** Links from the nearest note the query found. */
   depth: number;
+  /** The index of the first group whose query finds it. */
+  group: number | null;
   cards: GraphNodeCards;
+}
+
+/** Why a note is in a graph: the query found it, a note found builds on it, or it builds on one. */
+export type GraphRelation = 'found' | 'prerequisite' | 'dependent' | 'unmatched';
+
+export interface UnmatchedLink {
+  /** The note with the link. */
+  from: number;
+  keyword: string;
 }
 
 /** Suspended cards are counted only as suspended. */

@@ -1,5 +1,5 @@
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force';
-import type { GraphEdge, GraphNode, GraphNodeCards } from './types/spares';
+import type { GraphEdge, GraphNode, GraphNodeCards, GraphRelation, UnmatchedLink } from './types/spares';
 
 export interface Point { x: number; y: number }
 
@@ -249,3 +249,59 @@ export function tagColor(tag: string | undefined): string {
   for (const c of top) hash = (hash * 31 + c.charCodeAt(0)) | 0;
   return `var(${TAG_COLORS[Math.abs(hash) % TAG_COLORS.length]})`;
 }
+
+/** The colors a group of the graph can have, by name. */
+export const GROUP_COLORS: Record<string, string> = {
+  blue: 'var(--tone-blue-fg)',
+  green: 'var(--tone-green-fg)',
+  orange: 'var(--tone-orange-fg)',
+  purple: 'var(--tone-purple-fg)',
+  teal: 'var(--tone-teal-fg)',
+  red: 'var(--tone-red-fg)',
+  pink: 'var(--chart-relearning)',
+};
+
+/** A group of the graph: the notes `query` finds, drawn in `color`, a key of `GROUP_COLORS`. */
+export interface GraphGroup { color: string; query: string }
+
+/** A group as kept in the URL, as in `red:tag=exam`. */
+export function parseGroup(param: string): GraphGroup {
+  const at = param.indexOf(':');
+  const color = at < 0 ? '' : param.slice(0, at);
+  return color in GROUP_COLORS ? { color, query: param.slice(at + 1) } : { color: 'blue', query: param };
+}
+
+export const formatGroup = ({ color, query }: GraphGroup) => `${color}:${query}`;
+
+/**
+ * Nodes for the keywords `unmatched` links search for, which no note has, one per keyword
+ * ignoring case, with ids below 0, and an edge to each from each note with such a link.
+ */
+export function unmatchedNodes(unmatched: UnmatchedLink[]): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const ids = new Map<string, number>();
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+  const seen = new Set<string>();
+  for (const { from, keyword } of unmatched) {
+    const key = keyword.toLowerCase();
+    let id = ids.get(key);
+    if (id === undefined) {
+      id = -(ids.size + 1);
+      ids.set(key, id);
+      nodes.push({ id, keywords: [keyword], tags: [], relation: 'unmatched', depth: 0, group: null, cards: { new: 0, learning: 0, review: 0, suspended: 0 } });
+    }
+    if (!seen.has(`${from} ${id}`)) {
+      seen.add(`${from} ${id}`);
+      edges.push({ from, to: id, keyword, score: null });
+    }
+  }
+  return { nodes, edges };
+}
+
+/** The colors of `relation`, when notes are colored by it. */
+export const RELATION_COLORS: Record<GraphRelation, { color: string; label: string }> = {
+  found: { color: 'var(--accent)', label: 'Found' },
+  prerequisite: { color: 'var(--text-faint)', label: 'Built on' },
+  dependent: { color: 'var(--tone-purple-fg)', label: 'Building on them' },
+  unmatched: { color: 'var(--text-muted)', label: 'No such note' },
+};

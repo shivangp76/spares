@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { backEdges, bounds, forceLayout, layOut, layeredLayout, layers, lineage, maxRowLength, studyState } from './graphLayout';
+import { backEdges, bounds, forceLayout, formatGroup, layOut, layeredLayout, layers, lineage, maxRowLength, parseGroup, studyState, unmatchedNodes } from './graphLayout';
 import type { GraphEdge } from './types/spares';
 
 const edge = (from: number, to: number): GraphEdge => ({ from, to, keyword: '', score: 0 });
@@ -83,4 +83,21 @@ test('studyState', () => {
 test('bounds', () => {
   expect(bounds([{ x: 0, y: 0 }, { x: 10, y: 20 }], 5)).toEqual({ x: -5, y: -5, width: 20, height: 30 });
   expect(bounds([], 5)).toEqual({ x: -5, y: -5, width: 10, height: 10 });
+});
+
+test('groups round-trip through the URL, and take blue without a color', () => {
+  expect(parseGroup(formatGroup({ color: 'red', query: 'tag=a:b' }))).toEqual({ color: 'red', query: 'tag=a:b' });
+  expect(parseGroup('tag=exam')).toEqual({ color: 'blue', query: 'tag=exam' });
+  expect(parseGroup('nope:x')).toEqual({ color: 'blue', query: 'nope:x' });
+});
+
+test('unmatched links make one node per keyword, ignoring case', () => {
+  const { nodes, edges } = unmatchedNodes([
+    { from: 1, keyword: 'Zeta' },
+    { from: 2, keyword: 'zeta' },
+    { from: 2, keyword: 'ZETA' },
+    { from: 1, keyword: 'eta' },
+  ]);
+  expect(nodes.map(n => [n.id, n.keywords[0], n.relation])).toEqual([[-1, 'Zeta', 'unmatched'], [-2, 'eta', 'unmatched']]);
+  expect(edges.map(e => [e.from, e.to])).toEqual([[1, -1], [2, -1], [1, -2]]);
 });

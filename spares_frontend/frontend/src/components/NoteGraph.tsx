@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { STUDY_COLORS, bounds, forceSimulationOf, lineage, nodeLabel, studyState, tagColor, type ForceNode, type ForceSimulation, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
+import { RELATION_COLORS, STUDY_COLORS, bounds, forceSimulationOf, lineage, nodeLabel, studyState, tagColor, type ForceNode, type ForceSimulation, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
 import type { GraphEdge, GraphNode } from '../types/spares';
 import { formatNoteId } from '../utils';
 
@@ -17,11 +17,25 @@ const ZOOM_STEP = 1.4;
 /** How far the pointer can move and still click rather than drag. */
 const CLICK_SLOP = 4;
 
-function nodeColor(node: GraphNode, colorBy: GraphColor): string {
+function nodeColor(node: GraphNode, colorBy: GraphColor, groupColors: string[]): string {
+  if (node.relation === 'unmatched') return RELATION_COLORS.unmatched.color;
+  // Groups are colored over the rest, as in Obsidian
+  if (node.group !== null && groupColors[node.group]) return groupColors[node.group];
   switch (colorBy) {
-    case 'scope': return node.in_query ? 'var(--accent)' : 'var(--text-faint)';
+    case 'scope': return RELATION_COLORS[node.relation].color;
     case 'study': return STUDY_COLORS[studyState(node.cards)].color;
     case 'tag': return tagColor(node.tags[0]);
+  }
+}
+
+/** What a note's tooltip says about why it is shown. */
+function relationText({ relation, depth }: GraphNode): string {
+  const links = `${depth} link${depth === 1 ? '' : 's'}`;
+  switch (relation) {
+    case 'found': return 'Found by the query';
+    case 'prerequisite': return `Built on by a note found, ${links} down`;
+    case 'dependent': return `Builds on a note found, ${links} up`;
+    case 'unmatched': return 'No note has this keyword yet';
   }
 }
 
@@ -54,6 +68,8 @@ interface Props {
   edges: GraphEdge[];
   layout: GraphLayout;
   colorBy: GraphColor;
+  /** The color of each group, by its index, over `colorBy`. */
+  groupColors: string[];
   selected: number | null;
   onSelect: (id: number | null) => void;
   /** Notes to ring, such as those a search in the graph finds. */
@@ -69,7 +85,7 @@ interface Props {
  * background to pan, the wheel to zoom, and in the force layout, drag a note to move it.
  * Pointing at a note shows the notes it builds on and those that build on it.
  */
-export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onSelect, marked, centerOn, height, ref }: Props) {
+export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, selected, onSelect, marked, centerOn, height, ref }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [view, setView] = useState<Transform>({ x: 400, y: 300, k: 1 });
@@ -251,9 +267,12 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
                 stroke={lit ? 'var(--accent)' : 'var(--border-strong)'}
                 strokeWidth={lit ? 1.5 : 1}
                 opacity={family === null || lit ? 1 : 0.15}
+                strokeDasharray={edge.to < 0 ? '3 3' : undefined}
                 markerEnd="url(#graph-arrow)"
               >
-                <title>{`${formatNoteId(edge.from)} links to ${formatNoteId(edge.to)} by "${edge.keyword}"${edge.score === null ? '' : ` (score ${edge.score})`}`}</title>
+                <title>{edge.to < 0
+                  ? `${formatNoteId(edge.from)} links to "${edge.keyword}", which no note has`
+                  : `${formatNoteId(edge.from)} links to ${formatNoteId(edge.to)} by "${edge.keyword}"${edge.score === null ? '' : ` (score ${edge.score})`}`}</title>
               </line>
             );
           })}
@@ -261,7 +280,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
             const at = placed.at.get(node.id);
             if (!at) return null;
             const r = radius(node);
-            const color = nodeColor(node, colorBy);
+            const color = nodeColor(node, colorBy, groupColors);
             const isSelected = node.id === selected;
             const showLabel = isSelected || node.id === hovered || marked.has(node.id) || (showAllLabels ? inFamily(node.id) : family !== null && family.has(node.id));
             const { new: n, learning, review, suspended } = node.cards;
@@ -277,10 +296,10 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
               >
                 <title>
                   {[
-                    `${node.keywords.join(', ') || '(no keywords)'} · ${formatNoteId(node.id)}`,
-                    node.in_query ? 'Found by the query' : `Built on by a note found, ${node.depth} link${node.depth === 1 ? '' : 's'} down`,
+                    node.relation === 'unmatched' ? `"${node.keywords[0]}"` : `${node.keywords.join(', ') || '(no keywords)'} · ${formatNoteId(node.id)}`,
+                    relationText(node),
                     node.tags.length > 0 ? `Tags: ${node.tags.join(', ')}` : null,
-                    `Cards: ${n} new, ${learning} learning, ${review} review${suspended ? `, ${suspended} suspended` : ''}`,
+                    node.relation === 'unmatched' ? null : `Cards: ${n} new, ${learning} learning, ${review} review${suspended ? `, ${suspended} suspended` : ''}`,
                   ].filter(Boolean).join('\n')}
                 </title>
                 {marked.has(node.id) && <circle r={r + 4} fill="none" stroke="var(--warning)" strokeWidth={2} />}
@@ -288,9 +307,10 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, selected, onS
                   r={r}
                   fill={color}
                   // Notes the query didn't find are hollow, whatever they are colored by
-                  fillOpacity={node.in_query ? 1 : 0.25}
+                  fillOpacity={node.relation === 'found' ? 1 : node.relation === 'unmatched' ? 0 : 0.25}
                   stroke={isSelected ? 'var(--text)' : color}
                   strokeWidth={isSelected ? 2.5 : 1.5}
+                  strokeDasharray={node.relation === 'unmatched' ? '2 2' : undefined}
                 />
                 {showLabel && (
                   <text

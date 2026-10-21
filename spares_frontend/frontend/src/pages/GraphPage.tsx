@@ -4,7 +4,7 @@ import { ApiError, getNote, getNoteGraph } from '../api/client';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import NoteGraph, { type GraphLayout, type NoteGraphHandle } from '../components/NoteGraph';
-import { STUDY_COLORS, tagColor } from '../graphLayout';
+import { GROUP_COLORS, RELATION_COLORS, STUDY_COLORS, formatGroup, parseGroup, tagColor, unmatchedNodes, type GraphGroup } from '../graphLayout';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
@@ -12,7 +12,7 @@ import { useDetailView } from '../hooks/useDetailView';
 import { usePageKeys } from '../hooks/usePageKeys';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useSavedSearches } from '../hooks/useSavedSearches';
-import type { NoteGraphResponse, NoteResponse } from '../types/spares';
+import type { GraphNode, GraphRelation, NoteGraphResponse, NoteResponse } from '../types/spares';
 import { errorMessage, formatNoteId, keepShown } from '../utils';
 
 const MAX_NODES = 2000;
@@ -34,6 +34,15 @@ function numberParam(value: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** How many of `nodes` are there for each reason. */
+function countRelations(nodes: GraphNode[]): Record<GraphRelation, number> {
+  const counts = { found: 0, prerequisite: 0, dependent: 0, unmatched: 0 };
+  for (const n of nodes) counts[n.relation]++;
+  return counts;
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 export default function GraphPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -43,8 +52,22 @@ export default function GraphPage() {
   const layout: GraphLayout = searchParams.get('layout') === 'layered' ? 'layered' : 'force';
   const colorBy = (['scope', 'study', 'tag'] as const).find(c => c === searchParams.get('color')) ?? 'scope';
   const depth = numberParam(searchParams.get('depth'));
+  // None unless asked for, and every one for `all`
+  const downParam = searchParams.get('down');
+  const descendantDepth = downParam === 'all' ? null : numberParam(downParam) ?? 0;
   const maxScore = numberParam(searchParams.get('score'));
   const hideIsolated = searchParams.get('isolated') === 'hide';
+  const showUnmatched = searchParams.get('unmatched') === 'show';
+  const groupParams = searchParams.getAll('g');
+  // A string, to refetch only when the groups change, not each time the URL is read
+  const groupsKey = JSON.stringify(groupParams);
+  const groups = useMemo(() => (JSON.parse(groupsKey) as string[]).map(parseGroup), [groupsKey]);
+  // Edited here until a query is submitted, when they go in the URL
+  const [groupDrafts, setGroupDrafts] = useState<GraphGroup[]>(groups);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the boxes follow the URL, e.g. on back
+    setGroupDrafts(groups);
+  }, [groups]);
 
   const [query, setQuery] = useState(searchQuery);
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
@@ -54,6 +77,8 @@ export default function GraphPage() {
   const [find, setFind] = useState('');
   const [centerOn, setCenterOn] = useState<number | null>(null);
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
+  // A keyword no note has, picked in the graph
+  const [selectedMissing, setSelectedMissing] = useState<GraphNode | null>(null);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_graph_recent_searches');
   const { saved: savedSearches, remove: removeSavedSearch } = useSavedSearches();
@@ -71,7 +96,8 @@ export default function GraphPage() {
     setQuery(searchQuery);
     setLoading(true);
     let cancelled = false;
-    getNoteGraph({ query: searchQuery, max_score: maxScore, ancestor_depth: depth, max_nodes: MAX_NODES })
+    const groupQueries = groups.map(g => g.query);
+    getNoteGraph({ query: searchQuery, max_score: maxScore, ancestor_depth: depth, descendant_depth: descendantDepth, groups: groupQueries, max_nodes: MAX_NODES })
       .then(data => {
         if (cancelled) return;
         setGraph(data);
@@ -86,14 +112,32 @@ export default function GraphPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, searchQuery, maxScore, depth, saveRecent]);
+  }, [credentials, navigate, searchQuery, maxScore, depth, descendantDepth, groups, saveRecent]);
 
   const shown = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
-    if (!hideIsolated) return graph;
-    const linked = new Set(graph.edges.flatMap(e => [e.from, e.to]));
-    return { nodes: graph.nodes.filter(n => linked.has(n.id)), edges: graph.edges };
-  }, [graph, hideIsolated]);
+    let { nodes, edges } = graph;
+    if (showUnmatched) {
+      const missing = unmatchedNodes(graph.unmatched);
+      nodes = [...nodes, ...missing.nodes];
+      edges = [...edges, ...missing.edges];
+    }
+    if (hideIsolated) {
+      const linked = new Set(edges.flatMap(e => [e.from, e.to]));
+      nodes = nodes.filter(n => linked.has(n.id));
+    }
+    return { nodes, edges };
+  }, [graph, hideIsolated, showUnmatched]);
+
+  function saveGroups(next: GraphGroup[]) {
+    setGroupDrafts(next);
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev);
+      params.delete('g');
+      for (const group of next) params.append('g', formatGroup(group));
+      return params;
+    });
+  }
 
   const marked = useMemo(() => {
     const text = find.trim().toLowerCase();
@@ -108,7 +152,13 @@ export default function GraphPage() {
 
   async function select(id: number | null) {
     setPaneStatus(null);
+    setSelectedMissing(null);
     if (id === null) { setSelectedNote(null); return; }
+    if (id < 0) {
+      setSelectedNote(null);
+      setSelectedMissing(shown.nodes.find(n => n.id === id) ?? null);
+      return;
+    }
     try {
       setSelectedNote(await getNote(id));
     } catch (e) {
@@ -121,7 +171,7 @@ export default function GraphPage() {
     setCenterOn(id);
   }
 
-  const detail = useDetailView(selectedNote !== null, () => setSelectedNote(null));
+  const detail = useDetailView(selectedNote !== null || selectedMissing !== null, () => { setSelectedNote(null); setSelectedMissing(null); });
   const graphView = useRef<NoteGraphHandle>(null);
   const showingGraph = detail.showList && shown.nodes.length > 0;
   const keys = usePageKeys([
@@ -129,7 +179,11 @@ export default function GraphPage() {
     { keys: ['+'], codes: ['+', '='], description: 'Zoom in on the graph', available: showingGraph, run: () => graphView.current?.zoomIn() },
     { keys: ['-'], codes: ['-'], description: 'Zoom out of the graph', available: showingGraph, run: () => graphView.current?.zoomOut() },
   ]);
-  const inQuery = shown.nodes.filter(n => n.in_query).length;
+  const counts = countRelations(shown.nodes);
+  const missingFrom = selectedMissing
+    ? [...new Set((graph?.unmatched ?? []).filter(u => u.keyword.toLowerCase() === selectedMissing.keywords[0].toLowerCase()).map(u => u.from))]
+    : [];
+  const groupColors = groups.map(g => GROUP_COLORS[g.color]);
   const topTags = useMemo(() => {
     const counts = new Map<string, number>();
     for (const n of shown.nodes) {
@@ -183,11 +237,19 @@ export default function GraphPage() {
                 <option value="tag">Tag</option>
               </select>
             </label>
-            <label title="How many links up from the notes found to follow">
-              Depth{' '}
+            <label title="How many links up from the notes found to follow, to the notes they build on">
+              Built on{' '}
               <select value={depth ?? ''} onChange={e => setParam('depth', e.target.value || null)} style={input}>
                 <option value="">All</option>
                 {DEPTHS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+            <label title="How many links down from the notes found to follow, to the notes that build on them, even those the query doesn't find">
+              Building on them{' '}
+              <select value={downParam === 'all' ? 'all' : descendantDepth ?? 0} onChange={e => setParam('down', e.target.value === '0' ? null : e.target.value)} style={input}>
+                <option value="0">None</option>
+                {DEPTHS.map(d => <option key={d} value={d}>{d}</option>)}
+                <option value="all">All</option>
               </select>
             </label>
             <label title="The highest score a link can have and still be shown: 0 matches a keyword exactly, and higher scores allow plurals, typos and shared stems">
@@ -199,6 +261,9 @@ export default function GraphPage() {
             </label>
             <label>
               <input type="checkbox" checked={hideIsolated} onChange={e => setParam('isolated', e.target.checked ? 'hide' : null)} /> Hide unlinked notes
+            </label>
+            <label title="Show the keywords notes link to that no note has, which are notes yet to be written">
+              <input type="checkbox" checked={showUnmatched} onChange={e => setParam('unmatched', e.target.checked ? 'show' : null)} /> Unmatched links
             </label>
             <input
               type="search"
@@ -215,6 +280,42 @@ export default function GraphPage() {
             />
           </div>
 
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 13 }}>
+            <span title="Color the notes a query finds, over the colors above. A note takes the first group that finds it." style={{ color: 'var(--text-secondary)' }}>Groups</span>
+            {groupDrafts.map((group, i) => (
+              <span key={i} style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                <select
+                  value={group.color}
+                  onChange={e => saveGroups(groupDrafts.map((g, j) => (j === i ? { ...g, color: e.target.value } : g)))}
+                  aria-label={`Color of group ${i + 1}`}
+                  style={{ ...input, color: GROUP_COLORS[group.color], fontWeight: 600 }}
+                >
+                  {Object.keys(GROUP_COLORS).map(c => <option key={c} value={c}>● {c}</option>)}
+                </select>
+                <SearchInput
+                  value={group.query}
+                  onChange={q => setGroupDrafts(groupDrafts.map((g, j) => (j === i ? { ...g, query: q } : g)))}
+                  onSubmit={q => saveGroups(groupDrafts.map((g, j) => (j === i ? { ...g, query: q } : g)))}
+                  placeholder="e.g. tag=exam"
+                  ariaLabel={`Query of group ${i + 1}, applied with Enter`}
+                  style={{ minWidth: 140, maxWidth: 220 }}
+                  inputStyle={input}
+                />
+                <button onClick={() => saveGroups(groupDrafts.filter((_, j) => j !== i))} style={{ padding: '2px 8px', fontSize: 12 }} aria-label={`Remove group ${i + 1}`}>×</button>
+              </span>
+            ))}
+            <button
+              onClick={() => {
+                const used = new Set(groupDrafts.map(g => g.color));
+                const color = Object.keys(GROUP_COLORS).find(c => !used.has(c)) ?? 'blue';
+                setGroupDrafts([...groupDrafts, { color, query: '' }]);
+              }}
+              style={chip}
+            >
+              New group
+            </button>
+          </div>
+
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {graph && !graph.links_generated && (
             <div style={{ fontSize: 13, color: 'var(--warning)', marginBottom: 8 }}>Links between notes haven't been found yet. Render the notes, as with `spares note render`, to find them.</div>
@@ -224,21 +325,30 @@ export default function GraphPage() {
           )}
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <span>
-              {loading ? 'Loading…' : `${inQuery} note${inQuery === 1 ? '' : 's'} found, ${shown.nodes.length - inQuery} built on, ${shown.edges.length} link${shown.edges.length === 1 ? '' : 's'}`}
+              {loading ? 'Loading…' : [
+                `${plural(counts.found, 'note')} found`,
+                `${counts.prerequisite} built on`,
+                counts.dependent > 0 ? `${counts.dependent} building on them` : null,
+                counts.unmatched > 0 ? `${plural(counts.unmatched, 'keyword')} with no note` : null,
+                plural(shown.edges.length, 'link'),
+              ].filter(Boolean).join(', ')}
               {find.trim() && ` · ${marked.size} match${marked.size === 1 ? '' : 'es'}`}
             </span>
             <span style={{ marginLeft: 'auto' }}>
-              {colorBy === 'scope' && <>
-                <span style={{ marginRight: 10 }}><span style={legendDot('var(--accent)')} />Found</span>
-                <span><span style={legendDot('var(--text-faint)', true)} />Built on</span>
-              </>}
+              {groups.map((g, i) => g.query.trim() && (
+                <span key={`group-${i}`} style={{ marginRight: 10 }}><span style={legendDot(GROUP_COLORS[g.color])} />{g.query}</span>
+              ))}
+              {colorBy === 'scope' && (['found', 'prerequisite', 'dependent'] as const).filter(r => r === 'found' || counts[r] > 0).map(r => (
+                <span key={r} style={{ marginRight: 10 }}><span style={legendDot(RELATION_COLORS[r].color, r !== 'found')} />{RELATION_COLORS[r].label}</span>
+              ))}
               {colorBy === 'study' && Object.values(STUDY_COLORS).map(({ color, label }) => (
                 <span key={label} style={{ marginRight: 10 }}><span style={legendDot(color)} />{label}</span>
               ))}
               {colorBy === 'tag' && topTags.map(tag => (
                 <span key={tag} style={{ marginRight: 10 }}><span style={legendDot(tagColor(tag))} />{tag}</span>
               ))}
-              {colorBy !== 'scope' && <span style={{ color: 'var(--text-muted)' }}><span style={legendDot('var(--text-muted)', true)} />hollow: built on</span>}
+              {colorBy !== 'scope' && <span style={{ color: 'var(--text-muted)', marginRight: 10 }}><span style={legendDot('var(--text-muted)', true)} />hollow: not found</span>}
+              {counts.unmatched > 0 && <span style={{ color: 'var(--text-muted)' }}><span style={{ ...legendDot(RELATION_COLORS.unmatched.color, true), borderStyle: 'dashed' }} />{RELATION_COLORS.unmatched.label}</span>}
             </span>
           </div>
 
@@ -251,7 +361,8 @@ export default function GraphPage() {
               edges={shown.edges}
               layout={layout}
               colorBy={colorBy}
-              selected={selectedNote?.id ?? null}
+              groupColors={groupColors}
+              selected={selectedNote?.id ?? selectedMissing?.id ?? null}
               onSelect={id => void select(id)}
               marked={marked}
               centerOn={centerOn}
@@ -260,11 +371,23 @@ export default function GraphPage() {
           )}
         </div>
 
-        {(selectedNote || paneStatus || !detail.isNarrow) && (
+        {(selectedNote || selectedMissing || paneStatus || !detail.isNarrow) && (
           <div style={{ flex: 1, minWidth: 0 }}>
             {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to graph</button>}
             {paneStatus && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{paneStatus}</div>}
-            {selectedNote ? (
+            {selectedMissing ? (
+              <div style={{ fontSize: 14 }}>
+                <p style={{ marginTop: 0 }}>No note has the keyword <strong>{selectedMissing.keywords[0]}</strong> yet. {plural(missingFrom.length, 'note links', 'notes link')} to it:</p>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {missingFrom.map(id => (
+                    <button key={id} onClick={() => openNote(id)} className="button-link" style={{ padding: '4px 10px', fontSize: 12 }}>
+                      {shown.nodes.find(n => n.id === id)?.keywords[0] ?? formatNoteId(id)} ({formatNoteId(id)})
+                    </button>
+                  ))}
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Write a note with this keyword, on the Notes page, for the links to it to find it.</p>
+              </div>
+            ) : selectedNote ? (
               <>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 13 }}>
                   <button onClick={() => { search(noteQuery(selectedNote.id)); detail.back(); }} className="touch-target-small" title="Show only this note and the notes it builds on">
