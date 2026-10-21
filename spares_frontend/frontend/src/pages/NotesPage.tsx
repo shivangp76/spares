@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedNotesPage, changeNotesParser, deleteNotes, exportNotes, getNote, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
@@ -313,6 +313,7 @@ export default function NotesPage() {
             <button onClick={() => handleSearch()} className="touch-target-small">Search</button>
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
+            <Link to={searchQuery ? `/graph?q=${encodeURIComponent(searchQuery)}` : '/graph'} className="hide-narrow" style={{ alignSelf: 'center', fontSize: 13 }} title="See how these notes link to the notes they build on">Graph</Link>
             <button onClick={startNewNote} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
           </div>
           <RecentSearches
@@ -446,7 +447,8 @@ export default function NotesPage() {
                     <button onClick={() => selectNote(displayedNotes[(selectedIndex + 1) % displayedNotes.length])} disabled={displayedNotes.length < 2} className="touch-target-small">Next</button>
                   </>
                 )}
-                <button onClick={deleteSelected} className="touch-target-small" style={{ marginLeft: 'auto', color: 'var(--danger)' }}>Delete note</button>
+                <Link to={`/graph?q=${encodeURIComponent(`id=${formatNoteId(selectedNote.id)}`)}`} style={{ marginLeft: 'auto' }} title="See the notes this note builds on">Show in graph</Link>
+                <button onClick={deleteSelected} className="touch-target-small" style={{ color: 'var(--danger)' }}>Delete note</button>
               </div>
               <NoteDetail
                 ref={notePane}

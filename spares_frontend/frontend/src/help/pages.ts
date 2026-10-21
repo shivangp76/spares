@@ -93,6 +93,19 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       { label: 'Editing notes', file: 'getting_started.md', heading: 'Editing notes' },
     ],
   },
+  '/graph': {
+    title: 'Graph',
+    about: [
+      'Each note is a circle, with an arrow to it from each note it links to by keyword: the notes it builds on. Notes the query finds are filled. The notes they link to are shown too, hollow, even when the query does not find them, while notes that link to them are left out. With no query, every note is shown.',
+      'Force pulls linked notes together, as in Obsidian. Layered puts each note below the notes it builds on. Point at a note to light up what it builds on and what builds on it, and click it to edit it.',
+      'Depth limits how many links up to follow. Link score leaves out links that only match a keyword loosely; by default it is the queue\'s `linked_note_max_score`. Color by How learned shows which notes a topic builds on have not been studied yet.',
+    ],
+    shortcuts: [...SEARCH_BOX_SHORTCUTS],
+    docs: [
+      { label: 'Linked notes', file: 'concepts.md', heading: 'Linked Notes' },
+      { label: 'Keywords', file: 'concepts.md', heading: 'Keywords' },
+    ],
+  },
   '/cards': {
     title: 'Cards',
     about: [

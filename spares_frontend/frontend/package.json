@@ -25,6 +25,7 @@
     "@replit/codemirror-vim": "^6.4.0",
     "@uiw/react-codemirror": "^4.25.12",
     "codemirror-lang-typst": "^0.6.0",
+    "d3-force": "^3.0.0",
     "marked": "^18.1.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

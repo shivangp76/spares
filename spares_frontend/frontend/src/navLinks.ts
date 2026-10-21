@@ -2,6 +2,7 @@
 export const NAV_LINKS = [
   { to: '/review', label: 'Review', key: 'r' },
   { to: '/notes', label: 'Notes', key: 'n' },
+  { to: '/graph', label: 'Graph', key: 'd' },
   { to: '/cards', label: 'Cards', key: 'c' },
   { to: '/tags', label: 'Tags', key: 't' },
   { to: '/parsers', label: 'Parsers', key: 'p' },

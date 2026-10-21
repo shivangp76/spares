@@ -461,6 +461,50 @@ export interface ImageOcclusionEditorConfig {
   initial_tool: string;
 }
 
+/** See `NoteGraphRequest` in `spares_core::schema::note`. */
+export interface NoteGraphRequest {
+  query: string;
+  /** The queue's `linked_note_max_score` if `null`. */
+  max_score: number | null;
+  /** Every link up if `null`. */
+  ancestor_depth: number | null;
+  max_nodes: number;
+}
+
+export interface NoteGraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  truncated: boolean;
+  links_generated: boolean;
+}
+
+export interface GraphNode {
+  id: number;
+  keywords: string[];
+  tags: string[];
+  /** Whether the query found it, rather than a note it found linking to it. */
+  in_query: boolean;
+  /** Links up from the nearest note the query found. */
+  depth: number;
+  cards: GraphNodeCards;
+}
+
+/** Suspended cards are counted only as suspended. */
+export interface GraphNodeCards {
+  new: number;
+  learning: number;
+  review: number;
+  suspended: number;
+}
+
+/** `from` links to `to`, the note it builds on. */
+export interface GraphEdge {
+  from: number;
+  to: number;
+  keyword: string;
+  score: number | null;
+}
+
 export interface LinkedNote {
   searched_keyword: string;
   linked_note_id: number | null;

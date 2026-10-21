@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 // Pages are loaded on demand so a page doesn't wait for the others' code, e.g. the note editor
 const CardsPage = lazy(() => import('./pages/CardsPage'))
+const GraphPage = lazy(() => import('./pages/GraphPage'))
 const ImageOcclusionPage = lazy(() => import('./pages/ImageOcclusionPage'))
 const KeywordsPage = lazy(() => import('./pages/KeywordsPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -20,6 +21,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/notes" element={<NotesPage />} />
+        <Route path="/graph" element={<GraphPage />} />
         <Route path="/cards" element={<CardsPage />} />
         <Route path="/tags" element={<TagsPage />} />
         <Route path="/parsers" element={<ParsersPage />} />

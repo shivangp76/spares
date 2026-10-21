@@ -10,6 +10,8 @@ import type {
   ImageOcclusionData,
   ImageOcclusionEditorConfig,
   MatchedKeywordResponse,
+  NoteGraphRequest,
+  NoteGraphResponse,
   NoteLink,
   NoteMatch,
   NoteRenderResponse,
@@ -670,6 +672,11 @@ export async function searchNotesPage(query: string, page: number, limit: number
     body: JSON.stringify({ query, output_type: 'Notes', page, limit }),
   });
   return { total: data.total, items: data.items.Notes };
+}
+
+/** The notes a query finds, with the notes they link to, as the graph page shows them. */
+export async function getNoteGraph(req: NoteGraphRequest): Promise<NoteGraphResponse> {
+  return apiFetch('Graph', '/api/notes/graph', { method: 'POST', body: JSON.stringify(req) });
 }
 
 export async function listNotes(page: number, limit: number): Promise<NoteResponse[]> {
