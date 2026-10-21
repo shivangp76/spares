@@ -25,6 +25,7 @@ use spares_core::notes_vcs::FinishResponse;
 use spares_core::notes_vcs::ReceiveRequest;
 use spares_core::notes_vcs::ReceiveResponse;
 use spares_core::notes_vcs::ReconcileScope;
+use spares_core::notes_vcs::RemoveSavedCopiesRequest;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::note::CreateNoteRequest;
 use spares_core::schema::note::CreateNotesRequest;
@@ -707,6 +708,36 @@ async fn test_reconcile_dirty_saves_overwritten(pool: SqlitePool) {
     let saved: Vec<PathBuf> = walk(&notes_vcs::overwritten_dir());
     assert!(saved.iter().any(|p| read(p) == "a hand edit\n"));
     assert!(saved.iter().any(|p| read(p) == "stray\n"));
+
+    let copies = notes_vcs::saved_copies();
+    assert_eq!(copies.len(), 3, "{copies:?}");
+    assert!(copies.iter().all(|c| !c.matches_current), "{copies:?}");
+    // The same edit pushed later leaves nothing in the copy that is lost
+    std::fs::write(&note, "a hand edit\n").unwrap();
+    assert_eq!(
+        notes_vcs::saved_copies()
+            .iter()
+            .filter(|c| c.matches_current)
+            .count(),
+        1
+    );
+    std::fs::write(&note, &committed).unwrap();
+
+    let escape = RemoveSavedCopiesRequest {
+        paths: vec![PathBuf::from("../config")],
+    };
+    assert!(notes_vcs::remove_saved_copies(&escape).is_err());
+    let all = RemoveSavedCopiesRequest {
+        paths: copies.into_iter().map(|c| c.path).collect(),
+    };
+    notes_vcs::remove_saved_copies(&all).unwrap();
+    assert!(notes_vcs::saved_copies().is_empty());
+    assert_eq!(
+        std::fs::read_dir(notes_vcs::overwritten_dir())
+            .unwrap()
+            .count(),
+        0
+    );
 }
 
 fn walk(dir: &Path) -> Vec<PathBuf> {

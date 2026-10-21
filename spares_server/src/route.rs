@@ -57,6 +57,7 @@ use crate::handlers::notes_vcs::notes_vcs_check_handler;
 use crate::handlers::notes_vcs::notes_vcs_finish_handler;
 use crate::handlers::notes_vcs::notes_vcs_init_handler;
 use crate::handlers::notes_vcs::notes_vcs_receive_handler;
+use crate::handlers::notes_vcs::notes_vcs_remove_saved_copies_handler;
 use crate::handlers::notes_vcs::notes_vcs_status_handler;
 use crate::handlers::parser::create_parser_handler;
 use crate::handlers::parser::delete_parser_handler;
@@ -146,7 +147,8 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
         )
 }
 
-/// Notes repository (`spares note init-vcs` and its push hooks)
+/// Notes repository (`spares note init-vcs`, its push hooks, and the web UI's notice of saved
+/// copies)
 fn notes_vcs_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/notes/vcs/status", get(notes_vcs_status_handler))
@@ -154,6 +156,10 @@ fn notes_vcs_routes() -> Router<Arc<AppState>> {
         .route("/api/notes/vcs/finish", post(notes_vcs_finish_handler))
         .route("/api/notes/vcs/init", post(notes_vcs_init_handler))
         .route("/api/notes/vcs/check", post(notes_vcs_check_handler))
+        .route(
+            "/api/notes/vcs/saved-copies/remove",
+            post(notes_vcs_remove_saved_copies_handler),
+        )
 }
 
 /// Two-way sync (`spares_core::sync`)

@@ -20,10 +20,11 @@ use super::receive::status;
 use super::reconcile::ReconcileReport;
 use super::reconcile::ReconcileScope;
 use super::reconcile::dirty_paths;
-use super::reconcile::overwritten_entries;
+use super::reconcile::overwritten_dir;
 use super::reconcile::reconcile;
 use super::reconcile::reconcile_dry_run;
 use super::reconcile::rename_quarantine_dir;
+use super::reconcile::saved_copies;
 use crate::Error;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
@@ -179,12 +180,29 @@ pub async fn startup(db: &SqlitePool) {
     if let Err(e) = reconcile(db, ReconcileScope::Dirty, None).await {
         log::error!("Failed to reconcile the notes repository: {e}");
     }
+    warn_of_saved_copies();
     match sync_gitignore() {
         Ok(true) => log::info!("Updated the notes repository's .gitignore"),
         Ok(false) => {}
         Err(e) => log::error!("Failed to update the notes repository's .gitignore: {e}"),
     }
     check_hooks();
+}
+
+/// Saved copies may hold edits that are nowhere else, and are kept until removed.
+fn warn_of_saved_copies() {
+    let copies = saved_copies();
+    if copies.is_empty() {
+        return;
+    }
+    let differing = copies.iter().filter(|c| !c.matches_current).count();
+    log::warn!(
+        "{} copies of files spares overwrote without having written them are saved in {}, and \
+         {differing} differ from the current file. Check in the web UI that nothing in them is \
+         lost, then delete them there.",
+        copies.len(),
+        overwritten_dir().display()
+    );
 }
 
 /// Makes the repository's `.gitignore` match [`GITIGNORE`], removing it if that is empty, and
@@ -252,8 +270,6 @@ pub struct CheckResponse {
     pub dirty: Vec<PathBuf>,
     /// What does not match the database (or what was fixed, with `fix`)
     pub report: ReconcileReport,
-    /// Directories of copies saved before overwriting, under [`overwritten_dir`](super::overwritten_dir)
-    pub overwritten: Vec<PathBuf>,
 }
 
 /// Compares every note file with the database. With `fix`, rewrites those that differ. The caller
@@ -264,7 +280,6 @@ pub async fn check(db: &SqlitePool, request: CheckRequest) -> Result<CheckRespon
             status: status(),
             dirty: Vec::new(),
             report: ReconcileReport::default(),
-            overwritten: Vec::new(),
         });
     }
     let dirty = dirty_paths(&server_repo_dir())?
@@ -287,7 +302,6 @@ pub async fn check(db: &SqlitePool, request: CheckRequest) -> Result<CheckRespon
         status: status(),
         dirty,
         report,
-        overwritten: overwritten_entries(),
     })
 }
 

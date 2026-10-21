@@ -41,7 +41,10 @@ use super::paths::enabled;
 use super::paths::parse_note_rel_path;
 use super::paths::server_repo_dir;
 use super::reconcile::ReconcileScope;
+use super::reconcile::SavedCopy;
+use super::reconcile::overwritten_dir;
 use super::reconcile::reconcile;
+use super::reconcile::saved_copies;
 use super::reconcile::write_db_note_files;
 use crate::Error;
 use crate::api::note::get_note_links_map;
@@ -109,6 +112,11 @@ pub struct StatusResponse {
     /// Outcome of the last push settled after its hook returned (rolled back, or committed as a
     /// partial import), until the next push starts
     pub last_incident: Option<String>,
+    /// Where [`saved_copies`] are
+    pub overwritten_dir: Option<PathBuf>,
+    /// Files spares overwrote or removed without having written them, which may hold edits that
+    /// are now nowhere else
+    pub saved_copies: Vec<SavedCopy>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -191,6 +199,8 @@ pub fn status() -> StatusResponse {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone(),
+        overwritten_dir: enabled.then(overwritten_dir),
+        saved_copies: if enabled { saved_copies() } else { Vec::new() },
     }
 }
 

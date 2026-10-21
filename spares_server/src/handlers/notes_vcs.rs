@@ -7,6 +7,7 @@ use spares_core::notes_vcs;
 use spares_core::notes_vcs::CheckRequest;
 use spares_core::notes_vcs::FinishRequest;
 use spares_core::notes_vcs::ReceiveRequest;
+use spares_core::notes_vcs::RemoveSavedCopiesRequest;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -58,4 +59,14 @@ pub(crate) async fn notes_vcs_check_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))
+}
+
+/// Deletes copies of files spares overwrote, once the user checked nothing in them is lost.
+pub(crate) async fn notes_vcs_remove_saved_copies_handler(
+    Json(body): Json<RemoveSavedCopiesRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    notes_vcs::run_exclusive(async move { notes_vcs::remove_saved_copies(&body) })
+        .await
+        .map_err(error_to_response)?;
+    Ok(StatusCode::NO_CONTENT)
 }

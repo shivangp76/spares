@@ -73,6 +73,13 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
     if report.is_empty() && check.dirty.is_empty() {
         println!("The repository matches the database.");
     }
-    print_paths("Copies saved before overwriting", &check.overwritten);
+    let saved: Vec<std::path::PathBuf> =
+        status.saved_copies.iter().map(|c| c.path.clone()).collect();
+    if let Some(dir) = &status.overwritten_dir {
+        print_paths(
+            &format!("Copies saved before overwriting, in {}", dir.display()),
+            &saved,
+        );
+    }
     Ok(())
 }

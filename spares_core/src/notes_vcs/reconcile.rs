@@ -70,7 +70,8 @@ impl ReconcileReport {
 }
 
 /// Where files spares did not write are saved before it overwrites or removes them, in a directory
-/// per reconcile named by its time. Nothing reads them back or removes them.
+/// per reconcile named by its time. Nothing reads them back, and they are kept until removed with
+/// [`remove_saved_copies`] (from the web UI's notice of them).
 pub fn overwritten_dir() -> PathBuf {
     server_repo_dir().join(".git").join("spares-overwritten")
 }
@@ -429,12 +430,87 @@ fn io_error(path: &Path, source: std::io::Error) -> Error {
     }
 }
 
-/// Directories under [`overwritten_dir`], oldest first.
-pub fn overwritten_entries() -> Vec<PathBuf> {
-    let Ok(dirs) = std::fs::read_dir(overwritten_dir()) else {
-        return Vec::new();
-    };
-    let mut entries: Vec<PathBuf> = dirs.filter_map(|e| e.ok().map(|e| e.path())).collect();
-    entries.sort();
-    entries
+/// A file saved under [`overwritten_dir`] before spares overwrote or removed it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SavedCopy {
+    /// Relative to [`overwritten_dir`]: the time it was saved, then its path in the repository
+    pub path: PathBuf,
+    /// Whether the repository's file at that path now has the same contents, so nothing in the
+    /// copy is lost (as when the same edit was pushed afterwards)
+    pub matches_current: bool,
+}
+
+/// Every copy under [`overwritten_dir`], oldest first.
+pub fn saved_copies() -> Vec<SavedCopy> {
+    let dir = overwritten_dir();
+    let repo = server_repo_dir();
+    let mut files = Vec::new();
+    walk_files(&dir, &mut files);
+    let mut copies: Vec<SavedCopy> = files
+        .into_iter()
+        .filter_map(|file| {
+            let path = file.strip_prefix(&dir).ok()?.to_path_buf();
+            let rel: PathBuf = path.components().skip(1).collect();
+            let matches_current = match (std::fs::read(&file), std::fs::read(repo.join(rel))) {
+                (Ok(saved), Ok(current)) => saved == current,
+                _ => false,
+            };
+            Some(SavedCopy {
+                path,
+                matches_current,
+            })
+        })
+        .collect();
+    copies.sort_by(|a, b| a.path.cmp(&b.path));
+    copies
+}
+
+fn walk_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_files(&path, files);
+        } else {
+            files.push(path);
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RemoveSavedCopiesRequest {
+    /// [`SavedCopy::path`]s to remove. The caller names them, so a copy saved after it looked is
+    /// kept.
+    pub paths: Vec<PathBuf>,
+}
+
+/// Removes saved copies, and the directories they leave empty. The caller holds the exclusive
+/// notes lock.
+pub fn remove_saved_copies(request: &RemoveSavedCopiesRequest) -> Result<(), Error> {
+    let dir = overwritten_dir();
+    for path in &request.paths {
+        if !path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(Error::NotesVcs(format!(
+                "Not a saved copy: {}",
+                path.display()
+            )));
+        }
+        let absolute = dir.join(path);
+        match std::fs::remove_file(&absolute) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_error(&absolute, e)),
+        }
+        // Empty parents, up to and including the time's directory
+        let mut parent = absolute.parent();
+        while let Some(p) = parent
+            && p != dir
+            && std::fs::remove_dir(p).is_ok()
+        {
+            parent = p.parent();
+        }
+    }
+    Ok(())
 }
