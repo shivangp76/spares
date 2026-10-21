@@ -15,11 +15,13 @@ use crate::model::Card;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
+use crate::model::Score;
 use crate::model::SpecialState;
 use crate::schema::card::CardResponse;
 use crate::schema::note::GraphEdge;
 use crate::schema::note::GraphNode;
 use crate::schema::note::GraphNodeCards;
+use crate::schema::note::GraphRelation;
 use crate::schema::note::MAX_GRAPH_NODES;
 use crate::schema::note::MatchedKeywordResponse;
 use crate::schema::note::NoteGraphRequest;
@@ -33,6 +35,7 @@ use crate::schema::note::SearchPageItems;
 use crate::schema::note::SearchPageRequest;
 use crate::schema::note::SearchPageResponse;
 use crate::schema::note::UnmatchedKeywordResponse;
+use crate::schema::note::UnmatchedLink;
 use crate::search::QueryReturnItemType;
 use crate::search::evaluator::Evaluator;
 use crate::search::evaluator::text_matches;
@@ -260,13 +263,14 @@ pub async fn get_note_graph(
         query,
         max_score,
         ancestor_depth,
+        descendant_depth,
+        groups,
         max_nodes,
     } = body;
     let max_score = match max_score {
         Some(score) => score,
         None => read_external_config()?.queue.linked_note_max_score,
     };
-    let max_nodes = max_nodes.clamp(1, MAX_GRAPH_NODES);
     let found: Vec<NoteId> = if query.trim().is_empty() {
         sqlx::query_scalar(r"SELECT id FROM note ORDER BY id")
             .fetch_all(db)
@@ -275,77 +279,180 @@ pub async fn get_note_graph(
     } else {
         Evaluator::new(&query).get_note_ids(db).await?
     };
-    let mut truncated = found.len() > max_nodes;
-
-    // Breadth first, so that when notes are left out, they are the furthest from those found
-    let mut depths: HashMap<NoteId, u32> = HashMap::new();
-    let mut order: Vec<NoteId> = Vec::new();
-    for id in found.into_iter().take(max_nodes) {
-        if depths.insert(id, 0).is_none() {
-            order.push(id);
-        }
+    let mut walk = GraphWalk {
+        max_score,
+        max_nodes: max_nodes.clamp(1, MAX_GRAPH_NODES),
+        truncated: false,
+        reached: HashMap::new(),
+        order: Vec::new(),
+    };
+    for id in found {
+        walk.reach(id, GraphRelation::Found, 0);
     }
-    let mut links: Vec<NoteLink> = Vec::new();
-    let mut level = order.clone();
-    let mut depth = 0;
-    while !level.is_empty() {
-        let links_map = get_note_links_map(db, &level).await?;
-        depth += 1;
-        let follow = ancestor_depth.is_none_or(|max| depth <= max);
-        let mut next = Vec::new();
-        for link in level.iter().filter_map(|id| links_map.get(id)).flatten() {
-            let Some(to) = link.linked_note_id else {
-                continue;
-            };
-            if link.score.is_some_and(|s| s > max_score) {
-                continue;
-            }
-            if let Entry::Vacant(entry) = depths.entry(to) {
-                if !follow {
-                    continue;
-                }
-                if order.len() >= max_nodes {
-                    truncated = true;
-                    continue;
-                }
-                entry.insert(depth);
-                order.push(to);
-                next.push(to);
-            }
-            links.push(link.clone());
-        }
-        level = next;
-    }
+    let found = walk.order.clone();
+    walk.follow(db, &found, GraphRelation::Prerequisite, ancestor_depth)
+        .await?;
+    walk.follow(db, &found, GraphRelation::Dependent, descendant_depth)
+        .await?;
 
+    // Every link between two notes shown, including those not followed to reach them
+    let links_map = get_note_links_map(db, &walk.order).await?;
     let mut seen_edges = HashSet::new();
-    let edges = links
-        .into_iter()
-        .filter(|link| {
-            let to = link.linked_note_id.unwrap_or(NoteId::UNSET);
-            depths.contains_key(&to) && seen_edges.insert((link.parent_note_id, to))
-        })
-        .map(|link| GraphEdge {
-            from: link.parent_note_id,
-            to: link.linked_note_id.unwrap_or(NoteId::UNSET),
-            keyword: link.matched_keyword.unwrap_or(link.searched_keyword),
-            score: link.score,
-        })
-        .collect();
+    let mut edges = Vec::new();
+    let mut unmatched = Vec::new();
+    for link in walk
+        .order
+        .iter()
+        .filter_map(|id| links_map.get(id))
+        .flatten()
+    {
+        match link.linked_note_id {
+            None => unmatched.push(UnmatchedLink {
+                from: link.parent_note_id,
+                keyword: link.searched_keyword.clone(),
+            }),
+            Some(to)
+                if walk.reached.contains_key(&to)
+                    && walk.keeps(link)
+                    && seen_edges.insert((link.parent_note_id, to)) =>
+            {
+                edges.push(GraphEdge {
+                    from: link.parent_note_id,
+                    to,
+                    keyword: link
+                        .matched_keyword
+                        .clone()
+                        .unwrap_or_else(|| link.searched_keyword.clone()),
+                    score: link.score,
+                });
+            }
+            Some(_) => {}
+        }
+    }
+
+    let mut group_of: HashMap<NoteId, usize> = HashMap::new();
+    for (i, group_query) in groups.iter().enumerate() {
+        if group_query.trim().is_empty() {
+            continue;
+        }
+        for id in Evaluator::new(group_query).get_note_ids(db).await? {
+            if walk.reached.contains_key(&id) {
+                group_of.entry(id).or_insert(i);
+            }
+        }
+    }
 
     Ok(NoteGraphResponse {
-        nodes: graph_nodes(db, order, &depths).await?,
+        nodes: graph_nodes(db, &walk, &group_of).await?,
         edges,
-        truncated,
+        unmatched,
+        truncated: walk.truncated,
         links_generated: read_internal_config(db).await?.linked_notes_generated,
     })
 }
 
-/// The keywords, tags and cards of the notes `order` lists, in its order.
+/// The notes a graph has reached so far, in the order they were reached.
+struct GraphWalk {
+    max_score: Score,
+    max_nodes: usize,
+    truncated: bool,
+    reached: HashMap<NoteId, (GraphRelation, u32)>,
+    order: Vec<NoteId>,
+}
+
+impl GraphWalk {
+    /// Whether `link` is close enough a match to follow.
+    fn keeps(&self, link: &NoteLink) -> bool {
+        link.score.is_none_or(|s| s <= self.max_score)
+    }
+
+    /// Adds `id` unless it is already there, returning whether it was added.
+    fn reach(&mut self, id: NoteId, relation: GraphRelation, depth: u32) -> bool {
+        let Entry::Vacant(entry) = self.reached.entry(id) else {
+            return false;
+        };
+        if self.order.len() >= self.max_nodes {
+            self.truncated = true;
+            return false;
+        }
+        entry.insert((relation, depth));
+        self.order.push(id);
+        true
+    }
+
+    /// Follows links from `start` up to the notes they build on, for `Prerequisite`, or down to
+    /// the notes that build on them, for `Dependent`, up to `max_depth` links away. Breadth
+    /// first, so that when notes are left out, they are the furthest away.
+    async fn follow(
+        &mut self,
+        db: &SqlitePool,
+        start: &[NoteId],
+        relation: GraphRelation,
+        max_depth: Option<u32>,
+    ) -> Result<(), Error> {
+        let mut level = start.to_vec();
+        let mut depth = 0;
+        while !level.is_empty() && max_depth.is_none_or(|max| depth < max) {
+            depth += 1;
+            let mut next = Vec::new();
+            let neighbors: Vec<NoteId> = if relation == GraphRelation::Dependent {
+                links_to(db, &level)
+                    .await?
+                    .into_iter()
+                    .filter(|link| self.keeps(link))
+                    .map(|link| link.parent_note_id)
+                    .collect()
+            } else {
+                let links_map = get_note_links_map(db, &level).await?;
+                level
+                    .iter()
+                    .filter_map(|id| links_map.get(id))
+                    .flatten()
+                    .filter(|link| self.keeps(link))
+                    .filter_map(|link| link.linked_note_id)
+                    .collect()
+            };
+            for id in neighbors {
+                if self.reach(id, relation, depth) {
+                    next.push(id);
+                }
+            }
+            level = next;
+        }
+        Ok(())
+    }
+}
+
+/// The links to any of `note_ids`.
+async fn links_to(db: &SqlitePool, note_ids: &[NoteId]) -> Result<Vec<NoteLink>, Error> {
+    let mut links = Vec::new();
+    // Under SQLite's limit on the number of bound values
+    for chunk in note_ids.chunks(MAX_GRAPH_NODES) {
+        let sql = format!(
+            "SELECT * FROM note_link WHERE linked_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as::<_, NoteLink>(&sql);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        links.extend(
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?,
+        );
+    }
+    Ok(links)
+}
+
+/// The keywords, tags and cards of the notes `walk` reached, in the order it reached them.
 async fn graph_nodes(
     db: &SqlitePool,
-    order: Vec<NoteId>,
-    depths: &HashMap<NoteId, u32>,
+    walk: &GraphWalk,
+    group_of: &HashMap<NoteId, usize>,
 ) -> Result<Vec<GraphNode>, Error> {
+    let order = &walk.order;
     let mut keywords: HashMap<NoteId, Vec<String>> = HashMap::new();
     let mut tags: HashMap<NoteId, Vec<String>> = HashMap::new();
     let mut cards: HashMap<NoteId, GraphNodeCards> = HashMap::new();
@@ -400,14 +507,18 @@ async fn graph_nodes(
         }
     }
     Ok(order
-        .into_iter()
-        .map(|id| GraphNode {
-            id,
-            keywords: keywords.remove(&id).unwrap_or_default(),
-            tags: tags.remove(&id).unwrap_or_default(),
-            in_query: depths[&id] == 0,
-            depth: depths[&id],
-            cards: cards.remove(&id).unwrap_or_default(),
+        .iter()
+        .map(|&id| {
+            let (relation, depth) = walk.reached[&id];
+            GraphNode {
+                id,
+                keywords: keywords.remove(&id).unwrap_or_default(),
+                tags: tags.remove(&id).unwrap_or_default(),
+                relation,
+                depth,
+                group: group_of.get(&id).copied(),
+                cards: cards.remove(&id).unwrap_or_default(),
+            }
         })
         .collect())
 }
@@ -554,6 +665,15 @@ mod tests {
             .await
             .unwrap();
         }
+        // `e` also links to a keyword no note has
+        sqlx::query(
+            r#"INSERT INTO note_link (parent_note_id, linked_note_id, "order", searched_keyword)
+               VALUES (?, NULL, 1, 'zeta')"#,
+        )
+        .bind("e".parse::<NoteId>().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
         // A suspended review card and a new one for `c`
         sqlx::query(
             r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
@@ -593,6 +713,8 @@ mod tests {
             query: query.to_string(),
             max_score: Some(5.0),
             ancestor_depth: None,
+            descendant_depth: Some(0),
+            groups: Vec::new(),
             max_nodes: 100,
         }
     }
@@ -629,7 +751,8 @@ mod tests {
         assert!(!truncated);
 
         let full = get_note_graph(&pool, graph_request("id=c")).await.unwrap();
-        assert!(full.nodes[0].in_query && !full.nodes[1].in_query);
+        assert_eq!(full.nodes[0].relation, GraphRelation::Found);
+        assert_eq!(full.nodes[1].relation, GraphRelation::Prerequisite);
         assert_eq!(full.nodes[0].keywords, ["c-word"]);
         assert_eq!(
             full.nodes[0].cards,
@@ -683,5 +806,64 @@ mod tests {
         let (nodes, edges, _) = graph(&pool, graph_request(" ")).await;
         assert_eq!(nodes.len(), 5);
         assert_eq!(edges.len(), 5);
+    }
+
+    #[sqlx::test]
+    async fn graph_follows_dependents_groups_and_unmatched_links(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = graph_pool(pool_options, options).await;
+        // Down from `a`, to `b` and `e` that link to it, then `c`; and up, through the weak link,
+        // to `d`, which also links to `c`
+        let request = NoteGraphRequest {
+            descendant_depth: Some(2),
+            ancestor_depth: Some(1),
+            groups: vec![
+                String::new(),
+                "id=b or id=c".to_string(),
+                "id=c".to_string(),
+            ],
+            ..graph_request("id=a")
+        };
+        let full = get_note_graph(&pool, request).await.unwrap();
+        let nodes: Vec<_> = full
+            .nodes
+            .iter()
+            .map(|n| (n.id.letters(), n.relation, n.depth, n.group))
+            .collect();
+        assert_eq!(
+            nodes,
+            [
+                ("a".to_string(), GraphRelation::Found, 0, None),
+                ("d".to_string(), GraphRelation::Prerequisite, 1, None),
+                ("b".to_string(), GraphRelation::Dependent, 1, Some(1)),
+                ("e".to_string(), GraphRelation::Dependent, 1, None),
+                ("c".to_string(), GraphRelation::Dependent, 2, Some(1)),
+            ]
+        );
+        // Including `d` to `c`, which no walk followed
+        assert_eq!(full.edges.len(), 5);
+        assert!(
+            full.edges
+                .iter()
+                .any(|e| e.from.letters() == "d" && e.to.letters() == "c")
+        );
+        assert_eq!(
+            full.unmatched,
+            [UnmatchedLink {
+                from: "e".parse().unwrap(),
+                keyword: "zeta".to_string()
+            }]
+        );
+
+        // All of them down
+        let all_down = NoteGraphRequest {
+            descendant_depth: None,
+            ancestor_depth: Some(0),
+            ..graph_request("id=a")
+        };
+        let (nodes, _, _) = graph(&pool, all_down).await;
+        assert_eq!(nodes.len(), 5);
     }
 }

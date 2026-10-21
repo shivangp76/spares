@@ -262,7 +262,8 @@ pub mod note {
 
     /// The notes a query finds, with every note they link to, directly or through other notes,
     /// even those the query doesn't find: the notes they build on, which come first. Notes that
-    /// link to the ones found are left out unless the query finds them too.
+    /// link to the ones found, which build on them, are left out unless the query finds them too
+    /// or [`Self::descendant_depth`] asks for them.
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct NoteGraphRequest {
         /// The notes to show, with the notes they link to. Empty for every note.
@@ -275,8 +276,17 @@ pub mod note {
         /// link to directly. All of them if `None`.
         #[serde(default)]
         pub ancestor_depth: Option<u32>,
+        /// How many links down from the notes found to follow, to the notes that build on them:
+        /// `Some(1)` shows the notes that link to them directly. All of them if `None`. Defaults
+        /// to `Some(0)`, for none.
+        #[serde(default = "no_descendants")]
+        pub descendant_depth: Option<u32>,
+        /// Queries that put the notes they find in a group, to color them by. A note is in the
+        /// first group whose query finds it. An empty query finds none.
+        #[serde(default)]
+        pub groups: Vec<String>,
         /// The most notes to show, up to [`MAX_GRAPH_NODES`]. Notes the query finds come first,
-        /// then the notes they link to, nearest first.
+        /// then the notes they link to, nearest first, then the notes that link to them.
         #[serde(default = "default_graph_nodes")]
         pub max_nodes: usize,
     }
@@ -288,11 +298,19 @@ pub mod note {
         2000
     }
 
+    #[allow(clippy::unnecessary_wraps, reason = "a serde default")]
+    fn no_descendants() -> Option<u32> {
+        Some(0)
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct NoteGraphResponse {
         pub nodes: Vec<GraphNode>,
         /// Every link between two of the notes in `nodes`.
         pub edges: Vec<GraphEdge>,
+        /// The links of the notes in `nodes` that match no note's keyword, which point to notes
+        /// that are yet to be written.
+        pub unmatched: Vec<UnmatchedLink>,
         /// Whether notes were left out to keep to `max_nodes`.
         pub truncated: bool,
         /// Whether links have been found between notes yet. Until they are, there are none to show.
@@ -304,12 +322,33 @@ pub mod note {
         pub id: NoteId,
         pub keywords: Vec<String>,
         pub tags: Vec<String>,
-        /// Whether the query found the note, rather than it being shown because a note it found
-        /// links to it.
-        pub in_query: bool,
-        /// How many links up from the nearest note the query found: 0 for those notes.
+        pub relation: GraphRelation,
+        /// How many links from the nearest note the query found: 0 for those notes.
         pub depth: u32,
+        /// The index of the first of [`NoteGraphRequest::groups`] whose query finds the note.
+        pub group: Option<usize>,
         pub cards: GraphNodeCards,
+    }
+
+    /// Why a note is in a graph.
+    #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum GraphRelation {
+        /// The query found it.
+        Found,
+        /// A note the query found builds on it.
+        Prerequisite,
+        /// It builds on a note the query found.
+        Dependent,
+    }
+
+    /// A link that matches no note's keyword.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct UnmatchedLink {
+        /// The note with the link.
+        pub from: NoteId,
+        /// The text of the link, which no keyword matches.
+        pub keyword: String,
     }
 
     /// How many of a note's cards are in each state. Suspended cards are counted only as
