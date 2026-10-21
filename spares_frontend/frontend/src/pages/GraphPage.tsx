@@ -415,6 +415,7 @@ export default function GraphPage() {
                   onClose={detail.back}
                   onNoteUpdated={updated => setSelectedNote(prev => keepShown(prev, updated))}
                   onOpenNote={openNote}
+                  localGraph={false}
                 />
               </>
             ) : !detail.isNarrow && (

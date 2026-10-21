@@ -12,6 +12,7 @@ import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
+import LocalGraph from './LocalGraph';
 import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
@@ -32,12 +33,14 @@ interface Props {
   note: NoteResponse;
   onClose: () => void;
   onNoteUpdated: (updated: NoteResponse) => void;
-  /** Opens a linked note. The note's links are listed iff this is given. */
+  /** Opens a linked note. The note's links, and its local graph, are shown iff this is given. */
   onOpenNote?: (noteId: number) => void;
+  /** Whether to offer the note's local graph, which a page already showing the graph leaves out. */
+  localGraph?: boolean;
   ref?: React.Ref<NotePaneHandle>;
 }
 
-export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, ref }: Props) {
+export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, localGraph = true, ref }: Props) {
   const theme = useResolvedTheme();
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
@@ -349,6 +352,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, r
           </div>
         </div>
       )}
+      {onOpenNote && localGraph && <LocalGraph noteId={note.id} onOpenNote={onOpenNote} />}
 
       <div>
         <div style={fieldLabel}>Compiled</div>

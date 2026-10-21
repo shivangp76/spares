@@ -67,6 +67,11 @@ const showReviewTimer = booleanPreference('spares_show_review_timer', () => true
 export const setShowReviewTimer = showReviewTimer.set;
 export const useShowReviewTimer = showReviewTimer.use;
 
+/** Whether a note's local graph, of the notes it links to and that link to it, is shown open. */
+const localGraphOpen = booleanPreference('spares_local_graph_open', () => false);
+export const setLocalGraphOpen = localGraphOpen.set;
+export const useLocalGraphOpen = localGraphOpen.use;
+
 /** Whether note editors use Vim keybindings. Off by default on touchscreens, where a phone
     keyboard can't leave Vim's normal mode to type. */
 const vimKeybindings = booleanPreference('spares_vim_keybindings', () => !window.matchMedia('(pointer: coarse)').matches);

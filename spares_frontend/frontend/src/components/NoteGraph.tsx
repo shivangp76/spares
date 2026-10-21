@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RELATION_COLORS, STUDY_COLORS, bounds, forceSimulationOf, lineage, nodeLabel, studyState, tagColor, type ForceNode, type ForceSimulation, type LayoutRequest, type LayoutResponse, type Point } from '../graphLayout';
 import type { GraphEdge, GraphNode } from '../types/spares';
 import { formatNoteId } from '../utils';
@@ -89,6 +89,8 @@ interface Props {
  */
 export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, selected, onSelect, marked, centerOn, height, ref }: Props) {
   const svg = useRef<SVGSVGElement>(null);
+  // Each graph's own, as a page can have two
+  const arrowId = `graph-arrow${useId().replace(/:/g, '')}`;
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [view, setView] = useState<Transform>({ x: 400, y: 300, k: 1 });
   const [hovered, setHovered] = useState<number | null>(null);
@@ -251,7 +253,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
         onPointerCancel={onPointerUp}
       >
         <defs>
-          <marker id="graph-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <marker id={arrowId} viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
           </marker>
         </defs>
@@ -275,7 +277,7 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
                 strokeWidth={lit ? 1.5 : 1}
                 opacity={family === null || lit ? 1 : 0.15}
                 strokeDasharray={edge.to < 0 ? '3 3' : undefined}
-                markerEnd="url(#graph-arrow)"
+                markerEnd={`url(#${arrowId})`}
               >
                 <title>{edge.to < 0
                   ? `${formatNoteId(edge.from)} links to "${edge.keyword}", which no note has`
