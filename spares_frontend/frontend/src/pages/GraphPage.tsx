@@ -16,6 +16,9 @@ import type { GraphNode, GraphRelation, NoteGraphResponse, NoteResponse } from '
 import { errorMessage, formatNoteId, keepShown } from '../utils';
 
 const MAX_NODES = 2000;
+/** How far the arrow keys move the graph, and with Shift. */
+const PAN_STEP = 60;
+const FAST_PAN_STEP = 240;
 const DEPTHS = [1, 2, 3, 4, 5];
 const SCORES = [0, 0.5, 1, 1.5, 2.5, 4];
 const input: React.CSSProperties = { padding: '4px 8px', fontSize: 13, border: '1px solid var(--border-strong)', borderRadius: 4 };
@@ -178,6 +181,17 @@ export default function GraphPage() {
     // `=` is `+` without Shift
     { keys: ['+'], codes: ['+', '='], description: 'Zoom in on the graph', available: showingGraph, run: () => graphView.current?.zoomIn() },
     { keys: ['-'], codes: ['-'], description: 'Zoom out of the graph', available: showingGraph, run: () => graphView.current?.zoomOut() },
+    {
+      keys: ['←', '↑', '→', '↓'],
+      codes: ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Shift+ArrowLeft', 'Shift+ArrowUp', 'Shift+ArrowRight', 'Shift+ArrowDown'],
+      description: 'Move around the graph, faster with Shift',
+      available: showingGraph,
+      run: code => {
+        const step = code.startsWith('Shift+') ? FAST_PAN_STEP : PAN_STEP;
+        const [dx, dy] = { ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowRight: [1, 0], ArrowDown: [0, 1] }[code.replace('Shift+', '')] ?? [0, 0];
+        graphView.current?.pan(dx * step, dy * step);
+      },
+    },
   ]);
   const counts = countRelations(shown.nodes);
   const missingFrom = selectedMissing

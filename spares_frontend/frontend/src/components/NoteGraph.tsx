@@ -50,6 +50,8 @@ interface Transform { x: number; y: number; k: number }
 export interface NoteGraphHandle {
   zoomIn: () => void;
   zoomOut: () => void;
+  /** Moves the view by `dx` and `dy` pixels, so a positive `dx` shows more to the right. */
+  pan: (dx: number, dy: number) => void;
   fit: () => void;
 }
 
@@ -176,7 +178,12 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
     const cx = size.width / 2, cy = size.height / 2;
     return { k, x: cx - (cx - v.x) * (k / v.k), y: cy - (cy - v.y) * (k / v.k) };
   });
-  useImperativeHandle(ref, () => ({ zoomIn: () => zoomBy(ZOOM_STEP), zoomOut: () => zoomBy(1 / ZOOM_STEP), fit }));
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => zoomBy(ZOOM_STEP),
+    zoomOut: () => zoomBy(1 / ZOOM_STEP),
+    pan: (dx, dy) => setView(v => ({ ...v, x: v.x - dx, y: v.y - dy })),
+    fit,
+  }));
 
   function onPointerDown(e: React.PointerEvent, id?: number) {
     if (e.button !== 0) return;
