@@ -260,6 +260,81 @@ pub mod note {
         pub score_threshold: Score,
     }
 
+    /// The notes a query finds, with every note they link to, directly or through other notes,
+    /// even those the query doesn't find: the notes they build on, which come first. Notes that
+    /// link to the ones found are left out unless the query finds them too.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct NoteGraphRequest {
+        /// The notes to show, with the notes they link to. Empty for every note.
+        pub query: String,
+        /// The highest score a link can have and still be followed. Defaults to the queue's
+        /// `linked_note_max_score`, so the graph shows the links that hold cards back.
+        #[serde(default)]
+        pub max_score: Option<Score>,
+        /// How many links to follow up from the notes found: `Some(1)` shows only the notes they
+        /// link to directly. All of them if `None`.
+        #[serde(default)]
+        pub ancestor_depth: Option<u32>,
+        /// The most notes to show, up to [`MAX_GRAPH_NODES`]. Notes the query finds come first,
+        /// then the notes they link to, nearest first.
+        #[serde(default = "default_graph_nodes")]
+        pub max_nodes: usize,
+    }
+
+    /// The most notes [`NoteGraphRequest::max_nodes`] can ask for.
+    pub const MAX_GRAPH_NODES: usize = 5000;
+
+    fn default_graph_nodes() -> usize {
+        2000
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct NoteGraphResponse {
+        pub nodes: Vec<GraphNode>,
+        /// Every link between two of the notes in `nodes`.
+        pub edges: Vec<GraphEdge>,
+        /// Whether notes were left out to keep to `max_nodes`.
+        pub truncated: bool,
+        /// Whether links have been found between notes yet. Until they are, there are none to show.
+        pub links_generated: bool,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct GraphNode {
+        pub id: NoteId,
+        pub keywords: Vec<String>,
+        pub tags: Vec<String>,
+        /// Whether the query found the note, rather than it being shown because a note it found
+        /// links to it.
+        pub in_query: bool,
+        /// How many links up from the nearest note the query found: 0 for those notes.
+        pub depth: u32,
+        pub cards: GraphNodeCards,
+    }
+
+    /// How many of a note's cards are in each state. Suspended cards are counted only as
+    /// suspended.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct GraphNodeCards {
+        pub new: u32,
+        /// Learning or relearning.
+        pub learning: u32,
+        pub review: u32,
+        pub suspended: u32,
+    }
+
+    /// A note linking to a note it builds on.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct GraphEdge {
+        /// The note with the link.
+        pub from: NoteId,
+        /// The note it links to.
+        pub to: NoteId,
+        /// The keyword of `to` the link matched.
+        pub keyword: String,
+        pub score: Option<Score>,
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct CreateNotesRequest {
         pub parser_id: i64,

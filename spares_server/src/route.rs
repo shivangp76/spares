@@ -40,6 +40,7 @@ use crate::handlers::note::find_live_note_handler;
 use crate::handlers::note::generate_note_files_handler;
 use crate::handlers::note::get_duplicate_keywords_handler;
 use crate::handlers::note::get_keywords_handler;
+use crate::handlers::note::get_note_graph_handler;
 use crate::handlers::note::get_note_handler;
 use crate::handlers::note::get_note_links_handler;
 use crate::handlers::note::get_note_render_handler;
@@ -277,6 +278,7 @@ pub(crate) fn create_router(
         )
         .route("/api/notes/keywords", get(get_keywords_handler))
         .route("/api/notes/search/note-links", post(get_note_links_handler))
+        .route("/api/notes/graph", post(get_note_graph_handler))
         .route("/api/notes/live", post(find_live_note_handler))
         .route(
             "/api/notes/live/relocate-cards",

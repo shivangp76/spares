@@ -14,6 +14,7 @@ use spares_core::api::note::find_live_note_by_block_order;
 use spares_core::api::note::get_duplicate_keywords;
 use spares_core::api::note::get_keywords;
 use spares_core::api::note::get_note;
+use spares_core::api::note::get_note_graph;
 use spares_core::api::note::get_note_links;
 use spares_core::api::note::get_unmatched_keywords;
 use spares_core::api::note::list_notes;
@@ -32,6 +33,7 @@ use spares_core::schema::note::DeleteNotesRequest;
 use spares_core::schema::note::ExportNotesRequest;
 use spares_core::schema::note::FindLiveNoteRequest;
 use spares_core::schema::note::FindLiveNoteResponse;
+use spares_core::schema::note::NoteGraphRequest;
 use spares_core::schema::note::NoteLinksRequest;
 use spares_core::schema::note::RelocateLiveCardsRequest;
 use spares_core::schema::note::RenderNotesRequest;
@@ -200,6 +202,17 @@ pub(crate) async fn get_note_links_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(note_links))
+}
+
+/// The notes a query finds and the notes they link to, for the graph page.
+pub(crate) async fn get_note_graph_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<NoteGraphRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let graph = get_note_graph(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(graph))
 }
 
 pub(crate) async fn export_notes_handler(
