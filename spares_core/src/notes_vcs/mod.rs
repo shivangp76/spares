@@ -10,7 +10,7 @@
 //!   regenerates them from it and commits.
 //! - A pushed note is only imported if the database still holds the version the push is based on.
 //! - A push is imported completely or rolled back.
-//! - Content spares did not write is saved to a quarantine directory before being overwritten.
+//! - Files spares did not write are saved to [`overwritten_dir`] before being overwritten.
 //!
 //! Without the server copy, notes are written to `<data dir>/notes` as before.
 
@@ -75,7 +75,7 @@ pub use receive::session_file_path;
 pub use receive::status;
 pub use reconcile::ReconcileReport;
 pub use reconcile::ReconcileScope;
-pub use reconcile::quarantine_dir;
+pub use reconcile::overwritten_dir;
 pub use reconcile::reconcile;
 pub use reconcile::reconcile_after;
 pub use renumber::renumber_note_files;

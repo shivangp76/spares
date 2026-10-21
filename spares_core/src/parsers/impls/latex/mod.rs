@@ -33,7 +33,7 @@
 //!   again (`spares note generate`).
 //! - Inverse search from a PDF spares compiled opens the file in `notes-spares/`. Edit the note in
 //!   your clone instead: spares overwrites edits made in `notes-spares/`, saving them to
-//!   `notes-spares/.git/spares-quarantine/`.
+//!   `notes-spares/.git/spares-overwritten/`.
 
 mod data_parser;
 

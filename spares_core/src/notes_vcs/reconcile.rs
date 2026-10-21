@@ -54,9 +54,9 @@ pub struct ReconcileReport {
     pub removed: Vec<PathBuf>,
     /// Other tracked files restored to `HEAD`
     pub restored: Vec<PathBuf>,
-    /// Content that was not the server's, saved under the quarantine directory before being
-    /// overwritten or removed
-    pub quarantined: Vec<PathBuf>,
+    /// Files spares did not write, copied to [`overwritten_dir`] before being overwritten or
+    /// removed
+    pub saved: Vec<PathBuf>,
     pub committed: bool,
 }
 
@@ -65,14 +65,31 @@ impl ReconcileReport {
         self.rewritten.is_empty()
             && self.removed.is_empty()
             && self.restored.is_empty()
-            && self.quarantined.is_empty()
+            && self.saved.is_empty()
     }
 }
 
-/// Where content spares did not write is saved before it is overwritten or removed. It is never
-/// pruned automatically.
-pub fn quarantine_dir() -> PathBuf {
-    server_repo_dir().join(".git").join("spares-quarantine")
+/// Where files spares did not write are saved before it overwrites or removes them, in a directory
+/// per reconcile named by its time. Nothing reads them back or removes them.
+pub fn overwritten_dir() -> PathBuf {
+    server_repo_dir().join(".git").join("spares-overwritten")
+}
+
+/// Moves copies saved under the directory's former name, `spares-quarantine`, to
+/// [`overwritten_dir`]. Runs at startup.
+pub(crate) fn rename_quarantine_dir() {
+    let old = server_repo_dir().join(".git").join("spares-quarantine");
+    let new = overwritten_dir();
+    if old.exists()
+        && !new.exists()
+        && let Err(e) = std::fs::rename(&old, &new)
+    {
+        log::error!(
+            "Failed to rename {} to {}: {e}",
+            old.display(),
+            new.display()
+        );
+    }
 }
 
 /// Makes the notes repository describe the database again for `scope`, and commits the result.
@@ -80,7 +97,7 @@ pub fn quarantine_dir() -> PathBuf {
 /// The database is the source of truth: note files are regenerated from it, files of notes that no
 /// longer exist are removed, and other modified tracked files are restored to `HEAD`. Anything
 /// overwritten or removed that differs from `HEAD` (so was not committed by spares) is first saved
-/// to [`quarantine_dir`]. Callers hold the exclusive notes lock.
+/// to [`overwritten_dir`]. Callers hold the exclusive notes lock.
 pub async fn reconcile(
     db: &SqlitePool,
     scope: ReconcileScope,
@@ -199,8 +216,8 @@ async fn reconcile_inner(
                 }
                 if absolute.exists() {
                     if differs_from_head(&repo, &candidate, None)? {
-                        quarantine(&repo, &candidate, &stamp, false)?;
-                        report.quarantined.push(candidate.clone());
+                        save_overwritten(&repo, &candidate, &stamp, false)?;
+                        report.saved.push(candidate.clone());
                     }
                     std::fs::remove_file(&absolute).map_err(|e| io_error(&absolute, e))?;
                 }
@@ -228,8 +245,8 @@ async fn reconcile_inner(
                 continue;
             }
             if current.is_some() && differs_from_head(&repo, &rel, None)? {
-                quarantine(&repo, &rel, &stamp, false)?;
-                report.quarantined.push(rel.clone());
+                save_overwritten(&repo, &rel, &stamp, false)?;
+                report.saved.push(rel.clone());
             }
             write_file(&absolute, contents.as_bytes())?;
         }
@@ -243,8 +260,8 @@ async fn reconcile_inner(
                 continue;
             }
             if absolute.exists() {
-                quarantine(&repo, &rel, &stamp, false)?;
-                report.quarantined.push(rel.clone());
+                save_overwritten(&repo, &rel, &stamp, false)?;
+                report.saved.push(rel.clone());
             }
             let _index = git_index_lock();
             git(
@@ -262,8 +279,8 @@ async fn reconcile_inner(
             if dry_run {
                 continue;
             }
-            quarantine(&repo, &rel, &stamp, true)?;
-            report.quarantined.push(rel.clone());
+            save_overwritten(&repo, &rel, &stamp, true)?;
+            report.saved.push(rel.clone());
         }
     }
 
@@ -354,15 +371,15 @@ pub(crate) fn differs_from_head(
     Ok(output.stdout != current)
 }
 
-/// Saves `rel` under the quarantine directory: moved if `move_file`, copied otherwise.
-pub(crate) fn quarantine(
+/// Saves `rel` under [`overwritten_dir`]: moved if `move_file`, copied otherwise.
+pub(crate) fn save_overwritten(
     repo: &Path,
     rel: &Path,
     stamp: &str,
     move_file: bool,
 ) -> Result<(), Error> {
     let source = repo.join(rel);
-    let target = quarantine_dir().join(stamp).join(rel);
+    let target = overwritten_dir().join(stamp).join(rel);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
     }
@@ -373,7 +390,7 @@ pub(crate) fn quarantine(
     };
     result.map_err(|e| io_error(&source, e))?;
     log::warn!(
-        "Saved {} to {}, since spares did not write it",
+        "Saved a copy of {} to {} before overwriting it, since spares did not write it",
         source.display(),
         target.display()
     );
@@ -412,9 +429,9 @@ fn io_error(path: &Path, source: std::io::Error) -> Error {
     }
 }
 
-/// Number of saved copies in the quarantine directory, by timestamp directory.
-pub fn quarantine_entries() -> Vec<PathBuf> {
-    let Ok(dirs) = std::fs::read_dir(quarantine_dir()) else {
+/// Directories under [`overwritten_dir`], oldest first.
+pub fn overwritten_entries() -> Vec<PathBuf> {
+    let Ok(dirs) = std::fs::read_dir(overwritten_dir()) else {
         return Vec::new();
     };
     let mut entries: Vec<PathBuf> = dirs.filter_map(|e| e.ok().map(|e| e.path())).collect();

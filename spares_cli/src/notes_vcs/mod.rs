@@ -58,7 +58,7 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
         print_paths("Rewritten from the database", &report.rewritten);
         print_paths("Removed", &report.removed);
         print_paths("Restored", &report.restored);
-        print_paths("Saved to quarantine first", &report.quarantined);
+        print_paths("Saved before overwriting", &report.saved);
         if report.committed {
             println!("Committed the changes.");
         }
@@ -73,6 +73,6 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
     if report.is_empty() && check.dirty.is_empty() {
         println!("The repository matches the database.");
     }
-    print_paths("Saved copies in quarantine", &check.quarantine);
+    print_paths("Copies saved before overwriting", &check.overwritten);
     Ok(())
 }

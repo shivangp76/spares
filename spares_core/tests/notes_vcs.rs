@@ -688,7 +688,7 @@ async fn test_push_whose_ref_update_fails_is_rolled_back(pool: SqlitePool) {
 }
 
 #[sqlx::test]
-async fn test_reconcile_dirty_quarantines(pool: SqlitePool) {
+async fn test_reconcile_dirty_saves_overwritten(pool: SqlitePool) {
     let _guard = setup().await;
     let ids = init(&pool).await;
     let note = note_path(&repo(), ids[0]);
@@ -702,9 +702,9 @@ async fn test_reconcile_dirty_quarantines(pool: SqlitePool) {
     assert_eq!(read(&note), committed);
     assert!(!repo().join("stray.txt").exists());
     assert_gitignore_matches();
-    assert_eq!(report.quarantined.len(), 3, "{report:?}");
+    assert_eq!(report.saved.len(), 3, "{report:?}");
     assert_eq!(status(&repo()), "");
-    let saved: Vec<PathBuf> = walk(&notes_vcs::quarantine_dir());
+    let saved: Vec<PathBuf> = walk(&notes_vcs::overwritten_dir());
     assert!(saved.iter().any(|p| read(p) == "a hand edit\n"));
     assert!(saved.iter().any(|p| read(p) == "stray\n"));
 }

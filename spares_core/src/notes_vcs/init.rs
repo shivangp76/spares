@@ -20,9 +20,10 @@ use super::receive::status;
 use super::reconcile::ReconcileReport;
 use super::reconcile::ReconcileScope;
 use super::reconcile::dirty_paths;
-use super::reconcile::quarantine_entries;
+use super::reconcile::overwritten_entries;
 use super::reconcile::reconcile;
 use super::reconcile::reconcile_dry_run;
+use super::reconcile::rename_quarantine_dir;
 use crate::Error;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
@@ -169,6 +170,7 @@ pub async fn startup(db: &SqlitePool) {
     if !enabled() {
         return;
     }
+    rename_quarantine_dir();
     match recover(db).await {
         Ok(Some(message)) => log::warn!("Settled an interrupted push: {message}"),
         Ok(None) => {}
@@ -250,8 +252,8 @@ pub struct CheckResponse {
     pub dirty: Vec<PathBuf>,
     /// What does not match the database (or what was fixed, with `fix`)
     pub report: ReconcileReport,
-    /// Directories of saved content under the quarantine directory
-    pub quarantine: Vec<PathBuf>,
+    /// Directories of copies saved before overwriting, under [`overwritten_dir`](super::overwritten_dir)
+    pub overwritten: Vec<PathBuf>,
 }
 
 /// Compares every note file with the database. With `fix`, rewrites those that differ. The caller
@@ -262,7 +264,7 @@ pub async fn check(db: &SqlitePool, request: CheckRequest) -> Result<CheckRespon
             status: status(),
             dirty: Vec::new(),
             report: ReconcileReport::default(),
-            quarantine: Vec::new(),
+            overwritten: Vec::new(),
         });
     }
     let dirty = dirty_paths(&server_repo_dir())?
@@ -275,7 +277,7 @@ pub async fn check(db: &SqlitePool, request: CheckRequest) -> Result<CheckRespon
         report.rewritten.extend(all.rewritten);
         report.removed.extend(all.removed);
         report.restored.extend(all.restored);
-        report.quarantined.extend(all.quarantined);
+        report.saved.extend(all.saved);
         report.committed |= all.committed;
         report
     } else {
@@ -285,7 +287,7 @@ pub async fn check(db: &SqlitePool, request: CheckRequest) -> Result<CheckRespon
         status: status(),
         dirty,
         report,
-        quarantine: quarantine_entries(),
+        overwritten: overwritten_entries(),
     })
 }
 
