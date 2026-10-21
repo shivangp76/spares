@@ -54,7 +54,10 @@ import { dayAfter, formatBuryUntil, localDateString, useBuryUntilDate } from '..
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
-import { PAGE_WIDTH_LABELS, PAGE_WIDTHS, setPageWidth, usePageWidth, useShowReviewTimer, useVimKeybindings } from '../preferences';
+import {
+  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, setCardZoom, setPageWidth, useCardZoom, usePageWidth, useShowReviewTimer,
+  useVimKeybindings,
+} from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
   STATE_LABELS,
@@ -882,6 +885,10 @@ export default function ReviewPage() {
   function cyclePageWidth() {
     setPageWidth(PAGE_WIDTHS[(PAGE_WIDTHS.indexOf(pageWidth) + 1) % PAGE_WIDTHS.length]);
   }
+  const cardZoom = useCardZoom();
+  const zoomIndex = CARD_ZOOMS.indexOf(cardZoom);
+  const zoomIn = () => setCardZoom(CARD_ZOOMS[Math.min(zoomIndex + 1, CARD_ZOOMS.length - 1)]);
+  const zoomOut = () => setCardZoom(CARD_ZOOMS[Math.max(zoomIndex - 1, 0)]);
   const keybindings: Keybinding[] = [
     { keys: ['Space'], description: 'Show answer', available: phase === 'front' },
     ...ratings.map((r, i) => ({ keys: [String(i + 1)], description: `Rate ${r.description}`, available: phase === 'back' })),
@@ -897,6 +904,8 @@ export default function ReviewPage() {
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
     { keys: ['w'], description: `Change the page width (now ${PAGE_WIDTH_LABELS[pageWidth]})`, available: reviewing && !isNarrow },
+    { keys: ['+', '='], description: `Larger card text (now ${cardZoom}%)`, available: reviewing },
+    { keys: ['-'], description: 'Smaller card text', available: reviewing },
     ...TYPED_ANSWER_SHORTCUTS.map(s => ({ ...s, available: phase === 'front' && !!card?.typed_answer })),
   ];
 
@@ -923,6 +932,7 @@ export default function ReviewPage() {
       const actions: Record<string, () => void> = {
         Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
         f: flagNote, q: switchQuery, r: replayAudio, w: cyclePageWidth,
+        '+': zoomIn, '=': zoomIn, '-': zoomOut,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
       const action = actions[key];
@@ -1277,15 +1287,21 @@ export default function ReviewPage() {
                     </div>
                   )}
                 </ActionGroup>
-                {/* Phones use their whole width already */}
-                {!isNarrow && (
-                  <ActionGroup label="Display" tone={TONES.gray}>
-                    <span style={{ fontSize: 13 }}>Width <span className="key-hint">(w)</span></span>
-                    {PAGE_WIDTHS.map(width => (
-                      <button key={width} onClick={() => setPageWidth(width)} aria-pressed={pageWidth === width} style={actionButton}>{PAGE_WIDTH_LABELS[width]}</button>
-                    ))}
-                  </ActionGroup>
-                )}
+                <ActionGroup label="Display" tone={TONES.gray}>
+                  {/* Phones use their whole width already */}
+                  {!isNarrow && (
+                    <>
+                      <span style={{ fontSize: 13 }}>Width <span className="key-hint">(w)</span></span>
+                      {PAGE_WIDTHS.map(width => (
+                        <button key={width} onClick={() => setPageWidth(width)} aria-pressed={pageWidth === width} style={actionButton}>{PAGE_WIDTH_LABELS[width]}</button>
+                      ))}
+                    </>
+                  )}
+                  <span style={{ fontSize: 13, marginLeft: isNarrow ? 0 : 8 }}>Text size</span>
+                  <button onClick={zoomOut} disabled={zoomIndex === 0} style={actionButton} title="Smaller card text (-)">A−</button>
+                  <span style={{ fontSize: 13, minWidth: '4ch', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{cardZoom}%</span>
+                  <button onClick={zoomIn} disabled={zoomIndex === CARD_ZOOMS.length - 1} style={actionButton} title="Larger card text (+)">A+</button>
+                </ActionGroup>
               </div>
             </details>
 

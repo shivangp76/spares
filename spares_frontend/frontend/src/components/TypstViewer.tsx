@@ -14,6 +14,9 @@ interface Props {
   onWidth?: (width: number) => void;
   /** Scrolls the card's cloze into view when it is displayed or moves, unless it is in view. */
   scrollToCloze?: boolean;
+  /** Compiles the source for a viewer this many times narrower, which the page is then scaled up
+      from, so its text is larger. Pages of a fixed size already fill the viewer and are unchanged. */
+  zoom?: number;
 }
 
 const XLINK = 'http://www.w3.org/1999/xlink';
@@ -25,19 +28,19 @@ type State =
   | { source: string; width: number; svg: string; error?: undefined }
   | { source: string; width: number; error: string; svg?: undefined };
 
-// The viewer's width is passed to sources (see `widthInputs`). It is rounded down to a step and
-// debounced so small resizes do not recompile.
+// The viewer's width (divided by the zoom) is passed to sources (see `widthInputs`). It is rounded
+// down to a step and debounced so small resizes do not recompile.
 const WIDTH_STEP = 16;
 const RESIZE_DEBOUNCE_MS = 150;
 
-function useStepWidth() {
+function useViewerWidth() {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setWidth(Math.max(WIDTH_STEP, Math.floor(el.clientWidth / WIDTH_STEP) * WIDTH_STEP));
+    const measure = () => setWidth(el.clientWidth);
     measure();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const observer = new ResizeObserver(() => {
@@ -51,8 +54,9 @@ function useStepWidth() {
   return [ref, width] as const;
 }
 
-export default function TypstViewer({ source, onReady, onPlayAudio, onWidth, scrollToCloze }: Props) {
-  const [ref, width] = useStepWidth();
+export default function TypstViewer({ source, onReady, onPlayAudio, onWidth, scrollToCloze, zoom = 1 }: Props) {
+  const [ref, viewerWidth] = useViewerWidth();
+  const width = viewerWidth === null ? null : Math.max(WIDTH_STEP, Math.floor(viewerWidth / zoom / WIDTH_STEP) * WIDTH_STEP);
   const [result, setResult] = useState<State | null>(null);
   // Expanding compiles the source without the width input, so the template lays it out at its
   // default size, e.g. for long equations clipped at the screen's width. Tied to a source so the

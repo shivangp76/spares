@@ -87,3 +87,10 @@ export function setPageWidth(width: PageWidth): void {
   pageWidth.set(width);
   document.documentElement.dataset.pageWidth = width;
 }
+
+export const CARD_ZOOMS = ['100', '125', '150', '175', '200'] as const;
+export type CardZoom = typeof CARD_ZOOMS[number];
+/** How large cards' text is, in percent, for reading from further away on large screens. */
+const cardZoom = choicePreference<CardZoom>('spares_card_zoom', CARD_ZOOMS, '100');
+export const setCardZoom = cardZoom.set;
+export const useCardZoom = cardZoom.use;

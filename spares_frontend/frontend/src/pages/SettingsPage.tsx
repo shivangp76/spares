@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
-  PAGE_WIDTH_LABELS, PAGE_WIDTHS, setPageWidth, setShowReviewTimer, setVimKeybindings, usePageWidth, useShowReviewTimer,
-  useVimKeybindings,
+  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, setCardZoom, setPageWidth, setShowReviewTimer, setVimKeybindings, useCardZoom,
+  usePageWidth, useShowReviewTimer, useVimKeybindings, type CardZoom,
 } from '../preferences';
 import {
   setThemePreference, setTypstThemePreference, useThemePreference, useTypstThemePreference,
@@ -33,6 +33,7 @@ export default function SettingsPage() {
   const showReviewTimer = useShowReviewTimer();
   const vimKeybindings = useVimKeybindings();
   const pageWidth = usePageWidth();
+  const cardZoom = useCardZoom();
 
   useEffect(() => {
     if (!credentials) navigate('/login');
@@ -80,6 +81,15 @@ export default function SettingsPage() {
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           For large screens. Also changed with w while reviewing. Typst pages that fit the screen get longer lines, and pages of a fixed size get larger.
+        </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 12 }}>
+          Card text size:
+          <select value={cardZoom} onChange={e => setCardZoom(e.target.value as CardZoom)}>
+            {CARD_ZOOMS.map(zoom => <option key={zoom} value={zoom}>{zoom}%</option>)}
+          </select>
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Wherever cards are shown. Also changed with + and - while reviewing. Typst pages that fit the screen are laid out narrower and scaled up; pages of a fixed size are unchanged.
         </p>
       </fieldset>
 

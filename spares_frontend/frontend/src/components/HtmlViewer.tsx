@@ -15,6 +15,8 @@ interface Props {
   onPlayAudio?: (path: string) => void;
   /** Scrolls the card's clozes into view once it is displayed, unless they already are. */
   scrollToCloze?: boolean;
+  /** How much larger than usual the text is, e.g. 1.5. */
+  zoom?: number;
 }
 
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
@@ -26,7 +28,7 @@ const STYLE_ID = 'spares-theme';
  * can run. `allow-same-origin` lets the app size and theme it, and must never be combined with
  * `allow-scripts`, which would remove the sandbox.
  */
-export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio, scrollToCloze }: Props) {
+export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio, scrollToCloze, zoom = 1 }: Props) {
   const key = `${path}?v=${version}`;
   const [loaded, setLoaded] = useState<{ key: string; html?: string; error?: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -36,13 +38,15 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
   const scrolledKeyRef = useRef<string | null>(null);
   const theme = useResolvedTheme();
   const themeRef = useRef(theme);
+  const zoomRef = useRef(zoom);
   const onOpenNoteRef = useRef(onOpenNote);
   const onPlayAudioRef = useRef(onPlayAudio);
   useEffect(() => {
     themeRef.current = theme;
+    zoomRef.current = zoom;
     onOpenNoteRef.current = onOpenNote;
     onPlayAudioRef.current = onPlayAudio;
-  }, [theme, onOpenNote, onPlayAudio]);
+  }, [theme, zoom, onOpenNote, onPlayAudio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +72,7 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     const onLoad = () => {
       const doc = iframe.contentDocument;
       if (!doc) return;
-      applyTheme(doc, themeRef.current);
+      applyTheme(doc, themeRef.current, zoomRef.current);
       doc.addEventListener('click', e => onClick(e, onOpenNoteRef.current, onPlayAudioRef.current));
       observer = new ResizeObserver(() => setHeight(doc.documentElement.scrollHeight));
       observer.observe(doc.documentElement);
@@ -101,11 +105,11 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     }));
   }, [scrollToCloze, loadedKey, current, height]);
 
-  // Re-themes on a theme change, without reloading
+  // Re-themes on a theme or zoom change, without reloading
   useEffect(() => {
     const doc = iframeRef.current?.contentDocument;
-    if (doc?.head) applyTheme(doc, theme);
-  }, [theme]);
+    if (doc?.head) applyTheme(doc, theme, zoom);
+  }, [theme, zoom]);
 
   if (current?.error !== undefined) return <div style={{ color: 'var(--error)' }}>Error loading card: {current.error}</div>;
   if (current === null) return <div className="loading-delayed">Loading…</div>;
@@ -125,12 +129,12 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
  * defaults file can override them. pandoc's own page styles are left out when rendering. The app's colours are `light-dark()` values, which the iframe
  * resolves with the same `color-scheme`.
  */
-function applyTheme(doc: Document, theme: 'light' | 'dark') {
+function applyTheme(doc: Document, theme: 'light' | 'dark', zoom: number) {
   const app = getComputedStyle(document.documentElement);
   const appVar = (name: string) => app.getPropertyValue(name).trim();
   const css = `
     :root { color-scheme: ${theme}; }
-    html { color: ${appVar('--text')}; background: transparent; font-family: ${getComputedStyle(document.body).fontFamily}; }
+    html { color: ${appVar('--text')}; background: transparent; font-family: ${getComputedStyle(document.body).fontFamily}; font-size: ${zoom * 100}%; }
     body { margin: 0; padding: 0 4px; line-height: 1.6; overflow-wrap: break-word; }
     a { color: ${appVar('--link')}; }
     img, svg { max-width: 100%; height: auto; }

@@ -3,6 +3,7 @@ import { useAuthedFileUrl } from '../hooks/useAuthedFileUrl';
 import HtmlViewer from './HtmlViewer';
 import PdfViewer from './PdfViewer';
 import TypstViewer from './TypstViewer';
+import { useCardZoom } from '../preferences';
 
 interface Props {
   path: string;
@@ -25,8 +26,10 @@ interface Props {
 }
 
 export default function CardRenderer({ path, source, webPath, onOpenNote, version, onReady, onPlayAudio, onTypstWidth, scrollToCloze }: Props) {
-  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} scrollToCloze={scrollToCloze} />;
-  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} scrollToCloze={scrollToCloze} />;
+  // The card text size setting, wherever a card is shown
+  const zoom = Number(useCardZoom()) / 100;
+  if (source !== undefined) return <TypstViewer source={source} onReady={onReady} onPlayAudio={onPlayAudio} onWidth={onTypstWidth} scrollToCloze={scrollToCloze} zoom={zoom} />;
+  if (webPath !== undefined) return <HtmlViewer path={webPath} version={version} onOpenNote={onOpenNote} onReady={onReady} onPlayAudio={onPlayAudio} scrollToCloze={scrollToCloze} zoom={zoom} />;
   return <RenderedFile path={path} version={version} onReady={onReady} />;
 }
 
