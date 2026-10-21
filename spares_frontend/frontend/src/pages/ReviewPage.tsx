@@ -1215,6 +1215,7 @@ export default function ReviewPage() {
                 {/* In the answer bar when there is one */}
                 {!hasAnswerBar && <button onClick={buryCard} className="touch-target" style={toned(TONES.orange)}>Bury Card</button>}
                 {!hasAnswerBar && <button onClick={buryNote} className="touch-target" style={toned(TONES.orange)}>Bury Note</button>}
+                {!hasAnswerBar && buryUntil && <button onClick={buryCardUntilDate} className="touch-target" style={toned(TONES.orange)}>Bury Until {formatBuryUntil(buryUntil)}</button>}
                 <button onClick={suspendCard} className="touch-target" style={toned(TONES.purple)}>Suspend Card</button>
               </div>
             )}
@@ -1234,9 +1235,12 @@ export default function ReviewPage() {
                   {!isNarrow && <button onClick={buryCard} style={toned(TONES.orange)}>Bury Card <span className="key-hint">(b)</span></button>}
                   <button onClick={buryNote} style={toned(TONES.orange)}>Bury Note (card + siblings) <span className="key-hint">(B)</span></button>
                   <button onClick={buryUntilLaterToday} style={toned(TONES.orange)}>Bury Until Later Today <span className="key-hint">(l)</span></button>
-                  <button onClick={buryCardUntilDate} style={toned(TONES.orange)}>
-                    {buryUntil ? `Bury Card Until After ${formatBuryUntil(buryUntil)}` : 'Bury Card Until After…'} <span className="key-hint">(d)</span>
-                  </button>
+                  {/* On phones, once a date is picked, it is with Bury Card instead */}
+                  {(!isNarrow || !buryUntil) && (
+                    <button onClick={buryCardUntilDate} style={toned(TONES.orange)}>
+                      {buryUntil ? `Bury Card Until After ${formatBuryUntil(buryUntil)}` : 'Bury Card Until After…'} <span className="key-hint">(d)</span>
+                    </button>
+                  )}
                   {buryUntil && <button onClick={() => openBuryUntilPicker('change')} style={toned(TONES.gray)}>Change Date</button>}
                   {buryUntilPicker && (
                     <form
