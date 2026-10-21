@@ -94,6 +94,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqliteConnection;
+use sqlx::SqlitePool;
 
 use crate::Error;
 
@@ -123,9 +124,13 @@ pub struct SyncConfig {
     /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
     /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
     pub url: Option<String>,
-    /// With `url`, the local server syncs on startup and then every this many minutes. `0` turns
-    /// automatic syncing off.
+    /// With `url`, the local server syncs on startup, on waking from sleep and then every this many
+    /// minutes. `0` turns automatic syncing off, including after changes.
     pub interval_minutes: u64,
+    /// With automatic syncing on, the local server also syncs once local changes (reviews, edits)
+    /// have stopped for this many seconds, and at least every two minutes while they keep coming,
+    /// so they reach the server without waiting for the interval. `0` turns this off.
+    pub push_delay_seconds: u64,
     /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`.
     pub remote_host: Option<String>,
     /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
@@ -138,6 +143,7 @@ impl Default for SyncConfig {
         Self {
             url: None,
             interval_minutes: 0,
+            push_delay_seconds: 30,
             remote_host: None,
             remote_rendered_dir: ".cache/spares".to_string(),
         }
@@ -291,6 +297,21 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
         .await
         .map_err(sqlx_error)?;
     Ok(found == Some(1))
+}
+
+/// How many rows changed here since the last sync. Automatic sync watches it to tell when changes
+/// stop coming; changing a row that is already dirty leaves it the same.
+pub async fn dirty_count(db: &SqlitePool) -> Result<i64, Error> {
+    let query = USN_TABLES
+        .iter()
+        .chain(&["grave"])
+        .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn = -1)"))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    sqlx::query_scalar(&format!("SELECT {query}"))
+        .fetch_one(db)
+        .await
+        .map_err(sqlx_error)
 }
 
 /// Stamps every dirty row with `usn`.

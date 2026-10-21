@@ -9,8 +9,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use log::Level;
 use log::error;
-use log::info;
+use log::log;
 use sqlx::SqlitePool;
 
 use super::bump_notes_version;
@@ -48,7 +49,14 @@ pub async fn sync_now(
     let remote = HttpRemote::new(&url)?;
     let report = sync(db, &remote, mode, temp_dir).await?;
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;
-    info!(
+    // Automatic sync sends local changes within a minute, so a sync that only sent is routine.
+    let level = if report.pulled > 0 || !report.conflicts.is_empty() {
+        Level::Info
+    } else {
+        Level::Debug
+    };
+    log!(
+        level,
         "Synced with {url}: {} received, {} sent, {} conflicts",
         report.pulled,
         report.pushed,

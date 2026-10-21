@@ -203,6 +203,23 @@ async fn tag_changes_keep_the_old_tags_as_base(pool: SqlitePool) {
 }
 
 #[sqlx::test]
+async fn dirty_count_counts_changed_rows_and_graves(pool: SqlitePool) {
+    stamp_all(&pool, 3).await;
+    assert_eq!(super::dirty_count(&pool).await.unwrap(), 0);
+    let note_id = create_note(&pool, "Hello {{ world }}", &["math"]).await;
+    // The parser, the note, its card and the tag
+    assert_eq!(super::dirty_count(&pool).await.unwrap(), 4);
+    stamp_all(&pool, 3).await;
+    sqlx::query("DELETE FROM note WHERE id = ?")
+        .bind(note_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The note's and its card's graves
+    assert_eq!(super::dirty_count(&pool).await.unwrap(), 2);
+}
+
+#[sqlx::test]
 async fn unchanged_columns_do_not_mark_rows(pool: SqlitePool) {
     let note_id = create_note(&pool, "Hello {{ world }}", &[]).await;
     stamp_all(&pool, 3).await;

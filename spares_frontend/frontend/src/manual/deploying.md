@@ -100,7 +100,7 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 
 ## Day to day
 
-- **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts and then every `sync.interval_minutes`. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
+- **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts, when the laptop wakes, every `sync.interval_minutes`, and 30 seconds after you stop reviewing or editing (`sync.push_delay_seconds`), so you can close the laptop and carry on on your phone. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
 - **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
 - **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
