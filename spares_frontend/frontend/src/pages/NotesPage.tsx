@@ -15,6 +15,7 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail, { type NotePaneHandle } from '../components/NoteDetail';
+import Pagination from '../components/Pagination';
 import type { NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -415,11 +416,7 @@ export default function NotesPage() {
             </div>
           )}
 
-          <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
-            <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
-            <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
-          </div>
+          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

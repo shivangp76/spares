@@ -8,6 +8,7 @@ import CardTools from '../components/CardTools';
 import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
+import Pagination from '../components/Pagination';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -388,11 +389,7 @@ export default function CardsPage() {
             </div>
           )}
 
-          <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
-            <span style={{ fontSize: 13 }}>Page {page}{searchResults !== null && ` of ${pageCount}`}</span>
-            <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
-          </div>
+          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
