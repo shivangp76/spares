@@ -196,6 +196,7 @@ async fn get_linked_notes_for_review(
 }
 
 #[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments, reason = "only called by `review_card_response`")]
 fn build_review_card_response(
     ReviewCard {
         note_id,
@@ -206,6 +207,7 @@ fn build_review_card_response(
         card_state,
     }: ReviewCard,
     note_data: Option<String>,
+    note_updated_at: DateTime<Utc>,
     cards_left_by_state: HashMap<StateId, u32>,
     time_estimate: Duration,
     all_parsers: &[fn() -> Box<dyn Parseable>],
@@ -350,6 +352,7 @@ fn build_review_card_response(
         card_front_raw_path,
         card_back_raw_path,
         note_raw_path,
+        note_updated_at,
         parser_name,
         keywords,
         cli,
@@ -1031,9 +1034,16 @@ pub(crate) async fn review_card_response(
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+    let note_updated_at: DateTime<Utc> =
+        sqlx::query_scalar(r"SELECT updated_at FROM note WHERE id = ?")
+            .bind(review_card.note_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
     let mut response = build_review_card_response(
         review_card,
         note_data,
+        note_updated_at,
         cards_left_by_state,
         time_estimate,
         all_parsers,
@@ -2513,6 +2523,41 @@ mod tests {
         .unwrap();
         let total_filtered: u32 = response.cards_left_by_state.values().sum();
         assert_eq!(total_filtered, 2);
+    }
+
+    #[sqlx::test]
+    async fn test_review_card_has_note_updated_at(pool: sqlx::SqlitePool) -> () {
+        let now = Utc::now();
+        create_note_helper(&pool).await;
+        let (card_id, note_id): (CardId, NoteId) =
+            sqlx::query_as(r"SELECT id, note_id FROM card ORDER BY id ASC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let card_note_updated_at = async || {
+            get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+                .await
+                .unwrap()
+                .unwrap()
+                .note_updated_at
+        };
+        let note_updated_at: DateTime<Utc> =
+            sqlx::query_scalar(r"SELECT updated_at FROM note WHERE id = ?")
+                .bind(note_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(card_note_updated_at().await, note_updated_at);
+
+        // As when the note is imported again
+        let later = DateTime::from_timestamp(note_updated_at.timestamp() + 60, 0).unwrap();
+        sqlx::query(r"UPDATE note SET updated_at = ? WHERE id = ?")
+            .bind(later.timestamp())
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card_note_updated_at().await, later);
     }
 
     /// Three cards, one per note from `create_note_helper`:

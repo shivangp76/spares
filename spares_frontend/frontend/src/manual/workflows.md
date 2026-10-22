@@ -11,7 +11,7 @@ Live notes let you write notes in a source file, such as lecture notes with pros
 
 Then import the file with `spares import` after every edit, and finalize it with `spares import --strip-liveness` once the notes are stable. Edit a live note only in its source file: importing it from any other file, such as one from `spares note generate`, changing its text with `spares note edit`, and pushing a change to its text from the notes repository are all refused, since the next import of the source file would overwrite them. Its tags and keywords can still be changed in the web app, the notes repository or with `spares note edit`. How notes are matched, with a worked example, is in the module docs of `spares_cli::import`.
 
-To fix a live note while reviewing it in the web app, edit its source file and run `spares import` on it. Then press `R` (Reload Card, under More actions) to show the card as it is now, on the side you were on. If the edit removed the card, the review moves on to the next one.
+To fix a live note while reviewing it in the web app, edit its source file and run `spares import` on it. When you switch back to the review, the card is refreshed if its note changed, on the side you were on. If the browser stayed in view the whole time, press `R` (Reload Card, under More actions) instead. If the edit removed the card, the review moves on to the next one.
 
 ## Inheriting SRS data from another card
 

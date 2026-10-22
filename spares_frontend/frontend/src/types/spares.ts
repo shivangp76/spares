@@ -18,6 +18,8 @@ export interface GetReviewCardResponse {
   card_front_raw_path: string;
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
+  // When the note was last changed. Missing from cards downloaded for offline review before it was added.
+  note_updated_at?: string;
   parser_name: string;
   keywords: string[];
   // Present iff the card is reviewed by running an external command (CLI only)

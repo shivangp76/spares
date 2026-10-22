@@ -809,6 +809,10 @@ pub mod review {
         pub card_back_raw_path: CardBackRenderedPath,
         /// Path to the raw note source file. Relative to the files directory when inside it.
         pub note_raw_path: PathBuf,
+        /// When the note was last changed, for clients to tell whether the card shown is out of
+        /// date, e.g. after `spares import` of its file. The same as the note's `updated_at`.
+        #[serde(default)]
+        pub note_updated_at: DateTime<Utc>,
         pub parser_name: String,
         pub keywords: Vec<String>,
         /// Present iff this card is a CLI card.

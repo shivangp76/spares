@@ -36,6 +36,11 @@ export function keepShown<T extends { id: number }>(shown: T | null, updated: T)
   return shown?.id === updated.id ? updated : shown;
 }
 
+/** Whether `note` was changed after `card` was fetched, e.g. by `spares import` of its file. */
+export function noteChangedSince(card: { note_updated_at?: string }, note: { updated_at: string }): boolean {
+  return card.note_updated_at !== undefined && Date.parse(note.updated_at) > Date.parse(card.note_updated_at);
+}
+
 const NOTE_ID_PLACES = 8;
 const NOTE_ID_RADIX = 27;
 

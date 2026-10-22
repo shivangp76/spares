@@ -69,7 +69,7 @@ import {
   type ReviewHistoryResponse,
   type StatisticsResponse,
 } from '../types/spares';
-import { backPath, backWebPath, errorMessage, formatDuration, formatNoteId, keepShown, sectionLabel } from '../utils';
+import { backPath, backWebPath, errorMessage, formatDuration, formatNoteId, keepShown, noteChangedSince, sectionLabel } from '../utils';
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -885,6 +885,38 @@ export default function ReviewPage() {
   function reloadCard() {
     refreshCurrentCard('Card reloaded.', 'The card no longer exists. Advancing to next card.');
   }
+
+  // Coming back to the page, e.g. from the terminal after `spares import` of the card's file,
+  // refreshes the card if its note changed meanwhile. Focus and becoming visible often come
+  // together, so a check already under way is not repeated. Re-bound on every render so the card
+  // is current.
+  const checkingNote = useRef(false);
+  useEffect(() => {
+    if (!reviewing || !card || offline) return;
+    const shown = card;
+    async function checkNote() {
+      if (document.visibilityState !== 'visible' || checkingNote.current) return;
+      checkingNote.current = true;
+      try {
+        if (noteChangedSince(shown, await getNote(shown.note_id))) {
+          await refreshCurrentCard(
+            'Card refreshed, since its note changed (card order may have changed).',
+            'The card was deleted when its note changed. Advancing to next card.',
+          );
+        }
+      } catch (e) {
+        if (!isNetworkError(e)) console.error(e);
+      } finally {
+        checkingNote.current = false;
+      }
+    }
+    window.addEventListener('focus', checkNote);
+    document.addEventListener('visibilitychange', checkNote);
+    return () => {
+      window.removeEventListener('focus', checkNote);
+      document.removeEventListener('visibilitychange', checkNote);
+    };
+  });
 
   /** Tapping the front shows the answer, for touchscreens without the Space shortcut. */
   function onFrontClick(e: React.MouseEvent) {
