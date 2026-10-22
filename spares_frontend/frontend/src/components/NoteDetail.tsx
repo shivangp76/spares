@@ -1,5 +1,6 @@
-import { useEffect, useImperativeHandle, useRef, useState } from 'react';
-import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { getCM } from '@replit/codemirror-vim';
 import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -50,6 +51,14 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
   // The editor's data as last saved, so edits made since can be told apart
   const [savedData, setSavedData] = useState(note.data);
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
+  // Set once typing into a live note's data was blocked, to say why nothing happened
+  const [liveEditTried, setLiveEditTried] = useState(false);
+  const dataExtensions = useMemo(
+    () => live
+      ? [...editor.dataExtensions, EditorView.domEventHandlers({ beforeinput: () => { setLiveEditTried(true); return false; } })]
+      : editor.dataExtensions,
+    [live, editor.dataExtensions],
+  );
   const isNarrow = useMediaQuery('(max-width: 640px)');
   const [imageOcclusions, setImageOcclusions] = useState<ImageOcclusionData[]>([]);
   const [imageOcclusionsError, setImageOcclusionsError] = useState<string | null>(null);
@@ -209,14 +218,26 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
         </div>
       )}
       {live && (
-        <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
-          This is a live note: its text comes from <code>{String(note.custom_data.live_sync_name)}</code> on the laptop, so it can't be edited here. Tags and keywords can.
+        <div
+          role={liveEditTried ? 'alert' : undefined}
+          style={{
+            marginBottom: 12,
+            padding: '8px 10px',
+            borderRadius: 4,
+            fontSize: 13,
+            color: liveEditTried ? 'var(--tone-red-fg)' : 'var(--tone-orange-fg)',
+            border: `1px solid ${liveEditTried ? 'var(--tone-red-border)' : 'var(--tone-orange-border)'}`,
+            background: liveEditTried ? 'var(--tone-red-bg)' : 'var(--tone-orange-bg)',
+          }}
+        >
+          {liveEditTried ? <strong>The data of a live note is read-only here. </strong> : <strong>Live note: the data is read-only here. </strong>}
+          Its text comes from <code>{String(note.custom_data.live_sync_name)}</code> on the laptop, which would overwrite edits made here, so edit that file instead. Tags and keywords can be edited here.
         </div>
       )}
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <div style={fieldLabel}>Data</div>
+          <div style={fieldLabel}>Data{live && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}> (read-only)</span>}</div>
           {/* Wraps on phones rather than pushing the page sideways */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
@@ -251,9 +272,13 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
           theme={theme}
           value={dataContent}
           onChange={setDataContent}
-          editable={!live}
+          // Still focusable, so it can be scrolled and moved around in, as with Vim's hjkl
           readOnly={live}
-          extensions={editor.dataExtensions}
+          extensions={dataExtensions}
+          onCreateEditor={view => {
+            // Vim's insert mode is the first sign of trying to edit
+            if (live) getCM(view)?.on('vim-mode-change', (e: { mode: string }) => { if (e.mode === 'insert') setLiveEditTried(true); });
+          }}
           basicSetup={{ lineNumbers: editor.lineNumbers }}
           style={cmStyle}
         />
