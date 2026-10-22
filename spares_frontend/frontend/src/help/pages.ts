@@ -74,6 +74,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       { label: 'Typed answers', file: 'getting_started.md', heading: 'Typed answers' },
       { label: 'Reviewing offline', file: 'getting_started.md', heading: 'Reviewing offline' },
       { label: 'Putting cards off until after an exam', file: 'workflows.md', heading: 'Putting cards off until after an exam' },
+      { label: 'Fixing a live note while reviewing it', file: 'workflows.md', heading: 'Live notes' },
     ],
   },
   '/notes': {

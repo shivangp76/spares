@@ -849,24 +849,41 @@ export default function ReviewPage() {
     if (returnedToLanding) filterInputRef.current?.select();
   }, [returnedToLanding]);
 
-  /** Mirrors the CLI's Sync Note: re-render the note, then refresh the current card in place. */
-  async function onNoteUpdated(updated: NoteResponse) {
-    setPanelNote(prev => keepShown(prev, updated));
-    if (!card || updated.id !== card.note_id) return;
+  /**
+   * Fetches the current card again and shows it in place, on the side shown, without restarting
+   * its stopwatch. For after its note changed, here or by `spares import` of its file.
+   */
+  async function refreshCurrentCard(refreshed: string, deleted: string) {
+    if (!card) return;
     try {
-      // NoteDetail has already regenerated the note's rendered files
-      const refreshed = await getReviewCardById(card.card_id, activeFilter);
-      if (refreshed) {
-        setCard(refreshed);
+      const next = await getReviewCardById(card.card_id, activeFilter);
+      if (next) {
+        setCard(next);
         setCardVersion(v => v + 1);
-        setStatus('Current card refreshed after sync (card order may have changed).');
+        setStatus(refreshed);
       } else {
-        setStatus('Current card was deleted during sync. Advancing to next card.');
+        setStatus(deleted);
         loadCard(activeFilter);
       }
     } catch (e) {
-      setStatus(`Failed to refresh card after sync: ${errorMessage(e)}`);
+      setStatus(`Failed to refresh the card: ${errorMessage(e)}`);
     }
+  }
+
+  /** Mirrors the CLI's Sync Note: re-render the note, then refresh the current card in place. */
+  function onNoteUpdated(updated: NoteResponse) {
+    setPanelNote(prev => keepShown(prev, updated));
+    if (!card || updated.id !== card.note_id) return;
+    // NoteDetail has already regenerated the note's rendered files
+    refreshCurrentCard(
+      'Current card refreshed after sync (card order may have changed).',
+      'Current card was deleted during sync. Advancing to next card.',
+    );
+  }
+
+  /** Shows the card as it is now, e.g. after its file was edited and imported again. */
+  function reloadCard() {
+    refreshCurrentCard('Card reloaded.', 'The card no longer exists. Advancing to next card.');
   }
 
   /** Tapping the front shows the answer, for touchscreens without the Space shortcut. */
@@ -911,6 +928,7 @@ export default function ReviewPage() {
     { keys: ['d'], description: buryUntil ? `Bury card until after ${formatBuryUntil(buryUntil)}` : 'Bury card until after a date, e.g. an exam', available: cardShown },
     { keys: ['s'], description: 'Suspend card', available: cardShown },
     { keys: ['e'], description: cardShown && panelNote?.id === card.note_id ? 'Close note' : 'Edit note', available: cardShown },
+    { keys: ['R'], description: 'Reload card, e.g. after importing its file again', available: cardShown },
     { keys: ['f'], description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ''}`, available: cardShown && config !== null },
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
@@ -942,7 +960,7 @@ export default function ReviewPage() {
       if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
       const actions: Record<string, () => void> = {
         Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
-        f: flagNote, q: switchQuery, r: replayAudio, w: cyclePageWidth,
+        R: reloadCard, f: flagNote, q: switchQuery, r: replayAudio, w: cyclePageWidth,
         '+': zoomIn, '=': zoomIn, '-': zoomOut,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
@@ -1269,6 +1287,9 @@ export default function ReviewPage() {
                   {!isNarrow && <button onClick={toggleCardNote} style={toned(TONES.blue)}>{panelNote?.id === card.note_id ? 'Close Note' : 'Edit Note'} <span className="key-hint">(e)</span></button>}
                   <button onClick={flagNote} disabled={!config} style={toned(TONES.blue)}>
                     Tag to modify later{config ? ` (${config.flagged_tag_name})` : ''} <span className="key-hint">(f)</span>
+                  </button>
+                  <button onClick={reloadCard} style={toned(TONES.blue)} title="Shows the card as it is now, e.g. after its file was edited and imported again">
+                    Reload Card <span className="key-hint">(R)</span>
                   </button>
                 </ActionGroup>
                 <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
