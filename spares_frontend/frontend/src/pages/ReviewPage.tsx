@@ -213,6 +213,9 @@ export default function ReviewPage() {
   // A query that can't be searched, marked in the box it was typed in
   const [queryError, setQueryError] = useState<SearchInputError | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  // The status shown in full on phones, where it is otherwise cut to one line. A new status starts cut.
+  const [expandedStatus, setExpandedStatus] = useState<string | null>(null);
+  const statusExpanded = status !== null && expandedStatus === status;
   // Shown from the last visit while they are refetched, so the landing page appears straight away
   const [statistics, setStatistics] = useState<StatisticsResponse | null>(
     () => (credentials && cachedTodayStatistics(credentials.schedulerName)) ?? null,
@@ -516,7 +519,10 @@ export default function ReviewPage() {
       setLastUndo(null);
       const ratedCardId = card.card_id;
       setPreviousCard(prev => ({ id: ratedCardId, version: (prev?.version ?? 0) + 1 }));
-      setStatus(`Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}${res.sent ? '' : ' · Saved offline, sent once the server can be reached'}`);
+      // Shortened on phones, where it sits above the card
+      setStatus(isNarrow
+        ? `Previous card: Recall ${formatDuration(recallSeconds)} · Rate ${formatDuration(rateSeconds)}${res.sent ? '' : ' · Saved offline'}`
+        : `Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}${res.sent ? '' : ' · Saved offline, sent once the server can be reached'}`);
       loadCard(activeFilter);
     } catch (e) {
       setError(errorMessage(e));
@@ -1113,6 +1119,29 @@ export default function ReviewPage() {
 
       {(phase === 'front' || phase === 'back') && card && (
         <>
+          {/* What happened to the previous card, above the card so it is seen without scrolling.
+              On phones it is one line, which a tap unfolds, so the card is not pushed down. */}
+          {status && (
+            <div
+              onClick={isNarrow ? () => setExpandedStatus(statusExpanded ? null : status) : undefined}
+              title={isNarrow && !statusExpanded ? status : undefined}
+              style={{
+                marginBottom: 8, fontSize: isNarrow ? 12 : 13, color: 'var(--text-secondary)',
+                ...(isNarrow && !statusExpanded && { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
+              }}
+            >
+              {status}
+            </div>
+          )}
+
+          {/* Scrolls within a capped height, so the card stays in view below a long history */}
+          {showPreviousCardInfo && previousCard && (
+            <div style={{ marginBottom: 12, padding: isNarrow ? 8 : 12, border: '1px solid var(--border)', borderRadius: 6, maxHeight: isNarrow ? '35vh' : '45vh', overflowY: 'auto' }}>
+              <div style={sectionLabel}>Previous Card Info (card {previousCard.id})</div>
+              <CardInfo cardId={previousCard.id} version={previousCard.version} />
+            </div>
+          )}
+
           {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}><CodeText text={sessionInfo} /></div>}
           <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>Note {formatNoteId(card.note_id)} · Card {card.card_id} (#{card.card_order}) · {card.parser_name}</span>
@@ -1196,15 +1225,6 @@ export default function ReviewPage() {
                   ))}
                 </div>
               )}
-            </div>
-          )}
-
-          {status && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-secondary)' }}>{status}</div>}
-
-          {showPreviousCardInfo && previousCard && (
-            <div style={{ marginTop: 16 }}>
-              <div style={sectionLabel}>Previous Card Info (card {previousCard.id})</div>
-              <CardInfo cardId={previousCard.id} version={previousCard.version} />
             </div>
           )}
 
