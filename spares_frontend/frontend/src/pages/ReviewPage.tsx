@@ -1057,12 +1057,13 @@ export default function ReviewPage() {
       {phase === 'landing' && (
         <div style={{ marginTop: 24 }}>
           {sessionStarted && sessionShowedCard && <div style={{ marginBottom: 24 }}>{summary}</div>}
-          {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift. */}
-          <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center', minHeight: DUE_CARD_HEIGHT }}>
+          {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift.
+              On phones the four states' cards are narrowed to fit on that one row. */}
+          <div style={{ display: 'flex', gap: isNarrow ? 8 : 12, marginBottom: 20, flexWrap: isNarrow ? 'nowrap' : 'wrap', alignItems: 'center', minHeight: DUE_CARD_HEIGHT }}>
             {statistics && Object.entries(statistics.due_count_by_state)
               .filter(([, count]) => count > 0)
               .map(([stateId, count]) => (
-                <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', textAlign: 'center', boxSizing: 'border-box', height: DUE_CARD_HEIGHT }}>
+                <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: isNarrow ? '6px 8px' : '6px 14px', textAlign: 'center', boxSizing: 'border-box', height: DUE_CARD_HEIGHT, minWidth: 0 }}>
                   <div style={{ fontSize: 20, fontWeight: 600, lineHeight: '26px' }}>{count}</div>
                   <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
                 </div>
