@@ -204,6 +204,9 @@ export default function ReviewPage() {
 
   const [phase, setPhase] = useState<Phase>('landing');
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
+  // Bumped when the card is refreshed in place, since its rendered files keep their paths when the
+  // note is rendered again
+  const [cardVersion, setCardVersion] = useState(0);
   // What was typed into each blank of the card's typed answer
   const [typedAnswers, setTypedAnswers] = useState<string[]>([]);
   const audioPlayer = useAudioPlayer();
@@ -855,6 +858,7 @@ export default function ReviewPage() {
       const refreshed = await getReviewCardById(card.card_id, activeFilter);
       if (refreshed) {
         setCard(refreshed);
+        setCardVersion(v => v + 1);
         setStatus('Current card refreshed after sync (card order may have changed).');
       } else {
         setStatus('Current card was deleted during sync. Advancing to next card.');
@@ -1171,7 +1175,7 @@ export default function ReviewPage() {
               <>
                 {phase === 'front' && card.audio && <AudioBar audio={card.audio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} version={cardVersion} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
                 </div>
               </>
             )}
@@ -1182,7 +1186,7 @@ export default function ReviewPage() {
               {phase === 'back' && card.audio && <AudioBar audio={card.audio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
-                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
+                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} version={cardVersion} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
               </div>
             </div>
           )}
