@@ -196,7 +196,10 @@ async fn get_linked_notes_for_review(
 }
 
 #[expect(clippy::too_many_lines)]
-#[expect(clippy::too_many_arguments, reason = "only called by `review_card_response`")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "only called by `review_card_response`"
+)]
 fn build_review_card_response(
     ReviewCard {
         note_id,
