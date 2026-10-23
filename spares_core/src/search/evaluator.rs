@@ -880,6 +880,15 @@ impl Field {
         let with_op = move |field_name: &str| format!("{} {}", field_name, value_str);
         // Never NULL, so negating it matches the cards that have no value, like new cards.
         let never_null = move |expr: &str| format!("COALESCE({expr} {value_str}, 0)");
+        // `IS` is never NULL, unlike `=`, so `-c.suspended` matches the cards with no special state.
+        let special_state = |state: crate::model::SpecialState| {
+            let not = if value_str.contains("false") {
+                " NOT"
+            } else {
+                ""
+            };
+            format!("c.special_state IS{not} {}", state as u8)
+        };
         Ok(match self {
             Field::Note(note_field) => match note_field {
                 NoteField::Id => with_op("n.id"),
@@ -934,26 +943,10 @@ impl Field {
                 CardField::Difficulty => with_op("c.difficulty"),
                 CardField::DesiredRetention => with_op("c.desired_retention"),
                 // CardField::SpecialState => "c.special_state".to_string(),
-                CardField::Suspended => {
-                    if value_str.contains("false") {
-                        "(c.special_state IS NULL OR c.special_state != 1)".to_string()
-                    } else {
-                        "c.special_state = 1".to_string()
-                    }
-                }
-                CardField::UserBuried => {
-                    if value_str.contains("false") {
-                        "(c.special_state IS NULL OR c.special_state != 2)".to_string()
-                    } else {
-                        "c.special_state = 2".to_string()
-                    }
-                }
+                CardField::Suspended => special_state(crate::model::SpecialState::Suspended),
+                CardField::UserBuried => special_state(crate::model::SpecialState::UserBuried),
                 CardField::SchedulerBuried => {
-                    if value_str.contains("false") {
-                        "(c.special_state IS NULL OR c.special_state != 3)".to_string()
-                    } else {
-                        "c.special_state = 3".to_string()
-                    }
+                    special_state(crate::model::SpecialState::SchedulerBuried)
                 }
                 CardField::WaitingOnLinks => {
                     unreachable!("needs the config, see `waiting_on_links_sql`")
@@ -2841,16 +2834,16 @@ mod tests {
             // Card search - needs card join
             (
                 "-card.scheduler_buried=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.special_state = 3) ORDER BY n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE NOT (c.special_state IS 3) ORDER BY n.id ASC",
             ),
             // Complex query - needs multiple joins
             (
                 "dog and tag=math and -card.suspended=true",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state = 1)) ORDER BY rank(\"dog\"*), n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND NOT (c.special_state IS 1)) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             (
                 "dog and tag=math and card.suspended=false",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY rank(\"dog\"*), n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word dog) AND (EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON nt.tag_id = t.id WHERE nt.note_id = n.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')) OR EXISTS (SELECT 1 FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE ct.card_id = c.id AND (t.name LIKE 'math' OR t.name LIKE 'math:%')))) AND c.special_state IS NOT 1) ORDER BY rank(\"dog\"*), n.id ASC",
             ),
             // Custom data - no joins needed
             (
@@ -2917,7 +2910,7 @@ mod tests {
             // Words that start with a keyword, numbers and bare boolean fields
             (
                 "orbit 2024 c.user_buried",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word orbit) AND n.data REGEXP text(word 2024)) AND c.special_state = 2) ORDER BY rank(\"orbit\"* OR \"2024\"*), n.id ASC",
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE ((n.data REGEXP text(word orbit) AND n.data REGEXP text(word 2024)) AND c.special_state IS 2) ORDER BY rank(\"orbit\"* OR \"2024\"*), n.id ASC",
             ),
             // Card states by name
             (
@@ -3528,6 +3521,72 @@ mod tests {
         assert_eq!(search("sort_by_asc=c.retrievability").await, [2, 1, 3]);
         assert_eq!(search("sort_by_desc=c.retrievability").await, [1, 2, 3]);
         assert_eq!(search("sort_by_desc=c.lapses,c.id").await, [1, 3, 2]);
+    }
+
+    #[sqlx::test]
+    async fn negated_special_states_match_cards_without_one(pool: SqlitePool) {
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // `a` has a card with no special state and a buried one, `b` only one with none, and `c`
+        // a suspended one.
+        let cards = [
+            ("a", 1, None),
+            ("a", 2, Some(crate::model::SpecialState::UserBuried)),
+            ("b", 3, None),
+            ("c", 4, Some(crate::model::SpecialState::Suspended)),
+        ];
+        for (letters, card_id, special_state) in cards {
+            let note_id = letters.parse::<NoteId>().unwrap();
+            sqlx::query(
+                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, '{}', 1)",
+            )
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, special_state, custom_data) VALUES (?, ?, ?, 1, 0, 0, 5, 0.9, 0, ?, '{}')"#,
+            )
+            .bind(card_id)
+            .bind(note_id)
+            .bind(card_id)
+            .bind(special_state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let cards = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_card_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"));
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(cards("c.user_buried").await, [2]);
+        assert_eq!(cards("-c.user_buried").await, [1, 3, 4]);
+        assert_eq!(cards("c.user_buried=false").await, [1, 3, 4]);
+        assert_eq!(cards("-c.suspended").await, [1, 2, 3]);
+        assert_eq!(cards("c.suspended!=true").await, [1, 2, 3]);
+        assert_eq!(cards("-c.scheduler_buried").await, [1, 2, 3, 4]);
+        assert_eq!(cards("-(c.user_buried or c.suspended)").await, [1, 3]);
+        let notes = async |query: &str| {
+            Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"))
+        };
+        let ids = |letters: &[&str]| {
+            letters
+                .iter()
+                .map(|l| l.parse::<NoteId>().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(notes("-c.user_buried").await, ids(&["a", "b", "c"]));
+        assert_eq!(notes("-c.suspended").await, ids(&["a", "b"]));
     }
 
     #[sqlx::test]
@@ -4217,7 +4276,7 @@ n.data REGEXP text(word cat)) AND (c.due <= 100) ORDER BY c.due ASC, n.created_a
             ),
             (
                 r#"c.cloze~"proof" AND c.suspended=false"#,
-                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (1 AND (c.special_state IS NULL OR c.special_state != 1)) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
+                "SELECT DISTINCT c.id FROM card c LEFT JOIN note n ON n.id = c.note_id WHERE (1 AND c.special_state IS NOT 1) ORDER BY c.due ASC, n.created_at ASC, c.id ASC",
             ),
         ];
         for (input, expected_sql) in inputs {
