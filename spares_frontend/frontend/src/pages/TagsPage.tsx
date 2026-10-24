@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/client';
 import Navbar from '../components/Navbar';
+import Pagination from '../components/Pagination';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
+import { useClientPages } from '../hooks/useClientPages';
 import { useRowKeys } from '../hooks/useRowKeys';
+import { setTagsPageSize, useTagsPageSize } from '../preferences';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 
@@ -251,7 +254,10 @@ export default function TagsPage() {
   }
 
   const needle = filter.trim().toLowerCase();
-  const shown = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
+  const found = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
+  // Only the table is split into pages, as the tree's branches would be split across them
+  const pages = useClientPages(found, useTagsPageSize(), setTagsPageSize);
+  const shown = pages.shown;
 
   const tableBody = useRef<HTMLTableSectionElement>(null);
   const filterInput = useRef<HTMLInputElement>(null);
@@ -262,6 +268,8 @@ export default function TagsPage() {
     edit: { description: 'Edit the highlighted tag', run: i => setEditing({ tag: shown[i] }) },
     remove: { description: 'Delete the highlighted tag, after asking', run: i => void remove(shown[i]) },
     filter: filterInput,
+    prevPage: view === 'table' ? pages.pagination.prevPage : null,
+    nextPage: view === 'table' ? pages.pagination.nextPage : null,
   });
 
   return (
@@ -272,7 +280,7 @@ export default function TagsPage() {
       <h2 style={{ marginBottom: 16 }}>Tags</h2>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        <input ref={filterInput} value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
+        <input ref={filterInput} value={filter} onChange={e => { setFilter(e.target.value); pages.pagination.goToPage(1); }} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
         <label style={{ fontSize: 14 }}>
           <input type="radio" name="tag-view" checked={view === 'table'} onChange={() => setView('table')} style={{ marginRight: 4 }} />Table
         </label>
@@ -289,7 +297,7 @@ export default function TagsPage() {
 
       {tags && view === 'tree' && (
         <TagTree
-          node={buildTree(shown.map(t => t.name))}
+          node={buildTree(found.map(t => t.name))}
           path=""
           tagsByName={new Map(tags.map(t => [t.name, t]))}
           collapsed={collapsed}
@@ -298,42 +306,45 @@ export default function TagsPage() {
       )}
 
       {tags && view === 'table' && (
-        <div className="table-scroll">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead>
-              <tr>
-                <th style={th} className="hide-narrow">ID</th>
-                <th style={th}>Name</th>
-                <th style={th} className="hide-narrow">Description</th>
-                <th style={th} className="hide-narrow">Query</th>
-                <th style={th} className="hide-narrow">Auto delete</th>
-                <th style={th} />
-              </tr>
-            </thead>
-            <tbody ref={tableBody}>
-              {shown.map((tag, i) => (
-                <tr key={tag.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
-                  <td style={td} className="hide-narrow">{tag.id}</td>
-                  <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
-                  <td style={td} className="hide-narrow">{tag.description || '—'}</td>
-                  <td style={td} className="hide-narrow">{tag.query !== null ? <><code>{tag.query}</code>{!tag.reschedule && ' (no rescheduling)'}</> : '—'}</td>
-                  <td style={td} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    <span style={{ display: 'inline-flex', gap: 4 }}>
-                      <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
-                      <button onClick={() => setEditing({ tag })} className="touch-target-small" style={smallButton}>Edit</button>
-                      {tag.query !== null && <button onClick={() => rebuild(tag)} className="touch-target-small" style={smallButton}>Rebuild</button>}
-                      <button onClick={() => remove(tag)} className="touch-target-small" style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
-                    </span>
-                  </td>
+        <>
+          <div className="table-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr>
+                  <th style={th} className="hide-narrow">ID</th>
+                  <th style={th}>Name</th>
+                  <th style={th} className="hide-narrow">Description</th>
+                  <th style={th} className="hide-narrow">Query</th>
+                  <th style={th} className="hide-narrow">Auto delete</th>
+                  <th style={th} />
                 </tr>
-              ))}
-              {shown.length === 0 && (
-                <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No tags found</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody ref={tableBody}>
+                {shown.map((tag, i) => (
+                  <tr key={tag.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
+                    <td style={td} className="hide-narrow">{tag.id}</td>
+                    <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
+                    <td style={td} className="hide-narrow">{tag.description || '—'}</td>
+                    <td style={td} className="hide-narrow">{tag.query !== null ? <><code>{tag.query}</code>{!tag.reschedule && ' (no rescheduling)'}</> : '—'}</td>
+                    <td style={td} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <span style={{ display: 'inline-flex', gap: 4 }}>
+                        <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>
+                        <button onClick={() => setEditing({ tag })} className="touch-target-small" style={smallButton}>Edit</button>
+                        {tag.query !== null && <button onClick={() => rebuild(tag)} className="touch-target-small" style={smallButton}>Rebuild</button>}
+                        <button onClick={() => remove(tag)} className="touch-target-small" style={{ ...smallButton, color: 'var(--danger)' }}>Delete</button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {shown.length === 0 && (
+                  <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No tags found</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pagination {...pages.pagination} />
+        </>
       )}
     </div>
   );

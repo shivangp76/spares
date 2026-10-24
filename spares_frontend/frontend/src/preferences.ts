@@ -119,3 +119,13 @@ export const useNotesPageSize = notesPageSize.use;
 const cardsPageSize = choicePreference<PageSize>('spares_cards_page_size', PAGE_SIZES, '20');
 export const setCardsPageSize = cardsPageSize.set;
 export const useCardsPageSize = cardsPageSize.use;
+
+/** How many tags the tags page lists on each page. */
+const tagsPageSize = choicePreference<PageSize>('spares_tags_page_size', PAGE_SIZES, '50');
+export const setTagsPageSize = tagsPageSize.set;
+export const useTagsPageSize = tagsPageSize.use;
+
+/** How many rows the keywords page lists on each page of a tab. */
+const keywordsPageSize = choicePreference<PageSize>('spares_keywords_page_size', PAGE_SIZES, '50');
+export const setKeywordsPageSize = keywordsPageSize.set;
+export const useKeywordsPageSize = keywordsPageSize.use;
