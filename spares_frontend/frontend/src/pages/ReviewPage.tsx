@@ -78,7 +78,7 @@ function formatWait(ms: number): string {
   return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`;
 }
 
-type Phase = 'landing' | 'loading' | 'front' | 'back' | 'waiting' | 'done' | 'summary' | 'error';
+type Phase = 'landing' | 'loading' | 'front' | 'back' | 'waiting' | 'done' | 'error';
 type FilterMode = 'query' | 'tagName' | 'tagId';
 const filterInputStyle: React.CSSProperties = { padding: '8px 12px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 
@@ -407,7 +407,7 @@ export default function ReviewPage() {
 
   // Refresh the day's statistics whenever the session ends
   useEffect(() => {
-    if (phase === 'done' || phase === 'summary') refreshStatistics();
+    if (phase === 'done') refreshStatistics();
   }, [phase, refreshStatistics]);
 
   async function startReview(mode: FilterMode, rawInput: string) {
@@ -475,7 +475,10 @@ export default function ReviewPage() {
     loadCard(filter);
   }
 
-  /** Leaves the session for the landing page, keeping the current filter prefilled to edit. */
+  /**
+   * Leaves the session for the landing page, which shows its summary above the day's statistics,
+   * keeping the current filter prefilled to edit.
+   */
   function switchQuery() {
     if (sessionEnd === null) setSessionEnd(Date.now());
     setStatus(null);
@@ -1049,7 +1052,7 @@ export default function ReviewPage() {
             <button onClick={() => setShowPreviousCardInfo(v => !v)} disabled={!previousCard} className="touch-target-small" style={sessionButton}>
               {showPreviousCardInfo && previousCard ? 'Hide ' : ''}{isNarrow ? 'Previous' : 'Previous Card Info'}
             </button>
-            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }} className="touch-target-small" style={sessionButton}>{isNarrow ? 'End' : 'End session'}</button>
+            <button onClick={switchQuery} className="touch-target-small" style={sessionButton}>{isNarrow ? 'End' : 'End session'}</button>
           </div>
         )}
       </div>
@@ -1146,14 +1149,14 @@ export default function ReviewPage() {
             {' '}(in {formatWait(waitingUntil - Date.now())}), and will be once it can.
           </p>
           <p style={{ marginTop: 24, display: 'flex', gap: 16, justifyContent: 'center' }}>
-            <button onClick={() => { setSessionEnd(Date.now()); setPhase('summary'); }}>End session</button>
+            <button onClick={switchQuery}>End session</button>
           </p>
         </div>
       )}
 
-      {(phase === 'done' || phase === 'summary') && (
+      {phase === 'done' && (
         <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>
-          {phase === 'done' && <p>Nothing left to review{offline ? ' of the cards downloaded for offline review' : ''}.</p>}
+          <p>Nothing left to review{offline ? ' of the cards downloaded for offline review' : ''}.</p>
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
           {summary}
           <p style={{ marginTop: 24, display: 'flex', gap: 16, justifyContent: 'center' }}>
