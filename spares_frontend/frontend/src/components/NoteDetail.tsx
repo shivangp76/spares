@@ -9,6 +9,7 @@ import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, errorMessage, formatNoteId, insertBlock, insertInline, insertSource, isLiveNote } from '../utils';
 import { NO_WRITE_WARNING, useVimCommands } from '../vimCommands';
+import Backlinks from './Backlinks';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
@@ -34,7 +35,7 @@ interface Props {
   note: NoteResponse;
   onClose: () => void;
   onNoteUpdated: (updated: NoteResponse) => void;
-  /** Opens a linked note. The note's links, and its local graph, are shown iff this is given. */
+  /** Opens a linked note. The note's links both ways, and its local graph, are shown iff this is given. */
   onOpenNote?: (noteId: number) => void;
   /** Whether to offer the note's local graph, which a page already showing the graph leaves out. */
   localGraph?: boolean;
@@ -377,6 +378,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
           </div>
         </div>
       )}
+      {onOpenNote && <Backlinks noteId={note.id} version={note.updated_at} onOpenNote={onOpenNote} />}
       {onOpenNote && localGraph && <LocalGraph noteId={note.id} onOpenNote={onOpenNote} />}
 
       <div>

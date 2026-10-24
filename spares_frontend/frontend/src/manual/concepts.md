@@ -34,7 +34,7 @@ Keywords are used specifically for searching. For example, you may have multiple
 
 ## Linked Notes
 
-Each note can contain multiple linked notes, which are searched for using the parser specification. Notes are referenced based on their keywords. This is useful for connecting ideas together. Linked notes also support fuzzy finding, so notes can be referenced even if there are minor differences in phrasing of the keywords.
+Each note can contain multiple linked notes, which are searched for using the parser specification. Notes are referenced based on their keywords. This is useful for connecting ideas together. Linked notes also support fuzzy finding, so notes can be referenced even if there are minor differences in phrasing of the keywords. A note's pane in the web app lists both the notes it links to and the notes that link to it.
 
 ## Parsers
 
