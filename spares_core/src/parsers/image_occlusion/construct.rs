@@ -165,6 +165,11 @@ pub fn update_cloze_settings(
                 at: cloze_range.clone().into(),
             })
         })?;
+    // Rewriting unchanged contents would still change the file's modification time, so tools like
+    // rsync would see the file as changed.
+    if buffer == clozes_file_contents.as_bytes() {
+        return Ok(());
+    }
     std::fs::write(clozes_filepath, buffer).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!("Failed to write file {}.", clozes_filepath.display()),

@@ -1,7 +1,10 @@
+use std::fs::File;
 use std::fs::read_to_string;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 use indoc::indoc;
 use pretty_assertions::assert_eq;
@@ -29,6 +32,7 @@ use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
+use crate::parsers::image_occlusion::update_cloze_settings;
 use crate::parsers::impls::markdown::MarkdownParser;
 
 const MOVE_FILES: bool = false;
@@ -1142,4 +1146,40 @@ fn test_delete_note_files_with_missing_image_occlusion_files() {
     for filepath in &rendered_filepaths {
         assert!(!filepath.exists());
     }
+}
+
+/// Updating a cloze's settings to what they already are leaves the file, and so its modification
+/// time, alone.
+#[test]
+fn test_update_cloze_settings_skips_unchanged_file() {
+    let clozes_filepath = get_image_occlusion_directory().join("test-unchanged_clozes.svg");
+    let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><rect x="0" y="0" width="50" height="50"/></g></svg>"#;
+    std::fs::write(&clozes_filepath, svg).unwrap();
+    // The first update writes the settings and reformats the file.
+    update_cloze_settings(0, "o:1", &clozes_filepath, "", &(0..0)).unwrap();
+    let contents = read_to_string(&clozes_filepath).unwrap();
+    assert!(contents.contains(r#"data-cloze-settings="o:1""#));
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    File::options()
+        .write(true)
+        .open(&clozes_filepath)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+
+    update_cloze_settings(0, "o:1", &clozes_filepath, "", &(0..0)).unwrap();
+    let modified = std::fs::metadata(&clozes_filepath)
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(modified, old);
+
+    update_cloze_settings(0, "o:2", &clozes_filepath, "", &(0..0)).unwrap();
+    assert!(
+        read_to_string(&clozes_filepath)
+            .unwrap()
+            .contains(r#"data-cloze-settings="o:2""#)
+    );
+
+    std::fs::remove_file(&clozes_filepath).unwrap();
 }
