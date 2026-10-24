@@ -35,7 +35,7 @@ use crate::schedulers::state_role;
 use crate::schema::review::StateRole;
 
 /// `text` as a SQL string literal.
-fn sql_string(text: &str) -> String {
+pub(crate) fn sql_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 

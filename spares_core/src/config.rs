@@ -382,13 +382,14 @@ impl Default for EasyDaysConfig {
 /// for the next one, showing when it will be.
 ///
 /// For example, to review the cards you are most likely to have forgotten first, and to learn new
-/// cards a whole note at a time, in a random order of notes:
+/// cards a whole note at a time, in a random order of notes, with subjects taking turns:
 ///
 /// ```toml
 /// [queue]
 /// review_order = "retrievability"
 /// new_order = "random_note"
 /// new_review_mix = "interleaved"
+/// interleave_by = "top_level_tag"
 /// learn_ahead_limit = 1200
 /// ```
 ///
@@ -409,6 +410,38 @@ pub struct QueueConfig {
     pub new_order: NewCardOrder,
     /// How new cards and review cards are combined. Defaults to [`NewReviewMix::Interleaved`].
     pub new_review_mix: NewReviewMix,
+    /// Whether the cards of different subjects take turns, rather than coming in long runs of one
+    /// subject. Defaults to [`InterleaveBy::None`].
+    ///
+    /// Cards of one course are often due together, since they were added the same week, so a
+    /// review can be 40 calculus cards and then 40 chemistry ones. Mixing them helps tell similar
+    /// concepts apart, and makes each card a little harder to answer, which is what makes
+    /// interleaving work. With 6 `math` cards and 3 `chem` cards, and
+    /// `interleave_by = "top_level_tag"`:
+    ///
+    /// ```text
+    /// before: m1 m2 m3 m4 m5 m6 c1 c2 c3
+    /// after:  m1 c1 m2 m3 c2 m4 m5 c3 m6
+    /// ```
+    ///
+    /// - Each subject is spread over the session in proportion to its size, like the new cards
+    ///   of [`NewReviewMix::Interleaved`]: `chem` comes every third card, not every other one. A
+    ///   strict turn by turn would show all of `chem` in the first 6 cards, and end with a run of
+    ///   `math`.
+    /// - Within a subject, cards keep [`Self::review_order`] and [`Self::new_order`], so those
+    ///   still decide which cards of a subject come first. A card of a [preset](QueuePreset) keeps
+    ///   its preset's order.
+    /// - It takes the place of gathering the cards of presets that order differently (see
+    ///   [`QueuePreset::review_order`]): subjects take turns across presets, since a run of one
+    ///   preset's cards is a run of one subject too. Within a subject, they are still gathered.
+    /// - New cards and review cards are each mixed by subject, then combined as
+    ///   [`Self::new_review_mix`] says.
+    ///
+    /// It applies to group 2 of the list on [`QueueConfig`], new cards and reviews. Learning
+    /// cards are left alone, so their steps are not stretched, and so is a review whose query
+    /// sorts, since the sort asks for a different order. It is set for the whole queue, not by
+    /// preset, since a session mixes the cards of several presets.
+    pub interleave_by: InterleaveBy,
     /// How early a learning or relearning card may be shown when nothing else is left, in
     /// seconds. Defaults to 1200 (20 minutes), as in Anki.
     ///
@@ -518,6 +551,7 @@ impl Default for QueueConfig {
             review_order: ReviewOrder::default(),
             new_order: NewCardOrder::default(),
             new_review_mix: NewReviewMix::default(),
+            interleave_by: InterleaveBy::default(),
             learn_ahead_limit: Duration::minutes(20),
             bury_new_siblings: false,
             bury_review_siblings: false,
@@ -579,7 +613,7 @@ impl Default for QueueConfig {
 /// - Sibling burying, [`Self::bury_new_siblings`] and [`Self::bury_review_siblings`].
 ///
 /// Everything else stays global. The FSRS parameters are fitted to the whole review log, so
-/// there is one set of them. [`QueueConfig::new_review_mix`] and
+/// there is one set of them. [`QueueConfig::new_review_mix`], [`QueueConfig::interleave_by`] and
 /// [`QueueConfig::learn_ahead_limit`] shape a whole review session, which can mix the cards of
 /// several presets. A setting a preset cannot set, or a misspelled one, is an error rather than
 /// silently ignored.
@@ -719,6 +753,24 @@ pub enum NewReviewMix {
     NewFirst,
     /// `"reviews_first"`: all review cards, then all new cards.
     ReviewsFirst,
+}
+
+/// How the cards of different subjects are mixed. See [`QueueConfig::interleave_by`].
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterleaveBy {
+    /// `"none"`: cards are not mixed by subject, and come in their order alone.
+    #[default]
+    None,
+    /// `"top_level_tag"`: cards are mixed by the top-level tag of their note, so `math:analysis`
+    /// and `math:algebra` count as `math`.
+    ///
+    /// A note with several top-level tags counts as the first in alphabetical order. Notes keep
+    /// no order of their tags, and that one is the same every time. The tags of
+    /// [`SparesExternalConfig::flagged_tag_name`] and [`LeechConfig::tag_name`] are left out, since
+    /// they say how a note is doing rather than what it is about. Notes with no other tag are
+    /// mixed in as a subject of their own.
+    TopLevelTag,
 }
 
 /// The `[leech]` table of `config.toml`: cards you keep forgetting.
@@ -1466,11 +1518,13 @@ mod tests {
             review_order = "retrievability"
             new_order = "random_note"
             new_review_mix = "interleaved"
+            interleave_by = "top_level_tag"
             learn_ahead_limit = 1200
         "#});
         assert_eq!(config.queue.review_order, ReviewOrder::Retrievability);
         assert_eq!(config.queue.new_order, NewCardOrder::RandomNote);
         assert_eq!(config.queue.new_review_mix, NewReviewMix::Interleaved);
+        assert_eq!(config.queue.interleave_by, InterleaveBy::TopLevelTag);
         assert_eq!(config.queue.learn_ahead_limit, Duration::minutes(20));
     }
 

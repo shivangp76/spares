@@ -16,11 +16,13 @@ use crate::Error;
 
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::preset_index;
+use crate::api::preset::sql_string;
 use crate::api::review::DailyLimitsLeft;
 use crate::api::review::REVIEW_CARD_COLUMNS;
 use crate::api::review::ReviewCard;
 use crate::api::review::ReviewFilterQuery;
 use crate::api::review::get_cards_left_by_state_and_time_estimate;
+use crate::config::InterleaveBy;
 use crate::config::NewCardOrder;
 use crate::config::NewReviewMix;
 use crate::config::QueueConfig;
@@ -168,7 +170,8 @@ fn new_keys(order: NewCardOrder, now: DateTime<Utc>) -> Vec<Key> {
 /// (random) and `exam` (no order of its own) and a top-level order by due date, the `languages`
 /// cards come first, in a random order, then the `exam` cards and those of no preset, together,
 /// by due date. With no preset ordering differently from the top level, these are just
-/// `keys(top_level)`.
+/// `keys(top_level)`. With [`QueueConfig::interleave_by`], this gathering only applies within
+/// each subject.
 fn keys_by_preset<O: Copy + PartialEq>(
     presets: &indexmap::IndexMap<String, QueuePreset>,
     top_level: O,
@@ -208,6 +211,22 @@ fn keys_by_preset<O: Copy + PartialEq>(
     all_keys
 }
 
+/// The subject of card `c` that [`QueueConfig::interleave_by`] mixes by, as a SQL expression, or
+/// `None` if it mixes nothing.
+fn subject_sql(config: &SparesExternalConfig) -> Option<String> {
+    match config.queue.interleave_by {
+        InterleaveBy::None => None,
+        InterleaveBy::TopLevelTag => Some(format!(
+            "(SELECT MIN(CASE WHEN instr(t.name, ':') > 0 \
+             THEN substr(t.name, 1, instr(t.name, ':') - 1) ELSE t.name END) \
+             FROM note_tag nt JOIN tag t ON t.id = nt.tag_id \
+             WHERE nt.note_id = c.note_id AND t.name NOT IN ({}, {}))",
+            sql_string(&config.flagged_tag_name),
+            sql_string(&config.leech.tag_name),
+        )),
+    }
+}
+
 fn render(keys: &[Key]) -> String {
     keys.iter()
         .map(|(expr, descending)| format!("{expr} {}", if *descending { "DESC" } else { "ASC" }))
@@ -222,8 +241,8 @@ fn render(keys: &[Key]) -> String {
 /// `query_sort` is the sort the review's query asks for (see
 /// [`Evaluator::card_order_by`](crate::search::evaluator::Evaluator::card_order_by)). Unless it is
 /// empty, it orders new and review cards together in place of [`QueueConfig::new_order`],
-/// [`QueueConfig::review_order`] and [`QueueConfig::new_review_mix`], and of the orders of
-/// [presets](QueueConfig::presets).
+/// [`QueueConfig::review_order`], [`QueueConfig::new_review_mix`] and
+/// [`QueueConfig::interleave_by`], and of the orders of [presets](QueueConfig::presets).
 ///
 /// Each card is ordered by its preset's [`QueuePreset::new_order`] or
 /// [`QueuePreset::review_order`], with cards of presets that order differently gathered as
@@ -275,6 +294,26 @@ pub(crate) fn queue_order_by(
     ));
     within_kind.push(asc("c.id"));
 
+    // With `interleave_by`, each card's position within its subject, as a fraction of the
+    // subject's size, among the cards of its kind. Sorting a kind by it spreads each subject over
+    // the kind in proportion to its size, like the new cards of `NewReviewMix::Interleaved`, and
+    // keeps each subject in its own order. Sorting by it first also takes the place of
+    // gathering the cards of presets that order differently, which `within_kind` still does
+    // within a subject.
+    let subject_position = subject_sql(external_config).map(|subject| {
+        let partition = format!("PARTITION BY {group}, {is_new}, {subject}");
+        format!(
+            "(ROW_NUMBER() OVER ({partition} ORDER BY {}) - 0.5) / COUNT(*) OVER ({partition})",
+            render(&within_kind)
+        )
+    });
+    // The order of each kind on its own
+    let kind_keys = subject_position
+        .iter()
+        .map(|position| asc(position.clone()))
+        .chain(within_kind.iter().cloned())
+        .collect::<Vec<_>>();
+
     let query_keys = query_sort
         .iter()
         .map(|term| match term.rsplit_once(' ') {
@@ -288,12 +327,12 @@ pub(crate) fn queue_order_by(
         _ if !query_sort.is_empty() => query_keys,
         NewReviewMix::NewFirst => {
             let mut keys = vec![asc(format!("NOT ({is_new})"))];
-            keys.extend(within_kind);
+            keys.extend(kind_keys);
             keys
         }
         NewReviewMix::ReviewsFirst => {
             let mut keys = vec![asc(is_new.clone())];
-            keys.extend(within_kind);
+            keys.extend(kind_keys);
             keys
         }
         NewReviewMix::Interleaved => {
@@ -306,17 +345,34 @@ pub(crate) fn queue_order_by(
                 Some(cap) => format!("MAX(MIN({count}, {cap}), 1)"),
                 None => count.clone(),
             };
-            vec![
+            // The card's position within its kind, less a half. Mixed by subject, that is
+            // estimated from its position within its subject: with each subject spread evenly,
+            // a card 1/4 of the way through its subject is about 1/4 of the way through its kind.
+            // Counting it exactly would rank cards by `subject_position`, a window function, in
+            // another window's `ORDER BY`, which SQLite does not allow. The estimate is off by
+            // at most about one card per subject, and is exact with one subject.
+            let position = match &subject_position {
+                Some(subject_position) => format!("{subject_position} * {count}"),
+                None => format!(
+                    "ROW_NUMBER() OVER ({partition} ORDER BY {}) - 0.5",
+                    render(&within_kind)
+                ),
+            };
+            let mut keys = vec![
                 asc(format!(
-                    "(ROW_NUMBER() OVER ({partition} ORDER BY {}) - 0.5) / \
-                     CASE WHEN {is_new} THEN {} ELSE {} END",
-                    render(&within_kind),
+                    "({position}) / CASE WHEN {is_new} THEN {} ELSE {} END",
                     capped(caps.new),
                     capped(caps.reviews),
                 )),
                 // Reviews before new cards on a tie
                 asc(is_new.clone()),
-            ]
+            ];
+            // Cards of two subjects of the same size tie, so come in their kind's order. Without
+            // subjects, positions are unique within a kind, so this is not needed.
+            if subject_position.is_some() {
+                keys.extend(kind_keys);
+            }
+            keys
         }
     };
 
@@ -2238,7 +2294,7 @@ mod preset_tests {
         bury_new_siblings = true
     "#;
 
-    fn parse(toml: &str) -> SparesExternalConfig {
+    pub(super) fn parse(toml: &str) -> SparesExternalConfig {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
         config.validate().unwrap();
         config
@@ -2254,7 +2310,11 @@ mod preset_tests {
 
     /// One note of one card for each list of tags, in order, the `i`th created `i` hours after
     /// the first, returning their cards.
-    async fn tagged_cards(pool: &SqlitePool, tags: &[&[&str]], now: DateTime<Utc>) -> Vec<CardId> {
+    pub(super) async fn tagged_cards(
+        pool: &SqlitePool,
+        tags: &[&[&str]],
+        now: DateTime<Utc>,
+    ) -> Vec<CardId> {
         let parser = create_parser_helper(pool, "markdown").await;
         for (i, note_tags) in tags.iter().enumerate() {
             create_notes(
@@ -2338,6 +2398,9 @@ mod preset_tests {
         let error =
             invalid("[queue.presets.mix]\ntags = [\"a\"]\nnew_review_mix = \"new_first\"\n");
         assert!(error.contains("new_review_mix"), "{error}");
+        let error =
+            invalid("[queue.presets.mix]\ntags = [\"a\"]\ninterleave_by = \"top_level_tag\"\n");
+        assert!(error.contains("interleave_by"), "{error}");
         let error = invalid("[queue.presets.typo]\ntags = [\"a\"]\nnew_card_daily_limit = 5\n");
         assert!(error.contains("new_card_daily_limit"), "{error}");
     }
@@ -2626,5 +2689,173 @@ mod preset_tests {
                 .await
                 .unwrap();
         assert_eq!(sibling, Some(SpecialState::SchedulerBuried));
+    }
+}
+
+#[cfg(test)]
+mod interleave_tests {
+    use chrono::Duration;
+    use sqlx::SqlitePool;
+
+    use super::preset_tests::parse;
+    use super::preset_tests::tagged_cards;
+    use super::tests::REVIEW;
+    use super::tests::set_card;
+    use super::*;
+    use crate::api::preset::cards_with_preset;
+
+    /// Every card, in queue order under `toml`, with `caps` and `query_sort`.
+    async fn ordered(
+        pool: &SqlitePool,
+        toml: &str,
+        now: DateTime<Utc>,
+        caps: &QueueCaps,
+        query_sort: &[String],
+    ) -> Vec<CardId> {
+        let config = parse(toml);
+        let query = format!(
+            "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
+            cards_with_preset(&config.queue.presets),
+            queue_order_by(&config, now, caps, query_sort)
+        );
+        sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
+    }
+
+    /// The example on [`QueueConfig::interleave_by`].
+    #[sqlx::test]
+    async fn subjects_take_turns_in_proportion(pool: SqlitePool) {
+        let now = Utc::now();
+        let mut tags: Vec<&[&str]> = vec![&["math:analysis"]; 6];
+        tags.extend([&["chem"][..]; 3]);
+        let ids = tagged_cards(&pool, &tags, now - Duration::days(10)).await;
+        for card in &ids {
+            set_card(&pool, *card, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        }
+        let (m, c) = ids.split_at(6);
+        let interleaved = "[queue]\ninterleave_by = \"top_level_tag\"\n";
+        let none = QueueCaps::default();
+        assert_eq!(ordered(&pool, "", now, &none, &[]).await, ids);
+        assert_eq!(
+            ordered(&pool, interleaved, now, &none, &[]).await,
+            [m[0], c[0], m[1], m[2], c[1], m[3], m[4], c[2], m[5]]
+        );
+        // A query's sort takes its place
+        let sort = ["n.created_at DESC".to_string()];
+        let mut newest_first = ids.clone();
+        newest_first.reverse();
+        assert_eq!(
+            ordered(&pool, interleaved, now, &none, &sort).await,
+            newest_first
+        );
+    }
+
+    /// Each kind is mixed by subject, then the kinds are mixed, within today's limits.
+    #[sqlx::test]
+    async fn new_cards_and_reviews_are_each_mixed(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[
+                &["math"],
+                &["math"],
+                &["chem"],
+                &["chem"],
+                &["math"],
+                &["math"],
+            ],
+            now - Duration::days(10),
+        )
+        .await;
+        let [rm1, rm2, rc1, rc2, nm1, nm2] = ids[..] else {
+            unreachable!()
+        };
+        for card in [rm1, rm2, rc1, rc2] {
+            set_card(&pool, card, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        }
+        let toml = |mix: &str| {
+            format!("[queue]\ninterleave_by = \"top_level_tag\"\nnew_review_mix = \"{mix}\"\n")
+        };
+        let none = QueueCaps::default();
+        assert_eq!(
+            ordered(&pool, &toml("reviews_first"), now, &none, &[]).await,
+            [rm1, rc1, rm2, rc2, nm1, nm2]
+        );
+        // The new cards' positions are estimated from their subject, so tie with the reviews
+        // 1/4 and 3/4 of the way through, and come after them
+        assert_eq!(
+            ordered(&pool, &toml("interleaved"), now, &none, &[]).await,
+            [rm1, rc1, nm1, rm2, rc2, nm2]
+        );
+        // With two reviews left, one of each subject, the new cards are spread over those two
+        let two_reviews = QueueCaps {
+            reviews: Some(2),
+            ..QueueCaps::default()
+        };
+        assert_eq!(
+            ordered(&pool, &toml("interleaved"), now, &two_reviews, &[]).await,
+            [nm1, rm1, rc1, nm2, rm2, rc2]
+        );
+    }
+
+    /// Subjects take turns across presets that order differently, which are only gathered within
+    /// a subject.
+    #[sqlx::test]
+    async fn subjects_take_turns_across_presets(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&["math"], &["lang"], &["math"], &["lang"]],
+            now - Duration::days(1),
+        )
+        .await;
+        let [math_1, lang_1, math_2, lang_2] = ids[..] else {
+            unreachable!()
+        };
+        let toml = |interleave_by: &str| {
+            format!(
+                "[queue]\nnew_review_mix = \"new_first\"\ninterleave_by = \"{interleave_by}\"\n\
+                 [queue.presets.languages]\ntags = [\"lang\"]\nnew_order = \"newest_first\"\n"
+            )
+        };
+        let none = QueueCaps::default();
+        assert_eq!(
+            ordered(&pool, &toml("none"), now, &none, &[]).await,
+            [lang_2, lang_1, math_1, math_2]
+        );
+        assert_eq!(
+            ordered(&pool, &toml("top_level_tag"), now, &none, &[]).await,
+            [lang_2, math_1, lang_1, math_2]
+        );
+    }
+
+    /// A note's subject is its first top-level tag, leaving out the flagged and leech tags.
+    #[sqlx::test]
+    async fn subject_is_the_first_top_level_tag(pool: SqlitePool) {
+        let now = Utc::now();
+        tagged_cards(
+            &pool,
+            &[
+                &["math:analysis", "chem"],
+                &["math:algebra:groups"],
+                &["leech", "math"],
+                &["flagged"],
+                &[],
+            ],
+            now,
+        )
+        .await;
+        let config = parse("[queue]\ninterleave_by = \"top_level_tag\"\n");
+        let subject = subject_sql(&config).unwrap();
+        let subjects: Vec<Option<String>> =
+            sqlx::query_scalar(&format!("SELECT {subject} FROM card c ORDER BY c.id"))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let some = |s: &str| Some(s.to_string());
+        assert_eq!(
+            subjects,
+            [some("chem"), some("math"), some("math"), None, None]
+        );
+        assert_eq!(subject_sql(&parse("")), None);
     }
 }
