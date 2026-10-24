@@ -828,6 +828,10 @@ pub(crate) async fn build_review_filter_query(
 /// too, before the total is (see [`cap_counts`]). With 30 new `languages` cards and 10 left of
 /// its limit, and 5 other new cards, new shows 15.
 ///
+/// Learning and relearning cards due later today, held back by the learn ahead limit
+/// (`filter.held_back_clause`), are not counted, as review does not show them yet, but their time
+/// is, since they are still to be reviewed today.
+///
 /// The time estimate of a capped state is scaled down to the cards counted, by that state's
 /// average time per card: 600 reviews taking 5 hours in all, capped to 150, take 1h15.
 ///
@@ -843,7 +847,16 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     // The preset of each row is the card's own, which caps the counts only if it has limits of
     // its own (otherwise `caps.presets` has nothing for it)
     let counted = cap_counts(rows, &filter.caps);
-    let total_time_seconds: f64 = counted.values().map(|(_, time)| time).sum();
+    let held_back_seconds: f64 = match &filter.held_back_clause {
+        Some(clause) => card_times(db, filter, &paces, clause, None)
+            .await?
+            .into_iter()
+            .map(|(_, _, _, time)| time)
+            .sum(),
+        None => 0.0,
+    };
+    let total_time_seconds =
+        counted.values().map(|(_, time)| time).sum::<f64>() + held_back_seconds;
     let cards_left_by_state = counted
         .into_iter()
         .map(|(state, (count, _))| (state, count))

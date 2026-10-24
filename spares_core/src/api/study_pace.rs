@@ -375,6 +375,33 @@ mod tests {
         );
     }
 
+    /// A learning card held back by the learn ahead limit is not counted, but is still to be
+    /// reviewed today, so its time is.
+    #[sqlx::test]
+    async fn held_back_cards_take_time(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = cards(&pool, &[&[]], now - Duration::days(10)).await;
+        set_card(&pool, ids[0], LEARNING, now + Duration::hours(1), 1.0, 5.0).await;
+        let filter = ReviewFilterQuery {
+            cards: cards_with_preset(&IndexMap::new()),
+            where_clause: "c.due <= ?".to_string(),
+            is_filtered_tag: false,
+            card_due_limit: now,
+            caps: QueueCaps::default(),
+            preset_sql: "NULL".to_string(),
+            held_back_clause: Some(format!(
+                "c.state = {LEARNING} AND c.due > {}",
+                now.timestamp()
+            )),
+            query_sort: Vec::new(),
+        };
+        let (by_state, time) = get_cards_left_by_state_and_time_estimate(&pool, &filter)
+            .await
+            .unwrap();
+        assert!(by_state.is_empty());
+        assert_eq!(time, Duration::seconds(30));
+    }
+
     /// A card left open for an hour counts for 15 minutes.
     #[sqlx::test]
     async fn long_reviews_are_capped(pool: SqlitePool) {

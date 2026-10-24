@@ -832,8 +832,10 @@ pub mod review {
         /// limits leave room for. With `reviews_daily_limit = 200`, 600 reviews due and 50
         /// already done today, reviews show 150, not 550. Learning and relearning cards, and the
         /// cards of a filtered tag, are not limited, so every one due is counted. A state with
-        /// nothing left is left out. `time_estimate` is for the cards counted.
+        /// nothing left is left out. `time_estimate` is for the cards counted, and the learning cards due later today.
         pub cards_left_by_state: HashMap<StateId, u32>,
+        /// How long what is left should take, from how long the user's latest reviews of each
+        /// preset took, counting the learning steps a new card goes through the same day.
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub time_estimate: Duration,
         pub linked_notes: Vec<ReviewLinkedNote>,
