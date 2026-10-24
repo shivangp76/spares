@@ -18,8 +18,14 @@ For a review filter (a query, or a filtered tag by name or id) and a match query
   time they can be shown. They have no fixed position, since review shows them once nothing else is
   left and their time has come.
 - Matching cards the review would not show today, with the reason: not due, over the new or review
-  limit (of the top level or of a preset), buried, or suspended. "Where is this card?" is often
-  "why is it missing?"
+  limit (of the top level or of a preset), waiting on a linked note (`new_after_linked_notes`,
+  `reviews_after_linked_notes`), buried, or suspended. "Where is this card?" is often "why is it
+  missing?"
+- How many matching cards are not in the review at all, so a typo in the filter does not look the
+  same as "nothing matches".
+
+A filtered tag has no limits and no learn ahead limit, so for it nothing is held back and the only
+reasons are buried and suspended.
 
 Leaving out the match query lists the whole queue, which is also a preview of a session.
 
@@ -35,19 +41,24 @@ line, not leave it to a footnote.
    then renders those rows as it does today. This keeps a single copy of the ordering and cap
    logic.
 2. **`queue_positions`** in `api/queue.rs` (or `offline_review.rs`, next to what it reuses):
-   - Run `ordered_queue` with `learn_ahead = true`, the order live review shows cards in. Then run
-     it with `learn_ahead = false` to find the held-back learning cards: those in the second result
-     and not in the first.
+   - Run `ordered_queue` with `learn_ahead = true`, the order live review shows cards in. The
+     held-back learning cards are those of `ReviewFilterQuery::held_back_clause`, shown from
+     `due - learn_ahead_limit`, as in `get_review_queue` and `next_review_card_available_at`.
    - Evaluate the match query with output type `Cards`, so card-level filters such as `c.state=0`
      work, and intersect it with the filter's cards in SQL (`card_id IN (...)` over the review's
      `where_clause`). This avoids pulling every matching card id when the match is broad.
    - For matching cards that are not in the queue, work out the reason from the card (suspended,
-     buried, `due` after the cutoff) or from the cap that was full when the card's turn came. The
-     cap loop already knows that last reason, so have it record skipped card ids as it goes.
+     buried, `due` after the cutoff), from `waiting_on_links`, or from the cap that was full when
+     the card's turn came. The cap loop already knows that last reason, so have it record skipped
+     card ids as it goes. A cap that is already 0 never reaches the loop, since
+     `daily_limits_clause` drops its cards in the `WHERE`, so those are checked against the caps
+     at the start.
    - Do not render anything.
 3. **Filters with `limit`.** A query with `limit` is snapshotted to a filtered tag once per day. Use
-   today's snapshot if there is one. Otherwise return an error saying to start the review first,
-   rather than creating the snapshot as a side effect of looking.
+   today's snapshot if there is one, found by `review_snapshot_tag_name`, with the "built today"
+   check of `create_review_snapshot_tag` moved to a helper both use. Otherwise return an error
+   saying to start the review first, rather than creating the snapshot as a side effect of
+   looking.
 4. **Schema** (`schema::review`):
 
    ```rust
@@ -63,11 +74,17 @@ line, not leave it to a footnote.
        pub positions: Vec<QueuePosition>, // position from 1, card_id, note_id, card_order, card_state, due
        pub held_back: Vec<HeldBackCard>,  // card fields + shown_from
        pub not_shown: Vec<NotShownCard>,  // card fields + reason
+       /// Matching cards that are not in the review's filter at all.
+       pub not_in_review: u32,
    }
    ```
 
 5. **Tests** in `api/queue.rs`:
    - Positions agree with the index of each card in `get_review_queue`.
+   - The card at position 1 is the one `get_review_card` returns, with a preset limit and the
+     interleaved mix, since live review applies caps in the `WHERE` and the queue in its loop.
+   - A card waiting on a linked note is `not_shown` with that reason.
+   - Matching cards outside the filter are counted in `not_in_review`.
    - A card over the new limit is reported as `not_shown` with that reason.
    - A learning card beyond `learn_ahead_limit` is in `held_back`.
    - A match query that is a card filter (`c.state=0`) locates only the cards it matches.
@@ -140,6 +157,19 @@ wanted.
 Test it with headless Playwright against a scratch server: two notes, one matching. Check that the
 positions in the list match those `spares queue` prints for the same filter.
 
+## Search in queue order
+
+Ordering search results by queue position is not a sort key of the query language
+(`sort_by_asc=queue_position`): a position depends on today's counts, the cap loop and learn ahead,
+which are not SQL; it needs a review to be a position in; a query's sort already orders the review
+of that query, so the key would refer to itself; and search returns notes. The endpoint already is
+"these results in queue order", since the match query is the search:
+
+- On the Cards page, an "Order: queue position" option sends the search as `match_query` with no
+  filter (the default review) and shows the cards in that order, with the held-back and not-shown
+  cards after them and their reasons. It reuses the rows of the Review panel.
+- In the CLI, `spares queue -m QUERY` without a filter does the same.
+
 ## Order of work
 
 1. Core refactor (`ordered_queue`), with `get_review_queue`'s tests still passing.
@@ -147,5 +177,6 @@ positions in the list match those `spares queue` prints for the same filter.
 3. Endpoint.
 4. CLI command.
 5. Web app panel.
+6. Queue order on the Cards page.
 
 Each step is its own commit.
