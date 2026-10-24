@@ -1691,6 +1691,40 @@ mod linked_note_tests {
     }
 
     #[sqlx::test]
+    async fn held_reviews_leave_room_for_new_cards(pool: SqlitePool) {
+        use crate::api::review::daily_limits_left_with;
+
+        let now = Utc::now();
+        // `a` relearning, two reviews due linking to it, one not linking, and two new cards
+        let ids = create_cards(&pool, 6, now - Duration::days(30)).await;
+        let [a, held_1, held_2, free, ..] = ids[..] else {
+            unreachable!()
+        };
+        set_card(&pool, a, RELEARNING, now - Duration::minutes(1), 1.0, 5.0).await;
+        for card in [held_1, held_2, free] {
+            set_card(&pool, card, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        }
+        link(&pool, held_1, Some(a), 0.0).await;
+        link(&pool, held_2, Some(a), 0.0).await;
+        let new_left = async |queue: QueueConfig| {
+            let config = SparesExternalConfig {
+                new_cards_daily_limit: 10,
+                reviews_daily_limit: 4,
+                queue,
+                ..SparesExternalConfig::default()
+            };
+            daily_limits_left_with(&pool, &config, now)
+                .await
+                .unwrap()
+                .new
+        };
+        // Three reviews due take 3 of the 4
+        assert_eq!(new_left(holding(false, false)).await, 1);
+        // Only the review not held back is shown today, so it alone takes room
+        assert_eq!(new_left(holding(false, true)).await, 3);
+    }
+
+    #[sqlx::test]
     async fn counts_match_the_cards_shown(pool: SqlitePool) {
         let now = Utc::now();
         let ids = create_cards(&pool, 4, now - Duration::days(30)).await;

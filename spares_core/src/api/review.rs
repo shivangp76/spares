@@ -441,9 +441,14 @@ pub(crate) async fn daily_limits_left_with(
     let reviews_due: Vec<(Option<i64>, u32)> = if ignore_review_limit {
         Vec::new()
     } else {
+        // Reviews that `reviews_after_linked_notes` holds back are not shown today, so they leave
+        // their room to new cards. Any card holds them back here, not just those of the review's
+        // query: the limits are the same whatever is reviewed, and a review is only held while a
+        // card it links to relearns today, so the two rarely differ.
+        let held_reviews_str = linked_notes_clause(&config.queue, upper_limit, None);
         sqlx::query_as(&format!(
-            r"SELECT {preset} AS preset, COUNT(*) FROM card c
-            WHERE c.state IN ({}) AND c.special_state IS NULL AND c.due <= ?
+            r"SELECT {preset} AS preset, COUNT(*) FROM card c JOIN note n ON n.id = c.note_id
+            WHERE c.state IN ({}) AND c.special_state IS NULL AND c.due <= ?{held_reviews_str}
             GROUP BY 1",
             state_ids_sql(&[StateRole::Review]),
         ))

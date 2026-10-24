@@ -488,6 +488,10 @@ pub struct QueueConfig {
     /// relearned, since they likely depend on it. A relearning card due on a later day holds
     /// nothing back, so reviews never wait past the day. Learning and relearning cards never
     /// wait, since that would break their steps.
+    ///
+    /// Reviews waiting are not counted among the reviews due that leave room for new cards under
+    /// [`SparesExternalConfig::reviews_daily_limit`] (see
+    /// [`SparesExternalConfig::new_cards_ignore_review_limit`]), since they are not shown today.
     pub reviews_after_linked_notes: bool,
     /// The highest score a link can have and still hold cards back, for
     /// [`Self::new_after_linked_notes`] and [`Self::reviews_after_linked_notes`]. Defaults to
