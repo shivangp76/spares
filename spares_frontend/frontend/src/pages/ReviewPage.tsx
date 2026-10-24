@@ -282,6 +282,8 @@ export default function ReviewPage() {
 
   // Phones collapse the less common actions so the card and ratings get the screen
   const isNarrow = useMediaQuery('(max-width: 640px)');
+  // Laptops and wider have room for the note editor beside the card rather than below it
+  const isWide = useMediaQuery('(min-width: 1100px)');
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
@@ -793,11 +795,12 @@ export default function ReviewPage() {
     else openNote(card.note_id);
   }
 
-  // The editor opens below a card that can be taller than the viewport, so bring it into view
+  // The editor opens below a card that can be taller than the viewport, so bring it into view.
+  // Beside the card it is already in view.
   const panelNoteId = panelNote?.id;
   useEffect(() => {
-    if (panelNoteId !== undefined) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [panelNoteId]);
+    if (panelNoteId !== undefined && !isWide) notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [panelNoteId, isWide]);
 
   // Load the Typst compiler, its fonts and the renderer while the filter is picked, so the first
   // Typst card isn't delayed by them.
@@ -1063,8 +1066,23 @@ export default function ReviewPage() {
     </div>
   );
 
+  // On wide screens the editor takes the right half of the screen, and the page the left
+  const splitNote = isWide && panelNote !== null;
+  const notePanel = panelNote && (
+    <div ref={notePanelRef} className={splitNote ? 'review-note-split' : undefined} style={splitNote ? undefined : { marginTop: 16, scrollMarginTop: 16 }}>
+      <Suspense fallback={<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}>
+        <NoteDetail
+          key={panelNote.id}
+          note={panelNote}
+          onClose={() => setPanelNote(null)}
+          onNoteUpdated={onNoteUpdated}
+        />
+      </Suspense>
+    </div>
+  );
+
   return (
-    <div className="page">
+    <div className={splitNote ? 'page review-split' : 'page'}>
       <Navbar onLogout={logout} help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
       {/* On phones the heading, its top margin and the session's actions are kept to one short row,
           so the card starts near the top of the screen */}
@@ -1161,18 +1179,7 @@ export default function ReviewPage() {
           )}
           {showQueue && <FindInQueue filter={{ mode: filterMode, input: filterInput }} onOpenNote={openNote} onClose={() => setShowQueue(false)} />}
           {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
-          {panelNote && (
-            <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
-              <Suspense fallback={<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}>
-                <NoteDetail
-                  key={panelNote.id}
-                  note={panelNote}
-                  onClose={() => setPanelNote(null)}
-                  onNoteUpdated={onNoteUpdated}
-                />
-              </Suspense>
-            </div>
-          )}
+          {notePanel}
           {history && (
             <div style={{ marginTop: 40 }}>
               <ReviewHeatmap counts={history.review_count_by_date} cramCounts={history.cram_count_by_date} />
@@ -1341,18 +1348,7 @@ export default function ReviewPage() {
           )}
 
           {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
-          {panelNote && (
-            <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
-              <Suspense fallback={<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}>
-                <NoteDetail
-                  key={panelNote.id}
-                  note={panelNote}
-                  onClose={() => setPanelNote(null)}
-                  onNoteUpdated={onNoteUpdated}
-                />
-              </Suspense>
-            </div>
-          )}
+          {notePanel}
 
           <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
             {isNarrow && (

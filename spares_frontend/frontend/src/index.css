@@ -567,6 +567,34 @@ html:has(.review-answer-bar) {
   scroll-padding-bottom: calc(var(--answer-bar-height, 96px) + 16px);
 }
 
+/* With a note open on a wide screen, the page is the left half of the screen, as wide as the page
+   width setting allows within it, and the note editor the right half, scrolling on its own */
+.page.review-split {
+  box-sizing: border-box;
+  max-width: min(var(--page-max-width), 50%);
+  margin: 0 0 0 max(0px, (50% - var(--page-max-width)) / 2);
+}
+
+.review-split .review-answer-bar {
+  right: 50%;
+  padding-left: calc(max(0px, (50% - var(--page-max-width)) / 2) + 24px);
+  padding-right: calc(max(0px, (50% - var(--page-max-width)) / 2) + 24px);
+}
+
+.review-note-split {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+  box-sizing: border-box;
+  padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border-left: 1px solid var(--border-subtle);
+}
+
 /* The typed answer boxes, side by side when there's room, scrolling if there are many */
 .typed-answer-inputs {
   display: grid;
