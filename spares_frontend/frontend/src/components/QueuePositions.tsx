@@ -34,12 +34,12 @@ interface Row {
 
 /**
  * The cards of a queue position lookup: those in the queue by position, then those held back by
- * the learn ahead limit and those the review would not show today, with why. Clicking a note opens
- * it with `onOpenNote`.
+ * the learn ahead limit and those the review would not show today, with why. Clicking a row opens
+ * its card with `onOpen`.
  */
-export function QueuePositionList({ response, onOpenNote, lookingUp }: {
+export function QueuePositionList({ response, onOpen, lookingUp }: {
   response: QueuePositionResponse;
-  onOpenNote: (noteId: number) => void;
+  onOpen: (card: QueueCard) => void;
   /** Whether a query picked the cards, rather than the whole queue being listed. */
   lookingUp: boolean;
 }) {
@@ -61,9 +61,10 @@ export function QueuePositionList({ response, onOpenNote, lookingUp }: {
     },
   ];
   const shown = response.positions.length;
-  const summary = lookingUp
-    ? `${response.total} card${response.total === 1 ? '' : 's'} in this review. ${response.matching} match${response.matching === 1 ? 'es' : ''}.`
-    : `${response.total} card${response.total === 1 ? '' : 's'} in this review${shown < response.total ? `. The first ${shown}:` : '.'}`;
+  const listed = lookingUp ? response.matching : response.total;
+  const summary = `${response.total} card${response.total === 1 ? '' : 's'} in this review`
+    + (lookingUp ? `. ${response.matching} match${response.matching === 1 ? 'es' : ''}` : '')
+    + (shown < listed ? `. The first ${shown}:` : '.');
   return (
     <div style={{ fontSize: 14 }}>
       <style>{`.queue-row:hover { background-color: var(--hover); }`}</style>
@@ -88,9 +89,8 @@ export function QueuePositionList({ response, onOpenNote, lookingUp }: {
                   <tr
                     key={key}
                     className="queue-row"
-                    onClick={() => onOpenNote(card.note_id)}
+                    onClick={() => onOpen(card)}
                     style={{ cursor: 'pointer', color: muted ? 'var(--text-secondary)' : undefined }}
-                    title="Open the note"
                   >
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{first}</td>
                     <td style={td}>{formatNoteId(card.note_id)}</td>
@@ -211,7 +211,36 @@ export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClo
       {lookup.kind === 'loading' && <div className="loading-delayed" style={{ fontSize: 13 }}>Looking up the queue…</div>}
       {lookup.kind === 'offline' && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Needs the server: the cards downloaded for offline review are only some of the queue, and a query can't be searched without it.</div>}
       {lookup.kind === 'error' && <pre style={{ color: 'var(--error)', marginTop: 0, whiteSpace: 'pre-wrap' }}>{lookup.message}</pre>}
-      {lookup.kind === 'done' && <QueuePositionList response={lookup.response} onOpenNote={onOpenNote} lookingUp={lookup.lookingUp} />}
+      {lookup.kind === 'done' && <QueuePositionList response={lookup.response} onOpen={card => onOpenNote(card.note_id)} lookingUp={lookup.lookingUp} />}
     </div>
   );
+}
+
+/** How many cards queue order lists, of those in the queue and of those not shown today. */
+const QUEUE_ORDER_LIMIT = 200;
+
+/**
+ * The cards matching `query` in the order the default review shows them, for the cards page,
+ * followed by those it holds back or would not show today. The order is the queue's, which
+ * depends on today's limits and what is due, so it is not a sort of the query language.
+ */
+export function QueueOrder({ query, onOpen }: { query: string; onOpen: (card: QueueCard) => void }) {
+  const [lookup, setLookup] = useState<Lookup>({ kind: 'loading' });
+  useEffect(() => {
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the queue is fetched
+    setLookup({ kind: 'loading' });
+    getQueuePositions({ filter: null, match_query: query, limit: QUEUE_ORDER_LIMIT })
+      .then(response => { if (!cancelled) setLookup({ kind: 'done', response, lookingUp: true }); })
+      .catch(e => {
+        if (cancelled) return;
+        if (isNetworkError(e)) { setLookup({ kind: 'offline' }); return; }
+        setLookup({ kind: 'error', message: errorMessage(e) });
+      });
+    return () => { cancelled = true; };
+  }, [query]);
+  if (lookup.kind === 'loading' || lookup.kind === 'idle') return <div className="loading-delayed">Loading…</div>;
+  if (lookup.kind === 'offline') return <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Queue order needs the server.</div>;
+  if (lookup.kind === 'error') return <pre style={{ color: 'var(--error)', marginTop: 0, whiteSpace: 'pre-wrap' }}>{lookup.message}</pre>;
+  return <QueuePositionList response={lookup.response} onOpen={onOpen} lookingUp />;
 }

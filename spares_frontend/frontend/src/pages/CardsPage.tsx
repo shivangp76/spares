@@ -9,6 +9,7 @@ import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import Pagination from '../components/Pagination';
+import { QueueOrder } from '../components/QueuePositions';
 import { setCardsPageSize, useCardsPageSize, type PageSize } from '../preferences';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
@@ -136,6 +137,8 @@ export default function CardsPage() {
   const cardPane = useRef<CardDetailHandle>(null);
   const bulkBar = useRef<BulkActionBarHandle>(null);
   const rows = useRowSelection(searchQuery);
+  // Whether the search lists its cards in the order the default review shows them
+  const queueOrder = searchParams.get('order') === 'queue' && searchQuery !== null;
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -318,8 +321,24 @@ export default function CardsPage() {
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           {searchResults !== null && (
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              {searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+              <span>{searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"</span>
+              <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                Order
+                <select
+                  value={queueOrder ? 'queue' : 'search'}
+                  onChange={e => setSearchParams(prev => {
+                    const next = new URLSearchParams(prev);
+                    if (e.target.value === 'queue') next.set('order', 'queue');
+                    else next.delete('order');
+                    return next;
+                  })}
+                  title="Queue position lists the cards in the order the default review shows them today, then why it would not show the others"
+                >
+                  <option value="search">Search</option>
+                  <option value="queue">Queue position</option>
+                </select>
+              </label>
             </div>
           )}
 
@@ -340,7 +359,14 @@ export default function CardsPage() {
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
           {loading && <div>Loading…</div>}
 
-          {!loading && (
+          {queueOrder && searchQuery !== null && (
+            <QueueOrder
+              query={searchQuery}
+              onOpen={c => { getCard(c.card_id).then(card => setBrowse({ cards: [card], index: 0 }), (e: unknown) => setError(errorMessage(e))); }}
+            />
+          )}
+
+          {!loading && !queueOrder && (
             <div className="table-scroll">
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                 <thead>
@@ -396,7 +422,7 @@ export default function CardsPage() {
             </div>
           )}
 
-          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
+          {!queueOrder && <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />}
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
