@@ -14,6 +14,7 @@ use serde_json::json;
 use spares_core::Error;
 use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
+use spares_core::TagErrorKind;
 
 use crate::AppState;
 
@@ -53,14 +54,21 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": reason, "full_sync_required": true })),
             );
         }
-        // A search error's message marks the problem in the query, and `span` says where it is.
-        Error::Library(LibraryError::Search { message, span }) => {
+        // A search error's message marks the problem in the query, `span` says where it is, and
+        // `query_field` which of the request's queries it is in, if it has several.
+        Error::Library(LibraryError::Search {
+            message,
+            span,
+            query_field,
+        }) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "message": message, "span": span })),
+                Json(json!({ "message": message, "span": span, "query_field": query_field })),
             );
         }
-        Error::Sync(_) => Some(StatusCode::BAD_REQUEST),
+        Error::Sync(_) | Error::Library(LibraryError::Tag(TagErrorKind::InvalidInput(_))) => {
+            Some(StatusCode::BAD_REQUEST)
+        }
         Error::Library(LibraryError::Note(NoteErrorKind::NotFound { .. })) => {
             Some(StatusCode::NOT_FOUND)
         }

@@ -79,6 +79,7 @@ use crate::handlers::review::get_review_queue_handler;
 use crate::handlers::review::get_statistics_graphs_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
+use crate::handlers::review::queue_positions_handler;
 use crate::handlers::review::submit_study_action_handler;
 use crate::handlers::review::sync_offline_actions_handler;
 use crate::handlers::saved_search::delete_saved_search_handler;
@@ -211,6 +212,7 @@ fn review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/card/{id}", post(get_review_card_by_id_handler))
         .route("/api/review/submit", post(submit_study_action_handler))
         .route("/api/review/snapshot", post(create_review_snapshot_handler))
+        .route("/api/review/queue/position", post(queue_positions_handler))
         .route("/api/review/statistics", post(get_statistics_handler))
         .route("/api/review/history", get(get_review_history_handler))
         .route(

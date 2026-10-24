@@ -7,6 +7,7 @@ use axum::response::IntoResponse;
 use chrono::Utc;
 use spares_core::api::offline_review::get_review_queue;
 use spares_core::api::offline_review::sync_offline_actions;
+use spares_core::api::queue_position::queue_positions;
 use spares_core::api::review::create_review_snapshot_tag;
 use spares_core::api::review::get_review_card;
 use spares_core::api::review::get_review_card_by_id;
@@ -19,6 +20,7 @@ use spares_core::config::read_external_config;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::review::GetReviewCardRequest;
+use spares_core::schema::review::QueuePositionRequest;
 use spares_core::schema::review::ReviewConfigResponse;
 use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::ReviewQueueRequest;
@@ -56,6 +58,16 @@ pub(crate) async fn create_review_snapshot_handler(
     Json(body): Json<ReviewSnapshotRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let response = create_review_snapshot_tag(&data.db, body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
+}
+
+pub(crate) async fn queue_positions_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<QueuePositionRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let response = queue_positions(&data.db, body, Utc::now())
         .await
         .map_err(error_to_response)?;
     Ok(Json(response))
