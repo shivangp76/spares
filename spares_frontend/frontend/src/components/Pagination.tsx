@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { PAGE_SIZES, type PageSize } from '../preferences';
 
 /**
  * Prev and Next buttons around the page number, which can be typed over to go straight to a page,
- * going there on Enter or on leaving the box.
+ * going there on Enter or on leaving the box, and a choice of how many rows each page has.
  */
-export default function Pagination({ page, pageCount, prevPage, nextPage, goToPage }: {
+export default function Pagination({ page, pageCount, prevPage, nextPage, goToPage, pageSize, setPageSize }: {
   page: number;
   /** How many pages there are, or null when that isn't known, as when listing without a search. */
   pageCount: number | null;
@@ -12,6 +13,8 @@ export default function Pagination({ page, pageCount, prevPage, nextPage, goToPa
   prevPage: (() => void) | null;
   nextPage: (() => void) | null;
   goToPage: (page: number) => void;
+  pageSize: PageSize;
+  setPageSize: (size: PageSize) => void;
 }) {
   // What is typed in the box, or null to show the page
   const [draft, setDraft] = useState<string | null>(null);
@@ -26,7 +29,7 @@ export default function Pagination({ page, pageCount, prevPage, nextPage, goToPa
   }
 
   return (
-    <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
       <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center' }}>
         Page
@@ -49,6 +52,12 @@ export default function Pagination({ page, pageCount, prevPage, nextPage, goToPa
         {pageCount !== null && `of ${pageCount}`}
       </label>
       <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
+      <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
+        Per page
+        <select value={pageSize} onChange={e => setPageSize(e.target.value as PageSize)} style={{ fontSize: 13 }}>
+          {PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}
+        </select>
+      </label>
     </div>
   );
 }

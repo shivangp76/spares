@@ -9,6 +9,7 @@ import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import Pagination from '../components/Pagination';
+import { setCardsPageSize, useCardsPageSize, type PageSize } from '../preferences';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -19,7 +20,6 @@ import { selectedCount, type IdsOrQuery } from '../selection';
 import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
-const PAGE_SIZE = 20;
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
 /** The ids of the cards `selector` picks. */
@@ -113,6 +113,8 @@ export default function CardsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
+  const pageSizeChoice = useCardsPageSize();
+  const pageSize = Number(pageSizeChoice);
   const [cards, setCards] = useState<CardResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -139,23 +141,23 @@ export default function CardsPage() {
     if (!credentials) { navigate('/login'); return; }
     if (searchQuery !== null) return;
     // Show the page from an earlier visit straight away while it is refetched
-    const cached = cachedCardsPage(page, PAGE_SIZE);
+    const cached = cachedCardsPage(page, pageSize);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     if (cached) setCards(cached);
     setLoading(cached === undefined);
     let cancelled = false;
-    listCards(page, PAGE_SIZE)
+    listCards(page, pageSize)
       .then(data => {
         if (cancelled) return;
         setCards(data);
         setError(null);
         // Prefetch the next page so Next shows it straight away
-        if (data.length === PAGE_SIZE) listCards(page + 1, PAGE_SIZE).catch(() => {});
+        if (data.length === pageSize) listCards(page + 1, pageSize).catch(() => {});
       })
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, searchQuery, reloadCount]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_cards_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -169,7 +171,7 @@ export default function CardsPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchCardsPage(searchQuery, page, PAGE_SIZE)
+    searchCardsPage(searchQuery, page, pageSize)
       .then(data => {
         if (cancelled) return;
         setSearchResults(data.items);
@@ -187,7 +189,7 @@ export default function CardsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, searchCount, reloadCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -210,8 +212,8 @@ export default function CardsPage() {
     setBrowse(null);
   }
 
-  const pageCount = Math.max(1, Math.ceil(searchTotal / PAGE_SIZE));
-  const hasNextPage = searchResults !== null ? page < pageCount : cards.length === PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(searchTotal / pageSize));
+  const hasNextPage = searchResults !== null ? page < pageCount : cards.length === pageSize;
 
   function onCardChanged(card: CardResponse) {
     setCards(prev => replaceCard(prev, card));
@@ -242,6 +244,11 @@ export default function CardsPage() {
   }
   const prevPage = page > 1 ? () => goToPage(page - 1) : null;
   const nextPage = hasNextPage ? () => goToPage(page + 1) : null;
+  /** Lists `size` cards on each page, from the page with the first card of this one. */
+  function changePageSize(size: PageSize) {
+    setSearchParams(prev => withPage(prev, Math.floor((page - 1) * pageSize / Number(size)) + 1));
+    setCardsPageSize(size);
+  }
   const keys = useListKeys({
     rows,
     displayed: displayedCards,
@@ -389,7 +396,7 @@ export default function CardsPage() {
             </div>
           )}
 
-          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} />
+          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

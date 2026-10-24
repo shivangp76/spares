@@ -107,3 +107,15 @@ export const PAGES_PER_ROW_LABELS: Record<PagesPerRow, string> = { 1: 'One', 2: 
 const pagesPerRow = choicePreference<PagesPerRow>('spares_pages_per_row', PAGES_PER_ROW, 'auto');
 export const setPagesPerRow = pagesPerRow.set;
 export const usePagesPerRow = pagesPerRow.use;
+
+export const PAGE_SIZES = ['10', '20', '50', '100', '200'] as const;
+export type PageSize = typeof PAGE_SIZES[number];
+/** How many notes the notes page lists on each page. */
+const notesPageSize = choicePreference<PageSize>('spares_notes_page_size', PAGE_SIZES, '20');
+export const setNotesPageSize = notesPageSize.set;
+export const useNotesPageSize = notesPageSize.use;
+
+/** How many cards the cards page lists on each page. */
+const cardsPageSize = choicePreference<PageSize>('spares_cards_page_size', PAGE_SIZES, '20');
+export const setCardsPageSize = cardsPageSize.set;
+export const useCardsPageSize = cardsPageSize.use;

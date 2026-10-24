@@ -16,10 +16,10 @@ import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail, { type NotePaneHandle } from '../components/NoteDetail';
 import Pagination from '../components/Pagination';
+import { setNotesPageSize, useNotesPageSize, type PageSize } from '../preferences';
 import type { NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
-const PAGE_SIZE = 20;
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
@@ -44,6 +44,8 @@ export default function NotesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
+  const pageSizeChoice = useNotesPageSize();
+  const pageSize = Number(pageSizeChoice);
   const [notes, setNotes] = useState<NoteResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,24 +79,24 @@ export default function NotesPage() {
     if (!credentials) { navigate('/login'); return; }
     if (searchQuery !== null) return;
     // Show the page from an earlier visit straight away while it is refetched
-    const cached = cachedNotesPage(page, PAGE_SIZE);
+    const cached = cachedNotesPage(page, pageSize);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     if (cached) setNotes(cached);
     setLoading(cached === undefined);
     let cancelled = false;
-    listNotes(page, PAGE_SIZE)
+    listNotes(page, pageSize)
       .then(data => {
         if (cancelled) return;
         setNotes(data);
         for (const note of data) seenNotes.current.set(note.id, note);
         setError(null);
         // Prefetch the next page so Next shows it straight away
-        if (data.length === PAGE_SIZE) listNotes(page + 1, PAGE_SIZE).catch(() => {});
+        if (data.length === pageSize) listNotes(page + 1, pageSize).catch(() => {});
       })
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, searchQuery, reloadCount]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_notes_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -108,7 +110,7 @@ export default function NotesPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchNotesPage(searchQuery, page, PAGE_SIZE)
+    searchNotesPage(searchQuery, page, pageSize)
       .then(data => {
         if (cancelled) return;
         setSearchResults(data.items.map(m => m.note));
@@ -126,7 +128,7 @@ export default function NotesPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, searchCount, reloadCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -156,8 +158,8 @@ export default function NotesPage() {
     setSearchParams(prev => withPage(withSearch(prev, null), null));
   }
 
-  const pageCount = Math.max(1, Math.ceil(searchTotal / PAGE_SIZE));
-  const hasNextPage = searchResults !== null ? page < pageCount : notes.length === PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(searchTotal / pageSize));
+  const hasNextPage = searchResults !== null ? page < pageCount : notes.length === pageSize;
 
   const displayedNotes = searchResults ?? notes;
   // -1 if the selected note was opened from a link and isn't in the table
@@ -268,6 +270,11 @@ export default function NotesPage() {
   const goToPage = (n: number) => setSearchParams(prev => withPage(prev, n));
   const prevPage = page > 1 ? () => goToPage(page - 1) : null;
   const nextPage = hasNextPage ? () => goToPage(page + 1) : null;
+  /** Lists `size` notes on each page, from the page with the first note of this one. */
+  function changePageSize(size: PageSize) {
+    setSearchParams(prev => withPage(prev, Math.floor((page - 1) * pageSize / Number(size)) + 1));
+    setNotesPageSize(size);
+  }
   const keys = useListKeys({
     rows,
     displayed: displayedNotes,
@@ -416,7 +423,7 @@ export default function NotesPage() {
             </div>
           )}
 
-          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} />
+          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
