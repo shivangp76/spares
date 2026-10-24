@@ -10,8 +10,10 @@ use miette::miette;
 use reqwest::Client;
 use serde::Serialize;
 use spares_core::model::StateId;
+use spares_core::schema::review::CardState;
 use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::ReviewHistoryResponse;
+use spares_core::schema::review::StateRole;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::StatisticsResponse;
 use spares_core::schema::statistics::AnswerGroup;
@@ -21,6 +23,7 @@ use spares_core::schema::statistics::StatisticsGraphsRequest;
 use spares_core::schema::statistics::StatisticsGraphsResponse;
 
 use crate::args::StatisticsArgs;
+use crate::card_info::fetch_states;
 use crate::card_info::state_label;
 use crate::chart::bar;
 use crate::chart::column_chart;
@@ -116,6 +119,9 @@ pub(crate) struct Fetched {
     pub(crate) graphs: Option<StatisticsGraphsResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) history: Option<ReviewHistoryResponse>,
+    /// The scheduler's states, to name the counts by state
+    #[serde(skip)]
+    pub(crate) states: Vec<CardState>,
 }
 
 pub(crate) async fn print_statistics(
@@ -200,11 +206,18 @@ pub(crate) async fn print_statistics(
             .map(Some)
             .map_err(|e| miette!("{}", e))
     };
-    let (statistics, graphs, history) = tokio::try_join!(statistics, graphs, history)?;
+    let states = async {
+        fetch_states(&scheduler_name, base_url, client)
+            .await
+            .map_err(|e| miette!("{e}"))
+    };
+    let (statistics, graphs, history, states) =
+        tokio::try_join!(statistics, graphs, history, states)?;
     let fetched = Fetched {
         statistics,
         graphs,
         history,
+        states,
     };
     if json {
         println!("{}", serde_json::to_string_pretty(&fetched).unwrap());
@@ -304,7 +317,10 @@ fn percent_of(part: u32, whole: u32) -> String {
 }
 
 /// Counts by state, skipping empty states, with their total. `None` when every count is 0.
-fn state_rows(counts: &HashMap<StateId, u32>) -> Option<Vec<(String, String)>> {
+fn state_rows(
+    counts: &HashMap<StateId, u32>,
+    states: &[CardState],
+) -> Option<Vec<(String, String)>> {
     let mut counts = counts
         .iter()
         .filter(|(_, count)| **count > 0)
@@ -316,14 +332,20 @@ fn state_rows(counts: &HashMap<StateId, u32>) -> Option<Vec<(String, String)>> {
     let total = counts.iter().map(|(_, count)| **count).sum::<u32>();
     let mut rows = counts
         .into_iter()
-        .map(|(state, count)| (state_label(*state), count.to_string()))
+        .map(|(state, count)| (state_label(states, *state), count.to_string()))
         .collect::<Vec<_>>();
     rows.push(("Total".to_string(), total.to_string()));
     Some(rows)
 }
 
-fn write_state_section(out: &mut String, title: &str, counts: &HashMap<StateId, u32>, empty: &str) {
-    match state_rows(counts) {
+fn write_state_section(
+    out: &mut String,
+    title: &str,
+    counts: &HashMap<StateId, u32>,
+    states: &[CardState],
+    empty: &str,
+) {
+    match state_rows(counts, states) {
         Some(rows) => write_section(out, title, &rows),
         None => writeln!(out, "--- {} ---\n{}\n", title, empty).unwrap(),
     }
@@ -343,6 +365,7 @@ pub(crate) fn format_statistics(fetched: &Fetched, sections: &[Section], width: 
                         &mut out,
                         "Due",
                         &statistics.due_count_by_state,
+                        &fetched.states,
                         "Nothing due.",
                     );
                 }
@@ -378,7 +401,7 @@ pub(crate) fn format_statistics(fetched: &Fetched, sections: &[Section], width: 
             }
             Section::Cards => {
                 if let Some(graphs) = graphs {
-                    write_card_counts(&mut out, graphs);
+                    write_card_counts(&mut out, graphs, &fetched.states);
                 }
             }
             Section::Buttons => {
@@ -745,24 +768,30 @@ fn write_retention(out: &mut String, graphs: &StatisticsGraphsResponse) {
     write_table(out, &header, &rows);
 }
 
-fn write_card_counts(out: &mut String, graphs: &StatisticsGraphsResponse) {
+fn write_card_counts(out: &mut String, graphs: &StatisticsGraphsResponse, states: &[CardState]) {
     let counts = &graphs.card_counts;
     if counts.total == 0 {
         writeln!(out, "--- Card counts ---\nNo cards.\n").unwrap();
         return;
     }
-    let mut states = counts.by_state.iter().collect::<Vec<_>>();
-    states.sort_by_key(|(state, _)| **state);
+    let mut by_state = counts.by_state.iter().collect::<Vec<_>>();
+    by_state.sort_by_key(|(state, _)| **state);
     let mut rows = Vec::new();
-    for (state, count) in states {
-        if state_label(*state) == "Review" {
-            rows.push(("Young".to_string(), counts.young.to_string()));
-            rows.push((
-                format!("Mature (≥ {} days)", graphs.mature_threshold_days),
-                counts.mature.to_string(),
-            ));
+    let mut young_and_mature = false;
+    for (state, count) in by_state {
+        let role = states.iter().find(|s| s.id == *state).map(|s| s.role);
+        // Young and mature count the cards of every review state, in place of them
+        if role == Some(StateRole::Review) {
+            if !young_and_mature {
+                young_and_mature = true;
+                rows.push(("Young".to_string(), counts.young.to_string()));
+                rows.push((
+                    format!("Mature (≥ {} days)", graphs.mature_threshold_days),
+                    counts.mature.to_string(),
+                ));
+            }
         } else if *count > 0 {
-            rows.push((state_label(*state), count.to_string()));
+            rows.push((state_label(states, *state), count.to_string()));
         }
     }
     rows.push(("Suspended".to_string(), counts.suspended.to_string()));
@@ -1101,6 +1130,9 @@ mod tests {
             statistics: Some(statistics()),
             graphs: Some(graphs()),
             history: None,
+            states: spares_core::schedulers::get_scheduler_from_string("fsrs")
+                .unwrap()
+                .get_states(),
         }
     }
 

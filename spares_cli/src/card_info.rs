@@ -9,12 +9,16 @@ use spares_core::model::RescheduleData;
 use spares_core::model::ReviewLogKind;
 use spares_core::model::StateId;
 use spares_core::schema::card::CardReviewEntry;
+use spares_core::schema::review::CardState;
 use spares_core::schema::review::Rating;
 
 use crate::review::utils::format_duration;
 
 /// Ratings by scheduler name, since rating ids are relative to the scheduler that recorded them.
 type RatingsByScheduler = HashMap<String, Vec<Rating>>;
+
+/// States by scheduler name, since state ids are relative to the scheduler too.
+type StatesByScheduler = HashMap<String, Vec<CardState>>;
 
 pub(crate) async fn fetch_card_reviews(
     card_id: CardId,
@@ -29,28 +33,47 @@ pub(crate) async fn fetch_card_reviews(
     response.json().await.map_err(|e| format!("{}", e))
 }
 
-async fn fetch_ratings_by_scheduler(
+/// `what` of a scheduler, like `ratings` or `states`, from `/api/scheduler/{name}/{what}`.
+async fn fetch_of_scheduler<T: serde::de::DeserializeOwned>(
+    scheduler_name: &str,
+    what: &str,
+    base_url: &str,
+    client: &Client,
+) -> Result<T, String> {
+    let url = format!("{base_url}/api/scheduler/{scheduler_name}/{what}");
+    let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
+    let response = crate::utils::ensure_ok(response)
+        .await
+        .map_err(|e| format!("{}", e))?;
+    response.json().await.map_err(|e| format!("{}", e))
+}
+
+/// The states `scheduler_name` puts cards in, for [`state_label`].
+pub(crate) async fn fetch_states(
+    scheduler_name: &str,
+    base_url: &str,
+    client: &Client,
+) -> Result<Vec<CardState>, String> {
+    fetch_of_scheduler(scheduler_name, "states", base_url, client).await
+}
+
+async fn fetch_by_scheduler(
     entries: &[CardReviewEntry],
     base_url: &str,
     client: &Client,
-) -> Result<RatingsByScheduler, String> {
+) -> Result<(RatingsByScheduler, StatesByScheduler), String> {
     let mut ratings_by_scheduler = RatingsByScheduler::new();
+    let mut states_by_scheduler = StatesByScheduler::new();
     for entry in entries {
-        if ratings_by_scheduler.contains_key(&entry.scheduler_name) {
+        let name = &entry.scheduler_name;
+        if ratings_by_scheduler.contains_key(name) {
             continue;
         }
-        let url = format!(
-            "{}/api/scheduler/{}/ratings",
-            base_url, entry.scheduler_name
-        );
-        let response = client.get(url).send().await.map_err(|e| format!("{}", e))?;
-        let response = crate::utils::ensure_ok(response)
-            .await
-            .map_err(|e| format!("{}", e))?;
-        let ratings: Vec<Rating> = response.json().await.map_err(|e| format!("{}", e))?;
-        ratings_by_scheduler.insert(entry.scheduler_name.clone(), ratings);
+        let ratings = fetch_of_scheduler(name, "ratings", base_url, client).await?;
+        ratings_by_scheduler.insert(name.clone(), ratings);
+        states_by_scheduler.insert(name.clone(), fetch_states(name, base_url, client).await?);
     }
-    Ok(ratings_by_scheduler)
+    Ok((ratings_by_scheduler, states_by_scheduler))
 }
 
 /// Prints a card's review history and totals, like the frontend's Card Info.
@@ -60,8 +83,12 @@ pub(crate) async fn print_card_info(
     client: &Client,
 ) -> Result<(), String> {
     let entries = fetch_card_reviews(card_id, base_url, client).await?;
-    let ratings_by_scheduler = fetch_ratings_by_scheduler(&entries, base_url, client).await?;
-    print!("{}", format_card_info(&entries, &ratings_by_scheduler));
+    let (ratings_by_scheduler, states_by_scheduler) =
+        fetch_by_scheduler(&entries, base_url, client).await?;
+    print!(
+        "{}",
+        format_card_info(&entries, &ratings_by_scheduler, &states_by_scheduler)
+    );
     Ok(())
 }
 
@@ -76,14 +103,12 @@ fn rating_label<'a>(
         .map(|r| r.description.as_str())
 }
 
-pub(crate) fn state_label(state: StateId) -> String {
-    match state {
-        0 => "New".to_string(),
-        1 => "Learning".to_string(),
-        2 => "Review".to_string(),
-        3 => "Relearning".to_string(),
-        _ => state.to_string(),
-    }
+/// The name of `state` among `states`, or its id if none has it.
+pub(crate) fn state_label(states: &[CardState], state: StateId) -> String {
+    states
+        .iter()
+        .find(|s| s.id == state)
+        .map_or_else(|| state.to_string(), |s| s.name.clone())
 }
 
 fn time_taken(entry: &CardReviewEntry) -> i64 {
@@ -130,13 +155,18 @@ fn format_date(entry: &CardReviewEntry) -> String {
 fn format_card_info(
     entries: &[CardReviewEntry],
     ratings_by_scheduler: &RatingsByScheduler,
+    states_by_scheduler: &StatesByScheduler,
 ) -> String {
     if entries.is_empty() {
         return "This card has not been reviewed yet.\n".to_string();
     }
     let mut out = format_summary(entries);
     out.push('\n');
-    out.push_str(&format_table(entries, ratings_by_scheduler));
+    out.push_str(&format_table(
+        entries,
+        ratings_by_scheduler,
+        states_by_scheduler,
+    ));
     out.push_str(
         "\nStability and difficulty are replayed with the scheduler's current parameters.\n",
     );
@@ -194,7 +224,11 @@ fn move_label(reschedule: RescheduleData) -> String {
     }
 }
 
-fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsByScheduler) -> String {
+fn format_table(
+    entries: &[CardReviewEntry],
+    ratings_by_scheduler: &RatingsByScheduler,
+    states_by_scheduler: &StatesByScheduler,
+) -> String {
     let header = [
         "Date",
         "Type",
@@ -218,7 +252,8 @@ fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsBySch
             } else if e.tag_id.is_some() {
                 "Filtered".to_string()
             } else {
-                state_label(e.previous_state)
+                let states = states_by_scheduler.get(&e.scheduler_name);
+                state_label(states.map_or(&[], Vec::as_slice), e.previous_state)
             };
             let rating = dash_or(e.rating, |rating: RatingId| {
                 rating_label(e, ratings_by_scheduler)
@@ -317,6 +352,11 @@ mod tests {
         HashMap::from([("fsrs".to_string(), ratings)])
     }
 
+    fn states() -> StatesByScheduler {
+        let fsrs = spares_core::schedulers::get_scheduler_from_string("fsrs").unwrap();
+        HashMap::from([("fsrs".to_string(), fsrs.get_states())])
+    }
+
     #[test]
     fn interval_uses_coarsest_unit() {
         assert_eq!(format_interval(30), "30s");
@@ -330,7 +370,7 @@ mod tests {
     #[test]
     fn unreviewed_card() {
         assert_eq!(
-            format_card_info(&[], &ratings()),
+            format_card_info(&[], &ratings(), &states()),
             "This card has not been reviewed yet.\n"
         );
     }
@@ -342,7 +382,7 @@ mod tests {
             entry(1, ReviewLogKind::Review, Some(1), REVIEW_STATE),
             entry(2, ReviewLogKind::Forget, None, 3),
         ];
-        let out = format_card_info(&entries, &ratings());
+        let out = format_card_info(&entries, &ratings(), &states());
         assert!(out.contains("Reviews        2\n"), "{out}");
         assert!(out.contains("Lapses         1\n"), "{out}");
         assert!(out.contains("Average Time   7s\n"), "{out}");
@@ -370,7 +410,7 @@ mod tests {
             entry(1, ReviewLogKind::Cram, Some(1), REVIEW_STATE),
             entry(2, ReviewLogKind::Cram, Some(3), REVIEW_STATE),
         ];
-        let out = format_card_info(&entries, &ratings());
+        let out = format_card_info(&entries, &ratings(), &states());
         // A cram rated Again is not a lapse
         assert!(out.contains("Reviews        1\n"), "{out}");
         assert!(out.contains("Lapses         0\n"), "{out}");
@@ -407,7 +447,7 @@ mod tests {
             moved(1, 3),
             moved(2, -2),
         ];
-        let out = format_card_info(&entries, &ratings());
+        let out = format_card_info(&entries, &ratings(), &states());
         assert!(out.contains("Reviews        1\n"), "{out}");
         let rows = out
             .lines()
@@ -422,10 +462,31 @@ mod tests {
     #[test]
     fn unknown_rating_falls_back_to_id() {
         let entries = [entry(0, ReviewLogKind::Review, Some(9), 0)];
-        let out = format_card_info(&entries, &RatingsByScheduler::new());
+        let out = format_card_info(&entries, &RatingsByScheduler::new(), &states());
         assert!(
             out.lines().any(|l| l.contains("New") && l.contains(" 9 ")),
             "{out}"
         );
+    }
+
+    #[test]
+    fn states_are_named_by_the_scheduler_that_reviewed() {
+        let mut mastered = entry(1, ReviewLogKind::Review, Some(3), 4);
+        mastered.scheduler_name = "other".to_string();
+        let mut states = states();
+        states.insert(
+            "other".to_string(),
+            vec![CardState {
+                id: 4,
+                name: "Mastered".to_string(),
+                role: spares_core::schema::review::StateRole::Review,
+            }],
+        );
+        let entries = [entry(0, ReviewLogKind::Review, Some(3), 0), mastered];
+        let out = format_card_info(&entries, &ratings(), &states);
+        assert!(out.contains("Mastered"), "{out}");
+        // Without the scheduler's states, the id is shown
+        let out = format_card_info(&entries, &ratings(), &StatesByScheduler::new());
+        assert!(!out.contains("Mastered") && !out.contains("New"), "{out}");
     }
 }

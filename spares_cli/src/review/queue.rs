@@ -5,6 +5,8 @@ use clap::Args;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
+use spares_core::schedulers::get_default_scheduler_name;
+use spares_core::schema::review::CardState;
 use spares_core::schema::review::NotShownReason;
 use spares_core::schema::review::QueueCard;
 use spares_core::schema::review::QueuePositionRequest;
@@ -12,6 +14,7 @@ use spares_core::schema::review::QueuePositionResponse;
 
 use super::FilterArgs;
 use super::filter_args_to_filter;
+use crate::card_info::fetch_states;
 use crate::card_info::state_label;
 use crate::utils::ensure_ok;
 
@@ -79,6 +82,11 @@ pub(crate) async fn print_queue_positions(
         println!("{}", serde_json::to_string_pretty(&response).unwrap());
         return Ok(());
     }
+    // Schedulers that share a state id give it the same role, so the default's names do for
+    // cards of any scheduler
+    let states = fetch_states(get_default_scheduler_name(), base_url, client)
+        .await
+        .map_err(|e| miette!("{e}"))?;
 
     let cards = |n: u32| if n == 1 { "card" } else { "cards" };
     if request.match_query.is_some() {
@@ -112,7 +120,7 @@ pub(crate) async fn print_queue_positions(
             .iter()
             .map(|p| (p.position.to_string(), &p.card))
             .collect::<Vec<_>>();
-        print_table("pos", &rows, width);
+        print_table("pos", &rows, &states, width);
     }
     if !response.held_back.is_empty() {
         println!("\nHeld back by the learn ahead limit, shown once nothing else is left:");
@@ -121,7 +129,7 @@ pub(crate) async fn print_queue_positions(
             .iter()
             .map(|card| (format!("from {}", time(card.shown_from)), &card.card))
             .collect::<Vec<_>>();
-        print_table("shown", &rows, width);
+        print_table("shown", &rows, &states, width);
     }
     if !response.not_shown.is_empty() {
         println!("\nNot shown today:");
@@ -130,7 +138,7 @@ pub(crate) async fn print_queue_positions(
             .iter()
             .map(|card| (reason(&card.reason), &card.card))
             .collect::<Vec<_>>();
-        print_table("reason", &rows, width);
+        print_table("reason", &rows, &states, width);
         let more = response.not_shown_total as usize - response.not_shown.len();
         if more > 0 {
             println!("  and {more} more");
@@ -154,7 +162,7 @@ pub(crate) async fn print_queue_positions(
 /// Prints `rows` as a table: the first column, headed `heading` and aligned right if it is
 /// numbers, then each card's note, card order, state and due date, and the start of its note's text
 /// cut to `width`.
-fn print_table(heading: &str, rows: &[(String, &QueueCard)], width: usize) {
+fn print_table(heading: &str, rows: &[(String, &QueueCard)], states: &[CardState], width: usize) {
     let first_width = rows
         .iter()
         .map(|(first, _)| first.chars().count())
@@ -191,7 +199,7 @@ fn print_table(heading: &str, rows: &[(String, &QueueCard)], width: usize) {
             pad(first),
             card.note_id.letters(),
             card.card_order,
-            state_label(card.card_state),
+            state_label(states, card.card_state),
             time(card.due),
         );
         let room = width.saturating_sub(line.chars().count());
