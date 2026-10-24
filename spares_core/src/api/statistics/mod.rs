@@ -1,5 +1,5 @@
 mod graphs;
-mod local_time;
+pub(crate) mod local_time;
 #[cfg(test)]
 mod tests;
 

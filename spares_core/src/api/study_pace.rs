@@ -9,6 +9,7 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::preset::preset_index;
+use crate::api::statistics::local_time::Zone;
 use crate::model::ReviewLogKind;
 use crate::model::StateId;
 
@@ -19,15 +20,15 @@ const DEFAULT_SECONDS_PER_REVIEW: f64 = 30.0;
 /// which would make every estimate after it too long.
 pub(crate) const MAX_REVIEW_SECONDS: i64 = 15 * 60;
 
-/// How many of the latest reviews of each preset and state the pace is measured over, so it
-/// follows how fast reviews are now rather than how fast they were when the cards were new to
-/// the user.
-const RECENT_REVIEWS: u32 = 200;
+/// How many of the latest days a card was studied, of each preset and state, the pace is
+/// measured over, so it follows how fast reviews are now rather than how fast they were when the
+/// cards were new to the user.
+const RECENT_CARD_DAYS: u32 = 200;
 
-/// How many reviews a preset needs in a state for its own pace. With fewer, the pace of every
-/// card in that state is used, so a preset studied a few times is not estimated from one slow
-/// review.
-const MIN_PRESET_REVIEWS: u32 = 10;
+/// How many days of studying its cards a preset needs in a state for its own pace. With fewer,
+/// the pace of every card in that state is used, so a preset studied a few times is not estimated
+/// from one slow review.
+const MIN_PRESET_CARD_DAYS: u32 = 10;
 
 /// How many reviews in a state a card needs for its own time in that state to be used, rather
 /// than its preset's pace. One review could be an outlier.
@@ -41,28 +42,35 @@ pub(crate) fn capped_review_seconds(alias: &str) -> String {
     )
 }
 
-/// How long a review of a card in some state takes.
+/// How long studying a card in some state takes on a day.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StudyPace {
     pub(crate) seconds_per_review: f64,
+    /// How many times a card is reviewed on a day it is studied, from this state: more than once
+    /// for a new card that goes through its learning steps, or a review card rated Again and
+    /// relearned.
+    pub(crate) reviews_per_day: f64,
 }
 
 impl Default for StudyPace {
     fn default() -> Self {
         Self {
             seconds_per_review: DEFAULT_SECONDS_PER_REVIEW,
+            reviews_per_day: 1.0,
         }
     }
 }
 
-/// The [`StudyPace`] of each preset and state, from the latest [`RECENT_REVIEWS`] reviews of each.
+/// The [`StudyPace`] of each preset and state, from the latest [`RECENT_CARD_DAYS`] days a card
+/// was studied, of each. A day's state is the one the card was in at its first review that day,
+/// and its reviews are all of that day's, so a new card's day counts its learning steps.
 ///
 /// Presets are told apart since their cards can take very different times: a proof can take
 /// minutes to work through where a word takes seconds.
 #[derive(Debug, Default)]
 pub(crate) struct StudyPaces {
     /// By preset (`None` for cards of no preset) and state, for those with at least
-    /// [`MIN_PRESET_REVIEWS`] reviews.
+    /// [`MIN_PRESET_CARD_DAYS`].
     by_preset: HashMap<(Option<usize>, StateId), StudyPace>,
     /// By state, over every preset.
     by_state: HashMap<StateId, StudyPace>,
@@ -70,39 +78,59 @@ pub(crate) struct StudyPaces {
 
 impl StudyPaces {
     /// The paces of the reviews of `cards`, the card table with each card's preset as a `preset`
-    /// column (see [`cards_with_preset`](crate::api::preset::cards_with_preset)). The state of a
-    /// review is the one the card was in when reviewed.
+    /// column (see [`cards_with_preset`](crate::api::preset::cards_with_preset)), told apart by
+    /// local day.
     pub(crate) async fn load(db: &SqlitePool, cards: &str) -> Result<Self, Error> {
+        let (first, last): (Option<i64>, Option<i64>) =
+            sqlx::query_as(r"SELECT MIN(reviewed_at), MAX(reviewed_at) FROM review_log")
+                .fetch_one(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        let day = Zone::Server
+            .clock(first.unwrap_or_default(), last.unwrap_or_default())
+            .day("rl.reviewed_at");
         let seconds = capped_review_seconds("rl");
         let review = ReviewLogKind::Review as u8;
+        // The state and preset are the same for every review of a card's day
         let query = format!(
-            r"WITH ranked AS (
-                SELECT c.preset, rl.previous_state AS state, {seconds} AS seconds,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY c.preset, rl.previous_state ORDER BY rl.reviewed_at DESC
-                    ) AS preset_rank,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY rl.previous_state ORDER BY rl.reviewed_at DESC
-                    ) AS state_rank
-                FROM review_log rl JOIN {cards} c ON c.id = rl.card_id
-                WHERE rl.kind = {review}
+            r"WITH reviews AS (
+                SELECT rl.card_id, {day} AS day, {seconds} AS seconds,
+                    FIRST_VALUE(rl.previous_state) OVER (
+                        PARTITION BY rl.card_id, {day} ORDER BY rl.reviewed_at
+                    ) AS state
+                FROM review_log rl
+                WHERE rl.kind = {review} AND rl.card_id IS NOT NULL
+            ),
+            card_days AS (
+                SELECT c.preset, r.state, r.day, COUNT(*) AS reviews, SUM(r.seconds) AS seconds
+                FROM reviews r JOIN {cards} c ON c.id = r.card_id
+                GROUP BY r.card_id, r.day
+            ),
+            ranked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY preset, state ORDER BY day DESC) AS preset_rank,
+                    ROW_NUMBER() OVER (PARTITION BY state ORDER BY day DESC) AS state_rank
+                FROM card_days
             )
-            SELECT 1, preset, state, COUNT(*), AVG(seconds) FROM ranked
-            WHERE preset_rank <= {RECENT_REVIEWS} GROUP BY preset, state
+            SELECT 1, preset, state, COUNT(*), SUM(reviews), CAST(SUM(seconds) AS REAL) FROM ranked
+            WHERE preset_rank <= {RECENT_CARD_DAYS} GROUP BY preset, state
             UNION ALL
-            SELECT 0, NULL, state, COUNT(*), AVG(seconds) FROM ranked
-            WHERE state_rank <= {RECENT_REVIEWS} GROUP BY state"
+            SELECT 0, NULL, state, COUNT(*), SUM(reviews), CAST(SUM(seconds) AS REAL) FROM ranked
+            WHERE state_rank <= {RECENT_CARD_DAYS} GROUP BY state"
         );
-        let rows: Vec<(bool, Option<i64>, StateId, u32, f64)> = sqlx::query_as(&query)
+        let rows: Vec<(bool, Option<i64>, StateId, u32, u32, f64)> = sqlx::query_as(&query)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         let mut paces = Self::default();
-        for (of_preset, preset, state, reviews, seconds_per_review) in rows {
-            let pace = StudyPace { seconds_per_review };
+        for (of_preset, preset, state, days, reviews, seconds) in rows {
+            let pace = StudyPace {
+                seconds_per_review: seconds / f64::from(reviews),
+                reviews_per_day: f64::from(reviews) / f64::from(days),
+            };
             if !of_preset {
                 paces.by_state.insert(state, pace);
-            } else if reviews >= MIN_PRESET_REVIEWS {
+            } else if days >= MIN_PRESET_CARD_DAYS {
                 paces.by_preset.insert((preset_index(preset), state), pace);
             }
         }
@@ -132,12 +160,14 @@ mod tests {
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::preset::cards_with_preset;
     use crate::api::queue::QueueCaps;
+    use crate::api::queue::tests::LEARNING;
     use crate::api::queue::tests::NEW;
     use crate::api::queue::tests::REVIEW;
     use crate::api::queue::tests::set_card;
     use crate::api::review::ReviewFilterQuery;
     use crate::api::review::get_cards_left_by_state_and_time_estimate;
     use crate::config::QueuePreset;
+    use crate::helpers::get_start_end_local_date;
     use crate::model::CardId;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
@@ -308,6 +338,40 @@ mod tests {
         assert_eq!(
             estimate(&pool, &math(), now).await.num_seconds(),
             200 + average
+        );
+    }
+
+    /// A new card is estimated with the learning steps it goes through on its first day, and a
+    /// card already reviewed today with one more review.
+    #[sqlx::test]
+    async fn a_day_counts_every_review_of_a_card(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = cards(&pool, &[&[], &[]], now - Duration::days(10)).await;
+        // Seen as new and then once more in its learning steps, a minute and a half in all
+        let yesterday = now - Duration::days(1);
+        review(&pool, ids[0], yesterday, NEW, 60).await;
+        review(
+            &pool,
+            ids[0],
+            yesterday + Duration::minutes(10),
+            LEARNING,
+            30,
+        )
+        .await;
+        not_due(&pool, ids[0], now).await;
+        assert_eq!(
+            estimate(&pool, &IndexMap::new(), now).await,
+            Duration::seconds(90)
+        );
+
+        // Seen once today, so it has one more review of its learning steps to go, at the 30
+        // seconds learning cards have taken
+        let (day_start, _) = get_start_end_local_date(&now);
+        review(&pool, ids[1], day_start, NEW, 60).await;
+        set_card(&pool, ids[1], LEARNING, day_start, 1.0, 5.0).await;
+        assert_eq!(
+            estimate(&pool, &IndexMap::new(), now).await,
+            Duration::seconds(30)
         );
     }
 

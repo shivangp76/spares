@@ -808,11 +808,13 @@ pub(crate) async fn build_review_filter_query(
 /// What is left of a review with `filter` today: how many cards in each state, and how long they
 /// should take.
 ///
-/// A card's time is the average of its own reviews in the state it is in now, once it has
-/// [`MIN_CARD_REVIEWS`], since a card's first sight as a new card can take minutes while its later
-/// reviews take seconds. Otherwise, it is the [`StudyPace`] of the latest reviews of its preset
-/// in its state, so a new card is estimated from how long new cards have taken lately rather
-/// than a fixed guess. Each review counts for at most [`MAX_REVIEW_SECONDS`].
+/// A card's time is that of a day of studying it in its state, by the [`StudyPace`] of the latest
+/// such days of its preset: the time of a review, by how many times it is reviewed on such a day,
+/// so a new card counts its learning steps too. The time of a review is the average of the card's
+/// own reviews in the state it is in now, once it has [`MIN_CARD_REVIEWS`], since a card's first
+/// sight as a new card can take minutes while its later reviews take seconds, or else that of
+/// the pace. A card already reviewed today counts one more review, as it is through part of its
+/// day. Each review counts for at most [`MAX_REVIEW_SECONDS`].
 ///
 /// New and review cards are capped by `filter.caps`, what is left of today's limits, since the
 /// queue shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due
@@ -835,23 +837,45 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
-    let ReviewFilterQuery {
-        cards,
-        where_clause,
-        is_filtered_tag,
-        card_due_limit,
-        caps,
-        ..
-    } = filter;
-    let paces = StudyPaces::load(db, cards).await?;
-    // These are the remaining cards that are due on `requested_date` grouped by state and preset,
-    // with how many have enough reviews of their own and the seconds those take. Note that this is
-    // _not_ equivalent to the cards by state in `get_statistics()` because that does not filter by
+    let paces = StudyPaces::load(db, &filter.cards).await?;
+    let bind = (!filter.is_filtered_tag).then(|| filter.card_due_limit.timestamp());
+    let rows = card_times(db, filter, &paces, &filter.where_clause, bind).await?;
+    // The preset of each row is the card's own, which caps the counts only if it has limits of
+    // its own (otherwise `caps.presets` has nothing for it)
+    let counted = cap_counts(rows, &filter.caps);
+    let total_time_seconds: f64 = counted.values().map(|(_, time)| time).sum();
+    let cards_left_by_state = counted
+        .into_iter()
+        .map(|(state, (count, _))| (state, count))
+        .collect();
+    let time_estimate = Duration::seconds(total_time_seconds as i64);
+
+    Ok((cards_left_by_state, time_estimate))
+}
+
+/// The cards of `filter.cards` matching `where_clause` (which binds `bind`, if any), by state and
+/// preset: how many, and the seconds they should take (see
+/// [`get_cards_left_by_state_and_time_estimate`]).
+async fn card_times(
+    db: &SqlitePool,
+    filter: &ReviewFilterQuery,
+    paces: &StudyPaces,
+    where_clause: &str,
+    bind: Option<i64>,
+) -> Result<Vec<(StateId, Option<usize>, u32, f64)>, Error> {
+    let (day_start, _) = get_start_end_local_date(&filter.card_due_limit);
+    // These are the cards grouped by state, preset and whether they were reviewed today, with how
+    // many have enough reviews of their own and the seconds those take. Note that this is _not_
+    // equivalent to the cards by state in `get_statistics()` because that does not filter by
     // `requested_date`.
     let query_str = formatdoc! {
         "SELECT
             c.state,
             c.preset,
+            EXISTS (
+                SELECT 1 FROM review_log t
+                WHERE t.card_id = c.id AND t.kind = {review} AND t.reviewed_at >= {day_start}
+            ) AS reviewed_today,
             COUNT(*) AS count,
             COUNT(own.seconds) AS known,
             CAST(COALESCE(SUM(own.seconds), 0) AS REAL) AS known_seconds
@@ -866,39 +890,38 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
             HAVING COUNT(*) >= {MIN_CARD_REVIEWS}
         ) own ON own.card_id = c.id AND own.previous_state = c.state
         WHERE {where_clause}
-        GROUP BY 1, 2",
+        GROUP BY 1, 2, 3",
+        cards = filter.cards,
+        day_start = day_start.timestamp(),
         seconds = capped_review_seconds("rl"),
         review = ReviewLogKind::Review as u8,
     };
     let mut query = sqlx::query_as(&query_str);
-    if !is_filtered_tag {
-        query = query.bind(card_due_limit.timestamp());
+    if let Some(bind) = bind {
+        query = query.bind(bind);
     }
-    let rows: Vec<(StateId, Option<i64>, u32, u32, f64)> = query
+    let rows: Vec<(StateId, Option<i64>, bool, u32, u32, f64)> = query
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-
-    // The preset of each row is the card's own, which caps the counts only if it has limits of
-    // its own (otherwise `caps.presets` has nothing for it)
-    let counted = cap_counts(
-        rows.into_iter()
-            .map(|(state, preset, count, known, known_seconds)| {
-                let preset = preset_index(preset);
-                let pace = paces.of(preset, state);
-                let time = known_seconds + f64::from(count - known) * pace.seconds_per_review;
-                (state, preset, count, time)
-            }),
-        caps,
-    );
-    let total_time_seconds: f64 = counted.values().map(|(_, time)| time).sum();
-    let cards_left_by_state = counted
+    // One row per state and preset, for `cap_counts`
+    let mut times: HashMap<(StateId, Option<usize>), (u32, f64)> = HashMap::new();
+    for (state, preset, reviewed_today, count, known, known_seconds) in rows {
+        let preset = preset_index(preset);
+        let pace = paces.of(preset, state);
+        let reviews = if reviewed_today {
+            1.0
+        } else {
+            pace.reviews_per_day
+        };
+        let entry = times.entry((state, preset)).or_default();
+        entry.0 += count;
+        entry.1 += (known_seconds + f64::from(count - known) * pace.seconds_per_review) * reviews;
+    }
+    Ok(times
         .into_iter()
-        .map(|(state, (count, _))| (state, count))
-        .collect();
-    let time_estimate = Duration::seconds(total_time_seconds as i64);
-
-    Ok((cards_left_by_state, time_estimate))
+        .map(|((state, preset), (count, time))| (state, preset, count, time))
+        .collect())
 }
 
 pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
