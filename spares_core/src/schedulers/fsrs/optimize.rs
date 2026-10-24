@@ -14,6 +14,7 @@ use fsrs_rs::check_and_fill_parameters;
 use fsrs_rs::compute_parameters;
 use itertools::Itertools;
 
+use super::SCHEDULER_NAME;
 use super::utils::number_to_rating;
 use super::utils::rating_to_number;
 use crate::Error;
@@ -26,8 +27,6 @@ use crate::model::ReviewLogKind;
 use crate::schedulers::effective_review_logs;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::ParametersEvaluation;
-
-const SCHEDULER_NAME: &str = "fsrs";
 
 #[derive(Debug, Default)]
 pub struct TrainingSet {

@@ -66,6 +66,9 @@ pub fn parse_anki_revlog_rows(
                 // tell them apart (the best heuristic is `ivl == 0 && factor == 0`). Importing a
                 // set due date as a forget would wrongly reset the card's memory state, which is
                 // worse than dropping a real forget.
+                //
+                // A set due date would be a `ReviewLogKind::Reschedule`, but a row doesn't keep
+                // the due date before it, which that kind needs.
                 0 => {
                     info!(
                         "[Card {}] Skipping the {}th review log because manually rescheduled, so the rating is none.",

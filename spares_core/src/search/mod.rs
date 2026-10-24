@@ -38,6 +38,7 @@
 //! | `linked_to_keyword`   | String   |
 //! | `linked_from_note`    | i64      |
 //! | c.rated             | u32      |
+//! | c.postponed         | bool     |
 //! | c.reviewed          | `DateTime` |
 //! | c.reps              | u32      |
 //! | c.lapses            | u32      |
@@ -87,6 +88,17 @@
 //! - `c.rated[today]`: cards reviewed today.
 //! - `c.rated[>=today-7d]=1`: cards forgotten in the last week.
 //! - `c.rated[2026-10]>=3`: cards rated good or easy in October 2026.
+//!
+//! `c.postponed` matches the cards whose due date was moved later without a review, by
+//! `spares card postpone` (see `ReviewLogKind::Reschedule` in `spares_core::model`), and like
+//! `c.rated` it takes a time in brackets, which means the postponement was then, like Anki's
+//! `resched:n`:
+//! - `c.postponed[today]`: the cards postponed today, as in `c.postponed[today] tag=exam` to find
+//!   the exam cards among them.
+//! - `-c.postponed[>=today-30d]`: cards not postponed in the last month.
+//!
+//! A postponement or advance is not a review, so it doesn't count toward `c.rated`, `c.reviewed`
+//! or `c.reps`.
 //!
 //! Sorting by `c.reviewed`, `c.interval` or `c.retrievability` puts the cards without one last,
 //! so `sort_by_asc=c.retrievability limit=20` is the 20 cards you are least likely to recall.

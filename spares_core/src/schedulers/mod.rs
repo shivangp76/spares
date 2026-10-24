@@ -487,7 +487,9 @@ pub trait SrsScheduler: Send + Sync {
                 // Recorded for statistics only. Not even `previous_review_log` moves: the next
                 // review's elapsed time is measured from the last real review, as cramming a card
                 // the night before must not make it look like it was just reviewed.
-                ReviewLogKind::Cram => {}
+                // A postponement or advance, likewise: the next review is measured from the last
+                // real one.
+                ReviewLogKind::Cram | ReviewLogKind::Reschedule => {}
             }
             history.push(card.clone());
         }

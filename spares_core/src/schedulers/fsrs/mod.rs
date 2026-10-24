@@ -94,6 +94,9 @@ pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f
     ))
 }
 
+/// The name review logs and `config.toml` know FSRS by.
+const SCHEDULER_NAME: &str = "fsrs";
+
 /// Stateless: the model is built from the config's `fsrs_parameters` whenever it is needed, so a
 /// change to them applies without restarting the server.
 #[derive(Debug, Default)]
@@ -103,7 +106,7 @@ pub struct Fsrs;
 #[async_trait]
 impl SrsScheduler for Fsrs {
     fn get_scheduler_name(&self) -> &'static str {
-        "fsrs"
+        SCHEDULER_NAME
     }
 
     fn get_ratings(&self) -> Vec<Rating> {
@@ -422,6 +425,7 @@ impl SrsScheduler for Fsrs {
             &cards,
             &MoveCardAction::Advance,
             card_due_limit,
+            requested_date,
             config,
         )
         .await
@@ -466,6 +470,7 @@ impl SrsScheduler for Fsrs {
             &cards,
             &MoveCardAction::Postpone,
             card_due_limit,
+            requested_date,
             config,
         )
         .await

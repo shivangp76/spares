@@ -35,6 +35,7 @@ use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
@@ -515,6 +516,11 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             update_card_event(db, payloads, false).await?;
+        }
+        EventType::UnadvanceCards | EventType::UnpostponeCards => {
+            let payload: UnmoveCardsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            update_card_event(db, payload.cards, false).await?;
         }
     }
     Ok(())

@@ -12,6 +12,7 @@ use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateNotePayload;
@@ -22,6 +23,7 @@ use crate::model::Event;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 
 /// Appends the event that reverses `event` (an undo, or a redo when `event` is itself an undo) and
 /// returns it. The caller applies it.
@@ -48,11 +50,13 @@ pub async fn create_undo_event(
         EventType::UnrateCard => EventType::RateCard,
         EventType::ForgetCard => EventType::UnforgetCard,
         EventType::UnforgetCard => EventType::ForgetCard,
-        EventType::UpdateCards
-        | EventType::AdvanceCards
-        | EventType::PostponeCards
-        | EventType::BuryCards
-        | EventType::UnburyCards => EventType::UpdateCards,
+        EventType::AdvanceCards => EventType::UnadvanceCards,
+        EventType::UnadvanceCards => EventType::AdvanceCards,
+        EventType::PostponeCards => EventType::UnpostponeCards,
+        EventType::UnpostponeCards => EventType::PostponeCards,
+        EventType::UpdateCards | EventType::BuryCards | EventType::UnburyCards => {
+            EventType::UpdateCards
+        }
     };
 
     let undo_payload = create_undo_payload(db, event).await?;
@@ -124,6 +128,41 @@ async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })
+}
+
+/// Deletes the [`ReviewLogKind::Reschedule`] rows an `AdvanceCards` or `PostponeCards` event wrote
+/// for `moves`, returning them so a redo can restore them. They are the rows of the moved cards at
+/// the event's time that moved them to where `moves` did. A move from before moves were logged has
+/// none.
+async fn take_reschedule_logs(
+    db: &SqlitePool,
+    event: &Event,
+    moves: &[UpdateCardPayload],
+) -> Result<Vec<ReviewLog>, Error> {
+    let mut taken = Vec::new();
+    for change in moves {
+        let Some(due) = &change.due else {
+            continue;
+        };
+        let review_logs: Vec<ReviewLog> = sqlx::query_as(
+            r"SELECT * FROM review_log WHERE card_id = ? AND kind = ? AND reviewed_at = ?",
+        )
+        .bind(change.card_id)
+        .bind(ReviewLogKind::Reschedule)
+        .bind(event.created_at.timestamp())
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        for review_log in review_logs {
+            if review_log
+                .reschedule_data()
+                .is_some_and(|data| data.due == due.after)
+            {
+                taken.push(take_review_log(db, review_log.id).await?);
+            }
+        }
+    }
+    Ok(taken)
 }
 
 #[expect(clippy::too_many_lines)]
@@ -332,11 +371,30 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(redo_payload).unwrap())
         }
-        EventType::UpdateCards
-        | EventType::AdvanceCards
-        | EventType::PostponeCards
-        | EventType::BuryCards
-        | EventType::UnburyCards => {
+        EventType::AdvanceCards | EventType::PostponeCards => {
+            let payloads: Vec<UpdateCardPayload> =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            let review_logs = take_reschedule_logs(db, event, &payloads).await?;
+            let undo_payload = UnmoveCardsPayload {
+                cards: payloads.into_iter().map(UpdateCardPayload::swap).collect(),
+                review_logs,
+            };
+            Ok(serde_json::to_value(undo_payload).unwrap())
+        }
+        EventType::UnadvanceCards | EventType::UnpostponeCards => {
+            let payload: UnmoveCardsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            for review_log in &payload.review_logs {
+                restore_review_log(db, review_log).await?;
+            }
+            let redo_payloads: Vec<UpdateCardPayload> = payload
+                .cards
+                .into_iter()
+                .map(UpdateCardPayload::swap)
+                .collect();
+            Ok(serde_json::to_value(redo_payloads).unwrap())
+        }
+        EventType::UpdateCards | EventType::BuryCards | EventType::UnburyCards => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             let undo_payloads: Vec<UpdateCardPayload> =

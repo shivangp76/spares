@@ -5,6 +5,7 @@ use chrono::Local;
 use reqwest::Client;
 use spares_core::model::CardId;
 use spares_core::model::RatingId;
+use spares_core::model::RescheduleData;
 use spares_core::model::ReviewLogKind;
 use spares_core::model::StateId;
 use spares_core::schema::card::CardReviewEntry;
@@ -183,6 +184,16 @@ fn format_summary(entries: &[CardReviewEntry]) -> String {
     out
 }
 
+/// A move of a card's due date, with how far it moved, like `Postpone +3d`.
+fn move_label(reschedule: RescheduleData) -> String {
+    let seconds = (reschedule.due - reschedule.previous_due).num_seconds();
+    if seconds >= 0 {
+        format!("Postpone +{}", format_interval(seconds))
+    } else {
+        format!("Advance -{}", format_interval(-seconds))
+    }
+}
+
 fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsByScheduler) -> String {
     let header = [
         "Date",
@@ -200,6 +211,8 @@ fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsBySch
         .map(|e| {
             let kind = if e.kind == ReviewLogKind::Forget {
                 "Forget".to_string()
+            } else if let Some(reschedule) = e.reschedule {
+                move_label(reschedule)
             } else if e.kind == ReviewLogKind::Cram {
                 "Cram".to_string()
             } else if e.tag_id.is_some() {
@@ -211,7 +224,7 @@ fn format_table(entries: &[CardReviewEntry], ratings_by_scheduler: &RatingsBySch
                 rating_label(e, ratings_by_scheduler)
                     .map_or_else(|| rating.to_string(), ToString::to_string)
             });
-            let time = if e.kind == ReviewLogKind::Forget {
+            let time = if matches!(e.kind, ReviewLogKind::Forget | ReviewLogKind::Reschedule) {
                 "—".to_string()
             } else {
                 format_seconds(time_taken(e))
@@ -289,6 +302,7 @@ mod tests {
             difficulty: is_review.then_some(5.5),
             // As the server marks them under FSRS: Again in the review state
             lapse: is_review && rating == Some(1) && previous_state == REVIEW_STATE,
+            reschedule: None,
         }
     }
 
@@ -376,6 +390,33 @@ mod tests {
             rows[1].contains("Cram") && rows[1].contains("Again"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn moves_are_listed_with_how_far_they_moved() {
+        let moved = |id, days: i64| {
+            let mut e = entry(id, ReviewLogKind::Reschedule, None, REVIEW_STATE);
+            e.reschedule = Some(RescheduleData {
+                previous_due: e.reviewed_at,
+                due: e.reviewed_at + chrono::Duration::days(days),
+            });
+            e
+        };
+        let entries = [
+            entry(0, ReviewLogKind::Review, Some(3), 0),
+            moved(1, 3),
+            moved(2, -2),
+        ];
+        let out = format_card_info(&entries, &ratings());
+        assert!(out.contains("Reviews        1\n"), "{out}");
+        let rows = out
+            .lines()
+            .skip_while(|l| !l.starts_with("Date"))
+            .skip(1)
+            .take_while(|l| !l.is_empty())
+            .collect::<Vec<_>>();
+        assert!(rows[0].contains("Advance -2d"), "{out}");
+        assert!(rows[1].contains("Postpone +3d"), "{out}");
     }
 
     #[test]

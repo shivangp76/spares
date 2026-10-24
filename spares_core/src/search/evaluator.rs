@@ -562,6 +562,9 @@ enum CardField {
     /// A rating, in reviews at the time written in brackets, like the `>=today-7d` of
     /// `c.rated[>=today-7d]`, if there is one.
     Rated(Option<String>),
+    /// Whether the card was postponed, at the time written in brackets if there is one, like the
+    /// `today` of `c.postponed[today]`.
+    Postponed(Option<String>),
     Reviewed,
     Reps,
     Lapses,
@@ -592,7 +595,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 36] = [
+pub(crate) const FIELDS: [FieldDoc; 37] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -618,6 +621,7 @@ pub(crate) const FIELDS: [FieldDoc; 36] = [
     doc("c.state", "c.state=review", "The card's state: new, learning, review or relearning"),
     doc("c.custom_data", "c.custom_data.key=1", "A value in the card's custom data"),
     doc("c.rated", "c.rated[>=today-7d]=1", "A rating the card got in a review, from 1 (again) to 4 (easy), in reviews at the time in brackets if there are any"),
+    doc("c.postponed", "c.postponed[today]", "Whether the card's due date was moved later without a review, at the time in brackets if there is one"),
     doc("c.reviewed", "c.reviewed>=today-7d", "When the card was last reviewed"),
     doc("c.reps", "c.reps>=10", "How many times the card was reviewed"),
     doc("c.lapses", "c.lapses>=3", "How many times the card was forgotten after it had been learned"),
@@ -801,12 +805,19 @@ impl Field {
         } else {
             value_str.to_string()
         };
-        // Ratings in reviews at a time, like `c.rated[>=today-7d]`.
+        // Ratings in reviews at a time, like `c.rated[>=today-7d]`, and postponements, like
+        // `c.postponed[today]`.
         if let Some(range) = normalized_value_str
             .strip_prefix("c.rated[")
             .and_then(|rest| rest.strip_suffix(']'))
         {
             return Ok(Field::Card(CardField::Rated(Some(range.to_string()))));
+        }
+        if let Some(range) = normalized_value_str
+            .strip_prefix("c.postponed[")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            return Ok(Field::Card(CardField::Postponed(Some(range.to_string()))));
         }
         // A path into custom data, like `custom_data.x.y[1]`.
         for (prefix, is_card) in [("custom_data", false), ("c.custom_data", true)] {
@@ -849,6 +860,7 @@ impl Field {
             "c.state" => Ok(Field::Card(CardField::State)),
             "c.custom_data" => Ok(Field::Card(CardField::CustomData("$".to_string()))),
             "c.rated" => Ok(Field::Card(CardField::Rated(None))),
+            "c.postponed" => Ok(Field::Card(CardField::Postponed(None))),
             "c.reviewed" => Ok(Field::Card(CardField::Reviewed)),
             "c.reps" => Ok(Field::Card(CardField::Reps)),
             "c.lapses" => Ok(Field::Card(CardField::Lapses)),
@@ -964,6 +976,9 @@ impl Field {
                     )
                 }
                 CardField::Rated(range) => rated_sql(Some(value_str), range.as_deref())?,
+                CardField::Postponed(range) => {
+                    postponed_sql(!value_str.contains("false"), range.as_deref())?
+                }
                 CardField::Reviewed => never_null(&last_rated_sql()),
                 CardField::Reps => with_op(&reps_sql()),
                 CardField::Lapses => with_op(&lapses_sql()),
@@ -1040,7 +1055,8 @@ impl Field {
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
                 | CardField::WaitingOnLinks
-                | CardField::Leech => FieldType::Boolean,
+                | CardField::Leech
+                | CardField::Postponed(_) => FieldType::Boolean,
                 CardField::CustomData(_) => FieldType::Json,
                 CardField::Cloze => FieldType::String,
             },
@@ -1107,6 +1123,7 @@ impl Field {
                 | CardField::SchedulerBuried
                 | CardField::WaitingOnLinks
                 | CardField::Leech
+                | CardField::Postponed(_)
                 | CardField::CustomData(_)
                 | CardField::Cloze => Err(miette!("it can't be sorted")),
             },
@@ -1557,6 +1574,11 @@ fn evaluate_bare_field(name: &str, context: &mut EvaluationContext) -> Result<()
         // Any rating at the time, as in `c.rated[today]`.
         Field::Card(CardField::Rated(Some(range))) => {
             context.add_where_clause(rated_sql(None, Some(&range))?);
+            return Ok(());
+        }
+        // A postponement at the time, as in `c.postponed[today]`.
+        Field::Card(CardField::Postponed(Some(range))) => {
+            context.add_where_clause(postponed_sql(true, Some(&range))?);
             return Ok(());
         }
         _ => {
@@ -2195,21 +2217,40 @@ fn rated_sql(value_str: Option<&str>, range: Option<&str>) -> Result<String, Err
         let _ = write!(sql, " AND rl.rating {value_str}");
     }
     if let Some(range) = range {
-        let _ = write!(sql, " AND {}", review_time_sql(range)?);
+        let _ = write!(sql, " AND {}", review_time_sql("c.rated", range)?);
     }
     sql.push(')');
     Ok(sql)
 }
 
-/// The condition on when a review was that is written in `range`, the brackets of
-/// `c.rated[…]`: a comparison with a date, like `>=today-7d`, or a date, which means the review was
-/// in it, like `2026-10`. Dates work as they do for other date fields.
-fn review_time_sql(range: &str) -> Result<String, Error> {
-    let shown = format!("c.rated[{range}]");
+/// Whether the card's due date was moved later without a review, by a
+/// [`ReviewLogKind::Reschedule`] row, at the time written in `range`, like the `today` of
+/// `c.postponed[today]`, if there is one. `EXISTS` is never NULL, so `-c.postponed` matches the
+/// cards that never were.
+fn postponed_sql(is_true: bool, range: Option<&str>) -> Result<String, Error> {
+    let mut sql = format!(
+        "EXISTS (SELECT 1 FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {} \
+         AND json_extract(rl.custom_data, '$.due') > json_extract(rl.custom_data, '$.previous_due')",
+        ReviewLogKind::Reschedule as u8
+    );
+    if let Some(range) = range {
+        let _ = write!(sql, " AND {}", review_time_sql("c.postponed", range)?);
+    }
+    sql.push(')');
+    Ok(if is_true { sql } else { format!("NOT {sql}") })
+}
+
+/// The condition on when a review log row was that is written in `range`, the brackets of
+/// `field[…]`, like `c.rated[…]`: a comparison with a date, like `>=today-7d`, or a date, which
+/// means the row was in it, like `2026-10`. Dates work as they do for other date fields.
+fn review_time_sql(field: &str, range: &str) -> Result<String, Error> {
+    let shown = format!("{field}[{range}]");
     let invalid = || {
         miette!(
-            help = "Write a date in the brackets, or a comparison with one, as in `c.rated[today]` or `c.rated[>=today-7d]=1`",
-            "`{shown}` doesn't say when the reviews were",
+            help = format!(
+                "Write a date in the brackets, or a comparison with one, as in `{field}[today]` or `{field}[>=today-7d]`"
+            ),
+            "`{shown}` doesn't say when it was",
         )
     };
     let written = if range.starts_with(['<', '>', '=']) {
@@ -3602,6 +3643,83 @@ mod tests {
         assert_eq!(
             search(&format!("c.lapses>={threshold}")).await,
             search("c.leech").await
+        );
+    }
+
+    #[sqlx::test]
+    async fn searches_postponed_cards(pool: SqlitePool) {
+        let now = chrono::Utc::now().timestamp();
+        let day = 24 * 60 * 60;
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for card_id in 1..=4 {
+            sqlx::query(
+                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, custom_data) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 2, '{}')"#,
+            )
+            .bind(card_id)
+            .bind(card_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // 1 was postponed today, 2 ten days ago, and 3 advanced today. 4 was only reviewed.
+        let moves = [(1, 0, 5), (2, 10, 3), (3, 0, -2)];
+        for (card_id, days_ago, days_moved) in moves {
+            let moved_at = now - days_ago * day;
+            let data = crate::model::RescheduleData {
+                previous_due: chrono::DateTime::from_timestamp(moved_at, 0).unwrap(),
+                due: chrono::DateTime::from_timestamp(moved_at + days_moved * day, 0).unwrap(),
+            };
+            sqlx::query(
+                "INSERT INTO review_log (card_id, reviewed_at, kind, scheduler_name, previous_state, custom_data) VALUES (?, ?, ?, 'fsrs', 2, ?)",
+            )
+            .bind(card_id)
+            .bind(moved_at)
+            .bind(ReviewLogKind::Reschedule)
+            .bind(serde_json::to_value(data).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (4, ?, 0, 3, 'fsrs', 2, '{}')",
+        )
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_card_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"));
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(search("c.postponed").await, [1, 2]);
+        assert_eq!(search("c.postponed[today]").await, [1]);
+        assert_eq!(search("card.postponed[>=today-14d]").await, [1, 2]);
+        assert_eq!(search("c.postponed[<today]").await, [2]);
+        assert_eq!(search("-c.postponed[today]").await, [2, 3, 4]);
+        assert_eq!(search("c.postponed[today]=false").await, [2, 3, 4]);
+        assert_eq!(search("c.postponed=false").await, [3, 4]);
+        // A move is not a review.
+        assert_eq!(search("c.rated[today]").await, [4]);
+        assert_eq!(search("c.reps=0").await, [1, 2, 3]);
+        assert!(
+            Evaluator::new("c.postponed[soon]")
+                .get_card_ids(&pool)
+                .await
+                .is_err()
         );
     }
 

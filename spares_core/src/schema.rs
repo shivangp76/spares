@@ -558,6 +558,7 @@ pub mod card {
     use crate::model::CardId;
     use crate::model::NoteId;
     use crate::model::RatingId;
+    use crate::model::RescheduleData;
     use crate::model::ReviewLog;
     use crate::model::ReviewLogKind;
     use crate::model::SpecialState;
@@ -671,10 +672,15 @@ pub mod card {
         /// Whether this review was a lapse, as `SrsScheduler::lapses` counts them.
         #[serde(default)]
         pub lapse: bool,
+        /// For a [`ReviewLogKind::Reschedule`] row, the due dates before and after the card was
+        /// moved: a postponement if `due` is later.
+        #[serde(default)]
+        pub reschedule: Option<RescheduleData>,
     }
 
     impl CardReviewEntry {
         pub fn new(review_log: ReviewLog, memory_state: Option<(f64, f64)>, lapse: bool) -> Self {
+            let reschedule = review_log.reschedule_data();
             Self {
                 id: review_log.id,
                 kind: review_log.kind,
@@ -689,6 +695,7 @@ pub mod card {
                 stability: memory_state.map(|(stability, _)| stability),
                 difficulty: memory_state.map(|(_, difficulty)| difficulty),
                 lapse,
+                reschedule,
             }
         }
     }

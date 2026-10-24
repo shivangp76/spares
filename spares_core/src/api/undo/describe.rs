@@ -153,6 +153,8 @@ async fn describe(
         // Only ever undo events, which `summarize` never describes
         EventType::UnrateCard => "Unrate card".to_string(),
         EventType::UnforgetCard => "Unforget card".to_string(),
+        EventType::UnadvanceCards => "Unadvance cards".to_string(),
+        EventType::UnpostponeCards => "Unpostpone cards".to_string(),
         EventType::UpdateCards
         | EventType::AdvanceCards
         | EventType::PostponeCards

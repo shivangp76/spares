@@ -57,6 +57,9 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
   const crams = current.entries.filter(e => e.kind === 'Cram');
   const cramTime = crams.reduce((sum, e) => sum + timeTaken(e), 0);
   const date = (iso: string) => new Date(iso).toLocaleString();
+  // A postponement or advance, with how far it moved the due date, like `Postpone +3d`
+  const moveLabel = ({ previous_due, due }: { previous_due: number; due: number }) =>
+    due >= previous_due ? `Postpone +${formatInterval(due - previous_due)}` : `Advance -${formatInterval(previous_due - due)}`;
 
   return (
     <div>
@@ -89,10 +92,10 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
             {[...current.entries].reverse().map(e => (
               <tr key={e.id}>
                 <td style={td}>{date(e.reviewed_at)}</td>
-                <td style={td}>{e.kind === 'Forget' ? 'Forget' : e.kind === 'Cram' ? 'Cram' : e.tag_id !== null ? 'Filtered' : STATE_LABELS[e.previous_state] ?? e.previous_state}</td>
+                <td style={td}>{e.kind === 'Forget' ? 'Forget' : e.reschedule ? moveLabel(e.reschedule) : e.kind === 'Cram' ? 'Cram' : e.tag_id !== null ? 'Filtered' : STATE_LABELS[e.previous_state] ?? e.previous_state}</td>
                 <td style={td}>{e.rating === null ? '—' : ratingLabel(e) ?? e.rating}</td>
                 <td style={td}>{e.scheduled_time === null ? '—' : formatInterval(e.scheduled_time)}</td>
-                <td style={td}>{e.kind === 'Forget' ? '—' : formatDuration(timeTaken(e))}</td>
+                <td style={td}>{e.kind === 'Forget' || e.kind === 'Reschedule' ? '—' : formatDuration(timeTaken(e))}</td>
                 <td style={td}>{e.stability === null ? '—' : e.stability.toFixed(2)}</td>
                 <td style={td}>{e.difficulty === null ? '—' : e.difficulty.toFixed(2)}</td>
               </tr>

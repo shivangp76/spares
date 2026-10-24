@@ -6,11 +6,14 @@ use chrono::Duration;
 use chrono::Utc;
 use itertools::Itertools;
 use rand::RngExt;
+use serde_json::to_value;
 use sqlx::SqlitePool;
 
+use super::SCHEDULER_NAME;
 use super::utils::decay;
 use super::utils::retrievability;
 use crate::Error;
+use crate::api::review::insert_review;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::config::SparesExternalConfig;
@@ -18,6 +21,9 @@ use crate::helpers::FractionalDays;
 use crate::helpers::mean;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::RescheduleData;
+use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::schedulers::MoveCardsResult;
 
 #[derive(Debug)]
@@ -238,6 +244,7 @@ async fn get_all_cards_internal<'a>(
 // DB is used to:
 // 1. get latest review log for each card
 // 2. update card with new due date
+// 3. log the move as a `ReviewLogKind::Reschedule`, at `moved_at`
 #[expect(clippy::too_many_lines)]
 pub async fn move_cards(
     db: &SqlitePool,
@@ -245,6 +252,7 @@ pub async fn move_cards(
     cards: &[Card],
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
+    moved_at: DateTime<Utc>,
     config: &SparesExternalConfig,
 ) -> Result<MoveCardsResult, Error> {
     let decay = decay(config);
@@ -309,6 +317,24 @@ pub async fn move_cards(
                 .execute(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
+        let data = RescheduleData {
+            previous_due: card_internal.card.due,
+            due: new_due,
+        };
+        insert_review(
+            db,
+            &ReviewLog {
+                card_id: Some(card_internal.card.id),
+                reviewed_at: moved_at,
+                kind: ReviewLogKind::Reschedule,
+                scheduler_name: SCHEDULER_NAME.to_string(),
+                previous_state: card_internal.card.state,
+                custom_data: to_value(data).unwrap(),
+                ..ReviewLog::new()
+            },
+            None,
+        )
+        .await?;
         card_changes.push(UpdateCardPayload {
             card_id: card_internal.card.id,
             order: None,

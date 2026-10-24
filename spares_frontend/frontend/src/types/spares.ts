@@ -246,8 +246,8 @@ export interface ForgetCardResponse {
 /** One row of a card's review log, with the memory state the card had after it. */
 export interface CardReviewEntry {
   id: number;
-  /** `Cram` is a rating in a filtered tag that does not reschedule, which left the card's schedule alone. */
-  kind: 'Review' | 'Forget' | 'Cram';
+  /** `Cram` is a rating in a filtered tag that does not reschedule, which left the card's schedule alone. `Reschedule` is a postponement or advance, which moved the due date without a review. */
+  kind: 'Review' | 'Forget' | 'Cram' | 'Reschedule';
   reviewed_at: string;
   /** Relative to `scheduler_name`. */
   rating: number | null;
@@ -262,6 +262,8 @@ export interface CardReviewEntry {
   difficulty: number | null;
   /** Whether this review was a lapse: failed, by its scheduler's ratings, after the card was learned. */
   lapse: boolean;
+  /** For a `Reschedule`, the due dates before and after, in Unix seconds: a postponement if `due` is later. */
+  reschedule: { previous_due: number; due: number } | null;
 }
 
 /** An event that undo or redo reversed. */

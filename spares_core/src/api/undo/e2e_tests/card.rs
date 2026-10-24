@@ -13,6 +13,8 @@ use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::ReviewLog;
+use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::schema::card::CardsSelector;
@@ -579,6 +581,118 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
             "undo PostponeCards must restore original due date"
         );
     }
+}
+
+/// A postponement is logged as a `Reschedule` row, which undo deletes and redo restores, while
+/// the card's due date follows.
+#[sqlx::test]
+async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    let now = Utc::now();
+    // Rated a month ago, so it is due now
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 4,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        now - chrono::Duration::days(30),
+    )
+    .await
+    .unwrap();
+    let due = async || -> i64 {
+        sqlx::query_scalar("SELECT due FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let reschedules = async || -> Vec<ReviewLog> {
+        sqlx::query_as("SELECT * FROM review_log WHERE card_id = ? AND kind = ?")
+            .bind(card_id)
+            .bind(ReviewLogKind::Reschedule)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    let before = due().await;
+    assert!(before <= now.timestamp());
+
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Postpone {
+                count: 1,
+                query: None,
+            },
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    let after = due().await;
+    assert!(after > before);
+    let logged = reschedules().await;
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0].reviewed_at.timestamp(), now.timestamp());
+    assert_eq!(logged[0].rating, None);
+    let data = logged[0].reschedule_data().unwrap();
+    assert_eq!(
+        (data.previous_due.timestamp(), data.due.timestamp()),
+        (before, after)
+    );
+    let postponed = crate::search::evaluator::Evaluator::new("c.postponed[today]")
+        .get_card_ids(&pool)
+        .await
+        .unwrap();
+    assert_eq!(postponed, [card_id]);
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(due().await, before);
+    assert!(
+        reschedules().await.is_empty(),
+        "undo PostponeCards must delete the rows it wrote"
+    );
+
+    redo_event(
+        &pool,
+        RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(due().await, after);
+    assert_eq!(reschedules().await, logged, "redo must restore the rows");
+
+    // And again, from the redo
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(due().await, before);
+    assert_eq!(reschedules().await, Vec::<ReviewLog>::new());
 }
 
 #[sqlx::test]

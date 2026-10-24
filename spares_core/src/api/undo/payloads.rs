@@ -271,6 +271,20 @@ pub struct UnreviewPayload {
     pub buried_siblings: Vec<UpdateCardPayload>,
 }
 
+/// Payload for `UnadvanceCards` and `UnpostponeCards`, the undos of `AdvanceCards` and
+/// `PostponeCards`.
+///
+/// Undoing those deletes the [`ReviewLogKind::Reschedule`](crate::model::ReviewLogKind::Reschedule)
+/// rows they wrote, so the rows are kept here for a redo to reinsert.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UnmoveCardsPayload {
+    /// The moves, swapped.
+    pub cards: Vec<UpdateCardPayload>,
+    /// Empty for a move from before moves were logged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_logs: Vec<ReviewLog>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdateCardPayload {
     // This can't be a Vec<CardId> since each card will have a different old copy of the data.

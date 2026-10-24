@@ -142,13 +142,15 @@ pub enum SpecialState {
 ///   `2..=15` are reserved for future kinds such as `SetMemoryState`, `SchedulerChanged` or
 ///   `Created`.
 /// - `16..=31` are only *recorded*: they are part of the card's history, for statistics and the
-///   card's info, but every replay skips them. `17..=31` are reserved.
+///   card's info, but every replay skips them. `18..=31` are reserved.
 ///
 /// The column carries a matching `CHECK (kind BETWEEN 0 AND 31)`.
 ///
-/// Only actions that are a review, or that a scheduler must replay, belong in `review_log`.
-/// Audit-only actions — suspend, bury, set due date, advance, postpone — belong in the `event`
-/// table (see [`EventType`]) instead.
+/// Only actions that are a review, that a scheduler must replay, or that are part of the card's
+/// schedule's history, like a postponement ([`ReviewLogKind::Reschedule`]), belong in
+/// `review_log`. Other audit-only actions, like suspend and bury, belong in the `event` table
+/// (see [`EventType`]) instead. Unlike `review_log`, that table is not synced and is cleared by a
+/// full sync, so it is only for undo.
 ///
 /// A row whose `kind` is not a known variant fails to decode. That is deliberate: a database
 /// written by a newer version should not be silently misread as a stream of plain reviews.
@@ -187,6 +189,32 @@ pub enum ReviewLogKind {
     /// today as studied, while `spares card reschedule` gives every card the same due date and
     /// memory state as before.
     Cram = 16,
+    /// The card's due date was moved without a review, by `spares card postpone` or
+    /// `spares card advance`. Not to be confused with `spares card reschedule`, which recomputes
+    /// due dates from the replayed history and logs nothing. The card's memory state was left as
+    /// it was, so replay skips the row; the next review's elapsed time is still measured from the
+    /// last real review.
+    ///
+    /// The rating, `scheduled_time` and duration columns are `NULL`, `previous_state` is the
+    /// card's state at the time, and `custom_data` holds the due dates before and after, as
+    /// [`RescheduleData`]. Statistics, the daily limits, lapses, the optimizer and `c.rated`
+    /// leave these rows out. `c.postponed` finds the ones that moved a card later, and a card's
+    /// info shows them.
+    ///
+    /// For example, `spares card postpone 50` on a holiday writes 50 of these rows, so that
+    /// `c.postponed[today] tag=exam` finds the exam cards among them. Undoing the postponement
+    /// deletes them again.
+    Reschedule = 17,
+}
+
+/// What a [`ReviewLogKind::Reschedule`] row keeps in its `custom_data`: the card's due date
+/// before and after it was moved.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RescheduleData {
+    #[serde(with = "ts_seconds")]
+    pub previous_due: DateTime<Utc>,
+    #[serde(with = "ts_seconds")]
+    pub due: DateTime<Utc>,
 }
 
 impl ReviewLogKind {
@@ -283,8 +311,8 @@ pub struct Parser {
 /// Thus, each card has multiple entries in this table.
 ///
 /// Consumers that count or average over reviews must filter on `kind`; the rating and duration
-/// columns are `NULL` for every `Forget` row. Consumers that replay a card's history must skip
-/// the kinds that are not [replayed](ReviewLogKind::is_replayed), such as crams.
+/// columns are `NULL` for every `Forget` and `Reschedule` row. Consumers that replay a card's
+/// history must skip the kinds that are not [replayed](ReviewLogKind::is_replayed), such as crams.
 #[derive(Clone, Debug, Default, Deserialize, Eq, FromRow, Hash, PartialEq, Serialize)]
 pub struct ReviewLog {
     pub id: i64,
@@ -345,6 +373,13 @@ impl ReviewLog {
             ..Default::default()
         }
     }
+
+    /// The due dates of a [`ReviewLogKind::Reschedule`] row, or `None` for other kinds.
+    pub fn reschedule_data(&self) -> Option<RescheduleData> {
+        (self.kind == ReviewLogKind::Reschedule)
+            .then(|| serde_json::from_value(self.custom_data.clone()).ok())
+            .flatten()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, sqlx::Type)]
@@ -369,15 +404,21 @@ pub enum EventType {
     RateCard,
     /// Shares payload schema with `UpdateCards`
     BuryCards,
-    /// Shares payload schema with `UpdateCards`
+    /// Shares payload schema with `UpdateCards`. Its moves are logged as
+    /// [`ReviewLogKind::Reschedule`] rows, at the event's time, which undo deletes.
     AdvanceCards,
-    /// Shares payload schema with `UpdateCards`
+    /// Shares payload schema with `UpdateCards`, like `AdvanceCards`.
     PostponeCards,
     /// The undo of a `RateCard`. Carries `UnreviewPayload`, which keeps the deleted `review_log`
     /// row so a redo can restore it.
     UnrateCard,
     /// The undo of a `ForgetCard`. Carries `UnreviewPayload`, like `UnrateCard`.
     UnforgetCard,
+    /// The undo of an `AdvanceCards`. Carries `UnmoveCardsPayload`, which keeps the deleted
+    /// `review_log` rows so a redo can restore them.
+    UnadvanceCards,
+    /// The undo of a `PostponeCards`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
+    UnpostponeCards,
 }
 
 /// Whether an event is an action, or the undo or redo of one. Derived from the
@@ -653,5 +694,6 @@ mod tests {
         assert!(super::ReviewLogKind::Review.is_replayed());
         assert!(super::ReviewLogKind::Forget.is_replayed());
         assert!(!super::ReviewLogKind::Cram.is_replayed());
+        assert!(!super::ReviewLogKind::Reschedule.is_replayed());
     }
 }

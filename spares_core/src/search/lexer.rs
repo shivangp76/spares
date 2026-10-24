@@ -354,10 +354,14 @@ impl Lexer<'_> {
     }
 
     /// After the word starting at `start`, consumes the time in brackets of ratings at a time, like
-    /// the `[>=today-7d]` of `c.rated[>=today-7d]`, returning whether there was one. The evaluator
-    /// validates the time.
+    /// the `[>=today-7d]` of `c.rated[>=today-7d]`, or of postponements, like the `[today]` of
+    /// `c.postponed[today]`, returning whether there was one. The evaluator validates the time.
     fn eat_rated_time(&mut self, start: usize) -> Result<bool, Error> {
-        if !(matches!(self.s.from(start), "c.rated" | "card.rated") && self.s.eat_if('[')) {
+        if !(matches!(
+            self.s.from(start),
+            "c.rated" | "card.rated" | "c.postponed" | "card.postponed"
+        ) && self.s.eat_if('['))
+        {
             return Ok(false);
         }
         self.s.eat_until(|c: char| c == ']' || c.is_whitespace());
