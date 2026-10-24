@@ -31,6 +31,7 @@ use crate::model::Card;
 use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
+use crate::model::Tag;
 use crate::notes_vcs;
 use crate::parsers::CardData;
 use crate::parsers::Parseable;
@@ -172,6 +173,7 @@ pub async fn update_notes(
     let mut parse_note_requests = Vec::new();
     let mut update_note_payloads: Vec<UpdateNotePayload> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
+    let mut deleted_tags: Vec<Tag> = Vec::new();
 
     // ---- Phase 1: Batch pre-fetches ----
 
@@ -447,15 +449,15 @@ pub async fn update_notes(
         )
         .await?;
 
-        new_tag_payloads.extend(
-            tags::update_tags(
-                &mut *tx,
-                &tags,
-                parsed.note_id,
-                &existing_filtered_tag_names,
-            )
-            .await?,
-        );
+        let tag_changes = tags::update_tags(
+            &mut *tx,
+            &tags,
+            parsed.note_id,
+            &existing_filtered_tag_names,
+        )
+        .await?;
+        new_tag_payloads.extend(tag_changes.created);
+        deleted_tags.extend(tag_changes.deleted);
 
         links::update_note_links(
             &mut *tx,
@@ -731,6 +733,8 @@ pub async fn update_notes(
     let event_id = if log && !update_note_payloads.is_empty() {
         let payload = UpdateNotesPayload {
             notes: update_note_payloads,
+            deleted_tags,
+            restored_tags: Vec::new(),
         };
         let note_event = (
             EventType::UpdateNotes,

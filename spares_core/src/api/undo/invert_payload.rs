@@ -278,6 +278,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             // To undo CreateNotes, we need DeleteNotes with the same full snapshots
             let delete_payload = DeleteNotesPayload {
                 notes: payload.notes,
+                card_links: payload.card_links,
+                deleted_tags: payload.restored_tags,
             };
             Ok(serde_json::to_value(delete_payload).unwrap())
         }
@@ -299,6 +301,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                         cards: p.cards.map(|t| t.swap()),
                     })
                     .collect(),
+                deleted_tags: payload.restored_tags,
+                restored_tags: payload.deleted_tags,
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
@@ -308,6 +312,8 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             // To undo DeleteNotes, we recreate the notes from the saved snapshots
             let create_payload = CreateNotesPayload {
                 notes: payload.notes,
+                card_links: payload.card_links,
+                restored_tags: payload.deleted_tags,
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }

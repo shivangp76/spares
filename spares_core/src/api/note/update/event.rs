@@ -11,6 +11,7 @@ use crate::api::max_rows_for;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag;
+use crate::api::tag::restore_tags;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
@@ -29,6 +30,7 @@ pub async fn update_notes_event(
     log: bool,
 ) -> Result<(), Error> {
     let at = chrono::Utc::now();
+    restore_tags(db, &payload.restored_tags).await?;
     for note_payload in &payload.notes {
         let UpdateNotePayload {
             id,
@@ -103,9 +105,6 @@ pub async fn update_notes_event(
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
 
-            // Delete empty auto_delete tags
-            delete_empty_tags(db, &tag_ids_to_check).await?;
-
             // Re-add tags from the `after` list (create if needed, do NOT log)
             let mut new_tag_ids: Vec<i64> = Vec::new();
             for tag_name in &tags_transition.after {
@@ -142,6 +141,9 @@ pub async fn update_notes_event(
                     .collect::<Vec<_>>(),
             )
             .await?;
+
+            // Delete empty auto_delete tags, after re-adding, so a tag the note keeps stays
+            delete_empty_tags(db, &tag_ids_to_check).await?;
         }
 
         // Restore cards

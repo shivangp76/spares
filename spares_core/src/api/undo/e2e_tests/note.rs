@@ -5,16 +5,23 @@ use serde_json::Map;
 use sqlx::SqlitePool;
 
 use crate::api::note::create_notes;
+use crate::api::note::delete_notes;
 use crate::api::note::update_notes;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::tag::tests::create_tag_helper;
+use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
+use crate::model::CardId;
+use crate::model::Tag;
+use crate::model::TagId;
 use crate::parsers::get_all_parsers;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateTags;
+use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::UndoEventRequest;
 
 #[sqlx::test]
@@ -527,4 +534,240 @@ async fn e2e_undo_update_notes_with_new_tag_removes_tag_when_undo_group(pool: Sq
         tag_count_after, 0,
         "undo with undo_group must remove the tag created during note update"
     );
+}
+
+/// An auto-delete tag with a description, which a note created after it is the only one to have
+async fn create_lonely_tagged_note(pool: &SqlitePool) -> (crate::model::NoteId, Tag) {
+    use crate::api::tag::create_tag;
+    use crate::schema::tag::CreateTagRequest;
+
+    let parser = create_parser_helper(pool, "markdown").await;
+    create_tag(
+        pool,
+        CreateTagRequest {
+            name: "lonely".to_string(),
+            description: "kept on undo".to_string(),
+            query: None,
+            auto_delete: true,
+            reschedule: true,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let request = CreateNotesRequest {
+        parser_id: parser.id,
+        requests: vec![CreateNoteRequest {
+            data: "Hello {{ world }}".to_string(),
+            keywords: vec![],
+            tags: vec!["lonely".to_string()],
+            is_suspended: false,
+            custom_data: Map::new(),
+        }],
+    };
+    let note_id = create_notes(pool, request, Utc::now(), &get_all_parsers(), false)
+        .await
+        .unwrap()
+        .notes[0]
+        .id;
+    let tag = tag_named(pool, "lonely").await.unwrap();
+    (note_id, tag)
+}
+
+async fn tag_named(pool: &SqlitePool, name: &str) -> Option<Tag> {
+    sqlx::query_as("SELECT * FROM tag WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+async fn note_tag_ids(pool: &SqlitePool, note_id: crate::model::NoteId) -> Vec<TagId> {
+    sqlx::query_scalar("SELECT tag_id FROM note_tag WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn undo_latest(pool: &SqlitePool) {
+    undo_event(
+        pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+async fn redo_latest(pool: &SqlitePool) {
+    redo_event(
+        pool,
+        RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+async fn delete_note(pool: &SqlitePool, note_id: crate::model::NoteId) {
+    delete_notes(
+        pool,
+        DeleteNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+        },
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn e2e_undo_delete_notes_restores_auto_deleted_tag_and_card_links(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    use crate::api::review::submit_study_action;
+    use crate::api::tag::create_tag;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StudyAction;
+    use crate::schema::review::SubmitStudyActionRequest;
+    use crate::schema::tag::CreateTagRequest;
+
+    // The filtered tag searches text, which needs `REGEXP`.
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+    let (note_id, tag) = create_lonely_tagged_note(&pool).await;
+    let card_id: CardId = sqlx::query_scalar("SELECT id FROM card WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 3,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let filtered = create_tag(
+        &pool,
+        CreateTagRequest {
+            name: "filtered".to_string(),
+            description: String::new(),
+            query: Some("Hello".to_string()),
+            auto_delete: false,
+            reschedule: true,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let card_tags = async || -> Vec<TagId> {
+        sqlx::query_scalar("SELECT tag_id FROM card_tag WHERE card_id = ?")
+            .bind(card_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    let reviews_of_card = async || -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(card_tags().await, vec![filtered.id]);
+    assert_eq!(reviews_of_card().await, 1);
+
+    delete_note(&pool, note_id).await;
+    assert!(tag_named(&pool, "lonely").await.is_none());
+    assert_eq!(reviews_of_card().await, 0);
+
+    // A plain undo reverts the delete, with the tag it deleted and what its card had
+    undo_latest(&pool).await;
+    let restored = tag_named(&pool, "lonely").await.unwrap();
+    assert_eq!(restored.id, tag.id);
+    assert_eq!(restored.description, "kept on undo");
+    assert_eq!(note_tag_ids(&pool, note_id).await, vec![tag.id]);
+    assert_eq!(reviews_of_card().await, 1);
+    assert_eq!(card_tags().await, vec![filtered.id]);
+
+    redo_latest(&pool).await;
+    assert!(tag_named(&pool, "lonely").await.is_none());
+    assert_eq!(reviews_of_card().await, 0);
+
+    // And again, from the redo's undo
+    undo_latest(&pool).await;
+    assert_eq!(tag_named(&pool, "lonely").await.unwrap().id, tag.id);
+    assert_eq!(reviews_of_card().await, 1);
+}
+
+#[sqlx::test]
+async fn e2e_undo_delete_notes_links_to_tag_that_took_the_name(pool: SqlitePool) {
+    let (note_id, tag) = create_lonely_tagged_note(&pool).await;
+    delete_note(&pool, note_id).await;
+    // Not auto-delete, so it outlives the note again below
+    let other = create_tag_helper(&pool, "lonely", "another").await;
+    assert_ne!(other.id, tag.id);
+
+    undo_latest(&pool).await;
+    assert_eq!(note_tag_ids(&pool, note_id).await, vec![other.id]);
+    assert_eq!(
+        tag_named(&pool, "lonely").await.unwrap().description,
+        "another"
+    );
+
+    redo_latest(&pool).await;
+    assert_eq!(tag_named(&pool, "lonely").await.unwrap().id, other.id);
+}
+
+#[sqlx::test]
+async fn e2e_undo_update_notes_restores_auto_deleted_tag(pool: SqlitePool) {
+    let (note_id, tag) = create_lonely_tagged_note(&pool).await;
+    update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+            parser_id: None,
+            data: None,
+            keywords: None,
+            tags: UpdateTags::ModifyTags {
+                tags_to_remove: Some(vec!["lonely".to_string()]),
+                tags_to_add: None,
+            },
+            custom_data: None,
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(tag_named(&pool, "lonely").await.is_none());
+
+    undo_latest(&pool).await;
+    let restored = tag_named(&pool, "lonely").await.unwrap();
+    assert_eq!(restored.id, tag.id);
+    assert_eq!(restored.description, "kept on undo");
+    assert_eq!(note_tag_ids(&pool, note_id).await, vec![tag.id]);
+
+    redo_latest(&pool).await;
+    assert!(tag_named(&pool, "lonely").await.is_none());
+    assert_eq!(note_tag_ids(&pool, note_id).await, Vec::<TagId>::new());
 }

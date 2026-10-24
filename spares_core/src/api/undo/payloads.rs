@@ -172,6 +172,13 @@ pub struct NoteSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateNotesPayload {
     pub notes: Vec<NoteSnapshot>,
+    /// Carried from `DeleteNotesPayload::card_links` when undoing a delete
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub card_links: Vec<CardLinks>,
+    /// Carried from `DeleteNotesPayload::deleted_tags` when undoing a delete, and restored before
+    /// the notes link to them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_tags: Vec<Tag>,
 }
 
 /// Payload for `DeleteNotes` event.
@@ -179,6 +186,27 @@ pub struct CreateNotesPayload {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeleteNotesPayload {
     pub notes: Vec<NoteSnapshot>,
+    /// What deleting the notes' cards detached from them, for cards that had any. Empty in events
+    /// recorded before it was kept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub card_links: Vec<CardLinks>,
+    /// [`auto_delete`](Tag::auto_delete) tags deleted because these notes were the last to have
+    /// them, so undo can restore them as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_tags: Vec<Tag>,
+}
+
+/// What deleting a card detached from it, so undoing the delete can reattach it
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct CardLinks {
+    pub card_id: CardId,
+    /// Its reviews, which the delete kept with no card (`review_log.card_id` is `ON DELETE SET
+    /// NULL`)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_log_ids: Vec<i64>,
+    /// The filtered tags it was in. A note snapshot's tags are only its own, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filtered_tag_ids: Vec<TagId>,
 }
 
 /// Per-note transition payload for `UpdateNotes`
@@ -214,6 +242,14 @@ impl UpdateNotePayload {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdateNotesPayload {
     pub notes: Vec<UpdateNotePayload>,
+    /// [`auto_delete`](Tag::auto_delete) tags deleted because the notes no longer had them, so
+    /// undo can restore them as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_tags: Vec<Tag>,
+    /// Tags to restore before the notes link to them: an undo's, swapped from the `deleted_tags`
+    /// of the update it reverts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_tags: Vec<Tag>,
 }
 
 /// Payload for a `ForgetCard` event.
@@ -324,5 +360,32 @@ impl UpdateCardPayload {
             state: self.state.map(Transition::swap),
             custom_data: self.custom_data.map(Transition::swap),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn notes_payloads_from_before_card_links_and_deleted_tags_deserialize() {
+        let note = json!({
+            "id": 1, "data": "x", "created_at": "2026-10-01T00:00:00Z", "parser_id": 8,
+            "custom_data": {}, "keywords": [], "tags": ["a"], "cards": [],
+        });
+        let delete: DeleteNotesPayload = serde_json::from_value(json!({"notes": [note]})).unwrap();
+        assert!(delete.card_links.is_empty() && delete.deleted_tags.is_empty());
+        let create: CreateNotesPayload = serde_json::from_value(json!({"notes": [note]})).unwrap();
+        assert!(create.card_links.is_empty() && create.restored_tags.is_empty());
+        let update: UpdateNotesPayload =
+            serde_json::from_value(json!({"notes": [{"id": 1}]})).unwrap();
+        assert!(update.deleted_tags.is_empty() && update.restored_tags.is_empty());
+        // And they are written as before when there is nothing to add
+        assert_eq!(
+            serde_json::to_value(&update).unwrap(),
+            json!({"notes": [{"id": 1}]})
+        );
     }
 }

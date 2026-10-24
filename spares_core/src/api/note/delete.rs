@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -17,13 +18,16 @@ use crate::api::note::fetch_note_snapshot;
 use crate::api::parser::get_parser;
 use crate::api::placeholders;
 use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CardLinks;
 use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::is_test_mode;
 use crate::config::read_internal_config;
 use crate::config::write_internal_config;
+use crate::model::CardId;
 use crate::model::EventType;
 use crate::model::NoteId;
+use crate::model::Tag;
 use crate::model::TagId;
 use crate::notes_vcs;
 use crate::parsers::Parseable;
@@ -261,9 +265,11 @@ pub async fn delete_notes(
 
     // Delete notes from DB, clean up auto-delete tags, and log event
     let payload = DeleteNotesPayload {
+        card_links: fetch_card_links(db, &note_snapshots).await?,
         notes: note_snapshots,
+        deleted_tags: Vec::new(),
     };
-    delete_notes_from_db(db, &note_ids, &payload, log).await?;
+    let payload = delete_notes_from_db(db, &note_ids, payload, log).await?;
 
     // Delete files for all notes (derive parser_id, data, and card orders from snapshots)
     let grouped_note_data = payload
@@ -301,13 +307,73 @@ pub async fn delete_notes(
     Ok(())
 }
 
+/// What deleting the cards of `notes` will detach from them: their reviews and filtered tags
+async fn fetch_card_links(
+    db: &SqlitePool,
+    notes: &[NoteSnapshot],
+) -> Result<Vec<CardLinks>, Error> {
+    let card_ids: Vec<CardId> = notes
+        .iter()
+        .flat_map(|note| note.cards.iter().map(|card| card.id))
+        .collect();
+    let card_ids = card_ids.as_slice();
+    let reviews: Vec<(CardId, i64)> =
+        fetch_batched_query(db, card_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
+            let query_str = format!(
+                "SELECT card_id, id FROM review_log WHERE card_id IN ({}) ORDER BY id",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_as(&query_str);
+            for card_id in chunk {
+                query = query.bind(card_id);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
+    let filtered_tags: Vec<(CardId, TagId)> =
+        fetch_batched_query(db, card_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
+            let query_str = format!(
+                "SELECT ct.card_id, ct.tag_id FROM card_tag ct JOIN tag t ON t.id = ct.tag_id
+                WHERE ct.card_id IN ({}) AND t.query IS NOT NULL ORDER BY ct.tag_id",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_as(&query_str);
+            for card_id in chunk {
+                query = query.bind(card_id);
+            }
+            query
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })
+        })
+        .await?;
+    let mut links: BTreeMap<CardId, CardLinks> = BTreeMap::new();
+    let new = |card_id| CardLinks {
+        card_id,
+        ..CardLinks::default()
+    };
+    for (card_id, review_log_id) in reviews {
+        let entry = links.entry(card_id).or_insert_with(|| new(card_id));
+        entry.review_log_ids.push(review_log_id);
+    }
+    for (card_id, tag_id) in filtered_tags {
+        let entry = links.entry(card_id).or_insert_with(|| new(card_id));
+        entry.filtered_tag_ids.push(tag_id);
+    }
+    Ok(links.into_values().collect())
+}
+
 /// Shared core: delete notes from the DB, clean up auto-delete tags, and optionally log the event.
+/// Returns `payload` with the deleted tags.
 async fn delete_notes_from_db(
     db: &SqlitePool,
     note_ids: &[NoteId],
-    payload: &DeleteNotesPayload,
+    mut payload: DeleteNotesPayload,
     log: bool,
-) -> Result<(), Error> {
+) -> Result<DeleteNotesPayload, Error> {
     // Get all tags with `auto_delete` enabled for all notes (batched query)
     // NOTE: AUTOMATIC REBUILD: If `Automatic` rebuild is enabled in the future, then a check would be added to ensure `auto_delete` is false. In other words, `auto_delete` as true and rebuild as `Automatic` conflict since once the tag has 0 notes left, it will be deleted so that means notes are not automatically added to it anymore.
     let tags_rows: Vec<TagId> =
@@ -362,14 +428,14 @@ async fn delete_notes_from_db(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    delete_empty_tags(db, &all_tag_ids).await?;
+    payload.deleted_tags = delete_empty_tags(db, &all_tag_ids).await?;
 
     if log {
         insert_events(
             db,
             &[(
                 EventType::DeleteNotes,
-                serde_json::to_value(payload).unwrap(),
+                serde_json::to_value(&payload).unwrap(),
             )],
             Utc::now(),
             None,
@@ -377,7 +443,7 @@ async fn delete_notes_from_db(
         .await?;
     }
 
-    Ok(())
+    Ok(payload)
 }
 
 /// Delete notes from the DB only (no file operations, no config update).
@@ -392,10 +458,13 @@ pub(crate) async fn delete_notes_event(
         return Ok(());
     }
 
-    delete_notes_from_db(db, &note_ids, &payload, log).await
+    delete_notes_from_db(db, &note_ids, payload, log).await?;
+    Ok(())
 }
 
-pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(), Error> {
+/// Deletes those of `tag_ids` that are [`auto_delete`](Tag::auto_delete) and have no notes or
+/// cards left. Returns the deleted tags.
+pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<Vec<Tag>, Error> {
     let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
     delete_empty_tags_on(&mut conn, tag_ids).await
 }
@@ -403,7 +472,8 @@ pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<(),
 pub(crate) async fn delete_empty_tags_on(
     conn: &mut sqlx::sqlite::SqliteConnection,
     tag_ids: &[TagId],
-) -> Result<(), Error> {
+) -> Result<Vec<Tag>, Error> {
+    let mut deleted = Vec::new();
     for chunk in tag_ids.chunks(MAX_ROWS_IN_QUERY) {
         let query_str = format!(
             r"DELETE FROM tag
@@ -414,17 +484,20 @@ pub(crate) async fn delete_empty_tags_on(
             )
             AND NOT EXISTS (
                 SELECT 1 FROM card_tag WHERE card_tag.tag_id = tag.id
-            )",
+            )
+            RETURNING *",
             placeholders(chunk.len()),
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query_as(&query_str);
         for tag_id in chunk {
             query = query.bind(tag_id);
         }
-        query
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        deleted.extend(
+            query
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?,
+        );
     }
-    Ok(())
+    Ok(deleted)
 }

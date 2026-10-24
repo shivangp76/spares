@@ -24,7 +24,6 @@ use crate::schema::tag::CreateTagRequest;
 use crate::schema::tag::TagResponse;
 use crate::schema::tag::TagSelector;
 use crate::schema::tag::UpdateTagRequest;
-use crate::search::query_has_limit;
 
 mod query;
 pub use query::*;
@@ -118,14 +117,13 @@ pub async fn create_tag_event(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    if let Some(ref query) = payload.query {
-        // When undo restores a limited tag, its saved `card_ids` are the exact set to bring back.
-        // Re-running the query would add whichever items the limit picks today.
-        let restoring_limited_tag = payload.id.is_some() && query_has_limit(query);
-        if !restoring_limited_tag {
-            // Execute query and add tag to all notes that match query
-            tag_cards_from_query(db, query, tag.id).await?;
-        }
+    // When undo restores a tag, its saved `card_ids` are the exact set to bring back. Re-running
+    // the query would add whichever cards it matches today.
+    if let Some(ref query) = payload.query
+        && payload.id.is_none()
+    {
+        // Execute query and add tag to all notes that match query
+        tag_cards_from_query(db, query, tag.id).await?;
     }
 
     // Restore note_tag associations (for undo of DeleteTag)
@@ -171,6 +169,31 @@ pub async fn create_tag_event(
     }
 
     Ok(TagResponse::new(&tag))
+}
+
+/// Recreates `tags`, which an undone action deleted, as they were, without their notes or cards and
+/// without running their queries. A tag whose name another tag has taken since is skipped: notes
+/// link to tags by name, so the restored notes link to that one instead.
+pub(crate) async fn restore_tags(db: &SqlitePool, tags: &[Tag]) -> Result<(), Error> {
+    for tag in tags {
+        sqlx::query(
+            r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            WHERE NOT EXISTS (SELECT 1 FROM tag WHERE id = ?1 OR name = ?2)",
+        )
+        .bind(tag.id)
+        .bind(&tag.name)
+        .bind(&tag.description)
+        .bind(&tag.query)
+        .bind(tag.auto_delete)
+        .bind(tag.reschedule)
+        .bind(tag.created_at.timestamp())
+        .bind(tag.updated_at.timestamp())
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
+    Ok(())
 }
 
 pub async fn get_tag(db: &SqlitePool, id: i64) -> Result<TagResponse, Error> {

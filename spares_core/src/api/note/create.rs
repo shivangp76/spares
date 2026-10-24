@@ -17,11 +17,14 @@ use crate::api::fetch_review_logs;
 use crate::api::max_rows_for;
 use crate::api::note::basic::fetch_note_snapshot;
 use crate::api::parser::get_parser_name;
+use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag;
+use crate::api::tag::restore_tags;
 use crate::api::undo::create_event_group;
 use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CardLinks;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::NoteSnapshot;
@@ -307,7 +310,11 @@ pub async fn create_notes(
             .await?;
             snapshots.push(snapshot);
         }
-        let payload = CreateNotesPayload { notes: snapshots };
+        let payload = CreateNotesPayload {
+            notes: snapshots,
+            card_links: Vec::new(),
+            restored_tags: Vec::new(),
+        };
         let note_event = (
             EventType::CreateNotes,
             serde_json::to_value(&payload).map_err(|e| {
@@ -349,6 +356,7 @@ pub(crate) async fn create_notes_event(
     payload: CreateNotesPayload,
     log: bool,
 ) -> Result<(), Error> {
+    restore_tags(db, &payload.restored_tags).await?;
     for snapshot in &payload.notes {
         let NoteSnapshot {
             id,
@@ -455,6 +463,11 @@ pub(crate) async fn create_notes_event(
         }
     }
 
+    // Reattach what deleting the cards detached, when undoing a delete
+    for links in &payload.card_links {
+        restore_card_links(db, links).await?;
+    }
+
     if log {
         insert_events(
             db,
@@ -472,6 +485,43 @@ pub(crate) async fn create_notes_event(
         .await?;
     }
 
+    Ok(())
+}
+
+/// Gives a recreated card back its reviews, unless another card has them since, and its filtered
+/// tags, those that still exist.
+async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Error> {
+    execute_batched_query(
+        db,
+        &links.review_log_ids,
+        MAX_ROWS_IN_QUERY,
+        async |db, chunk| {
+            let query_str = format!(
+                "UPDATE review_log SET card_id = ? WHERE id IN ({}) AND card_id IS NULL",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query(&query_str).bind(links.card_id);
+            for id in chunk {
+                query = query.bind(id);
+            }
+            query
+                .execute(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+            Ok(())
+        },
+    )
+    .await?;
+    for tag_id in &links.filtered_tag_ids {
+        sqlx::query(
+            r"INSERT OR IGNORE INTO card_tag (card_id, tag_id) SELECT ?, id FROM tag WHERE id = ?",
+        )
+        .bind(links.card_id)
+        .bind(tag_id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    }
     Ok(())
 }
 

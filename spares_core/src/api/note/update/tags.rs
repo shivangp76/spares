@@ -15,6 +15,7 @@ use crate::api::tag::create_tag_row;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::helpers::remove_ancestor_tags;
 use crate::model::NoteId;
+use crate::model::Tag;
 use crate::model::TagId;
 use crate::schema::note::UpdateTags;
 
@@ -107,16 +108,24 @@ pub(super) async fn add_tags_to_note(
     Ok(new_tag_payloads)
 }
 
+/// The tags that updating a note's tags created or deleted, for its undo events
+#[derive(Default)]
+pub(super) struct TagChanges {
+    pub created: Vec<CreateTagPayload>,
+    /// [`auto_delete`](Tag::auto_delete) tags the note was the last to have
+    pub deleted: Vec<Tag>,
+}
+
 #[expect(clippy::too_many_lines)]
 pub(super) async fn update_tags(
     conn: &mut SqliteConnection,
     tags: &UpdateTags,
     note_id: NoteId,
     existing_filtered_tag_names: &[String],
-) -> Result<Vec<CreateTagPayload>, Error> {
+) -> Result<TagChanges, Error> {
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     if matches!(tags, UpdateTags::None) {
-        return Ok(new_tag_payloads);
+        return Ok(TagChanges::default());
     }
 
     let remove_all_tags = matches!(tags, UpdateTags::SetTags(_));
@@ -224,6 +233,9 @@ pub(super) async fn update_tags(
     }
     // Delete tags with no more notes. Only after adding, so a tag the note keeps (e.g. when its
     // tags are set to include it again) is not deleted and recreated under a new id.
-    delete_empty_tags_on(&mut *conn, &tags_to_check).await?;
-    Ok(new_tag_payloads)
+    let deleted = delete_empty_tags_on(&mut *conn, &tags_to_check).await?;
+    Ok(TagChanges {
+        created: new_tag_payloads,
+        deleted,
+    })
 }
