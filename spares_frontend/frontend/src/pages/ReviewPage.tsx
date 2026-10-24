@@ -42,6 +42,7 @@ import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
 import CodeText from '../components/CodeText';
 import { RedoIcon, UndoIcon } from '../components/Icons';
+import FindInQueue from '../components/QueuePositions';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
@@ -237,6 +238,8 @@ export default function ReviewPage() {
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
   const recentFilters = useRecentSearches<RecentFilter>('spares_review_recent_filters', sameFilter);
   const filterInputRef = useRef<HTMLInputElement>(null);
+  // Find in queue, for the filter typed. Open when its query is in the URL, e.g. from a bookmark.
+  const [showQueue, setShowQueue] = useState(() => searchParams.has('match'));
 
   // Side panels
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
@@ -460,7 +463,13 @@ export default function ReviewPage() {
     sessionKey.current = key;
     setSessionKeyShown(key);
     if (input) recentFilters.save({ mode, input });
-    setSearchParams(filterParams(mode, input), { replace: true });
+    setSearchParams(prev => {
+      const params = filterParams(mode, input);
+      // Find in queue's query stays for when the session ends
+      const match = prev.get('match');
+      if (match) params.set('match', match);
+      return params;
+    }, { replace: true });
     setActiveFilter(filter);
     setReviewedCount(0);
     setSessionRecallMs(0);
@@ -1128,6 +1137,9 @@ export default function ReviewPage() {
             <button onClick={() => startReview(filterMode, filterInput)} className="touch-target" style={{ ...primaryButton, padding: '8px 24px', fontSize: 14 }}>
               Start Review
             </button>
+            <button onClick={() => setShowQueue(v => !v)} aria-pressed={showQueue} className="touch-target" style={{ padding: '8px 16px', fontSize: 14 }} title="The queue of this filter, and where cards are in it">
+              Find in Queue
+            </button>
           </div>
           {filterMode === 'query' && queryError && error && (
             <pre style={{ color: 'var(--error)', marginTop: 0, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{error}</pre>
@@ -1143,6 +1155,20 @@ export default function ReviewPage() {
             <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.
             </p>
+          )}
+          {showQueue && <FindInQueue filterMode={filterMode} filterInput={filterInput} onOpenNote={openNote} onClose={() => setShowQueue(false)} />}
+          {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
+          {panelNote && (
+            <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
+              <Suspense fallback={<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}>
+                <NoteDetail
+                  key={panelNote.id}
+                  note={panelNote}
+                  onClose={() => setPanelNote(null)}
+                  onNoteUpdated={onNoteUpdated}
+                />
+              </Suspense>
+            </div>
           )}
           {history && (
             <div style={{ marginTop: 40 }}>

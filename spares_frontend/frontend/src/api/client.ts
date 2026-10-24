@@ -19,6 +19,8 @@ import type {
   NotesSelector,
   ParserResponse,
   QueryExample,
+  QueuePositionRequest,
+  QueuePositionResponse,
   Rating,
   RedoEventResponse,
   ReviewConfig,
@@ -226,13 +228,19 @@ async function clearOfflineCopies(): Promise<void> {
   await clearStatisticsEntries();
 }
 
-/** An error the server returned. `span` is where in a search query the problem is, if it is one. */
+/**
+ * An error the server returned. `span` is where in a search query the problem is, if it is one,
+ * and `queryField` the field of the request that query is in, for a request with several, like
+ * `match_query` of `getQueuePositions`.
+ */
 export class ApiError extends Error {
   span: [number, number] | null;
+  queryField: string | null;
 
-  constructor(message: string, span: [number, number] | null = null) {
+  constructor(message: string, span: [number, number] | null = null, queryField: string | null = null) {
     super(message);
     this.span = span;
+    this.queryField = queryField;
   }
 }
 
@@ -244,10 +252,12 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
   if (res.ok) return;
   let message = `${label} failed: ${res.status}`;
   let span: [number, number] | null = null;
+  let queryField: string | null = null;
   const text = await res.text().catch(() => '');
   try {
-    const body = JSON.parse(text) as { message?: unknown; span?: unknown };
+    const body = JSON.parse(text) as { message?: unknown; span?: unknown; query_field?: unknown };
     if (typeof body.message === 'string') message = body.message;
+    if (typeof body.query_field === 'string') queryField = body.query_field;
     if (Array.isArray(body.span) && body.span.length === 2 && body.span.every(n => typeof n === 'number')) {
       span = body.span as [number, number];
     }
@@ -255,7 +265,7 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
     // Not JSON, e.g. a request the server rejected before reaching a handler
     if (text) message = text;
   }
-  throw new ApiError(message, span);
+  throw new ApiError(message, span, queryField);
 }
 
 async function apiFetch<T>(label: string, path: string, init: RequestInit = {}): Promise<T> {
@@ -659,6 +669,11 @@ export async function getSchedulerRatings(name: string): Promise<Rating[]> {
 /** The cards a review would show next, to review offline. */
 export async function fetchReviewQueue(req: ReviewQueueRequest): Promise<ReviewQueueResponse> {
   return apiFetch('Review queue fetch', '/api/review/queue', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Where the cards matching a query are in a review's queue, and why the others are not in it. */
+export async function getQueuePositions(req: QueuePositionRequest): Promise<QueuePositionResponse> {
+  return apiFetch('Queue positions', '/api/review/queue/position', { method: 'POST', body: JSON.stringify(req) });
 }
 
 /** Submits actions performed offline. */

@@ -129,6 +129,63 @@ export interface ReviewQueueResponse {
   new_cards_left_today: number;
 }
 
+// Where the cards matching `match_query` are in the queue of the review with `filter`
+export interface QueuePositionRequest {
+  // `null` for the default review
+  filter: ReviewFilter | null;
+  // `null` lists the whole queue
+  match_query: string | null;
+  // The most cards to list in `positions` and `not_shown`, or `null` for all
+  limit: number | null;
+}
+
+export interface QueueCard {
+  card_id: number;
+  note_id: number;
+  card_order: number;
+  card_state: number;
+  due: string; // ISO 8601
+  // The start of the note's text, on one line, cut at 100 characters with `…`
+  note_preview: string;
+}
+
+export interface QueuePosition extends QueueCard {
+  // From 1, for the card review shows next
+  position: number;
+}
+
+export interface HeldBackCard extends QueueCard {
+  // The earliest review can show the card (ISO 8601)
+  shown_from: string;
+}
+
+// Externally-tagged serde enum
+export type NotShownReason =
+  | 'Suspended'
+  | 'Buried'
+  | 'NotDue'
+  | 'WaitingOnLinkedNote'
+  | { NewLimit: { preset: string | null } }
+  | { ReviewLimit: { preset: string | null } };
+
+export interface NotShownCard extends QueueCard {
+  reason: NotShownReason;
+}
+
+export interface QueuePositionResponse {
+  // How many cards the review would show now
+  total: number;
+  // How many of them match the query: `total` when there is none
+  matching: number;
+  positions: QueuePosition[];
+  // Learning cards held back by the learn ahead limit, soonest first
+  held_back: HeldBackCard[];
+  not_shown_total: number;
+  not_shown: NotShownCard[];
+  // Matching cards that are not in the review's filter at all
+  not_in_review: number;
+}
+
 // The study actions that can be performed offline
 export type OfflineStudyActionKind = { Rate: RatingSubmission } | { Bury: { card_id: number } };
 
