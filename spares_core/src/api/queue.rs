@@ -948,6 +948,9 @@ mod daily_limit_tests {
     /// estimate shrinks with them.
     #[sqlx::test]
     async fn counts_are_capped_by_the_limits(pool: SqlitePool) {
+        use indexmap::IndexMap;
+
+        use crate::api::preset::cards_with_preset;
         use crate::api::review::ReviewFilterQuery;
         use crate::api::review::get_cards_left_by_state_and_time_estimate;
 
@@ -964,7 +967,7 @@ mod daily_limit_tests {
         }
         let counts = async |caps: QueueCaps| {
             let filter = ReviewFilterQuery {
-                cards: "card".to_string(),
+                cards: cards_with_preset(&IndexMap::new()),
                 where_clause: "c.due <= ?".to_string(),
                 is_filtered_tag: false,
                 card_due_limit: now,
@@ -1340,6 +1343,7 @@ mod sibling_tests {
 #[cfg(test)]
 mod linked_note_tests {
     use chrono::Duration;
+    use indexmap::IndexMap;
     use sqlx::SqlitePool;
 
     use super::tests::LEARNING;
@@ -1349,6 +1353,7 @@ mod linked_note_tests {
     use super::tests::create_cards;
     use super::tests::set_card;
     use super::*;
+    use crate::api::preset::cards_with_preset;
     use crate::api::review::ReviewFilterQuery;
     use crate::api::review::get_cards_left_by_state_and_time_estimate;
     use crate::helpers::get_start_end_local_date;
@@ -1555,7 +1560,7 @@ mod linked_note_tests {
 
         let (_, card_due_limit) = get_start_end_local_date(&now);
         let filter = ReviewFilterQuery {
-            cards: "card".to_string(),
+            cards: cards_with_preset(&IndexMap::new()),
             where_clause: where_clause(&config, now, None),
             is_filtered_tag: false,
             card_due_limit,

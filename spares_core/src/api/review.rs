@@ -9,7 +9,6 @@ use chrono::Local;
 use chrono::NaiveDate;
 use chrono::Utc;
 use indoc::formatdoc;
-use indoc::indoc;
 use itertools::Itertools;
 use log::info;
 use log::warn;
@@ -39,6 +38,9 @@ use crate::api::preset::preset_index;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
+use crate::api::study_pace::MIN_CARD_REVIEWS;
+use crate::api::study_pace::StudyPaces;
+use crate::api::study_pace::capped_review_seconds;
 use crate::api::tag::create_tag;
 use crate::api::undo::insert_events;
 use crate::api::undo::join_event_group;
@@ -367,8 +369,6 @@ fn build_review_card_response(
         linked_notes,
     })
 }
-
-const DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS: f64 = 30.0;
 
 /// What is left of today's limits on `requested_date`'s local day. See
 /// [`SparesExternalConfig::new_cards_daily_limit`] and
@@ -806,7 +806,13 @@ pub(crate) async fn build_review_filter_query(
 }
 
 /// What is left of a review with `filter` today: how many cards in each state, and how long they
-/// should take, from each card's average review time (30 seconds for a card never reviewed).
+/// should take.
+///
+/// A card's time is the average of its own reviews in the state it is in now, once it has
+/// [`MIN_CARD_REVIEWS`], since a card's first sight as a new card can take minutes while its later
+/// reviews take seconds. Otherwise, it is the [`StudyPace`] of the latest reviews of its preset
+/// in its state, so a new card is estimated from how long new cards have taken lately rather
+/// than a fixed guess. Each review counts for at most [`MAX_REVIEW_SECONDS`].
 ///
 /// New and review cards are capped by `filter.caps`, what is left of today's limits, since the
 /// queue shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due
@@ -822,6 +828,9 @@ pub(crate) async fn build_review_filter_query(
 ///
 /// The time estimate of a capped state is scaled down to the cards counted, by that state's
 /// average time per card: 600 reviews taking 5 hours in all, capped to 150, take 1h15.
+///
+/// [`StudyPace`]: crate::api::study_pace::StudyPace
+/// [`MAX_REVIEW_SECONDS`]: crate::api::study_pace::MAX_REVIEW_SECONDS
 pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     filter: &ReviewFilterQuery,
@@ -832,51 +841,54 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
         is_filtered_tag,
         card_due_limit,
         caps,
-        preset_sql,
         ..
     } = filter;
-    // These are the remaining cards that are due on `requested_date` grouped by state, with the
-    // seconds they should take. Note that this is _not_ equivalent to the cards by state in
-    // `get_statistics()` because that does not filter by `requested_date`. The cast is necessary
-    // since the SUM function returns a different type depending on whether the arguments are all
-    // null or not.
-    let query_str = format!(
-        indoc! {
+    let paces = StudyPaces::load(db, cards).await?;
+    // These are the remaining cards that are due on `requested_date` grouped by state and preset,
+    // with how many have enough reviews of their own and the seconds those take. Note that this is
+    // _not_ equivalent to the cards by state in `get_statistics()` because that does not filter by
+    // `requested_date`.
+    let query_str = formatdoc! {
         "SELECT
             c.state,
-            {} AS preset,
-            COUNT(*) as count,
-            SUM(CAST(COALESCE(avg_duration, {}) as REAL)) as total_time
-        FROM {} c
+            c.preset,
+            COUNT(*) AS count,
+            COUNT(own.seconds) AS known,
+            CAST(COALESCE(SUM(own.seconds), 0) AS REAL) AS known_seconds
+        FROM {cards} c
         JOIN note n ON c.note_id = n.id
         JOIN parser p ON n.parser_id = p.id
         LEFT JOIN (
-            SELECT card_id, AVG(recall_duration + rate_duration) as avg_duration
-            FROM review_log
-            WHERE kind = {}
-            GROUP BY card_id
-        ) rl ON rl.card_id = c.id
-        WHERE {}
-        GROUP BY 1, 2"
-        },
-        if *is_filtered_tag { "NULL" } else { preset_sql },
-        DEFAULT_ESTIMATED_CARD_REVIEW_SECONDS,
-        cards,
-        ReviewLogKind::Review as u8,
-        where_clause
-    );
+            SELECT rl.card_id, rl.previous_state, AVG({seconds}) AS seconds
+            FROM review_log rl
+            WHERE rl.kind = {review}
+            GROUP BY rl.card_id, rl.previous_state
+            HAVING COUNT(*) >= {MIN_CARD_REVIEWS}
+        ) own ON own.card_id = c.id AND own.previous_state = c.state
+        WHERE {where_clause}
+        GROUP BY 1, 2",
+        seconds = capped_review_seconds("rl"),
+        review = ReviewLogKind::Review as u8,
+    };
     let mut query = sqlx::query_as(&query_str);
     if !is_filtered_tag {
         query = query.bind(card_due_limit.timestamp());
     }
-    let rows: Vec<(StateId, Option<i64>, u32, f64)> = query
+    let rows: Vec<(StateId, Option<i64>, u32, u32, f64)> = query
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
+    // The preset of each row is the card's own, which caps the counts only if it has limits of
+    // its own (otherwise `caps.presets` has nothing for it)
     let counted = cap_counts(
         rows.into_iter()
-            .map(|(state, preset, count, time)| (state, preset_index(preset), count, time)),
+            .map(|(state, preset, count, known, known_seconds)| {
+                let preset = preset_index(preset);
+                let pace = paces.of(preset, state);
+                let time = known_seconds + f64::from(count - known) * pace.seconds_per_review;
+                (state, preset, count, time)
+            }),
         caps,
     );
     let total_time_seconds: f64 = counted.values().map(|(_, time)| time).sum();

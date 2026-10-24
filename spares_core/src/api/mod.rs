@@ -14,6 +14,7 @@ pub mod scheduler;
 #[cfg(test)]
 mod scheduling_tests;
 pub mod statistics;
+pub(crate) mod study_pace;
 pub mod tag;
 #[cfg(test)]
 pub(crate) mod tests;
