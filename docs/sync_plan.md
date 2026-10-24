@@ -6,8 +6,8 @@ Open work on two-way sync and note ids. How sync works, and why, is documented o
 
 ## Known limitations
 
-- **The rsync of rendered cards can overwrite the server's.** `spares sync cloud` copies `cards/`
-  of parsers rendered on the server (not Typst) after the sync. A note edited on the phone between
+- **The rsync of rendered cards can overwrite the server's.** `spares sync cloud` copies the rendered
+  files of parsers rendered on the server (not Typst) after the sync. A note edited on the phone between
   the sync and the copy has its newly rendered cards replaced by the laptop's older ones.
 - **Without the notes repository, a note file edited during a sync can be overwritten** when the
   sync changes that note. `spares sync cloud` warns about edits not imported yet.

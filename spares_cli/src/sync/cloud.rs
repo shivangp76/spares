@@ -48,14 +48,16 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
     let note_ids = server_rendered_note_ids(&data_dir.join(DATABASE_FILENAME)).await?;
     let local = data_dir.to_str().unwrap();
 
-    // Pass 2: Everything else (cards, image occlusions, render assets). The server reads notes from
-    // the database, so raw note files are not needed. Neither are the raw cards of parsers that
-    // render in the browser, since they are generated from the database on demand.
+    // Pass 2: Everything else (image occlusions, render assets). The server reads notes from the
+    // database, so raw note and card files are not needed: it writes them when it renders. Without
+    // them, the server's render cache misses, so a note edited there has all its cards rendered
+    // again rather than only the changed ones, which is cheaper than pushing a file per card.
     println!("Syncing files → {}", remote_host);
-    let mut excludes = vec![
+    let excludes = [
         // The database, its WAL/SHM/journal files and local backups. The database is synced above.
         "--exclude=*.sqlite*".to_string(),
         "--exclude=/notes/".to_string(),
+        "--exclude=/cards/".to_string(),
         // The notes repository (see `spares note init-vcs`), what setting it up leaves behind, and
         // its interrupted setup
         format!(
@@ -66,13 +68,6 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
         "--exclude=/.notes-spares-init/".to_string(),
         "--exclude=/.notes-clone-tmp/".to_string(),
     ];
-    excludes.extend(
-        get_all_parsers()
-            .into_iter()
-            .map(|parser| parser())
-            .filter(|parser| parser.renders_in_browser())
-            .map(|parser| format!("--exclude=/cards/{}/", parser.get_parser_name())),
-    );
     let source = format!("{}/", local);
     let destination = format!("{}:{}/", remote_host, local);
     let mut args = vec!["-avz"];
