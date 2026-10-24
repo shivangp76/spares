@@ -24,11 +24,10 @@ use crate::api::review::unbury_cards_and_update_config;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::CardId;
-use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
 use crate::model::SpecialState;
 use crate::model::StateId;
-use crate::schedulers::review_state;
+use crate::schedulers::state_role;
 use crate::schema::review::GetReviewCardFilterRequest;
 use crate::schema::review::HeldBackCard;
 use crate::schema::review::NotShownCard;
@@ -37,6 +36,7 @@ use crate::schema::review::QueueCard;
 use crate::schema::review::QueuePosition;
 use crate::schema::review::QueuePositionRequest;
 use crate::schema::review::QueuePositionResponse;
+use crate::schema::review::StateRole;
 use crate::search::evaluator::Evaluator;
 use crate::search::query_has_limit;
 
@@ -388,7 +388,7 @@ fn not_shown_reason(
             .map(|(name, _)| name.clone())
     };
     let limit_reason = |preset: Option<String>| {
-        if row.card_state == NEW_CARD_STATE {
+        if state_role(row.card_state) == Some(StateRole::New) {
             NotShownReason::NewLimit { preset }
         } else {
             NotShownReason::ReviewLimit { preset }
@@ -426,9 +426,8 @@ fn not_shown_reason(
     }) {
         return limit_reason(preset_name(index));
     }
-    if review_filter.caps.of_state(row.card_state) == Some(0)
-        && [NEW_CARD_STATE, review_state()].contains(&row.card_state)
-    {
+    // Only new and review cards have a cap
+    if review_filter.caps.of_state(row.card_state) == Some(0) {
         return limit_reason(None);
     }
     warn!(
@@ -457,6 +456,7 @@ mod tests {
     use crate::api::review::get_review_card;
     use crate::config::QueueConfig;
     use crate::helpers::get_start_end_local_date;
+    use crate::model::NEW_CARD_STATE;
     use crate::parsers::get_all_parsers;
     use crate::schema::review::GetReviewCardRequest;
     use crate::schema::review::ReviewQueueRequest;

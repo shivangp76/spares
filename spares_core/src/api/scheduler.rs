@@ -7,6 +7,7 @@ use crate::api::review::reschedule_all_cards;
 use crate::config::read_external_config;
 use crate::config::write_fsrs_parameters;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schema::review::CardState;
 use crate::schema::review::OptimizeRequest;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
@@ -14,6 +15,13 @@ use crate::schema::review::Rating;
 pub fn get_scheduler_ratings(scheduler_name: &str) -> Result<Vec<Rating>, Error> {
     let scheduler = get_scheduler_from_string(scheduler_name)?;
     Ok(scheduler.get_ratings())
+}
+
+/// The states the scheduler puts cards in. See
+/// [`SrsScheduler::get_states`](crate::schedulers::SrsScheduler::get_states).
+pub fn get_scheduler_states(scheduler_name: &str) -> Result<Vec<CardState>, Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    Ok(scheduler.get_states())
 }
 
 pub fn resolve_rating_from_score(scheduler_name: &str, score: f64) -> Result<Rating, Error> {

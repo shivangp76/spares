@@ -67,13 +67,10 @@ use crate::model::CardId;
 use crate::model::NoteId;
 use crate::model::ReviewLog;
 use crate::model::SpecialState;
-use crate::model::StateId;
 use crate::schedulers::SrsScheduler;
-
-/// The state of a card that is in review.
-///
-/// Only cards in review compete for days: new and learning cards have no review-sized due date.
-const REVIEW_STATE: StateId = 2;
+use crate::schedulers::state_ids_sql;
+use crate::schedulers::state_role;
+use crate::schema::review::StateRole;
 
 /// Converts an instant to the calendar day it falls on for the user.
 pub type LocalDate = fn(DateTime<Utc>) -> NaiveDate;
@@ -137,14 +134,16 @@ impl PlacementContext {
     ) -> Result<Self, Error> {
         let (from, to) =
             due_between.unwrap_or((DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC));
-        // Buried cards still compete: they come back. Suspended cards are not studied at all.
-        let rows: Vec<(CardId, NoteId, i64)> = sqlx::query_as(
+        // Only cards in review compete for days: new and learning cards have no review-sized due
+        // date. Buried cards still compete: they come back. Suspended cards are not studied at
+        // all.
+        let rows: Vec<(CardId, NoteId, i64)> = sqlx::query_as(&format!(
             r"SELECT id, note_id, due FROM card
-              WHERE state = ?
+              WHERE state IN ({})
                 AND (special_state IS NULL OR special_state != ?)
                 AND ((due BETWEEN ? AND ?) OR note_id = ?)",
-        )
-        .bind(REVIEW_STATE)
+            state_ids_sql(&[StateRole::Review])
+        ))
         .bind(SpecialState::Suspended)
         .bind(from.timestamp())
         .bind(to.timestamp())
@@ -181,7 +180,9 @@ impl PlacementContext {
 
     /// Records `card`'s current due date, or drops it if it no longer competes for days.
     pub fn update(&mut self, card: &Card) {
-        if card.state == REVIEW_STATE && card.special_state != Some(SpecialState::Suspended) {
+        if state_role(card.state) == Some(StateRole::Review)
+            && card.special_state != Some(SpecialState::Suspended)
+        {
             self.insert(card.id, card.note_id, card.due);
         } else {
             self.remove(card.id);
@@ -358,7 +359,7 @@ mod tests {
         Card {
             id,
             note_id: note(note_id),
-            state: REVIEW_STATE,
+            state: crate::schedulers::review_state(),
             ..Card::new(day(0))
         }
     }

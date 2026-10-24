@@ -54,31 +54,28 @@ use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
+#[cfg(test)]
 use crate::model::StateId;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::RetrievabilityKey;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
+use crate::schema::review::CardState;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
+use crate::schema::review::StateRole;
 use crate::search::evaluator::Evaluator;
 
-/// The states of cards in their learning or relearning steps, which come back the same day.
-pub(crate) fn learning_states() -> [StateId; 2] {
-    [
-        state_to_number(State::Learning),
-        state_to_number(State::Relearning),
-    ]
-}
-
-/// The state of cards that graduated from their learning steps.
+/// FSRS's state of cards that graduated from their learning steps, for tests that set up cards.
+#[cfg(test)]
 pub(crate) fn review_state() -> StateId {
     state_to_number(State::Review)
 }
 
-/// The state of cards that lapsed and are back in their relearning steps.
+/// FSRS's state of cards that lapsed and are back in their relearning steps.
+#[cfg(test)]
 pub(crate) fn relearning_state() -> StateId {
     state_to_number(State::Relearning)
 }
@@ -123,6 +120,22 @@ impl SrsScheduler for Fsrs {
                     .collect::<Vec<_>>()
             })
             .clone()
+    }
+
+    fn get_states(&self) -> Vec<CardState> {
+        State::ALL
+            .into_iter()
+            .map(|state| CardState {
+                id: state_to_number(state),
+                name: format!("{state:?}"),
+                role: match state {
+                    State::New => StateRole::New,
+                    State::Learning => StateRole::Learning,
+                    State::Review => StateRole::Review,
+                    State::Relearning => StateRole::Relearning,
+                },
+            })
+            .collect()
     }
 
     fn retrievability(&self, config: &SparesExternalConfig) -> Option<RetrievabilityFn> {
@@ -570,6 +583,25 @@ impl SrsScheduler for Fsrs {
 mod tests {
     use super::*;
     use crate::api::tests::generate_review_logs;
+
+    #[test]
+    fn states_have_their_own_roles() {
+        let states = Fsrs
+            .get_states()
+            .into_iter()
+            .map(|state| (state.id, state.name, state.role))
+            .collect::<Vec<_>>();
+        let state = |id, name: &str, role| (id, name.to_string(), role);
+        assert_eq!(
+            states,
+            [
+                state(0, "New", StateRole::New),
+                state(1, "Learning", StateRole::Learning),
+                state(2, "Review", StateRole::Review),
+                state(3, "Relearning", StateRole::Relearning),
+            ]
+        );
+    }
 
     #[test]
     fn retrievability_key_inverts_the_forgetting_curve() {

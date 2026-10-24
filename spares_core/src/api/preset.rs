@@ -30,9 +30,9 @@ use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::SparesExternalConfig;
 use crate::model::CardId;
-use crate::model::NEW_CARD_STATE;
 use crate::model::StateId;
-use crate::schedulers::review_state;
+use crate::schedulers::state_role;
+use crate::schema::review::StateRole;
 
 /// `text` as a SQL string literal.
 fn sql_string(text: &str) -> String {
@@ -151,12 +151,15 @@ pub(crate) struct PresetLimitsLeft {
 impl PresetLimitsLeft {
     /// What is left for cards in `state`. Learning and relearning cards are never limited.
     pub(crate) fn of_state(self, state: StateId) -> Option<u32> {
-        if state == NEW_CARD_STATE {
-            self.new
-        } else if state == review_state() {
-            self.reviews
-        } else {
-            None
+        self.of_role(state_role(state)?)
+    }
+
+    /// What is left for cards whose state has `role`.
+    pub(crate) fn of_role(self, role: StateRole) -> Option<u32> {
+        match role {
+            StateRole::New => self.new,
+            StateRole::Review => self.reviews,
+            StateRole::Learning | StateRole::Relearning => None,
         }
     }
 }
@@ -171,38 +174,93 @@ pub(crate) fn preset_index(preset: Option<i64>) -> Option<usize> {
 /// (with a weight, such as the time they take), by state: the count, and the weight of the cards
 /// counted.
 ///
-/// Each preset's cards are capped by what is left of its own limit, then each state's total by
+/// Each preset's cards are capped by what is left of its own limit, then each role's total by
 /// what is left of the top-level one. For example, with 30 new `languages` cards and 30 others,
 /// 10 left of the `languages` limit and 25 of the top-level one, 25 are let through: 10 of
 /// `languages` and 30 others would make 40. Weights are scaled down with the counts, in
 /// proportion. States left with nothing are left out.
+///
+/// A limit applies to all the states of its [`StateRole`] together, which [`cap_role`] shares
+/// out among them.
 pub(crate) fn cap_counts(
     rows: impl IntoIterator<Item = (StateId, Option<usize>, u32, f64)>,
     caps: &QueueCaps,
 ) -> HashMap<StateId, (u32, f64)> {
-    let mut by_state: HashMap<StateId, (u32, f64)> = HashMap::new();
+    let mut by_preset: HashMap<Option<usize>, HashMap<StateId, (u32, f64)>> = HashMap::new();
     for (state, preset, count, weight) in rows {
         if count == 0 {
             continue;
         }
-        let cap = preset
-            .and_then(|index| caps.presets.get(index))
-            .and_then(|left| left.of_state(state));
-        let capped = cap.map_or(count, |cap| count.min(cap));
-        let entry = by_state.entry(state).or_default();
-        entry.0 += capped;
-        entry.1 += weight * f64::from(capped) / f64::from(count);
+        let entry = by_preset
+            .entry(preset)
+            .or_default()
+            .entry(state)
+            .or_default();
+        entry.0 += count;
+        entry.1 += weight;
     }
-    for (state, (count, weight)) in &mut by_state {
-        if let Some(cap) = caps.of_state(*state)
-            && *count > cap
-        {
-            *weight *= f64::from(cap) / f64::from(*count);
-            *count = cap;
+    let mut by_state: HashMap<StateId, (u32, f64)> = HashMap::new();
+    for (preset, mut counts) in by_preset {
+        if let Some(left) = preset.and_then(|index| caps.presets.get(index)) {
+            cap_role(&mut counts, state_role, |state| left.of_state(state));
+        }
+        for (state, (count, weight)) in counts {
+            let entry = by_state.entry(state).or_default();
+            entry.0 += count;
+            entry.1 += weight;
         }
     }
+    cap_role(&mut by_state, state_role, |state| caps.of_state(state));
     by_state.retain(|_, (count, _)| *count > 0);
     by_state
+}
+
+/// Shrinks the `counts` of the states of each [`StateRole`] (as `role_of` gives it) that `cap_of`
+/// caps, so they add up to at most the cap, each keeping its share of it and scaling its weight
+/// with it. With a review limit of 10 and 15 cards in the review state and 5 in another of the
+/// role, 8 and 2 are kept.
+fn cap_role(
+    counts: &mut HashMap<StateId, (u32, f64)>,
+    role_of: impl Fn(StateId) -> Option<StateRole>,
+    cap_of: impl Fn(StateId) -> Option<u32>,
+) {
+    let by_role = counts
+        .keys()
+        .filter_map(|state| Some((role_of(*state)?, *state)))
+        .into_group_map();
+    for mut states in by_role.into_values() {
+        states.sort_unstable();
+        // Every state of a role has the same cap
+        let Some(cap) = cap_of(states[0]) else {
+            continue;
+        };
+        let total: u32 = states.iter().map(|state| counts[state].0).sum();
+        if total <= cap {
+            continue;
+        }
+        // Largest remainder: each state gets the whole part of its share, and the cards left
+        // over go to the largest fractions, the lowest state first on a tie.
+        let share = |state: &StateId| u64::from(counts[state].0) * u64::from(cap);
+        let mut kept: HashMap<StateId, u32> = states
+            .iter()
+            .map(|state| {
+                let whole = share(state) / u64::from(total);
+                (*state, u32::try_from(whole).expect("at most the cap"))
+            })
+            .collect();
+        let left_over = cap - kept.values().sum::<u32>();
+        let by_fraction = states
+            .iter()
+            .sorted_by_key(|state| std::cmp::Reverse(share(state) % u64::from(total)));
+        for state in by_fraction.take(left_over as usize) {
+            *kept.get_mut(state).expect("every state is kept") += 1;
+        }
+        for (state, kept) in kept {
+            let (count, weight) = counts.get_mut(&state).expect("counted");
+            *weight *= f64::from(kept) / f64::from(*count);
+            *count = kept;
+        }
+    }
 }
 
 /// The settings each card is rated or replayed with: the top-level ones, with the steps and
@@ -272,6 +330,8 @@ impl<'a> CardConfigs<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::NEW_CARD_STATE;
+    use crate::schedulers::review_state;
 
     fn presets(toml: &str) -> IndexMap<String, QueuePreset> {
         let config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
@@ -329,5 +389,30 @@ mod tests {
             ..QueueCaps::default()
         };
         assert!(cap_counts([(NEW_CARD_STATE, Some(0), 3, 1.0)], &caps).is_empty());
+    }
+
+    #[test]
+    fn a_cap_is_shared_among_the_states_of_its_role() {
+        // 2 is a review state, and so is a `mastered` 4 of some other scheduler
+        let role_of = |state| match state {
+            2 | 4 => Some(StateRole::Review),
+            _ => state_role(state),
+        };
+        let cap_of = |state| (role_of(state) == Some(StateRole::Review)).then_some(10);
+        let mut counts =
+            HashMap::from([(2, (15, 30.0)), (4, (5, 5.0)), (NEW_CARD_STATE, (7, 7.0))]);
+        cap_role(&mut counts, role_of, cap_of);
+        assert_eq!(
+            counts[&2],
+            (8, 16.0),
+            "7.5 and 2.5: the lower state gets the card left over"
+        );
+        assert_eq!(counts[&4], (2, 2.0));
+        assert_eq!(counts[&NEW_CARD_STATE], (7, 7.0), "uncapped");
+
+        // Under the cap, nothing changes
+        let mut counts = HashMap::from([(2, (6, 6.0)), (4, (4, 4.0))]);
+        cap_role(&mut counts, role_of, cap_of);
+        assert_eq!(counts, HashMap::from([(2, (6, 6.0)), (4, (4, 4.0))]));
     }
 }

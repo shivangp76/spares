@@ -84,7 +84,7 @@ use crate::parsers::Parseable;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
-use crate::schedulers::learning_states;
+use crate::schedulers::step_states;
 use crate::schema::review::OfflineActionOutcome;
 use crate::schema::review::OfflineActionResult;
 use crate::schema::review::OfflineStudyAction;
@@ -149,7 +149,7 @@ pub async fn get_review_queue(
         // Held back like `build_review_filter_query` does with `learn_ahead`, except that the
         // client compares it to its own clock
         let shown_from = (!review_filter.is_filtered_tag
-            && learning_states().contains(&card.card_state))
+            && step_states().contains(&card.card_state))
         .then(|| due - config.queue.learn_ahead_limit);
         let card = review_card_response(
             db,

@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
@@ -23,17 +25,21 @@ use crate::model::RatingId;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
+use crate::model::StateId;
+use crate::schema::review::CardState;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::RatingSubmission;
+use crate::schema::review::StateRole;
 
 pub(crate) mod fsrs;
 pub mod placement;
 
-pub(crate) use fsrs::learning_states;
 #[cfg(test)]
 pub(crate) use fsrs::optimal_interval_days;
+#[cfg(test)]
 pub(crate) use fsrs::relearning_state;
+#[cfg(test)]
 pub(crate) use fsrs::review_state;
 
 #[derive(Debug)]
@@ -81,10 +87,12 @@ fn lapse_sql_for(alias: &str, schedulers: &[Box<dyn SrsScheduler>]) -> String {
         return "0".to_string();
     }
     format!(
-        "({alias}.kind = {} AND {alias}.previous_state = {} \
+        "({alias}.kind = {} AND {alias}.previous_state IN ({}) \
          AND ({alias}.scheduler_name, {alias}.rating) IN (VALUES {failing}))",
         ReviewLogKind::Review as u8,
-        review_state(),
+        states_in(schedulers, &[StateRole::Review])
+            .iter()
+            .join(", "),
     )
 }
 
@@ -128,6 +136,17 @@ pub trait SrsScheduler: Send + Sync {
     fn get_scheduler_name(&self) -> &'static str;
 
     fn get_ratings(&self) -> Vec<Rating>;
+
+    /// The states this scheduler puts cards in, each with the [`StateRole`] spares treats it as:
+    /// the queue, daily limits, sibling burying, placement, lapses and statistics act on roles,
+    /// and search (`c.state=<name>`, ignoring case), statistics and card info use the names, so
+    /// a name is one word.
+    ///
+    /// Must include [`crate::model::NEW_CARD_STATE`] with the role [`StateRole::New`], since every
+    /// card starts there whatever will schedule it. Two schedulers may give the same id only to
+    /// states with the same role, which `test_schedulers_validation` checks: the queue then knows
+    /// a card's role from its state alone, without looking up which scheduler last reviewed it.
+    fn get_states(&self) -> Vec<CardState>;
 
     /// Map a `[0, 1]` score to a [`Rating`] using continuous linear
     /// interpolation across the ratings sorted by id (lowest id = worst,
@@ -559,6 +578,62 @@ pub(crate) fn retrievability_key_sql(
     )
 }
 
+/// The ids of every scheduler's states with one of `roles`, sorted. See
+/// [`SrsScheduler::get_states`].
+pub(crate) fn states_with_role(roles: &[StateRole]) -> Vec<StateId> {
+    all_states()
+        .iter()
+        .filter(|state| roles.contains(&state.role))
+        .map(|state| state.id)
+        .sorted()
+        .dedup()
+        .collect()
+}
+
+/// [`states_with_role`] among `schedulers` only.
+fn states_in(schedulers: &[Box<dyn SrsScheduler>], roles: &[StateRole]) -> Vec<StateId> {
+    schedulers
+        .iter()
+        .flat_map(|scheduler| scheduler.get_states())
+        .filter(|state| roles.contains(&state.role))
+        .map(|state| state.id)
+        .sorted()
+        .dedup()
+        .collect()
+}
+
+/// [`states_with_role`] as a comma separated list, for SQL's `c.state IN (...)`. Empty if no
+/// state has the roles, which SQLite accepts and matches nothing.
+pub(crate) fn state_ids_sql(roles: &[StateRole]) -> String {
+    states_with_role(roles).iter().join(", ")
+}
+
+/// The states of cards in their learning or relearning steps, which come back the same day.
+pub(crate) fn step_states() -> Vec<StateId> {
+    states_with_role(&[StateRole::Learning, StateRole::Relearning])
+}
+
+/// The role of the state `id` in whichever scheduler has it, or `None` if none does. Every
+/// scheduler with the state gives it the same role. See [`SrsScheduler::get_states`].
+pub(crate) fn state_role(id: StateId) -> Option<StateRole> {
+    all_states()
+        .iter()
+        .find(|state| state.id == id)
+        .map(|state| state.role)
+}
+
+/// Every scheduler's [`SrsScheduler::get_states`], the default scheduler's first, so an id or name
+/// two schedulers share is found as the default's. Read once, since the schedulers are fixed.
+pub(crate) fn all_states() -> &'static [CardState] {
+    static STATES: OnceLock<Vec<CardState>> = OnceLock::new();
+    STATES.get_or_init(|| {
+        all_schedulers()
+            .iter()
+            .flat_map(|scheduler| scheduler.get_states())
+            .collect()
+    })
+}
+
 /// Every scheduler, the default first.
 pub(crate) fn all_schedulers() -> Vec<Box<dyn SrsScheduler>> {
     get_all_schedulers()
@@ -600,6 +675,8 @@ pub fn get_scheduler_from_string(scheduler_str: &str) -> Result<Box<dyn SrsSched
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use itertools::Itertools;
     use serde_json::Map;
 
@@ -621,6 +698,60 @@ mod tests {
         assert_eq!(
             all_scheduler_names.len(),
             all_scheduler_names.iter().unique().count()
+        );
+        check_states(&super::all_schedulers()).unwrap();
+    }
+
+    /// Whether every scheduler starts cards in [`NEW_CARD_STATE`] as [`StateRole::New`], lists
+    /// each id once, and gives an id the same role as every other scheduler that has it.
+    fn check_states(schedulers: &[Box<dyn SrsScheduler>]) -> Result<(), String> {
+        let mut roles: HashMap<StateId, (&str, StateRole)> = HashMap::new();
+        for scheduler in schedulers {
+            let name = scheduler.get_scheduler_name();
+            let states = scheduler.get_states();
+            if !states
+                .iter()
+                .any(|state| state.id == NEW_CARD_STATE && state.role == StateRole::New)
+            {
+                return Err(format!("`{name}` has no new state {NEW_CARD_STATE}"));
+            }
+            if states.iter().map(|state| state.id).unique().count() != states.len() {
+                return Err(format!("`{name}` lists a state id twice"));
+            }
+            for state in states {
+                let (other, role) = *roles.entry(state.id).or_insert((name, state.role));
+                if role != state.role {
+                    return Err(format!(
+                        "state {} is {role:?} in `{other}` but {:?} in `{name}`",
+                        state.id, state.role
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn schedulers_may_not_give_a_state_id_different_roles() {
+        let mastered = || CardState {
+            id: 4,
+            name: "Mastered".to_string(),
+            role: StateRole::Review,
+        };
+        let with_mastered: Box<dyn SrsScheduler> = Box::new(PassFail {
+            extra_state: Some(mastered()),
+        });
+        check_states(&[scheduler(), with_mastered]).unwrap();
+
+        let clashing: Box<dyn SrsScheduler> = Box::new(PassFail {
+            extra_state: Some(CardState {
+                id: 1,
+                ..mastered()
+            }),
+        });
+        assert_eq!(
+            check_states(&[scheduler(), clashing]),
+            Err("state 1 is Learning in `fsrs` but Review in `pass_fail`".to_string())
         );
     }
 
@@ -666,8 +797,13 @@ mod tests {
         }
     }
 
-    /// A scheduler whose only ratings are Fail (id 0) and Pass (id 1). Only its ratings are used.
-    struct PassFail;
+    /// A scheduler whose only ratings are Fail (id 0) and Pass (id 1). Only its ratings and
+    /// states are used. Its states are FSRS's, and `extra_state` if any, in place of FSRS's with
+    /// its id.
+    #[derive(Default)]
+    struct PassFail {
+        extra_state: Option<CardState>,
+    }
 
     #[async_trait]
     impl SrsScheduler for PassFail {
@@ -684,6 +820,15 @@ mod tests {
                     description: description.to_string(),
                 })
                 .collect()
+        }
+
+        fn get_states(&self) -> Vec<CardState> {
+            let mut states = fsrs::Fsrs.get_states();
+            if let Some(extra) = &self.extra_state {
+                states.retain(|state| state.id != extra.id);
+                states.push(extra.clone());
+            }
+            states
         }
 
         fn generate_review_history(
@@ -772,7 +917,7 @@ mod tests {
     #[test]
     fn failing_ratings_are_the_ones_is_pass_rejects() {
         assert_eq!(scheduler().failing_ratings(), vec![1], "FSRS's Again");
-        assert_eq!(PassFail.failing_ratings(), vec![0]);
+        assert_eq!(PassFail::default().failing_ratings(), vec![0]);
     }
 
     #[sqlx::test]
@@ -816,7 +961,7 @@ mod tests {
             .unwrap();
         }
 
-        let lapse = lapse_sql_for("rl", &[Box::new(PassFail), scheduler()]);
+        let lapse = lapse_sql_for("rl", &[Box::new(PassFail::default()), scheduler()]);
         assert_eq!(count_lapses(&pool, 1, &lapse).await.unwrap(), threshold);
         let leeches = cards_with_lapses(&pool, &lapse, threshold).await.unwrap();
         assert_eq!(

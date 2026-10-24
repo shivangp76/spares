@@ -8,6 +8,7 @@ use axum::response::IntoResponse;
 use chrono::Utc;
 use serde::Deserialize;
 use spares_core::api::scheduler::get_scheduler_ratings;
+use spares_core::api::scheduler::get_scheduler_states;
 use spares_core::api::scheduler::optimize_scheduler;
 use spares_core::api::scheduler::reschedule_scheduler;
 use spares_core::api::scheduler::resolve_rating_from_score;
@@ -31,6 +32,14 @@ pub(crate) async fn get_scheduler_ratings_handler(
     axum::extract::State(_data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let res = get_scheduler_ratings(name.as_str()).map_err(error_to_response)?;
+    Ok(Json(res))
+}
+
+pub(crate) async fn get_scheduler_states_handler(
+    Path(name): Path<String>,
+    axum::extract::State(_data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let res = get_scheduler_states(name.as_str()).map_err(error_to_response)?;
     Ok(Json(res))
 }
 

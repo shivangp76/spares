@@ -66,7 +66,6 @@ use crate::ids::next_id_in;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
-use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
@@ -92,9 +91,10 @@ use crate::parsers::web_render_filepath;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
-use crate::schedulers::learning_states;
 use crate::schedulers::placement::place_due;
-use crate::schedulers::review_state;
+use crate::schedulers::state_ids_sql;
+use crate::schedulers::state_role;
+use crate::schedulers::step_states;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateTags;
@@ -107,6 +107,7 @@ use crate::schema::review::RatingSubmission;
 use crate::schema::review::ReviewLinkedNote;
 use crate::schema::review::ReviewSnapshotRequest;
 use crate::schema::review::ReviewSnapshotResponse;
+use crate::schema::review::StateRole;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
@@ -412,30 +413,29 @@ pub(crate) async fn daily_limits_left_with(
         r"SELECT {preset} AS preset, rl.previous_state, COUNT(DISTINCT rl.card_id)
         FROM review_log rl LEFT JOIN card c ON c.id = rl.card_id
         WHERE rl.reviewed_at >= ? AND rl.reviewed_at <= ? AND rl.kind = ?
-        AND rl.previous_state IN (?, ?)
-        GROUP BY 1, 2"
+        AND rl.previous_state IN ({})
+        GROUP BY 1, 2",
+        state_ids_sql(&[StateRole::New, StateRole::Review]),
     ))
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
     // Forgetting a card must not use up one of today's cards.
     .bind(ReviewLogKind::Review)
-    .bind(NEW_CARD_STATE)
-    .bind(review_state())
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let studied_from = |state: StateId, of_preset: Option<Option<usize>>| -> u32 {
+    let studied_from = |role: StateRole, of_preset: Option<Option<usize>>| -> u32 {
         studied
             .iter()
             .filter(|(preset, studied_state, _)| {
-                *studied_state == state
+                state_role(*studied_state) == Some(role)
                     && of_preset.is_none_or(|of_preset| preset_index(*preset) == of_preset)
             })
             .map(|(_, _, count)| count)
             .sum()
     };
-    let new_studied = studied_from(NEW_CARD_STATE, None);
-    let reviews_studied = studied_from(review_state(), None);
+    let new_studied = studied_from(StateRole::New, None);
+    let reviews_studied = studied_from(StateRole::Review, None);
     let ignore_review_limit = config.new_cards_ignore_review_limit;
 
     let reviews_due: Vec<(Option<i64>, u32)> = if ignore_review_limit {
@@ -443,10 +443,10 @@ pub(crate) async fn daily_limits_left_with(
     } else {
         sqlx::query_as(&format!(
             r"SELECT {preset} AS preset, COUNT(*) FROM card c
-            WHERE c.state = ? AND c.special_state IS NULL AND c.due <= ?
-            GROUP BY 1"
+            WHERE c.state IN ({}) AND c.special_state IS NULL AND c.due <= ?
+            GROUP BY 1",
+            state_ids_sql(&[StateRole::Review]),
         ))
-        .bind(review_state())
         .bind(upper_limit.timestamp())
         .fetch_all(db)
         .await
@@ -468,8 +468,8 @@ pub(crate) async fn daily_limits_left_with(
             .values()
             .enumerate()
             .map(|(index, preset)| {
-                let new_studied = studied_from(NEW_CARD_STATE, Some(Some(index)));
-                let reviews_studied = studied_from(review_state(), Some(Some(index)));
+                let new_studied = studied_from(StateRole::New, Some(Some(index)));
+                let reviews_studied = studied_from(StateRole::Review, Some(Some(index)));
                 let counted = if ignore_review_limit {
                     reviews_studied
                 } else {
@@ -531,22 +531,26 @@ pub(crate) async fn daily_limits_left_with(
 /// are left out, while other new cards are still shown.
 pub(crate) fn daily_limits_clause(left: &DailyLimitsLeft, preset: &str) -> String {
     let mut clause = String::new();
-    for (left, state) in [(left.new, NEW_CARD_STATE), (left.reviews, review_state())] {
+    for (left, role) in [
+        (left.new, StateRole::New),
+        (left.reviews, StateRole::Review),
+    ] {
         if left == 0 {
-            let _ = write!(clause, "\nAND c.state != {state}");
+            let _ = write!(clause, "\nAND c.state NOT IN ({})", state_ids_sql(&[role]));
         }
     }
-    for state in [NEW_CARD_STATE, review_state()] {
+    for role in [StateRole::New, StateRole::Review] {
         let used_up = left
             .presets
             .iter()
-            .positions(|left| left.of_state(state) == Some(0))
+            .positions(|left| left.of_role(role) == Some(0))
             .join(", ");
         if !used_up.is_empty() {
             // A card of no preset is `NULL`, which `IN` would make the whole condition
             let _ = write!(
                 clause,
-                "\nAND NOT (c.state = {state} AND COALESCE({preset}, -1) IN ({used_up}))"
+                "\nAND NOT (c.state IN ({}) AND COALESCE({preset}, -1) IN ({used_up}))",
+                state_ids_sql(&[role])
             );
         }
     }
@@ -785,7 +789,7 @@ pub(crate) async fn build_review_filter_query(
         .then(|| waiting_on_links(&config.queue, card_due_limit, query_card_ids.as_deref()))
         .flatten();
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
-    let learning_states = learning_states().iter().join(", ");
+    let learning_states = step_states().iter().join(", ");
     let learn_ahead_until = (requested_date + config.queue.learn_ahead_limit).timestamp();
     let where_clause = if let Some(GetReviewCardFilterRequest::FilteredTag { tag_id }) = filter {
         let tag_query_opt: Option<(Option<String>,)> =
@@ -1700,13 +1704,14 @@ async fn bury_siblings(
     card: &Card,
     reviewed_at: DateTime<Utc>,
 ) -> Result<Vec<UpdateCardPayload>, Error> {
-    let states = [
-        (queue.bury_new_siblings, NEW_CARD_STATE),
-        (queue.bury_review_siblings, review_state()),
+    let roles = [
+        (queue.bury_new_siblings, StateRole::New),
+        (queue.bury_review_siblings, StateRole::Review),
     ]
     .into_iter()
-    .filter_map(|(bury, state)| bury.then_some(state))
-    .join(", ");
+    .filter_map(|(bury, role)| bury.then_some(role))
+    .collect::<Vec<_>>();
+    let states = state_ids_sql(&roles);
     if states.is_empty() {
         return Ok(Vec::new());
     }
@@ -2021,6 +2026,7 @@ mod tests {
     use crate::api::statistics::get_statistics;
     use crate::api::tag::create_tag;
     use crate::model::Card;
+    use crate::model::NEW_CARD_STATE;
     use crate::model::TagId;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::NoteResponse;

@@ -21,13 +21,14 @@ use crate::api::preset::limited_preset_sql;
 use crate::api::queue::QueueCaps;
 use crate::api::review::daily_limits_left_with;
 use crate::config::read_external_config;
-use crate::model::NEW_CARD_STATE;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::schedulers::get_scheduler_from_string;
+use crate::schedulers::state_ids_sql;
 use crate::schema::review::ReviewHistoryRequest;
 use crate::schema::review::ReviewHistoryResponse;
+use crate::schema::review::StateRole;
 use crate::schema::review::StatisticsRequest;
 use crate::schema::review::StatisticsResponse;
 
@@ -96,9 +97,10 @@ pub async fn get_statistics(
         let due_day = zone.clock(today_start, tomorrow_start).day("c.due");
         let counts: Vec<(StateId, Option<i64>, u32)> = sqlx::query_as(&format!(
             r"SELECT c.state, {preset} AS preset, COUNT(*) FROM card c
-              WHERE (c.state = {NEW_CARD_STATE} OR {due_day} <= {today_number})
+              WHERE (c.state IN ({new}) OR {due_day} <= {today_number})
                 AND (c.special_state IS NULL OR c.special_state = {later_today})
               GROUP BY c.state, preset",
+            new = state_ids_sql(&[StateRole::New]),
             preset = limited_preset_sql(&config.queue),
             today_number = day_number(today),
             later_today = SpecialState::BuriedUntilLaterToday as u8,

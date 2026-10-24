@@ -92,7 +92,10 @@ pub struct Card {
     // pub lapses: u32, // Equivalent to: `SrsScheduler::lapses`
     // NOTE: This field is _not_ recoverable from the note data. In other words, this is not serialized in the cloze settings string (even though it is *de*serialized). This is because otherwise, sending a request to update a card and suspend it would require modifying the note's data. Instead, this field now only *de*serialized, not serialized.
     pub special_state: Option<SpecialState>,
-    /// The integer value is in relation to the scheduler specified by latest review's `scheduler_id`. If there are no reviews for this card, then it is `NEW_CARD_STATE` to represent the first state.
+    /// One of the states [`get_states`](crate::schedulers::SrsScheduler::get_states) lists for the
+    /// scheduler of the card's latest review (its `scheduler_name`). If there are no reviews for
+    /// this card, then it is `NEW_CARD_STATE` to represent the first state, which every scheduler
+    /// has.
     pub state: StateId,
     // pub last_review: i64, // DateTime. Equivalent to: `SELECT reviewed_at FROM review_log WHERE card_id = ? ORDER BY reviewed_at LIMIT 1`
     // pub previous_state: i64, // Not needed.

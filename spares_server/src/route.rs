@@ -88,6 +88,7 @@ use crate::handlers::saved_search::list_saved_searches_handler;
 use crate::handlers::saved_search::save_search_handler;
 use crate::handlers::scheduler::get_rating_from_score_handler;
 use crate::handlers::scheduler::get_scheduler_ratings_handler;
+use crate::handlers::scheduler::get_scheduler_states_handler;
 use crate::handlers::scheduler::list_schedulers_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
@@ -311,6 +312,10 @@ pub(crate) fn create_router(
         .route(
             "/api/scheduler/{name}/ratings",
             get(get_scheduler_ratings_handler),
+        )
+        .route(
+            "/api/scheduler/{name}/states",
+            get(get_scheduler_states_handler),
         )
         .route(
             "/api/scheduler/{name}/rating",

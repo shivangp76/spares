@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 use chrono::Utc;
+use itertools::Itertools;
 use log::info;
 use miette::Error;
 use miette::Report;
@@ -29,6 +30,7 @@ use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_cloze_context_for_card_order;
 use crate::schedulers::RetrievabilityKey;
+use crate::schedulers::all_states;
 use crate::schedulers::lapse_sql;
 use crate::schedulers::retrievability_key_sql;
 use crate::search::Atom;
@@ -479,32 +481,36 @@ fn like_pattern(pattern: &str) -> String {
     }
 }
 
-/// The names of the card states, as in `c.state=review`, and the FSRS state each stands for.
-const CARD_STATES: [(&str, StateId); 4] = [
-    ("new", 0),
-    ("learning", 1),
-    ("review", 2),
-    ("relearning", 3),
-];
+/// The names of the card states, as in `c.state=review`, lowercase, with the state each stands
+/// for: every scheduler's (see [`SrsScheduler::get_states`]), each name once.
+///
+/// [`SrsScheduler::get_states`]: crate::schedulers::SrsScheduler::get_states
+fn card_states() -> Vec<(String, StateId)> {
+    all_states()
+        .iter()
+        .map(|state| (state.name.to_lowercase(), state.id))
+        .unique_by(|(name, _)| name.clone())
+        .collect()
+}
 
 fn card_state_from_name(name: &str) -> Option<StateId> {
-    CARD_STATES
-        .iter()
+    card_states()
+        .into_iter()
         .find(|(state_name, _)| state_name.eq_ignore_ascii_case(name))
-        .map(|(_, state)| *state)
+        .map(|(_, state)| state)
 }
 
 /// The card states for errors, like `` `new` (0), `learning` (1), ... ``.
 fn card_state_names() -> String {
-    let names = CARD_STATES
+    let names = card_states()
         .iter()
         .map(|(name, state)| format!("`{name}` ({state})"))
         .collect::<Vec<_>>();
-    format!(
-        "{} and {}",
-        names[..names.len() - 1].join(", "),
-        names[names.len() - 1]
-    )
+    match names.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
 }
 
 /// Whether `name` is a boolean field like `c.suspended`, which on its own means it is true.
@@ -619,7 +625,7 @@ pub(crate) const FIELDS: [FieldDoc; 37] = [
     doc("c.user_buried", "c.user_buried", "Whether the card was buried by hand"),
     doc("c.scheduler_buried", "c.scheduler_buried", "Whether the card was buried as a sibling"),
     doc("c.waiting_on_links", "c.waiting_on_links", "Whether the card waits for the notes it links to"),
-    doc("c.state", "c.state=review", "The card's state: new, learning, review or relearning"),
+    doc("c.state", "c.state=review", "The card's state, as its scheduler names it: with FSRS, new, learning, review or relearning"),
     doc("c.custom_data", "c.custom_data.key=1", "A value in the card's custom data"),
     doc("c.rated", "c.rated[>=today-7d]=1", "A rating the card got in a review, from 1 (again) to 4 (easy), in reviews at the time in brackets if there are any"),
     doc("c.postponed", "c.postponed[today]", "Whether the card's due date was moved later without a review, at the time in brackets if there is one"),
@@ -1658,7 +1664,7 @@ pub(crate) fn field_infos() -> Vec<crate::search::FieldInfo> {
                 about: doc.about,
                 values: match field {
                     Ok(Field::Card(CardField::State)) => {
-                        CARD_STATES.iter().map(|(name, _)| *name).collect()
+                        card_states().into_iter().map(|(name, _)| name).collect()
                     }
                     _ => Vec::new(),
                 },
@@ -1917,7 +1923,9 @@ fn evaluate_comparison(
     if matches!(field, Field::Card(CardField::State))
         && matches!(value_type, FieldType::Integer)
         && let Some(state) = value_context.params.last_mut()
-        && let Some((name, _)) = CARD_STATES.iter().find(|(_, id)| id.to_string() == *state)
+        && let Some((name, _)) = card_states()
+            .into_iter()
+            .find(|(_, id)| id.to_string() == *state)
     {
         let _ = write!(state, " /* {name} */");
     }
@@ -3021,7 +3029,7 @@ mod tests {
             .unwrap();
         assert_eq!(state.values, ["new", "learning", "review", "relearning"]);
         for name in state.values {
-            assert!(state.about.contains(name), "{name}");
+            assert!(state.about.contains(&name), "{name}");
         }
     }
 

@@ -28,12 +28,14 @@ use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::config::SparesExternalConfig;
 use crate::model::CardId;
-use crate::model::NEW_CARD_STATE;
 use crate::model::SpecialState;
 use crate::model::StateId;
-use crate::schedulers::learning_states;
 use crate::schedulers::retrievability_key_sql;
-use crate::schedulers::review_state;
+use crate::schedulers::state_ids_sql;
+use crate::schedulers::state_role;
+use crate::schedulers::states_with_role;
+use crate::schedulers::step_states;
+use crate::schema::review::StateRole;
 
 /// What is left of today's limits, which [`NewReviewMix::Interleaved`] spreads cards over. `None`
 /// for no limit, as when studying a filtered tag.
@@ -58,12 +60,10 @@ impl QueueCaps {
 
     /// The top-level cap of cards in `state`. Learning and relearning cards are never capped.
     pub(crate) fn of_state(&self, state: StateId) -> Option<u32> {
-        if state == NEW_CARD_STATE {
-            self.new
-        } else if state == review_state() {
-            self.reviews
-        } else {
-            None
+        match state_role(state)? {
+            StateRole::New => self.new,
+            StateRole::Review => self.reviews,
+            StateRole::Learning | StateRole::Relearning => None,
         }
     }
 
@@ -77,10 +77,15 @@ impl QueueCaps {
     ///
     /// [`cap_counts`]: crate::api::preset::cap_counts
     pub(crate) fn showable(&self, cards_left_by_state: &HashMap<StateId, u32>) -> Self {
-        let left = |state: StateId| cards_left_by_state.get(&state).copied().unwrap_or(0);
+        let left = |role: StateRole| {
+            states_with_role(&[role])
+                .iter()
+                .filter_map(|state| cards_left_by_state.get(state))
+                .sum()
+        };
         Self {
-            new: self.new.map(|_| left(NEW_CARD_STATE)),
-            reviews: self.reviews.map(|_| left(review_state())),
+            new: self.new.map(|_| left(StateRole::New)),
+            reviews: self.reviews.map(|_| left(StateRole::Review)),
             presets: Vec::new(),
         }
     }
@@ -232,14 +237,14 @@ pub(crate) fn queue_order_by(
 ) -> String {
     let config = &external_config.queue;
     let now_ts = now.timestamp();
-    let [learning, relearning] = learning_states();
+    let in_steps = step_states().iter().join(", ");
     // The groups listed on `QueueConfig`, numbered from 0
     let group = format!(
         "CASE WHEN c.special_state IS NOT NULL THEN 3 \
-         WHEN c.state IN ({learning}, {relearning}) THEN CASE WHEN c.due <= {now_ts} THEN 0 ELSE 2 END \
+         WHEN c.state IN ({in_steps}) THEN CASE WHEN c.due <= {now_ts} THEN 0 ELSE 2 END \
          ELSE 1 END"
     );
-    let is_new = format!("c.state = {NEW_CARD_STATE}");
+    let is_new = format!("c.state IN ({})", state_ids_sql(&[StateRole::New]));
 
     // Within group 1, new and review cards are each sorted by their own keys. A key that only
     // applies to one kind is NULL for the other, so it ties.
@@ -347,17 +352,19 @@ pub(crate) fn waiting_on_links(
     card_due_limit: DateTime<Utc>,
     query_card_ids: Option<&str>,
 ) -> Option<String> {
-    let review = review_state();
-    let [learning, relearning] = learning_states();
+    let new = state_ids_sql(&[StateRole::New]);
     let mut holds = Vec::new();
     if config.new_after_linked_notes {
         holds.push(format!(
-            "(c.state = {NEW_CARD_STATE} AND lc.state IN ({NEW_CARD_STATE}, {learning}))"
+            "(c.state IN ({new}) AND lc.state IN ({}))",
+            state_ids_sql(&[StateRole::New, StateRole::Learning])
         ));
     }
     if config.reviews_after_linked_notes {
         holds.push(format!(
-            "(c.state = {review} AND lc.state = {relearning} AND lc.due <= {})",
+            "(c.state IN ({}) AND lc.state IN ({}) AND lc.due <= {})",
+            state_ids_sql(&[StateRole::Review]),
+            state_ids_sql(&[StateRole::Relearning]),
             card_due_limit.timestamp()
         ));
     }
@@ -489,16 +496,20 @@ pub(crate) async fn ordered_queue(
         }
         let decrement = |left: &mut Option<u32>| *left = left.map(|left| left - 1);
         let preset_left = preset.and_then(|index| allowed.presets.get_mut(index));
-        if state == NEW_CARD_STATE {
-            decrement(&mut allowed.new);
-            if let Some(left) = preset_left {
-                decrement(&mut left.new);
+        match state_role(state) {
+            Some(StateRole::New) => {
+                decrement(&mut allowed.new);
+                if let Some(left) = preset_left {
+                    decrement(&mut left.new);
+                }
             }
-        } else if state == review_state() {
-            decrement(&mut allowed.reviews);
-            if let Some(left) = preset_left {
-                decrement(&mut left.reviews);
+            Some(StateRole::Review) => {
+                decrement(&mut allowed.reviews);
+                if let Some(left) = preset_left {
+                    decrement(&mut left.reviews);
+                }
             }
+            _ => {}
         }
         rows.push(row);
     }

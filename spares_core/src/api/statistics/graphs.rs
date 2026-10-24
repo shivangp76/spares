@@ -23,7 +23,6 @@ use crate::Error;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::CardId;
-use crate::model::NEW_CARD_STATE;
 use crate::model::RatingId;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -31,9 +30,10 @@ use crate::model::StateId;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_scheduler_from_string;
-use crate::schedulers::learning_states;
-use crate::schedulers::relearning_state;
-use crate::schedulers::review_state;
+use crate::schedulers::state_ids_sql;
+use crate::schedulers::state_role;
+use crate::schedulers::step_states;
+use crate::schema::review::StateRole;
 use crate::schema::statistics::AddedDay;
 use crate::schema::statistics::AnswerButtons;
 use crate::schema::statistics::AnswerGroup;
@@ -154,10 +154,10 @@ impl Context<'_> {
     /// SQL for a review's [`Class`]. Crams get one too, which is ignored.
     fn class(&self) -> String {
         format!(
-            "(CASE WHEN previous_state = {review} THEN 2 + (COALESCE(previous_interval, 0) >= {mature}) \
-             WHEN previous_state = {relearning} THEN 1 ELSE 0 END)",
-            review = review_state(),
-            relearning = relearning_state(),
+            "(CASE WHEN previous_state IN ({review}) THEN 2 + (COALESCE(previous_interval, 0) >= {mature}) \
+             WHEN previous_state IN ({relearning}) THEN 1 ELSE 0 END)",
+            review = state_ids_sql(&[StateRole::Review]),
+            relearning = state_ids_sql(&[StateRole::Relearning]),
             mature = self.mature_seconds,
         )
     }
@@ -338,7 +338,7 @@ pub(crate) async fn due_by_day(
         today_start + horizon.map_or(366, |h| h - today_number + 1) * SECONDS_PER_DAY,
     );
     let due_day = clock.day("due");
-    let learning = learning_states().iter().join(", ");
+    let learning = step_states().iter().join(", ");
     let having = horizon.map_or(String::new(), |h| format!(" HAVING day < {h}"));
     let rows: Vec<(i64, u32, u32)> = cards
         .bind(sqlx::query_as(&format!(
@@ -346,9 +346,10 @@ pub(crate) async fn due_by_day(
                     + (IFNULL(special_state, 0) IN ({user}, {scheduler}) AND {due_day} <= {today_number}) AS day,
                     SUM(state IN ({learning})), SUM(state NOT IN ({learning}))
              FROM card
-             WHERE state != {NEW_CARD_STATE}
+             WHERE state NOT IN ({new})
                AND (special_state IS NULL OR special_state != {suspended}){cards}
              GROUP BY day{having}",
+            new = state_ids_sql(&[StateRole::New]),
             user = SpecialState::UserBuried as u8,
             scheduler = SpecialState::SchedulerBuried as u8,
             suspended = SpecialState::Suspended as u8,
@@ -484,11 +485,11 @@ async fn true_retention(context: &Context<'_>) -> Result<Vec<RetentionRow>, Erro
                     COALESCE(SUM(NOT young AND passed), 0), COALESCE(SUM(NOT young AND NOT passed), 0)
              FROM (SELECT COALESCE(previous_interval, 0) < {mature} AS young, {passed} AS passed
                    FROM review_log{hint}
-                   WHERE kind = {REVIEW} AND previous_state = {review}
+                   WHERE kind = {REVIEW} AND previous_state IN ({review})
                      AND reviewed_at >= {start} AND reviewed_at < {end}{cards})",
             mature = context.mature_seconds,
             hint = context.cards.scan_hint(days.is_none_or(|days| days > 30)),
-            review = review_state(),
+            review = state_ids_sql(&[StateRole::Review]),
             cards = context.cards.sql("card_id"),
         );
         async move {
@@ -648,7 +649,8 @@ async fn cards_and_distributions(
                     c.difficulty,
                     (SELECT MAX(rl.reviewed_at) FROM review_log rl
                      WHERE rl.card_id = c.id AND rl.kind = {REVIEW})))
-         FROM card c WHERE c.state != {NEW_CARD_STATE}{cards}"
+         FROM card c WHERE c.state NOT IN ({new}){cards}",
+        new = state_ids_sql(&[StateRole::New]),
     );
     let (counts, rows): (Vec<StateCount>, Vec<(String,)>) = futures::try_join!(
         context.fetch_all(&counts_sql),
@@ -704,7 +706,7 @@ fn summarize_cards(
     let mut recalls = Vec::with_capacity(rows.len());
     for (state, special_state, due, stability, difficulty, last_review) in rows {
         let interval = last_review.map(|last| due - last);
-        if state == review_state() && special_state.is_none() {
+        if state_role(state) == Some(StateRole::Review) && special_state.is_none() {
             if interval.is_some_and(|interval| interval >= mature_seconds) {
                 card_counts.mature += 1;
             } else {
@@ -815,6 +817,7 @@ fn fixed_histogram(values: &[f64], lower: f64, upper: f64, buckets: usize) -> Hi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schedulers::review_state;
 
     #[test]
     fn a_scheduler_without_a_forgetting_curve_leaves_retrievability_out() {

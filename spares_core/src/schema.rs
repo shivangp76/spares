@@ -883,6 +883,35 @@ pub mod review {
         pub description: String,
     }
 
+    /// What spares treats a [`CardState`] as, whatever the scheduler calls it. See
+    /// [`crate::schedulers::SrsScheduler::get_states`].
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
+    pub enum StateRole {
+        /// Never studied. Counts toward the daily new card limit, and is buried with
+        /// [`crate::config::QueueConfig::bury_new_siblings`].
+        New,
+        /// In the first learning steps: comes back the same day, and is never limited.
+        Learning,
+        /// Graduated from its learning steps. Counts toward the daily review limit, is buried
+        /// with [`crate::config::QueueConfig::bury_review_siblings`], and placed by
+        /// [`crate::schedulers::placement`]. Failing it is a lapse.
+        Review,
+        /// Lapsed and back in relearning steps: comes back the same day like
+        /// [`StateRole::Learning`], and holds back linked reviews with
+        /// [`crate::config::QueueConfig::reviews_after_linked_notes`].
+        Relearning,
+    }
+
+    /// A state a scheduler can put a card in.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+    pub struct CardState {
+        /// What [`crate::model::Card::state`] holds for a card in this state.
+        pub id: StateId,
+        /// What search's `c.state=<name>`, statistics and card info call it.
+        pub name: String,
+        pub role: StateRole,
+    }
+
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct OptimizeRequest {
         /// Save the optimized parameters if they predict the review history better than the

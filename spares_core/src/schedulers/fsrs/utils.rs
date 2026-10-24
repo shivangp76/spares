@@ -33,6 +33,10 @@ pub enum State {
     Relearning,
 }
 
+impl State {
+    pub const ALL: [Self; 4] = [Self::New, Self::Learning, Self::Review, Self::Relearning];
+}
+
 pub fn number_to_rating(num: RatingId) -> Option<Rating> {
     match num {
         1 => Some(Rating::Again),
