@@ -312,7 +312,7 @@ export default function KeywordsPage() {
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, since the tabs keep their own results */}
-        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+        <div className="split-list" style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <div role="tablist" className="tab-row" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
             {TABS.map(t => (
               <button

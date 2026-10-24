@@ -285,7 +285,7 @@ export default function CardsPage() {
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
-        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+        <div className="split-list" style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <details style={{ marginBottom: 16 }}>
             <summary style={{ cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>Bulk tools (unbury, forget, edit, leeches)</summary>
             <CardTools onOpenCard={(index, list) => setBrowse({ cards: list, index })} />

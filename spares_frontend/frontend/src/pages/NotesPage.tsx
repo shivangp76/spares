@@ -308,7 +308,7 @@ export default function NotesPage() {
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
-        <div style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+        <div className="split-list" style={{ flex: 1, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.length > 0 ? 8 : 16 }}>
             <SearchInput
               ref={searchInput}

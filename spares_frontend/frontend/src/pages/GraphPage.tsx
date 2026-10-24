@@ -316,7 +316,7 @@ export default function GraphPage() {
       <h2 style={{ marginBottom: 16 }}>Graph</h2>
 
       <div className="split">
-        <div style={{ flex: 2, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
+        <div className="split-list" style={{ flex: 2, minWidth: 0, display: detail.showList ? undefined : 'none' }}>
           <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             <SearchInput
               value={query}

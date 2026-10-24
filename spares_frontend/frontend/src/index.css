@@ -363,6 +363,28 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   align-items: flex-start;
 }
 
+/* The list beside a detail panel, which is narrow on mid-sized screens though the page isn't */
+.split-list {
+  container-type: inline-size;
+}
+
+/* Its search box takes the whole row, with the buttons below, as on phones */
+@container (max-width: 600px) {
+  .search-row {
+    flex-wrap: wrap;
+  }
+
+  .search-row > input, .search-row > .search-input {
+    flex-basis: 100% !important;
+    max-width: none !important;
+  }
+
+  .search-row > button {
+    flex: 1;
+    white-space: nowrap;
+  }
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
