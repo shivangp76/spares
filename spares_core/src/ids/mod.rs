@@ -85,8 +85,11 @@
 //! rather than produce a 9th letter, which only a server creating hundreds of notes in one block
 //! without seeing a newer laptop note could reach.
 //!
-//! Only replicas `0` and `1` have note id rules; allocation refuses any other. How a third replica
-//! would fit in is in `docs/sync_plan.md`.
+//! Only replicas `0` and `1` have note id rules; allocation refuses any other. A third replica,
+//! such as a second laptop (`SPARES_REPLICA=2`, `SPARES_SYNC_ROLE=client`), would take `y` as its
+//! slot in blocks opened after it joins, leaving the laptop `a`–`x`. Add it while all replicas are
+//! synced. Nothing already allocated changes, because [the packing](#storage) doesn't depend on
+//! these rules.
 //!
 //! # The high-water mark
 //!
@@ -478,7 +481,7 @@ fn ids_after(replica: Replica, newest: Option<NoteId>, n: usize) -> Result<Vec<N
         number => {
             return Err(note_error(format!(
                 "Replica {number} cannot create notes yet: only replicas 0 (laptop) and 1 (server) \
-                 have note id rules. See \"A third replica\" in docs/sync_plan.md."
+                 have note id rules. See \"Allocation\" in the `spares_core::ids` docs."
             )));
         }
     };

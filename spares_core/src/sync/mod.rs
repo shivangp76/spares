@@ -1,5 +1,5 @@
 //! Two-way sync between the laptop and the server. How to set it up and use it is in the manual's
-//! Getting Started and Deploying pages; what is still to do is in `docs/sync_plan.md`.
+//! Getting Started and Deploying pages.
 //!
 //! # Goal
 //!

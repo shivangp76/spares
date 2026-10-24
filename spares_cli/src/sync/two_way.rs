@@ -69,6 +69,7 @@ pub(crate) async fn sync_cloud(
             return Err(message);
         }
         println!("{} {message}", "A full sync is required:".yellow());
+        // The choice doesn't show how many changes each direction would lose.
         let choices = vec![
             "Upload: replace the server's database with this one",
             "Download: replace this database with the server's",

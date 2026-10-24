@@ -34,7 +34,7 @@ Document things where they are implemented, so the docs change with the code:
 - Settings: on their fields in `config.toml`'s structs (`spares_core::config`), and note and cloze settings on `NoteSettings`, `ClozeSettings` and `ClozeGroupingSettings`.
 - Syntax and behavior of a feature, and the reasons for a design: in the module docs of the code that implements it, e.g. `spares_core::sync` and `spares_core::ids`.
 - Command-line options: in the doc comments of the clap structs, which become `spares <command> --help`.
-- Work that is planned but not done: in a plan file in `docs/`, such as `docs/queue_plan.md` and `docs/sync_plan.md`.
+- Work that is planned but not done: in a plan file in `docs/`, such as `docs/queue_plan.md`.
 
 The manual, in `spares_frontend/frontend/src/manual`, is for guides that walk through several parts at once, and for self-contained pages like the comparison with Anki. The web app shows it under Manual, and its help popups link to its sections, which `src/help/pages.test.ts` checks exist. A new page is added to `MANUAL_PAGES` in `src/help/pages.ts`. It points to the API docs for details, which are built with:
 

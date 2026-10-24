@@ -1,4 +1,7 @@
 //! Notes a sync could not merge on its own (see [`super::client`]), and resolving them.
+//!
+//! Conflicts can only be resolved on the client, where the merge runs and stores them. The server
+//! has no `sync_conflict` rows: the web app there shows the `sync-conflict` tag, but not the sides.
 
 use std::collections::HashMap;
 

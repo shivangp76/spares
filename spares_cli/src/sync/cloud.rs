@@ -183,6 +183,9 @@ fn dir_source(dir: &Path) -> Result<String, String> {
 
 /// Copies the rendered files of the notes the server renders into `remote_rendered_dir`, along
 /// with rendered image occlusions.
+///
+/// This runs after the sync, so a note edited on the server between the two has the cards the
+/// server just rendered replaced by this machine's older ones.
 fn sync_rendered_files(
     remote_host: &str,
     remote_rendered_dir: &str,
