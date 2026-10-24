@@ -688,6 +688,68 @@ async fn test_push_whose_ref_update_fails_is_rolled_back(pool: SqlitePool) {
     assert!(notes_vcs::status().last_incident.is_some());
 }
 
+/// The events of the push's notes: `(id, group_id)`, oldest first
+async fn events_after(pool: &SqlitePool, id: i64) -> Vec<(i64, Option<i64>)> {
+    sqlx::query_as("SELECT id, group_id FROM event WHERE id > ? ORDER BY id")
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn max_event_id(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test]
+async fn test_push_of_several_notes_is_one_group(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let clone = clone();
+    let originals = [
+        note_data(&pool, ids[0]).await,
+        note_data(&pool, ids[1]).await,
+    ];
+    let before = max_event_id(&pool).await;
+    let before_head = head(&repo());
+    // The first note gets a new tag, so its own events are a `[CreateTag, UpdateNotes]` group,
+    // which the push's group takes in.
+    let path = note_path(&clone, ids[0]);
+    std::fs::write(
+        &path,
+        read(&path)
+            .replace("Cloze here", "Grouped")
+            .replace("tags: tag 1", "tags: tag 1, zz grouped"),
+    )
+    .unwrap();
+    let path = note_path(&clone, ids[1]);
+    std::fs::write(&path, read(&path).replace("Second", "Second, grouped")).unwrap();
+    git(&clone, &["commit", "-qam", "edit"]);
+    // The ref update fails, so the push is rolled back after it was imported.
+    let pushed = push(&pool, &clone, false).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+
+    let events = events_after(&pool, before).await;
+    let pushed_events: Vec<_> = events.iter().take(3).collect();
+    let leader = pushed_events[0].0;
+    assert!(
+        pushed_events
+            .iter()
+            .all(|(_, group)| *group == Some(leader)),
+        "{events:?}"
+    );
+
+    let finish = pushed.finish.unwrap();
+    assert!(finish.message.contains("rolled back"), "{}", finish.message);
+    assert!(!finish.message.contains("partial"), "{}", finish.message);
+    assert_eq!(note_data(&pool, ids[0]).await, originals[0]);
+    assert_eq!(note_data(&pool, ids[1]).await, originals[1]);
+    assert_eq!(head(&repo()), before_head);
+}
+
 #[sqlx::test]
 async fn test_reconcile_dirty_saves_overwritten(pool: SqlitePool) {
     let _guard = setup().await;

@@ -50,6 +50,8 @@ use crate::Error;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::update_notes;
+use crate::api::undo::is_reverted;
+use crate::api::undo::join_event_group;
 use crate::api::undo::undo_event;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
@@ -376,9 +378,20 @@ fn add_existing(repo: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, Error> {
 
 /// Undoes the import's events, newest first, then regenerates its notes from the database. Returns
 /// a description of the outcome for the user.
+///
+/// The import's events form one group, so the first undo reverts them all. Journals written before
+/// imports were grouped hold one ungrouped event per note, which the later iterations revert.
 async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
     let mut failure = None;
     for event_id in journal.event_ids.iter().rev() {
+        match is_reverted(db, *event_id).await {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        }
         if let Err(e) = undo_event(
             db,
             UndoEventRequest {
@@ -774,6 +787,9 @@ async fn import(
     journal: &mut Journal,
 ) -> Result<(), Error> {
     let parsers = get_all_parsers();
+    let at = Utc::now();
+    // The first event of the import, whose group the later ones join, so one undo reverts it all
+    let mut leader = None;
     for note in pushed {
         let parser_id: i64 = sqlx::query_scalar(r"SELECT id FROM parser WHERE name = ?")
             .bind(note.parser.get_parser_name())
@@ -790,8 +806,12 @@ async fn import(
             tags: UpdateTags::SetTags(parsed.settings.tags),
             custom_data: Some(parsed.settings.custom_data),
         };
-        let response = update_notes(db, request, Utc::now(), &parsers, true).await?;
+        let response = update_notes(db, request, at, &parsers, true).await?;
         if let Some(event_id) = response.event_id {
+            match leader {
+                None => leader = Some(event_id),
+                Some(leader) => join_event_group(db, leader, event_id).await?,
+            }
             journal.event_ids.push(event_id);
             write_journal(journal)?;
         }

@@ -101,7 +101,7 @@ async fn event_action(db: &SqlitePool, id: i64) -> Result<EventAction, Error> {
         .map_err(|e| Error::Sqlx { source: e })
 }
 
-async fn is_reverted(db: &SqlitePool, id: i64) -> Result<bool, Error> {
+pub(crate) async fn is_reverted(db: &SqlitePool, id: i64) -> Result<bool, Error> {
     sqlx::query_scalar(r"SELECT EXISTS (SELECT 1 FROM event WHERE reverts_event_id = ?)")
         .bind(id)
         .fetch_one(db)
