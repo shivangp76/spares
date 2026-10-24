@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApiError, getQueuePositions, getTagByName, isNetworkError } from '../api/client';
 import SearchInput, { type SearchInputError } from './SearchInput';
@@ -37,11 +37,13 @@ interface Row {
  * the learn ahead limit and those the review would not show today, with why. Clicking a row opens
  * its card with `onOpen`.
  */
-export function QueuePositionList({ response, onOpen, lookingUp }: {
+export function QueuePositionList({ response, onOpen, lookingUp, currentCardId }: {
   response: QueuePositionResponse;
   onOpen: (card: QueueCard) => void;
   /** Whether a query picked the cards, rather than the whole queue being listed. */
   lookingUp: boolean;
+  /** The card a session shows now, which is marked. */
+  currentCardId?: number;
 }) {
   const sections: { heading: string | null; firstHeading: string; rows: Row[] }[] = [
     {
@@ -67,7 +69,10 @@ export function QueuePositionList({ response, onOpen, lookingUp }: {
     + (shown < listed ? `. The first ${shown}:` : '.');
   return (
     <div style={{ fontSize: 14 }}>
-      <style>{`.queue-row:hover { background-color: var(--hover); }`}</style>
+      <style>{`
+        .queue-row:hover { background-color: var(--hover); }
+        .queue-row-current { background-color: var(--selected) !important; }
+      `}</style>
       <div style={{ marginBottom: 8, color: 'var(--text-secondary)' }}>{summary}</div>
       {sections.filter(s => s.rows.length > 0).map(section => (
         <div key={section.firstHeading} style={{ marginBottom: 12 }}>
@@ -88,9 +93,10 @@ export function QueuePositionList({ response, onOpen, lookingUp }: {
                 {section.rows.map(({ key, first, card, muted }) => (
                   <tr
                     key={key}
-                    className="queue-row"
+                    className={`queue-row${card.card_id === currentCardId ? ' queue-row-current' : ''}`}
                     onClick={() => onOpen(card)}
                     style={{ cursor: 'pointer', color: muted ? 'var(--text-secondary)' : undefined }}
+                    title={card.card_id === currentCardId ? 'The card shown now' : undefined}
                   >
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{first}</td>
                     <td style={td}>{formatNoteId(card.note_id)}</td>
@@ -131,6 +137,9 @@ async function resolveFilter(mode: FilterMode, input: string): Promise<ReviewFil
   return { FilteredTag: { tag_id: id } };
 }
 
+/** The review to look in: as typed on the landing view, or as a session resolved it. */
+export type QueueFilter = { mode: FilterMode; input: string } | { resolved: ReviewFilter | null };
+
 type Lookup =
   | { kind: 'idle' }
   | { kind: 'loading' }
@@ -139,15 +148,23 @@ type Lookup =
   | { kind: 'offline' };
 
 /**
- * Find in queue, on the review page: the queue of the filter typed above it, from its first card,
- * or, with a query typed in its box, where the cards matching it are in that queue. The query is
- * kept in `?match=`.
+ * Find in queue, on the review page: the queue of `filter`, from its first card, or, with a query
+ * typed in its box, where the cards matching it are in that queue. The query is kept in `?match=`,
+ * so the landing view and a session share it.
+ *
+ * On the landing view, `filter` is the one typed above it. During a session, it is the one the
+ * session resolved, such as the snapshot of a query with `limit`, and `refreshKey` changes with each
+ * card shown, so the positions follow the session. `currentCardId` marks the card shown now.
  */
-export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClose }: {
-  filterMode: FilterMode;
-  filterInput: string;
+export default function FindInQueue({ filter, onOpenNote, onClose, refreshKey, currentCardId, autoFocus, style }: {
+  filter: QueueFilter;
   onOpenNote: (noteId: number) => void;
   onClose: () => void;
+  refreshKey?: unknown;
+  currentCardId?: number;
+  autoFocus?: boolean;
+  /** Merged into the panel's style. */
+  style?: React.CSSProperties;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [match, setMatch] = useState(() => searchParams.get('match') ?? '');
@@ -155,7 +172,13 @@ export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClo
   const [submitted, setSubmitted] = useState(() => searchParams.get('match') ?? '');
   const [lookup, setLookup] = useState<Lookup>({ kind: 'loading' });
   const [matchError, setMatchError] = useState<SearchInputError | null>(null);
-  const filter = filterInput.trim();
+  const input = useRef<HTMLInputElement>(null);
+  // The filter as a string, so a new object for the same filter on each render looks nothing up
+  const filterKey = JSON.stringify('resolved' in filter ? filter : { ...filter, input: filter.input.trim() });
+
+  useEffect(() => {
+    if (autoFocus) input.current?.focus();
+  }, [autoFocus]);
 
   useEffect(() => {
     setSearchParams(prev => {
@@ -171,8 +194,9 @@ export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClo
     const timer = setTimeout(async () => {
       setLookup(prev => (prev.kind === 'done' ? prev : { kind: 'loading' }));
       try {
+        const queueFilter = JSON.parse(filterKey) as QueueFilter;
         const response = await getQueuePositions({
-          filter: await resolveFilter(filterMode, filter),
+          filter: 'resolved' in queueFilter ? queueFilter.resolved : await resolveFilter(queueFilter.mode, queueFilter.input),
           match_query: submitted || null,
           limit: submitted ? null : PREVIEW_LIMIT,
         });
@@ -189,14 +213,15 @@ export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClo
       }
     }, LOOKUP_DELAY_MS);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [filterMode, filter, submitted]);
+  }, [filterKey, submitted, refreshKey]);
 
   return (
-    <div style={{ position: 'relative', marginTop: 16, padding: 12, border: '1px solid var(--border)', borderRadius: 6 }}>
+    <div style={{ position: 'relative', marginTop: 16, padding: 12, border: '1px solid var(--border)', borderRadius: 6, ...style }}>
       <button onClick={onClose} aria-label="Close Find in queue" style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary)' }}>×</button>
       <label htmlFor="find-in-queue" style={{ display: 'block', fontSize: 14, marginBottom: 8 }}>Find in queue</label>
       <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <SearchInput
+          ref={input}
           id="find-in-queue"
           value={match}
           onChange={value => { setMatch(value); if (!value.trim()) setSubmitted(''); }}
@@ -211,7 +236,7 @@ export default function FindInQueue({ filterMode, filterInput, onOpenNote, onClo
       {lookup.kind === 'loading' && <div className="loading-delayed" style={{ fontSize: 13 }}>Looking up the queue…</div>}
       {lookup.kind === 'offline' && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Needs the server: the cards downloaded for offline review are only some of the queue, and a query can't be searched without it.</div>}
       {lookup.kind === 'error' && <pre style={{ color: 'var(--error)', marginTop: 0, whiteSpace: 'pre-wrap' }}>{lookup.message}</pre>}
-      {lookup.kind === 'done' && <QueuePositionList response={lookup.response} onOpen={card => onOpenNote(card.note_id)} lookingUp={lookup.lookingUp} />}
+      {lookup.kind === 'done' && <QueuePositionList response={lookup.response} onOpen={card => onOpenNote(card.note_id)} lookingUp={lookup.lookingUp} currentCardId={currentCardId} />}
     </div>
   );
 }

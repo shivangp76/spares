@@ -300,6 +300,8 @@ export default function ReviewPage() {
   // refetches even when the same card comes back, e.g. during relearning.
   const [previousCard, setPreviousCard] = useState<{ id: number; version: number } | null>(null);
   const [showPreviousCardInfo, setShowPreviousCardInfo] = useState(false);
+  // Find in queue, during a session, for its filter
+  const [showFindInQueue, setShowFindInQueue] = useState(false);
 
   const tagId = activeFilter && 'FilteredTag' in activeFilter ? activeFilter.FilteredTag.tag_id : null;
 
@@ -975,6 +977,7 @@ export default function ReviewPage() {
     { keys: ['R'], description: 'Reload card, e.g. after importing its file again', available: cardShown },
     { keys: ['f'], description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ''}`, available: cardShown && config !== null },
     { keys: ['q'], description: 'Switch query', available: reviewing },
+    { keys: ['Q'], description: showFindInQueue ? 'Close Find in queue' : "Find cards in this session's queue", available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
     { keys: ['w'], description: `Change the page width (now ${PAGE_WIDTH_LABELS[pageWidth]})`, available: reviewing && !isNarrow },
     { keys: ['+', '='], description: `Larger card text (now ${cardZoom}%)`, available: reviewing },
@@ -1004,7 +1007,7 @@ export default function ReviewPage() {
       if (!keybindings.some(b => b.available && b.keys.includes(key))) return;
       const actions: Record<string, () => void> = {
         Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
-        R: reloadCard, f: flagNote, q: switchQuery, r: replayAudio, w: cyclePageWidth,
+        R: reloadCard, f: flagNote, q: switchQuery, Q: () => setShowFindInQueue(v => !v), r: replayAudio, w: cyclePageWidth,
         '+': zoomIn, '=': zoomIn, '-': zoomOut,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
@@ -1156,7 +1159,7 @@ export default function ReviewPage() {
               Queries using <code>limit</code> are saved to a filtered tag once per day, so running the same query again later that day resumes it.
             </p>
           )}
-          {showQueue && <FindInQueue filterMode={filterMode} filterInput={filterInput} onOpenNote={openNote} onClose={() => setShowQueue(false)} />}
+          {showQueue && <FindInQueue filter={{ mode: filterMode, input: filterInput }} onOpenNote={openNote} onClose={() => setShowQueue(false)} />}
           {noteLoading && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>Loading note…</div>}
           {panelNote && (
             <div ref={notePanelRef} style={{ marginTop: 16, scrollMarginTop: 16 }}>
@@ -1237,6 +1240,18 @@ export default function ReviewPage() {
               <div style={sectionLabel}>Previous Card Info (card {previousCard.id})</div>
               <CardInfo cardId={previousCard.id} version={previousCard.version} />
             </div>
+          )}
+
+          {showFindInQueue && (
+            <FindInQueue
+              filter={{ resolved: activeFilter ?? null }}
+              onOpenNote={openNote}
+              onClose={() => setShowFindInQueue(false)}
+              refreshKey={card}
+              currentCardId={card?.card_id}
+              autoFocus
+              style={{ marginTop: 0, marginBottom: 12, padding: isNarrow ? 8 : 12, maxHeight: isNarrow ? '50vh' : '60vh', overflowY: 'auto' }}
+            />
           )}
 
           {sessionInfo && <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}><CodeText text={sessionInfo} /></div>}
@@ -1365,6 +1380,11 @@ export default function ReviewPage() {
                   </button>
                   <button onClick={reloadCard} style={toned(TONES.blue)} title="Shows the card as it is now, e.g. after its file was edited and imported again">
                     Reload Card <span className="key-hint">(R)</span>
+                  </button>
+                </ActionGroup>
+                <ActionGroup label="Queue" tone={TONES.gray}>
+                  <button onClick={() => setShowFindInQueue(v => !v)} aria-pressed={showFindInQueue} style={toned(TONES.gray)} title="Where cards are in this session's queue, and why others are not in it">
+                    {showFindInQueue ? 'Close Find in Queue' : 'Find in Queue'} <span className="key-hint">(Q)</span>
                   </button>
                 </ActionGroup>
                 <ActionGroup label="Remove from today's queue" tone={TONES.orange}>
