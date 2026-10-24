@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { getDuplicateKeywords, getNote, getNoteLinks, getUnmatchedKeywords, listKeywords, searchKeyword } from '../api/client';
 import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
+import Pagination from '../components/Pagination';
 import RecentSearches from '../components/RecentSearches';
 import { useAuth } from '../hooks/useAuth';
+import { useClientPages } from '../hooks/useClientPages';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { setKeywordsPageSize, useKeywordsPageSize, type PageSize } from '../preferences';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
 import { errorMessage, formatNoteId, keepShown, td, th } from '../utils';
 
@@ -30,6 +33,11 @@ function NoteLinkButton({ id, onOpen }: { id: number; onOpen: (id: number) => vo
   );
 }
 
+/** Splits a tab's rows into pages of the size chosen for the keywords page. */
+function useKeywordPages<T>(rows: T[]) {
+  return useClientPages(rows, useKeywordsPageSize(), (size: PageSize) => setKeywordsPageSize(size));
+}
+
 function formatScore(score: number | null): string {
   return score === null ? '—' : score.toFixed(3);
 }
@@ -45,17 +53,23 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     listKeywords().then(setKeywords, e => setError(errorMessage(e)));
   }, []);
 
+  const needle = filter.trim().toLowerCase();
+  const shown = (keywords ?? []).filter(([, k]) => !needle || k.toLowerCase().includes(needle));
+  const unique = [...new Set(shown.map(([, k]) => k))];
+  const rowPages = useKeywordPages(shown);
+  const uniquePages = useKeywordPages(unique);
+
   if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
   if (!keywords) return <div>Loading…</div>;
-
-  const needle = filter.trim().toLowerCase();
-  const shown = keywords.filter(([, k]) => !needle || k.toLowerCase().includes(needle));
-  const unique = [...new Set(shown.map(([, k]) => k))];
 
   return (
     <>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-        <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter…" style={{ ...input, flex: 1, maxWidth: 300 }} />
+        <input
+          value={filter}
+          onChange={e => { setFilter(e.target.value); rowPages.pagination.goToPage(1); uniquePages.pagination.goToPage(1); }}
+          placeholder="Filter…" style={{ ...input, flex: 1, maxWidth: 300 }}
+        />
         <label style={{ fontSize: 14 }}>
           <input type="checkbox" checked={short} onChange={e => setShort(e.target.checked)} style={{ marginRight: 6 }} />
           Unique keywords only
@@ -64,14 +78,14 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {short ? (
         <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.7 }}>
-          {unique.map(k => <li key={k}>{k}</li>)}
+          {uniquePages.shown.map(k => <li key={k}>{k}</li>)}
         </ul>
       ) : (
         <div className="table-scroll">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead><tr><th style={th}>Note</th><th style={th}>Keyword</th></tr></thead>
             <tbody>
-              {shown.map(([id, k], i) => (
+              {rowPages.shown.map(([id, k], i) => (
                 <tr key={`${id}-${k}-${i}`}>
                   <td style={td}><NoteLinkButton id={id} onOpen={onOpen} /></td>
                   <td style={td}>{k}</td>
@@ -81,6 +95,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           </table>
         </div>
       )}
+      <Pagination {...(short ? uniquePages : rowPages).pagination} />
     </>
   );
 }
@@ -91,6 +106,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
   const [results, setResults] = useState<{ keyword: string; matches: MatchedKeywordResponse[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_keyword_recent_searches');
+  const pages = useKeywordPages(results?.matches ?? []);
 
   async function search(q = keyword) {
     const k = q.trim();
@@ -99,6 +115,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
     setError(null);
     try {
       setResults({ keyword: k, matches: await searchKeyword(k) });
+      pages.pagination.goToPage(1);
       saveRecent(k);
     } catch (e) {
       setError(errorMessage(e));
@@ -128,9 +145,9 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead><tr><th style={th}>#</th><th style={th}>Matched keyword</th><th style={th}>Note</th><th style={th}>Score</th></tr></thead>
               <tbody>
-                {results.matches.map((m, i) => (
-                  <tr key={`${m.note_id}-${m.matched_keyword}`} style={i === 0 ? { background: 'var(--selected)' } : undefined}>
-                    <td style={td}>{i + 1}</td>
+                {pages.shown.map((m, i) => (
+                  <tr key={`${m.note_id}-${m.matched_keyword}`} style={pages.offset + i === 0 ? { background: 'var(--selected)' } : undefined}>
+                    <td style={td}>{pages.offset + i + 1}</td>
                     <td style={td}>{m.matched_keyword}</td>
                     <td style={td}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
                     <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(m.score)}</td>
@@ -139,6 +156,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
               </tbody>
             </table>
           </div>
+          <Pagination {...pages.pagination} />
         </>
       ))}
     </>
@@ -149,6 +167,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
 function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [rows, setRows] = useState<UnmatchedKeywordResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pages = useKeywordPages(rows ?? []);
 
   useEffect(() => {
     getUnmatchedKeywords().then(setRows, e => setError(errorMessage(e)));
@@ -163,8 +182,8 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
           <thead><tr><th style={th}>Note</th><th style={th}>Searched keyword</th></tr></thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={`${r.note_id}-${r.searched_keyword}-${i}`}>
+            {pages.shown.map((r, i) => (
+              <tr key={`${r.note_id}-${r.searched_keyword}-${pages.offset + i}`}>
                 <td style={td}><NoteLinkButton id={r.note_id} onOpen={onOpen} /></td>
                 <td style={td}>{r.searched_keyword}</td>
               </tr>
@@ -173,6 +192,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           </tbody>
         </table>
       </div>
+      <Pagination {...pages.pagination} />
     </>
   );
 }
@@ -181,6 +201,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
 function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [rows, setRows] = useState<[string, number[]][] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pages = useKeywordPages(rows ?? []);
 
   useEffect(() => {
     getDuplicateKeywords().then(setRows, e => setError(errorMessage(e)));
@@ -195,7 +216,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
           <thead><tr><th style={th}>Keyword</th><th style={th}>Notes</th></tr></thead>
           <tbody>
-            {rows.map(([k, ids]) => (
+            {pages.shown.map(([k, ids]) => (
               <tr key={k}>
                 <td style={td}>{k}</td>
                 <td style={td}>
@@ -209,6 +230,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           </tbody>
         </table>
       </div>
+      <Pagination {...pages.pagination} />
     </>
   );
 }
@@ -218,6 +240,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
   const [threshold, setThreshold] = useState('');
   const [links, setLinks] = useState<{ threshold: number; links: NoteLink[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pages = useKeywordPages(links?.links ?? []);
 
   async function load() {
     const t = Number(threshold);
@@ -225,6 +248,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
     setError(null);
     try {
       setLinks({ threshold: t, links: await getNoteLinks(t) });
+      pages.pagination.goToPage(1);
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -249,33 +273,36 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {error && <div style={{ color: 'var(--error)' }}>{error}</div>}
       {links && (
-        <div className="table-scroll">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead>
-              <tr>
-                <th style={th}>Note</th>
-                <th style={th}>Searched keyword</th>
-                <th style={th}>Matched keyword</th>
-                <th style={th}>Linked note</th>
-                <th style={th}>Score</th>
-              </tr>
-            </thead>
-            <tbody>
-              {links.links.map(l => (
-                <tr key={`${l.parent_note_id}-${l.order}`}>
-                  <td style={td}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
-                  <td style={td}>{l.searched_keyword}</td>
-                  <td style={td}>{l.matched_keyword ?? '—'}</td>
-                  <td style={td}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(l.score)}</td>
+        <>
+          <div className="table-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Note</th>
+                  <th style={th}>Searched keyword</th>
+                  <th style={th}>Matched keyword</th>
+                  <th style={th}>Linked note</th>
+                  <th style={th}>Score</th>
                 </tr>
-              ))}
-              {links.links.length === 0 && (
-                <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pages.shown.map(l => (
+                  <tr key={`${l.parent_note_id}-${l.order}`}>
+                    <td style={td}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
+                    <td style={td}>{l.searched_keyword}</td>
+                    <td style={td}>{l.matched_keyword ?? '—'}</td>
+                    <td style={td}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
+                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(l.score)}</td>
+                  </tr>
+                ))}
+                {links.links.length === 0 && (
+                  <tr><td colSpan={5} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No links scoring at or below {links.threshold}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pagination {...pages.pagination} />
+        </>
       )}
     </>
   );
