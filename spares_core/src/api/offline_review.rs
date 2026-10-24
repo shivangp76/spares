@@ -51,22 +51,17 @@ use chrono::DateTime;
 use chrono::Duration;
 use chrono::Local;
 use chrono::Utc;
-use indoc::formatdoc;
-use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::preset::CardConfigs;
-use crate::api::preset::preset_index;
-use crate::api::queue::queue_order_by;
-use crate::api::review::REVIEW_CARD_COLUMNS;
-use crate::api::review::ReviewCard;
-use crate::api::review::ReviewFilterQuery;
+use crate::api::queue::OrderedQueue;
+use crate::api::queue::QueueRow;
+use crate::api::queue::ordered_queue;
 use crate::api::review::build_review_filter_query;
 use crate::api::review::bury_card;
 use crate::api::review::daily_limits_left;
-use crate::api::review::get_cards_left_by_state_and_time_estimate;
 use crate::api::review::insert_review;
 use crate::api::review::rate_card_with_config;
 use crate::api::review::review_card_response;
@@ -82,7 +77,6 @@ use crate::config::read_external_config;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
-use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
 use crate::model::ReviewLog;
 use crate::model::SpecialState;
@@ -91,7 +85,6 @@ use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::learning_states;
-use crate::schedulers::review_state;
 use crate::schema::review::OfflineActionOutcome;
 use crate::schema::review::OfflineActionResult;
 use crate::schema::review::OfflineStudyAction;
@@ -102,16 +95,6 @@ use crate::schema::review::ReviewQueueRequest;
 use crate::schema::review::ReviewQueueResponse;
 use crate::schema::review::SyncOfflineActionsRequest;
 use crate::schema::review::SyncOfflineActionsResponse;
-
-#[derive(FromRow)]
-struct QueueRow {
-    #[sqlx(flatten)]
-    card: ReviewCard,
-    due: DateTime<Utc>,
-    /// The card's preset, if it has limits of its own (see
-    /// [`limited_preset_sql`](crate::api::preset::limited_preset_sql))
-    preset: Option<i64>,
-}
 
 /// The cards a review with `filter` would show next, in order, as of `requested_date`.
 ///
@@ -144,79 +127,30 @@ pub async fn get_review_queue(
             new_cards_left_today,
         });
     };
-    let (cards_left_by_state, time_estimate) =
-        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?;
-    let ReviewFilterQuery {
-        cards,
-        where_clause,
-        is_filtered_tag,
-        card_due_limit,
-        caps,
-        preset_sql,
-        query_sort,
-        ..
-    } = review_filter;
-
-    // Ordered like `get_review_card`. There is no `LIMIT` since new cards beyond today's limit are
-    // skipped below.
     let config = read_external_config()?;
-    let order_by = queue_order_by(
+    let due_limit = review_filter.card_due_limit + Duration::days(i64::from(days_ahead));
+    let OrderedQueue {
+        rows,
+        cards_left_by_state,
+        time_estimate,
+        ..
+    } = ordered_queue(
+        db,
+        &review_filter,
         &config,
         requested_date,
-        &caps.showable(&cards_left_by_state),
-        &query_sort,
-    );
-    let query_str = formatdoc! {"
-        SELECT {REVIEW_CARD_COLUMNS}, c.due as due, {preset_sql} as preset
-        FROM {cards} c
-        JOIN note n ON c.note_id = n.id
-        JOIN parser p ON n.parser_id = p.id
-        WHERE {where_clause}
-        ORDER BY
-            {order_by}"
-    };
-    let mut query = sqlx::query_as(&query_str);
-    if !is_filtered_tag {
-        query = query.bind((card_due_limit + Duration::days(i64::from(days_ahead))).timestamp());
-    }
-    let rows: Vec<QueueRow> = query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        due_limit,
+        Some(limit as usize),
+    )
+    .await?;
 
-    // What is left of the top-level limits, and of each preset's
-    let mut allowed = caps;
     let mut cards = Vec::new();
-    for QueueRow { card, due, preset } in rows {
-        if cards.len() >= limit as usize {
-            break;
-        }
-        // Filtered tags have no limits, and learning cards are never held back
-        let state = card.card_state;
-        let preset = preset_index(preset);
-        let preset_left = preset
-            .and_then(|index| allowed.presets.get(index))
-            .and_then(|left| left.of_state(state));
-        if preset_left == Some(0) || allowed.of_state(state) == Some(0) {
-            continue;
-        }
-        let decrement = |left: &mut Option<u32>| *left = left.map(|left| left - 1);
-        let preset_left = preset.and_then(|index| allowed.presets.get_mut(index));
-        if state == NEW_CARD_STATE {
-            decrement(&mut allowed.new);
-            if let Some(left) = preset_left {
-                decrement(&mut left.new);
-            }
-        } else if state == review_state() {
-            decrement(&mut allowed.reviews);
-            if let Some(left) = preset_left {
-                decrement(&mut left.reviews);
-            }
-        }
+    for QueueRow { card, due, .. } in rows {
         // Held back like `build_review_filter_query` does with `learn_ahead`, except that the
         // client compares it to its own clock
-        let shown_from = (!is_filtered_tag && learning_states().contains(&card.card_state))
-            .then(|| due - config.queue.learn_ahead_limit);
+        let shown_from = (!review_filter.is_filtered_tag
+            && learning_states().contains(&card.card_state))
+        .then(|| due - config.queue.learn_ahead_limit);
         let card = review_card_response(
             db,
             card,

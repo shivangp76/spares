@@ -4,19 +4,30 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Datelike;
+use chrono::Duration;
 use chrono::Local;
 use chrono::Utc;
 use indoc::formatdoc;
 use itertools::Itertools;
+use sqlx::FromRow;
+use sqlx::SqlitePool;
+
+use crate::Error;
 
 use crate::api::preset::PresetLimitsLeft;
+use crate::api::preset::preset_index;
 use crate::api::review::DailyLimitsLeft;
+use crate::api::review::REVIEW_CARD_COLUMNS;
+use crate::api::review::ReviewCard;
+use crate::api::review::ReviewFilterQuery;
+use crate::api::review::get_cards_left_by_state_and_time_estimate;
 use crate::config::NewCardOrder;
 use crate::config::NewReviewMix;
 use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::config::SparesExternalConfig;
+use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
 use crate::model::SpecialState;
 use crate::model::StateId;
@@ -372,6 +383,130 @@ pub(crate) fn waiting_on_links(
         scheduler_buried = SpecialState::SchedulerBuried as u8,
         buried_until_later_today = SpecialState::BuriedUntilLaterToday as u8,
         holds = holds.join(" OR "),
+    })
+}
+
+/// A card of [`ordered_queue`].
+#[derive(FromRow)]
+pub(crate) struct QueueRow {
+    #[sqlx(flatten)]
+    pub(crate) card: ReviewCard,
+    pub(crate) due: DateTime<Utc>,
+    /// The card's preset, if it has limits of its own (see
+    /// [`limited_preset_sql`](crate::api::preset::limited_preset_sql))
+    pub(crate) preset: Option<i64>,
+}
+
+/// The daily limit that was used up when a card's turn came in [`ordered_queue`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UsedUpLimit {
+    /// [`SparesExternalConfig::new_cards_daily_limit`] or
+    /// [`SparesExternalConfig::reviews_daily_limit`]
+    TopLevel,
+    /// That of the preset at this index in [`QueueConfig::presets`]
+    Preset(usize),
+}
+
+/// The cards a review would show, in order, from [`ordered_queue`].
+pub(crate) struct OrderedQueue {
+    pub(crate) rows: Vec<QueueRow>,
+    /// The cards left out because a limit was used up by the cards before them, in order.
+    pub(crate) skipped: Vec<(CardId, UsedUpLimit)>,
+    /// What [`get_cards_left_by_state_and_time_estimate`] counts for the review.
+    pub(crate) cards_left_by_state: HashMap<StateId, u32>,
+    pub(crate) time_estimate: Duration,
+}
+
+/// The cards matching `filter` and due by `due_limit`, in the order review shows them as of
+/// `requested_date`, at most `limit` of them.
+///
+/// New and review cards are kept while what is left of today's limits, and of their
+/// [preset](QueuePreset)'s, lets them through, in turn: with 5 new cards left today, the first 5
+/// new cards are kept and the others skipped, wherever they are in the order. Learning cards and
+/// the cards of filtered tags are never capped. A limit already used up at the start never gets
+/// here, since [`build_review_filter_query`](crate::api::review::build_review_filter_query)
+/// leaves its cards out of `filter.where_clause`.
+pub(crate) async fn ordered_queue(
+    db: &SqlitePool,
+    filter: &ReviewFilterQuery,
+    config: &SparesExternalConfig,
+    requested_date: DateTime<Utc>,
+    due_limit: DateTime<Utc>,
+    limit: Option<usize>,
+) -> Result<OrderedQueue, Error> {
+    let (cards_left_by_state, time_estimate) =
+        get_cards_left_by_state_and_time_estimate(db, filter).await?;
+    // Ordered like `get_review_card`. There is no `LIMIT` since cards beyond today's limits are
+    // skipped below.
+    let order_by = queue_order_by(
+        config,
+        requested_date,
+        &filter.caps.showable(&cards_left_by_state),
+        &filter.query_sort,
+    );
+    let query_str = formatdoc! {"
+        SELECT {REVIEW_CARD_COLUMNS}, c.due as due, {preset_sql} as preset
+        FROM {cards} c
+        JOIN note n ON c.note_id = n.id
+        JOIN parser p ON n.parser_id = p.id
+        WHERE {where_clause}
+        ORDER BY
+            {order_by}",
+        preset_sql = filter.preset_sql,
+        cards = filter.cards,
+        where_clause = filter.where_clause,
+    };
+    let mut query = sqlx::query_as(&query_str);
+    if !filter.is_filtered_tag {
+        query = query.bind(due_limit.timestamp());
+    }
+    let all_rows: Vec<QueueRow> = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    // What is left of the top-level limits, and of each preset's
+    let mut allowed = filter.caps.clone();
+    let mut rows = Vec::new();
+    let mut skipped = Vec::new();
+    for row in all_rows {
+        if limit.is_some_and(|limit| rows.len() >= limit) {
+            break;
+        }
+        // Filtered tags have no limits, and learning cards are never held back
+        let state = row.card.card_state;
+        let preset = preset_index(row.preset);
+        let preset_left = preset
+            .and_then(|index| allowed.presets.get(index))
+            .and_then(|left| left.of_state(state));
+        if let Some(index) = preset.filter(|_| preset_left == Some(0)) {
+            skipped.push((row.card.card_id, UsedUpLimit::Preset(index)));
+            continue;
+        }
+        if allowed.of_state(state) == Some(0) {
+            skipped.push((row.card.card_id, UsedUpLimit::TopLevel));
+            continue;
+        }
+        let decrement = |left: &mut Option<u32>| *left = left.map(|left| left - 1);
+        let preset_left = preset.and_then(|index| allowed.presets.get_mut(index));
+        if state == NEW_CARD_STATE {
+            decrement(&mut allowed.new);
+            if let Some(left) = preset_left {
+                decrement(&mut left.new);
+            }
+        } else if state == review_state() {
+            decrement(&mut allowed.reviews);
+            if let Some(left) = preset_left {
+                decrement(&mut left.reviews);
+            }
+        }
+        rows.push(row);
+    }
+    Ok(OrderedQueue {
+        rows,
+        skipped,
+        cards_left_by_state,
+        time_estimate,
     })
 }
 
