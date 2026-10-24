@@ -1110,6 +1110,8 @@ mod daily_limit_tests {
                 preset_sql: "NULL".to_string(),
                 held_back_clause: None,
                 query_sort: Vec::new(),
+                filter_cards_clause: "TRUE".to_string(),
+                waiting_clause: None,
             };
             get_cards_left_by_state_and_time_estimate(&pool, &filter)
                 .await
@@ -1703,6 +1705,8 @@ mod linked_note_tests {
             preset_sql: "NULL".to_string(),
             held_back_clause: None,
             query_sort: Vec::new(),
+            filter_cards_clause: "TRUE".to_string(),
+            waiting_clause: None,
         };
         let (by_state, _) = get_cards_left_by_state_and_time_estimate(&pool, &filter)
             .await

@@ -91,6 +91,11 @@ pub enum LibraryError {
         /// Where in the query the problem is, as a start and end in UTF-16 code units, the way
         /// JavaScript counts them, so the web client can mark it.
         span: Option<(usize, usize)>,
+        /// The field of the request the query is in, for a request with several, like
+        /// `match_query` of a
+        /// [`QueuePositionRequest`](crate::schema::review::QueuePositionRequest), whose filter
+        /// may be a query too. `None` otherwise.
+        query_field: Option<&'static str>,
     },
     #[error("{0}")]
     InvalidTimeZone(String),

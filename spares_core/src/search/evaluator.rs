@@ -426,6 +426,7 @@ fn search_error(query: &str) -> impl Fn(Report) -> crate::Error + '_ {
         crate::Error::Library(LibraryError::Search {
             message: render_error(query, &e),
             span: error_span(query, &e),
+            query_field: None,
         })
     }
 }

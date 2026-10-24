@@ -38,6 +38,7 @@ use crate::api::preset::preset_index;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
+use crate::api::queue::waiting_on_links;
 use crate::api::study_pace::MIN_CARD_REVIEWS;
 use crate::api::study_pace::StudyPaces;
 use crate::api::study_pace::capped_review_seconds;
@@ -128,9 +129,9 @@ pub(crate) fn web_render_path(rendered_path: &Path) -> Option<PathBuf> {
 
 #[derive(Clone, Debug, FromRow)]
 pub(crate) struct ReviewCard {
-    note_id: NoteId,
+    pub(crate) note_id: NoteId,
     parser_name: String,
-    card_order: u32,
+    pub(crate) card_order: u32,
     card_back_type: BackType,
     pub(crate) card_id: i64,
     pub(crate) card_state: StateId,
@@ -593,6 +594,29 @@ fn review_snapshot_tag_name(query: &str) -> String {
     format!("review-{}", &hash[..8])
 }
 
+/// Whether `tag`, a review snapshot, was built on the local day of `requested_date`, so review
+/// works through it as it is rather than rebuilding it.
+fn snapshot_built_today(tag: &Tag, requested_date: DateTime<Utc>) -> bool {
+    let (start_of_day, _) = get_start_end_local_date(&requested_date);
+    tag.updated_at >= start_of_day
+}
+
+/// The review snapshot of `query` built today by [`create_review_snapshot_tag`], if there is one.
+pub(crate) async fn todays_review_snapshot(
+    db: &SqlitePool,
+    query: &str,
+    requested_date: DateTime<Utc>,
+) -> Result<Option<TagId>, Error> {
+    let tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
+        .bind(review_snapshot_tag_name(query))
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(tag
+        .filter(|tag| snapshot_built_today(tag, requested_date))
+        .map(|tag| tag.id))
+}
+
 /// Resolves `query` against the cards due on `requested_date`, applying any per-group limits, and
 /// stores the result in a filtered tag that review then works through with
 /// [`GetReviewCardFilterRequest::FilteredTag`].
@@ -613,9 +637,8 @@ pub async fn create_review_snapshot_tag(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    let (start_of_day, _) = get_start_end_local_date(&requested_date);
     let (tag_id, rebuilt) = match existing_tag {
-        Some(tag) if tag.updated_at >= start_of_day => (tag.id, false),
+        Some(tag) if snapshot_built_today(&tag, requested_date) => (tag.id, false),
         Some(tag) => (tag.id, true),
         None => {
             // `auto_delete` stays off: if finishing the snapshot deleted the tag, running the
@@ -703,6 +726,17 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) held_back_clause: Option<String>,
     /// The sort the query (or the filtered tag's query) asks for, for [`queue_order_by`].
     pub(crate) query_sort: Vec<String>,
+    /// The cards of the filter, whether or not review would show them today, as a SQL condition
+    /// over `c` with nothing to bind: those matching the query, those in the filtered tag, or
+    /// `TRUE` for the default review.
+    pub(crate) filter_cards_clause: String,
+    /// The cards [`QueueConfig::new_after_linked_notes`] and
+    /// [`QueueConfig::reviews_after_linked_notes`] hold back, as [`waiting_on_links`] gives them.
+    /// `None` when both are off, and for filtered tags.
+    ///
+    /// [`QueueConfig::new_after_linked_notes`]: crate::config::QueueConfig::new_after_linked_notes
+    /// [`QueueConfig::reviews_after_linked_notes`]: crate::config::QueueConfig::reviews_after_linked_notes
+    pub(crate) waiting_clause: Option<String>,
 }
 
 /// Build the `where_clause`, `is_filtered_tag` flag, and `card_due_limit` for a review filter.
@@ -744,6 +778,12 @@ pub(crate) async fn build_review_filter_query(
         .map(|ids| format!("\nAND c.id IN ({ids})"))
         .unwrap_or_default();
     let is_filtered_tag = matches!(filter, Some(GetReviewCardFilterRequest::FilteredTag { .. }));
+    let mut filter_cards_clause = query_card_ids
+        .as_ref()
+        .map_or_else(|| "TRUE".to_string(), |ids| format!("c.id IN ({ids})"));
+    let waiting_clause = (!is_filtered_tag)
+        .then(|| waiting_on_links(&config.queue, card_due_limit, query_card_ids.as_deref()))
+        .flatten();
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     let learning_states = learning_states().iter().join(", ");
     let learn_ahead_until = (requested_date + config.queue.learn_ahead_limit).timestamp();
@@ -765,8 +805,11 @@ pub(crate) async fn build_review_filter_query(
             )));
         };
         query_sort = Evaluator::new(&tag_query).card_order_by()?;
+        filter_cards_clause = format!(
+            "c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
+        );
         format!(
-            "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND c.id IN (SELECT ct.card_id FROM card_tag ct JOIN tag t ON ct.tag_id = t.id WHERE t.id = {tag_id})"
+            "(c.special_state IS NULL OR c.special_state = {buried_state})\n    AND {filter_cards_clause}"
         )
     } else {
         let learn_ahead_str = if learn_ahead {
@@ -802,6 +845,8 @@ pub(crate) async fn build_review_filter_query(
         preset_sql,
         held_back_clause,
         query_sort,
+        filter_cards_clause,
+        waiting_clause,
     }))
 }
 

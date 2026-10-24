@@ -1003,6 +1003,103 @@ pub mod review {
         pub card: GetReviewCardResponse,
     }
 
+    /// Where the cards matching `match_query` are in the queue of the review with `filter` (see
+    /// [`queue_positions`](crate::api::queue_position::queue_positions)).
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct QueuePositionRequest {
+        /// The review, as for [`GetReviewCardRequest`]. `None` for the default review.
+        pub filter: Option<GetReviewCardFilterRequest>,
+        /// The cards to locate, as a search query whose card filters (like `c.state=0`) pick
+        /// cards rather than whole notes. `None` lists the whole queue.
+        #[serde(default)]
+        pub match_query: Option<String>,
+        /// The most cards to list in [`QueuePositionResponse::positions`] and in
+        /// [`QueuePositionResponse::not_shown`]. `None` lists them all.
+        #[serde(default)]
+        pub limit: Option<u32>,
+    }
+
+    /// A card of a [`QueuePositionResponse`].
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+    pub struct QueueCard {
+        pub card_id: CardId,
+        pub note_id: NoteId,
+        pub card_order: u32,
+        pub card_state: StateId,
+        pub due: DateTime<Utc>,
+        /// The start of the note's text, on one line, as a list of notes shows it: at most 100
+        /// characters, with `…` where it is cut.
+        pub note_preview: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct QueuePositionResponse {
+        /// How many cards the review would show now.
+        pub total: u32,
+        /// How many of them match the query: `total` when there is none.
+        pub matching: u32,
+        /// Where the matching cards are, in order, up to the request's `limit`.
+        pub positions: Vec<QueuePosition>,
+        /// Matching learning and relearning cards due later today, held back by
+        /// [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit).
+        /// They have no position: review shows them once nothing else is left and their time has
+        /// come. Soonest first.
+        pub held_back: Vec<HeldBackCard>,
+        /// How many matching cards of the review it would not show today.
+        pub not_shown_total: u32,
+        /// Those cards, up to the request's `limit`, and why. Empty when there is no query.
+        pub not_shown: Vec<NotShownCard>,
+        /// How many matching cards are not in the review's filter at all.
+        pub not_in_review: u32,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+    pub struct QueuePosition {
+        /// From 1, for the card review shows next.
+        pub position: u32,
+        #[serde(flatten)]
+        pub card: QueueCard,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+    pub struct HeldBackCard {
+        /// The earliest review can show the card: its `due` minus the learn ahead limit.
+        pub shown_from: DateTime<Utc>,
+        #[serde(flatten)]
+        pub card: QueueCard,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+    pub struct NotShownCard {
+        pub reason: NotShownReason,
+        #[serde(flatten)]
+        pub card: QueueCard,
+    }
+
+    /// Why a review would not show a card of its filter today.
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+    pub enum NotShownReason {
+        Suspended,
+        /// Buried by hand or by the scheduler, until it is unburied
+        Buried,
+        /// Due after today
+        NotDue,
+        /// Held back by
+        /// [`QueueConfig::new_after_linked_notes`](crate::config::QueueConfig::new_after_linked_notes)
+        /// or
+        /// [`QueueConfig::reviews_after_linked_notes`](crate::config::QueueConfig::reviews_after_linked_notes)
+        /// until a note it links to is studied
+        WaitingOnLinkedNote,
+        /// Today's new card limit is used up, the top-level one or that of `preset`
+        NewLimit {
+            preset: Option<String>,
+        },
+        /// Today's review limit is used up, the top-level one or that of `preset`
+        ReviewLimit {
+            preset: Option<String>,
+        },
+    }
+
     /// Study actions a client performed while offline.
     #[derive(Debug, Deserialize, Serialize)]
     pub struct SyncOfflineActionsRequest {

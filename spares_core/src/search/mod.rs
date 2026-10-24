@@ -833,7 +833,7 @@ mod tests {
     /// The message and span of the error in evaluating `query`, which parses.
     fn evaluation_error(query: &str) -> (String, Option<(usize, usize)>) {
         match explain(query, QueryReturnItemType::Cards) {
-            Err(crate::Error::Library(crate::LibraryError::Search { message, span })) => {
+            Err(crate::Error::Library(crate::LibraryError::Search { message, span, .. })) => {
                 (message, span)
             }
             other => panic!("expected a search error for `{query}`, got {other:?}"),

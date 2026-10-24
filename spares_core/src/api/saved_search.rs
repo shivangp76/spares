@@ -20,6 +20,7 @@ fn invalid(message: &str) -> Error {
     LibraryError::Search {
         message: message.to_string(),
         span: None,
+        query_field: None,
     }
     .into()
 }
