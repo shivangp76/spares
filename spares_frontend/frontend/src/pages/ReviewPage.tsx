@@ -1019,22 +1019,35 @@ export default function ReviewPage() {
   const dueInLabel = config ? formatDuration(config.set_card_due_date_duration) : '…';
   const sessionStarted = sessionStart !== null;
 
+  // A stat in the summary, styled like the due counts' cards on the landing page
+  const summaryStat = (value: React.ReactNode, label: string) => (
+    <div key={label} style={{ minWidth: 64 }}>
+      <div style={{ fontSize: 20, fontWeight: 600, lineHeight: '26px', color: 'var(--text)' }}>{value}</div>
+      <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--text-secondary)' }}>{label}</div>
+    </div>
+  );
+  const summaryGroup = (label: string, stats: React.ReactNode[]) => (
+    <div>
+      <div style={sectionLabel}>{label}</div>
+      <div style={{ display: 'flex', gap: isNarrow ? 16 : 24, flexWrap: 'wrap' }}>{stats}</div>
+    </div>
+  );
   const summary = sessionStarted && (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 16, marginTop: 24, textAlign: 'left', display: 'inline-block' }}>
-      <div style={sectionLabel}>Session</div>
-      <div>Cards reviewed: {reviewedCount}</div>
-      <div>Total time: {formatDuration(msToSeconds((sessionEnd ?? sessionStart ?? 0) - (sessionStart ?? 0)))}</div>
-      <div>Recall time: {formatDuration(msToSeconds(sessionRecallMs))}</div>
-      <div>Rate time: {formatDuration(msToSeconds(sessionRateMs))}</div>
-      {statistics && (
-        <>
-          <div style={{ ...sectionLabel, marginTop: 12 }}>Today</div>
-          <div>Cards studied: {statistics.cards_studied_count}</div>
-          <div>Recall time: {formatDuration(statistics.recall_duration)}</div>
-          <div>Rate time: {formatDuration(statistics.rate_duration)}</div>
-          {statistics.cram_count > 0 && <div>Crams: {statistics.cram_count} ({formatDuration(statistics.cram_duration)})</div>}
-        </>
-      )}
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: isNarrow ? '12px 14px' : '12px 20px', textAlign: 'left', display: 'inline-flex', gap: isNarrow ? 16 : 40, flexWrap: 'wrap' }}>
+      {summaryGroup('Session', [
+        summaryStat(reviewedCount, 'Cards reviewed'),
+        summaryStat(formatDuration(msToSeconds((sessionEnd ?? sessionStart ?? 0) - (sessionStart ?? 0))), 'Total time'),
+        summaryStat(formatDuration(msToSeconds(sessionRecallMs)), 'Recall time'),
+        summaryStat(formatDuration(msToSeconds(sessionRateMs)), 'Rate time'),
+      ])}
+      {statistics && summaryGroup('Today', [
+        summaryStat(statistics.cards_studied_count, 'Cards studied'),
+        summaryStat(formatDuration(statistics.recall_duration), 'Recall time'),
+        summaryStat(formatDuration(statistics.rate_duration), 'Rate time'),
+        ...(statistics.cram_count > 0
+          ? [summaryStat(`${statistics.cram_count} (${formatDuration(statistics.cram_duration)})`, 'Crams')]
+          : []),
+      ])}
     </div>
   );
 
@@ -1058,8 +1071,8 @@ export default function ReviewPage() {
       </div>
 
       {phase === 'landing' && (
-        <div style={{ marginTop: 24 }}>
-          {sessionStarted && sessionShowedCard && <div style={{ marginBottom: 24 }}>{summary}</div>}
+        <div style={{ marginTop: sessionStarted && sessionShowedCard ? 0 : 24 }}>
+          {sessionStarted && sessionShowedCard && <div style={{ marginBottom: 20 }}>{summary}</div>}
           {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift.
               On phones the four states' cards are narrowed to fit on that one row. */}
           <div style={{ display: 'flex', gap: isNarrow ? 8 : 12, marginBottom: 20, flexWrap: isNarrow ? 'nowrap' : 'wrap', alignItems: 'center', minHeight: DUE_CARD_HEIGHT }}>
@@ -1158,7 +1171,7 @@ export default function ReviewPage() {
         <div style={{ textAlign: 'center', marginTop: 80, color: 'var(--text-secondary)' }}>
           <p>Nothing left to review{offline ? ' of the cards downloaded for offline review' : ''}.</p>
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
-          {summary}
+          {summary && <div style={{ marginTop: 24 }}>{summary}</div>}
           <p style={{ marginTop: 24, display: 'flex', gap: 16, justifyContent: 'center' }}>
             <button onClick={() => { setStatus(null); setPhase('landing'); }}>New session</button>
             <Link to="/notes">View notes</Link>
