@@ -556,6 +556,7 @@ enum CardField {
     UserBuried,
     SchedulerBuried,
     WaitingOnLinks,
+    Leech,
     State,
     CustomData(String),
     /// A rating, in reviews at the time written in brackets, like the `>=today-7d` of
@@ -591,7 +592,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 35] = [
+pub(crate) const FIELDS: [FieldDoc; 36] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -620,6 +621,7 @@ pub(crate) const FIELDS: [FieldDoc; 35] = [
     doc("c.reviewed", "c.reviewed>=today-7d", "When the card was last reviewed"),
     doc("c.reps", "c.reps>=10", "How many times the card was reviewed"),
     doc("c.lapses", "c.lapses>=3", "How many times the card was forgotten after it had been learned"),
+    doc("c.leech", "c.leech", "Whether the card lapsed at least `lapses_threshold` times, as for leeches"),
     doc("c.interval", "c.interval>=30", "Days from the card's last review to when it is due"),
     doc("c.retrievability", "c.retrievability<0.8", "How likely you are to recall the card now, from 0 to 1, as its scheduler predicts"),
     doc("c.count", "c.count>=2", "How many cards the note has"),
@@ -850,6 +852,7 @@ impl Field {
             "c.reviewed" => Ok(Field::Card(CardField::Reviewed)),
             "c.reps" => Ok(Field::Card(CardField::Reps)),
             "c.lapses" => Ok(Field::Card(CardField::Lapses)),
+            "c.leech" => Ok(Field::Card(CardField::Leech)),
             "c.interval" => Ok(Field::Card(CardField::Interval)),
             "c.retrievability" => Ok(Field::Card(CardField::Retrievability)),
             "c.count" => Ok(Field::Card(CardField::Count)),
@@ -951,6 +954,7 @@ impl Field {
                 CardField::WaitingOnLinks => {
                     unreachable!("needs the config, see `waiting_on_links_sql`")
                 }
+                CardField::Leech => unreachable!("needs the config, see `leech_sql`"),
                 CardField::State => with_op("c.state"),
                 CardField::CustomData(json_path) => {
                     format!(
@@ -1035,7 +1039,8 @@ impl Field {
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
-                | CardField::WaitingOnLinks => FieldType::Boolean,
+                | CardField::WaitingOnLinks
+                | CardField::Leech => FieldType::Boolean,
                 CardField::CustomData(_) => FieldType::Json,
                 CardField::Cloze => FieldType::String,
             },
@@ -1101,6 +1106,7 @@ impl Field {
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
                 | CardField::WaitingOnLinks
+                | CardField::Leech
                 | CardField::CustomData(_)
                 | CardField::Cloze => Err(miette!("it can't be sorted")),
             },
@@ -2079,10 +2085,10 @@ fn evaluate_comparison(
     validate_field_value_types(field_name, &field_type, &value_type, value)
         .map_err(|e| label_error(e, value.span(), &format!("not {}", field_type.describe())))?;
 
-    let sql_condition = if matches!(field, Field::Card(CardField::WaitingOnLinks)) {
-        waiting_on_links_sql(&value_str)?
-    } else {
-        field.to_sql_str(&value_str)?
+    let sql_condition = match field {
+        Field::Card(CardField::WaitingOnLinks) => waiting_on_links_sql(&value_str)?,
+        Field::Card(CardField::Leech) => leech_sql(&value_str)?,
+        _ => field.to_sql_str(&value_str)?,
     };
     context.add_where_clause(sql_condition);
     Ok(())
@@ -2109,6 +2115,22 @@ fn lapses_sql() -> String {
         "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND {})",
         lapse_sql("rl")
     )
+}
+
+/// The SQL of `c.leech` compared with `value_str`: whether the card lapsed at least
+/// [`crate::config::LeechConfig::lapses_threshold`] times, the cards
+/// [`crate::schedulers::SrsScheduler::get_leeches`] lists, and the suspended and buried ones too.
+fn leech_sql(value_str: &str) -> Result<String, Error> {
+    let threshold = read_external_config()
+        .map_err(|e| miette!("{e}"))?
+        .leech
+        .lapses_threshold;
+    let leech = format!("{} >= {threshold}", lapses_sql());
+    Ok(if value_str.contains("false") {
+        format!("NOT ({leech})")
+    } else {
+        format!("({leech})")
+    })
 }
 
 /// Days from the card's last review to when it is due, as in statistics, or NULL for a new card.
@@ -3521,6 +3543,66 @@ mod tests {
         assert_eq!(search("sort_by_asc=c.retrievability").await, [2, 1, 3]);
         assert_eq!(search("sort_by_desc=c.retrievability").await, [1, 2, 3]);
         assert_eq!(search("sort_by_desc=c.lapses,c.id").await, [1, 3, 2]);
+    }
+
+    #[sqlx::test]
+    async fn searches_leeches_by_card(pool: SqlitePool) {
+        let threshold = read_external_config().unwrap().leech.lapses_threshold;
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Of the note's 3 cards, 2 lapsed `threshold` times, and the suspended 3 one time fewer.
+        let cards = [
+            (1, 0, None),
+            (2, threshold, None),
+            (3, threshold - 1, Some(1)),
+        ];
+        for (card_id, lapses, special_state) in cards {
+            sqlx::query(
+                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, special_state, custom_data) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 3, ?, '{}')"#,
+            )
+            .bind(card_id)
+            .bind(card_id)
+            .bind(special_state)
+            .execute(&pool)
+            .await
+            .unwrap();
+            for i in 0..lapses {
+                sqlx::query(
+                    "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (?, ?, 0, 1, 'fsrs', 2, '{}')",
+                )
+                .bind(card_id)
+                .bind(i64::from(i))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_card_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"));
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(search("c.leech").await, [2]);
+        assert_eq!(search("c.leech=true -c.suspended").await, [2]);
+        assert_eq!(search("-c.leech").await, [1, 3]);
+        assert_eq!(search("c.leech=false").await, [1, 3]);
+        assert_eq!(search("c.leech or c.suspended").await, [2, 3]);
+        assert_eq!(
+            search(&format!("c.lapses>={threshold}")).await,
+            search("c.leech").await
+        );
     }
 
     #[sqlx::test]

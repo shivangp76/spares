@@ -41,6 +41,7 @@
 //! | c.reviewed          | `DateTime` |
 //! | c.reps              | u32      |
 //! | c.lapses            | u32      |
+//! | c.leech             | bool     |
 //! | c.interval          | f64      |
 //! | c.retrievability    | f64      |
 //! | c.count             | u32      |
@@ -69,6 +70,10 @@
 //! - `c.reps`: how many times it was reviewed.
 //! - `c.lapses`: how many times it was forgotten (failed a review, by the ratings of the scheduler
 //!   that rated it) after it had been learned, counted as for leeches.
+//! - `c.leech`: whether it lapsed at least `lapses_threshold` times (see `LeechConfig` in
+//!   `spares_core::config`), the cards `spares card leeches` lists, but suspended and buried ones
+//!   too. Unlike `tag=leech`, which is on the note, it matches only the card, and it doesn't
+//!   depend on the leech `action`: `c.leech -c.suspended` is the leeches still being reviewed.
 //! - `c.interval`: the days from its last review to when it is due, as in statistics, as in
 //!   `c.interval>=30`. A postponed card's interval includes the postponement.
 //! - `c.retrievability`: how likely you are to recall it now, from 0 to 1, as the scheduler that
