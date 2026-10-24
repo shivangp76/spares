@@ -198,9 +198,6 @@ pub(super) async fn update_tags(
                 .map_err(|e| Error::Sqlx { source: e })?;
         }
     }
-    // Delete tags with no more notes
-    delete_empty_tags_on(&mut *conn, &tags_to_check).await?;
-
     if let Some(tags_to_add) = tags_to_add {
         let mut tags_to_add = remove_ancestor_tags(tags_to_add);
         if !tags_to_add.is_empty() {
@@ -225,5 +222,8 @@ pub(super) async fn update_tags(
             add_tags_to_note(conn, note_id, &tags_to_add, existing_filtered_tag_names).await?,
         );
     }
+    // Delete tags with no more notes. Only after adding, so a tag the note keeps (e.g. when its
+    // tags are set to include it again) is not deleted and recreated under a new id.
+    delete_empty_tags_on(&mut *conn, &tags_to_check).await?;
     Ok(new_tag_payloads)
 }

@@ -29,6 +29,7 @@ pub(crate) mod tests {
     use crate::api::note::update_notes;
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::tag::create_tag;
+    use crate::model::EventType;
     use crate::model::Tag;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
@@ -361,6 +362,66 @@ pub(crate) mod tests {
         let mut tags = update_res.unwrap().notes[0].tags.clone();
         tags.sort();
         assert_eq!(tags, vec!["a:b", "x"]);
+    }
+
+    #[sqlx::test]
+    async fn test_update_note_set_tags_keeps_kept_tags(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let note_id = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: "Test".to_string(),
+                    keywords: vec![],
+                    tags: vec!["kept".to_string(), "dropped".to_string()],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap()
+        .notes[0]
+            .id;
+        let tag_id = async |name: &str| -> Option<i64> {
+            sqlx::query_scalar("SELECT id FROM tag WHERE name = ?")
+                .bind(name)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+        };
+        let kept_id = tag_id("kept").await.unwrap();
+
+        // Only this note has `kept`, which must survive being set again with its id
+        let response = update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                data: None,
+                parser_id: None,
+                keywords: None,
+                tags: UpdateTags::SetTags(vec!["kept".to_string()]),
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.notes[0].tags, vec!["kept"]);
+        assert_eq!(tag_id("kept").await, Some(kept_id));
+        assert_eq!(tag_id("dropped").await, None);
+        let created_tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event WHERE kind = ?")
+            .bind(EventType::CreateTag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(created_tags, 0);
     }
 
     #[sqlx::test]
