@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { forgetCard, getCard, getNote, getReviewCardById, updateCards } from '../api/client';
-import { STATE_LABELS, type CardResponse, type GetReviewCardResponse, type NoteResponse } from '../types/spares';
+import type { CardResponse, GetReviewCardResponse, NoteResponse } from '../types/spares';
+import { useCardStates } from '../hooks/useCardStates';
 import { useFieldAbout } from '../hooks/useFieldAbout';
 import { backPath, backWebPath, errorMessage, formatNoteId, keepShown, sectionLabel } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
@@ -46,6 +47,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
   const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const about = useFieldAbout();
+  const { stateName } = useCardStates();
 
   useEffect(() => {
     let cancelled = false;
@@ -168,7 +170,7 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         <div><div style={metaLabel}>Note Id</div>{formatNoteId(card.note_id)}</div>
         <div><div style={metaLabel}>Parser</div>{reviewCard?.parser_name ?? '…'}</div>
         <div><div style={metaLabel}>Order</div>{card.order}</div>
-        <div><div style={metaLabel} className="explained" title={about('c.state')}>State</div>{STATE_LABELS[card.state] ?? card.state}</div>
+        <div><div style={metaLabel} className="explained" title={about('c.state')}>State</div>{stateName(card.state)}</div>
         <div><div style={metaLabel} className="explained" title={about('c.due')}>Due</div>{new Date(card.due).toLocaleString()}</div>
         <div><div style={metaLabel} className="explained" title={about('c.desired_retention')}>Desired Retention</div>{card.desired_retention}</div>
         <div><div style={metaLabel} className="explained" title={about('c.stability')}>Stability</div>{card.stability.toFixed(2)}</div>

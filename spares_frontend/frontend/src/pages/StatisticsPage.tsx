@@ -10,6 +10,7 @@ import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import ReviewHeatmap from '../components/ReviewHeatmap';
 import { useAuth } from '../hooks/useAuth';
+import { useCardStates } from '../hooks/useCardStates';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useOfflineStatus } from '../offline/review';
 import {
@@ -24,7 +25,6 @@ import {
   type StatisticsView,
 } from '../offline/statistics';
 import {
-  STATE_LABELS,
   type AnswerGroup,
   type PassFail,
   type ReviewHistoryResponse,
@@ -64,10 +64,6 @@ function requestDate(value: string): Date {
   return new Date(year, month - 1, day, 12);
 }
 
-function stateLabel(stateId: string): string {
-  return STATE_LABELS[Number(stateId)] ?? stateId;
-}
-
 function Tile({ value, label }: { value: React.ReactNode; label: string }) {
   return (
     <div className="tile" style={tile}>
@@ -78,6 +74,7 @@ function Tile({ value, label }: { value: React.ReactNode; label: string }) {
 }
 
 function StateCounts({ counts, empty }: { counts: Record<string, number>; empty: string }) {
+  const { stateName } = useCardStates();
   const entries = Object.entries(counts)
     .filter(([, count]) => count > 0)
     .sort(([a], [b]) => Number(a) - Number(b));
@@ -85,7 +82,7 @@ function StateCounts({ counts, empty }: { counts: Record<string, number>; empty:
   if (entries.length === 0) return <p style={{ color: 'var(--text-secondary)' }}>{empty}</p>;
   return (
     <div style={tiles}>
-      {entries.map(([stateId, count]) => <Tile key={stateId} value={count} label={stateLabel(stateId)} />)}
+      {entries.map(([stateId, count]) => <Tile key={stateId} value={count} label={stateName(Number(stateId))} />)}
       <Tile value={total} label="Total" />
     </div>
   );
@@ -296,14 +293,19 @@ function RetentionSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
 }
 
 function CardCountsSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
+  const { stateName, stateRole } = useCardStates();
   const counts = graphs.card_counts;
   if (counts.total === 0) return <p style={{ color: 'var(--text-secondary)' }}>No cards.</p>;
   const states = Object.entries(counts.by_state).filter(([, n]) => n > 0).sort(([a], [b]) => Number(a) - Number(b));
+  // Young and mature count the cards of every review state, in place of them
+  const firstReview = states.find(([state]) => stateRole(Number(state)) === 'Review')?.[0];
   return (
     <div style={tiles}>
-      {states.flatMap(([state, n]) => stateLabel(state) === 'Review'
-        ? [<Tile key="young" value={counts.young} label="Young" />, <Tile key="mature" value={counts.mature} label={`Mature (≥ ${graphs.mature_threshold_days}d)`} />]
-        : [<Tile key={state} value={n} label={stateLabel(state)} />])}
+      {states.flatMap(([state, n]) => stateRole(Number(state)) !== 'Review'
+        ? [<Tile key={state} value={n} label={stateName(Number(state))} />]
+        : state === firstReview
+          ? [<Tile key="young" value={counts.young} label="Young" />, <Tile key="mature" value={counts.mature} label={`Mature (≥ ${graphs.mature_threshold_days}d)`} />]
+          : [])}
       <Tile value={counts.suspended} label="Suspended" />
       <Tile value={counts.buried} label="Buried" />
       <Tile value={counts.total} label="Total" />

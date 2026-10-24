@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApiError, getQueuePositions, getTagByName, isNetworkError } from '../api/client';
 import SearchInput, { type SearchInputError } from './SearchInput';
-import { STATE_LABELS, type NotShownReason, type QueueCard, type QueuePositionResponse, type ReviewFilter } from '../types/spares';
+import type { NotShownReason, QueueCard, QueuePositionResponse, ReviewFilter } from '../types/spares';
+import { useCardStates } from '../hooks/useCardStates';
 import { errorMessage, formatNoteId, td, th } from '../utils';
 
 /** The start of a note's text, cut to the column like the notes list's Data column. */
@@ -45,6 +46,7 @@ export function QueuePositionList({ response, onOpen, lookingUp, currentCardId }
   /** The card a session shows now, which is marked. */
   currentCardId?: number;
 }) {
+  const { stateName } = useCardStates();
   const sections: { heading: string | null; firstHeading: string; rows: Row[] }[] = [
     {
       heading: null,
@@ -102,7 +104,7 @@ export function QueuePositionList({ response, onOpen, lookingUp, currentCardId }
                     <td style={td}>{formatNoteId(card.note_id)}</td>
                     <td style={dataTd} className="clamp-narrow" title={card.note_preview}><span>{card.note_preview}</span></td>
                     <td style={td} className="hide-narrow">{card.card_order}</td>
-                    <td style={td}>{STATE_LABELS[card.card_state] ?? card.card_state}</td>
+                    <td style={td}>{stateName(card.card_state)}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{time(card.due)}</td>
                   </tr>
                 ))}

@@ -12,13 +12,14 @@ import Pagination from '../components/Pagination';
 import { QueueOrder } from '../components/QueuePositions';
 import { setCardsPageSize, useCardsPageSize, type PageSize } from '../preferences';
 import { useAuth } from '../hooks/useAuth';
+import { useCardStates } from '../hooks/useCardStates';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
 import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import { selectedCount, type IdsOrQuery } from '../selection';
-import { STATE_LABELS, type CardResponse, type UpdateCardsRequest } from '../types/spares';
+import type { CardResponse, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
@@ -111,6 +112,7 @@ function replaceCard(cards: CardResponse[], card: CardResponse): CardResponse[] 
 
 export default function CardsPage() {
   const { credentials, logout } = useAuth();
+  const { stateName } = useCardStates();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
@@ -402,7 +404,7 @@ export default function CardsPage() {
                       <td style={td}>{card.id}</td>
                       <td style={td}>{formatNoteId(card.note_id)}</td>
                       <td style={td} className="hide-narrow">{card.order}</td>
-                      <td style={td}>{STATE_LABELS[card.state] ?? card.state}</td>
+                      <td style={td}>{stateName(card.state)}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>
                       <td style={td} className="hide-narrow">{card.desired_retention}</td>
                       <td style={td} className="hide-narrow">{card.special_state ?? '—'}</td>

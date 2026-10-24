@@ -342,12 +342,15 @@ export interface RedoEventResponse {
   redo_event_ids: number[];
 }
 
-export const STATE_LABELS: Record<number, string> = {
-  0: 'New',
-  1: 'Learning',
-  2: 'Review',
-  3: 'Relearning',
-};
+/** What spares treats a card state as, whatever its scheduler calls it. */
+export type StateRole = 'New' | 'Learning' | 'Review' | 'Relearning';
+
+/** A state a scheduler can put a card in, from `getSchedulerStates`. */
+export interface CardState {
+  id: number;
+  name: string;
+  role: StateRole;
+}
 
 export interface StatisticsResponse {
   /** Distinct cards reviewed, crams excluded. */

@@ -1,6 +1,7 @@
 import type {
   CardResponse,
   CardReviewEntry,
+  CardState,
   CreateNoteRequest,
   CreateTagRequest,
   Credentials,
@@ -664,6 +665,11 @@ export function cachedReviewHistory(): ReviewHistoryResponse | undefined {
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {
   return memoize(`ratings:${name}`, () => withOfflineCopy(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`)));
+}
+
+/** The states the scheduler puts cards in. */
+export async function getSchedulerStates(name: string): Promise<CardState[]> {
+  return memoize(`states:${name}`, () => withOfflineCopy(`states:${name}`, () => apiFetch('States fetch', `/api/scheduler/${encodeURIComponent(name)}/states`)));
 }
 
 /** The cards a review would show next, to review offline. */

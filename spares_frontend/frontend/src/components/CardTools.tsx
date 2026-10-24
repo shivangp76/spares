@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ApiError, forgetCard, getLeeches, searchCards, unburyCards, updateCards } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
-import { STATE_LABELS, type CardResponse, type CardsSelector, type SpecialStateUpdate, type UpdateCardsRequest } from '../types/spares';
+import { useCardStates } from '../hooks/useCardStates';
+import type { CardResponse, CardsSelector, SpecialStateUpdate, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, sectionLabel, td, th } from '../utils';
 import ActionResult, { type ActionOutcome } from './ActionResult';
 import SearchInput, { type SearchInputError } from './SearchInput';
@@ -79,6 +80,7 @@ export default function CardTools({ onOpenCard }: {
   onOpenCard?: (index: number, cards: CardResponse[]) => void;
 }) {
   const { credentials } = useAuth();
+  const { stateName } = useCardStates();
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
   const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -258,7 +260,7 @@ export default function CardTools({ onOpenCard }: {
                   >
                     <td style={td}>{c.id}</td>
                     <td style={td}>{formatNoteId(c.note_id)}</td>
-                    <td style={td}>{STATE_LABELS[c.state] ?? c.state}</td>
+                    <td style={td}>{stateName(c.state)}</td>
                     <td style={td}>{new Date(c.due).toLocaleString()}</td>
                     <td style={td}>{c.special_state ?? '—'}</td>
                   </tr>

@@ -51,6 +51,7 @@ import ReviewHeatmap from '../components/ReviewHeatmap';
 import Navbar from '../components/Navbar';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useAuth } from '../hooks/useAuth';
+import { useCardStates } from '../hooks/useCardStates';
 import { dayAfter, formatBuryUntil, localDateString, useBuryUntilDate } from '../hooks/useBuryUntilDate';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -61,7 +62,6 @@ import {
 } from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
-  STATE_LABELS,
   type GetReviewCardResponse,
   type NoteResponse,
   type Rating,
@@ -202,6 +202,7 @@ const sameFilter = (a: RecentFilter, b: RecentFilter) => a.mode === b.mode && a.
 export default function ReviewPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
+  const { stateName } = useCardStates();
 
   const [phase, setPhase] = useState<Phase>('landing');
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
@@ -1026,7 +1027,7 @@ export default function ReviewPage() {
   const cardCounts = card
     ? Object.entries(card.cards_left_by_state)
         .filter(([, count]) => count > 0)
-        .map(([stateId, count]) => `${STATE_LABELS[Number(stateId)] ?? stateId}: ${count}`)
+        .map(([stateId, count]) => `${stateName(Number(stateId))}: ${count}`)
         .join(' · ')
     : '';
 
@@ -1111,7 +1112,7 @@ export default function ReviewPage() {
               .map(([stateId, count]) => (
                 <div key={stateId} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: isNarrow ? '6px 8px' : '6px 14px', textAlign: 'center', boxSizing: 'border-box', height: DUE_CARD_HEIGHT, minWidth: 0 }}>
                   <div style={{ fontSize: 20, fontWeight: 600, lineHeight: '26px' }}>{count}</div>
-                  <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--text-secondary)' }}>{STATE_LABELS[Number(stateId)] ?? stateId}</div>
+                  <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--text-secondary)' }}>{stateName(Number(stateId))}</div>
                 </div>
               ))}
             {statistics && Object.values(statistics.due_count_by_state).every(c => c === 0) && (
