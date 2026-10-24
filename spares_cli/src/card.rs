@@ -27,6 +27,7 @@ use crate::card_info::fetch_card_reviews;
 use crate::card_info::print_card_info;
 use crate::history::print_history;
 use crate::review::forget_card;
+use crate::review::queue::print_queue_positions;
 use crate::review::review_cards;
 use crate::saved_search::saved_query;
 use crate::search::print_examples;
@@ -186,6 +187,9 @@ pub(crate) async fn handle(
             review_cards(review_args, base_url, client)
                 .await
                 .map_err(|e| miette!("{}", e))?;
+        }
+        CardCommands::Queue(queue_args) => {
+            print_queue_positions(queue_args, base_url, client).await?;
         }
         CardCommands::Advance(AdvanceArgs {
             count,

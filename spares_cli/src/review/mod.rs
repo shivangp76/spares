@@ -67,6 +67,7 @@ use crate::card_info::print_card_info;
 use crate::import::import_from_files;
 
 mod audio;
+pub(crate) mod queue;
 mod typed_answer;
 pub(crate) mod utils;
 use spares_core::parsers::cloze_tag_str;

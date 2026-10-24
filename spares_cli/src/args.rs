@@ -21,6 +21,7 @@ use crate::deploy::DeployArgs;
 use crate::import::ImportArgs;
 use crate::migrate::MigrateArgs;
 use crate::review::ReviewArgs;
+use crate::review::queue::QueueArgs;
 use crate::statistics::Period;
 use crate::statistics::Section;
 use crate::sync::SyncArgs;
@@ -371,6 +372,7 @@ pub(crate) enum CardCommands {
     Search(SearchArgs),
     /// Study cards
     Review(ReviewArgs),
+    Queue(QueueArgs),
     /// Advance cards (review material ahead of time)
     Advance(AdvanceArgs),
     /// Postpone cards (delay reviews)
