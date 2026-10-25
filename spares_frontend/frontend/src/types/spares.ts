@@ -676,6 +676,28 @@ export interface NoteMatch {
   matches: [number, number][];
 }
 
+/** What a card's reviews say about it, counted as the search fields `c.interval`, `c.reps`, `c.lapses` and `c.reviewed` are. */
+export interface CardStats {
+  /** `null` for a card never reviewed */
+  interval_days: number | null;
+  reps: number;
+  lapses: number;
+  last_reviewed: string | null;
+}
+
+/** A card a search found, with what its table shows besides the card. */
+export interface CardMatch {
+  card: CardResponse;
+  parser_name: string;
+  stats: CardStats;
+}
+
+/** A field a search page is sorted by first, like a clicked column, as `sort_by_asc` takes it. */
+export interface SearchSort {
+  field: string;
+  descending: boolean;
+}
+
 /** One page of a search's results, and how many there are on every page together. */
 export interface SearchPage<T> {
   total: number;

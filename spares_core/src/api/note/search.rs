@@ -2,22 +2,27 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 
+use chrono::DateTime;
 use sqlx::sqlite::SqlitePool;
 
 use super::enrich_note;
 use crate::Error;
+use crate::LibraryError;
 use crate::api::note::get_note_links_map;
 use crate::api::note::match_keyword;
 use crate::api::placeholders;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::model::Card;
+use crate::model::CardId;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
 use crate::model::Score;
 use crate::model::SpecialState;
 use crate::schema::card::CardResponse;
+use crate::schema::note::CardMatch;
+use crate::schema::note::CardStats;
 use crate::schema::note::GraphEdge;
 use crate::schema::note::GraphNode;
 use crate::schema::note::GraphNodeCards;
@@ -34,10 +39,15 @@ use crate::schema::note::SearchNotesResponse;
 use crate::schema::note::SearchPageItems;
 use crate::schema::note::SearchPageRequest;
 use crate::schema::note::SearchPageResponse;
+use crate::schema::note::SearchSort;
 use crate::schema::note::UnmatchedKeywordResponse;
 use crate::schema::note::UnmatchedLink;
 use crate::search::QueryReturnItemType;
 use crate::search::evaluator::Evaluator;
+use crate::search::evaluator::interval_sql;
+use crate::search::evaluator::lapses_sql;
+use crate::search::evaluator::last_rated_sql;
+use crate::search::evaluator::reps_sql;
 use crate::search::evaluator::text_matches;
 use crate::search::evaluator::text_patterns;
 
@@ -95,7 +105,12 @@ pub async fn search_page(
         output_type,
         page,
         limit,
+        sort,
     } = body;
+    let sorted_query = match sort {
+        Some(sort) => sorted_query(&query, &sort)?,
+        None => query.clone(),
+    };
     let limit = limit.clamp(1, MAX_PAGE_LIMIT);
     let offset = page.max(1).saturating_sub(1).saturating_mul(limit);
     // Only the ids of every result are read, and then the page's items in full.
@@ -110,7 +125,10 @@ pub async fn search_page(
                 note: Note,
                 name: String,
             }
-            let ids = Evaluator::new(&query).get_note_ids(db).await?;
+            let ids = match Evaluator::new(&sorted_query).get_note_ids(db).await {
+                Ok(ids) => ids,
+                Err(e) => return Err(query_error(db, &query, &sorted_query, e).await),
+            };
             let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
             let rows: Vec<NoteWithParser> = sqlx::query_as(&format!(
                 "SELECT n.*, p.name FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({})",
@@ -141,29 +159,19 @@ pub async fn search_page(
             })
         }
         QueryReturnItemType::Cards => {
-            #[derive(sqlx::FromRow)]
-            struct CardWithParser {
-                #[sqlx(flatten)]
-                card: Card,
-                name: String,
-            }
-            let ids = Evaluator::new(&query).ranked().get_card_ids(db).await?;
+            let ids = match Evaluator::new(&sorted_query)
+                .ranked()
+                .get_card_ids(db)
+                .await
+            {
+                Ok(ids) => ids,
+                Err(e) => return Err(query_error(db, &query, &sorted_query, e).await),
+            };
             let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
-            let rows: Vec<CardWithParser> = sqlx::query_as(&format!(
-                "SELECT c.*, p.name FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id WHERE c.id IN ({})",
-                in_list(&mut page_ids.iter().map(|id| **id))
-            ))
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-            let mut rows = rows
-                .into_iter()
-                .map(|row| (row.card.id, row))
-                .collect::<HashMap<_, _>>();
+            let mut rows = card_matches(db, &in_list(&mut page_ids.iter().map(|id| **id))).await?;
             let cards = page_ids
                 .into_iter()
                 .filter_map(|id| rows.remove(id))
-                .map(|row| (CardResponse::new(&row.card), row.name))
                 .collect();
             Ok(SearchPageResponse {
                 total: ids.len(),
@@ -171,6 +179,87 @@ pub async fn search_page(
             })
         }
     }
+}
+
+/// The cards `ids_sql`, a list of ids for `IN`, with what their reviews say, by id.
+async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, CardMatch>, Error> {
+    #[derive(sqlx::FromRow)]
+    struct CardWithParser {
+        #[sqlx(flatten)]
+        card: Card,
+        name: String,
+        interval_days: Option<f64>,
+        reps: u32,
+        lapses: u32,
+        last_reviewed: Option<i64>,
+    }
+    let rows: Vec<CardWithParser> = sqlx::query_as(&format!(
+        "SELECT c.*, p.name, {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed
+        FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id
+        WHERE c.id IN ({ids_sql})",
+        interval_sql(),
+        reps_sql(),
+        lapses_sql(),
+        last_rated_sql(),
+    ))
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let card_match = CardMatch {
+                card: CardResponse::new(&row.card),
+                parser_name: row.name,
+                stats: CardStats {
+                    interval_days: row.interval_days,
+                    reps: row.reps,
+                    lapses: row.lapses,
+                    last_reviewed: row
+                        .last_reviewed
+                        .and_then(|at| DateTime::from_timestamp(at, 0)),
+                },
+            };
+            (row.card.id, card_match)
+        })
+        .collect())
+}
+
+/// The error of `query` alone, whose place in the query is right, as it isn't in the query with the
+/// sort added, or `error` if `query` alone has none.
+async fn query_error(db: &SqlitePool, query: &str, sorted_query: &str, error: Error) -> Error {
+    if query == sorted_query {
+        return error;
+    }
+    match Evaluator::new(query).get_note_ids(db).await {
+        Ok(_) => error,
+        Err(e) => e,
+    }
+}
+
+/// `query`, sorted by `sort` first.
+fn sorted_query(query: &str, sort: &SearchSort) -> Result<String, Error> {
+    // The field goes into the query, so it must be only a field.
+    if sort.field.is_empty()
+        || !sort
+            .field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return Err(Error::Library(LibraryError::InvalidConfig(format!(
+            "Can't sort by `{}`, which is not a field",
+            sort.field
+        ))));
+    }
+    let direction = if sort.descending { "desc" } else { "asc" };
+    let term = format!("sort_by_{direction}={}", sort.field);
+    Ok(if query.trim().is_empty() {
+        term
+    } else {
+        // Groups are evaluated in order, before the terms beside them, so the sort is in one of
+        // its own to come first. The query's keeps a top-level `or` in it from taking the sort.
+        format!("({term}) ({query})")
+    })
 }
 
 pub async fn search_keyword(
@@ -578,6 +667,7 @@ mod tests {
                     output_type,
                     page,
                     limit,
+                    sort: None,
                 },
             )
             .await
@@ -611,10 +701,172 @@ mod tests {
         assert_eq!(
             cards
                 .iter()
-                .map(|(card, _)| card.note_id.to_string())
+                .map(|m| m.card.note_id.to_string())
                 .collect::<Vec<_>>(),
             ["e", "d", "c"]
         );
+    }
+
+    /// Notes `a` to `c`, each with a card, where `a` is due last.
+    async fn sort_pool(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) -> SqlitePool {
+        let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (letters, due) in [("a", 300_000), ("b", 100_000), ("c", 200_000)] {
+            let note_id = letters.parse::<NoteId>().unwrap();
+            sqlx::query(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, 0, 0, '{}', 1)",
+            )
+            .bind(note_id)
+            .bind(format!("dog {letters}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
+                   desired_retention, state, custom_data) VALUES (?, 1, 1, ?, 0, 0, 0.9, 2, '{}')"#,
+            )
+            .bind(note_id)
+            .bind(due)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn card_page(pool: &SqlitePool, query: &str, sort: Option<SearchSort>) -> Vec<CardMatch> {
+        let page = search_page(
+            pool,
+            SearchPageRequest {
+                query: query.to_string(),
+                output_type: QueryReturnItemType::Cards,
+                page: 1,
+                limit: 10,
+                sort,
+            },
+        )
+        .await
+        .unwrap();
+        let SearchPageItems::Cards(cards) = page.items else {
+            panic!("asked for cards")
+        };
+        cards
+    }
+
+    fn note_ids(cards: &[CardMatch]) -> Vec<String> {
+        cards.iter().map(|m| m.card.note_id.to_string()).collect()
+    }
+
+    #[sqlx::test]
+    async fn sorts_by_a_column_before_the_query(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = sort_pool(pool_options, options).await;
+        let due = |descending| {
+            Some(SearchSort {
+                field: "c.due".to_string(),
+                descending,
+            })
+        };
+        assert_eq!(
+            note_ids(&card_page(&pool, "", due(false)).await),
+            ["b", "c", "a"]
+        );
+        assert_eq!(
+            note_ids(&card_page(&pool, "  ", due(true)).await),
+            ["a", "c", "b"]
+        );
+        // The column comes first, and the query's sort breaks ties.
+        assert_eq!(
+            note_ids(&card_page(&pool, "dog sort_by_asc=id", due(true)).await),
+            ["a", "c", "b"]
+        );
+        // A top-level `or` is kept together.
+        assert_eq!(
+            note_ids(&card_page(&pool, r#""dog b" or "dog a""#, due(false)).await),
+            ["b", "a"]
+        );
+        // An error in the query is placed in the query as written.
+        let bad = search_page(
+            &pool,
+            SearchPageRequest {
+                query: "dog c.nope=1".to_string(),
+                output_type: QueryReturnItemType::Cards,
+                page: 1,
+                limit: 10,
+                sort: due(false),
+            },
+        )
+        .await
+        .unwrap_err();
+        let unsorted = Evaluator::new("dog c.nope=1")
+            .get_note_ids(&pool)
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{bad:?}"), format!("{unsorted:?}"));
+        let not_a_field = SearchSort {
+            field: "c.due tag=x".to_string(),
+            descending: false,
+        };
+        assert!(
+            search_page(
+                &pool,
+                SearchPageRequest {
+                    query: String::new(),
+                    output_type: QueryReturnItemType::Cards,
+                    page: 1,
+                    limit: 10,
+                    sort: Some(not_a_field),
+                },
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[sqlx::test]
+    async fn cards_come_with_their_review_stats(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = sort_pool(pool_options, options).await;
+        let card_id: i64 = sqlx::query_scalar("SELECT id FROM card WHERE due = 300000")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // A pass, then a lapse a day before the card is due, and a cram, which is left out.
+        sqlx::query(
+            r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+               VALUES (?1, 10, 0, 3, 'fsrs', 0, 1, 1, 2, '{}'),
+                      (?1, 300000 - 86400, 0, 1, 'fsrs', 0, 1, 1, 2, '{}'),
+                      (?1, 250000, 16, 3, 'fsrs', 0, 1, 1, 2, '{}')",
+        )
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let cards = card_page(&pool, "", None).await;
+        let reviewed = cards.iter().find(|m| m.card.id == card_id).unwrap();
+        assert_eq!(
+            reviewed.stats,
+            CardStats {
+                interval_days: Some(1.0),
+                reps: 2,
+                lapses: 1,
+                last_reviewed: DateTime::from_timestamp(300_000 - 86400, 0),
+            }
+        );
+        let other = cards.iter().find(|m| m.card.id != card_id).unwrap();
+        assert_eq!(other.stats, CardStats::default());
+        assert_eq!(reviewed.parser_name, "markdown");
     }
 
     /// Notes `a` to `e`, where `d` links to `c`, `c` to `b`, `b` to `a` and `e` to `a`, and `a`

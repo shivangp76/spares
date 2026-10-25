@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 
 const CHANGE_EVENT = 'spares-preferences-change';
 
@@ -52,6 +52,50 @@ function choicePreference<T extends string>(key: string, values: readonly T[], d
 
   function use(): T {
     return useSyncExternalStore(subscribe, get);
+  }
+
+  return { get, set, use };
+}
+
+/** A setting kept in this browser that is some of `values`, kept in their order, falling back to
+    `defaultValue` when unset or unreadable. Values no longer known are dropped. */
+export function listPreference<T extends string>(key: string, values: readonly T[], defaultValue: readonly T[]) {
+  function stored(): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function parse(raw: string | null): T[] {
+    if (raw === null) return [...defaultValue];
+    try {
+      const list: unknown = JSON.parse(raw);
+      if (!Array.isArray(list)) return [...defaultValue];
+      return values.filter(v => list.includes(v));
+    } catch {
+      return [...defaultValue];
+    }
+  }
+
+  function get(): T[] {
+    return parse(stored());
+  }
+
+  function set(value: readonly T[]): void {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // Without storage the preference can't be changed, so the default stays
+    }
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  }
+
+  function use(): T[] {
+    // The stored string is compared, as a parsed list would be new on each read
+    const raw = useSyncExternalStore(subscribe, stored);
+    return useMemo(() => parse(raw), [raw]);
   }
 
   return { get, set, use };
@@ -129,3 +173,17 @@ export const useTagsPageSize = tagsPageSize.use;
 const keywordsPageSize = choicePreference<PageSize>('spares_keywords_page_size', PAGE_SIZES, '50');
 export const setKeywordsPageSize = keywordsPageSize.set;
 export const useKeywordsPageSize = keywordsPageSize.use;
+
+export const CARD_COLUMNS = ['id', 'note', 'order', 'state', 'due', 'retention', 'special', 'stability', 'difficulty', 'interval', 'reps', 'lapses', 'reviewed', 'created', 'updated'] as const;
+export type CardColumn = typeof CARD_COLUMNS[number];
+/** Which columns the cards page's table shows. */
+const cardColumns = listPreference<CardColumn>('spares_cards_columns', CARD_COLUMNS, ['id', 'note', 'order', 'state', 'due', 'retention', 'special']);
+export const setCardColumns = cardColumns.set;
+export const useCardColumns = cardColumns.use;
+
+export const NOTE_COLUMNS = ['id', 'data', 'tags', 'keywords', 'cards', 'parser', 'created', 'updated'] as const;
+export type NoteColumn = typeof NOTE_COLUMNS[number];
+/** Which columns the notes page's table shows. */
+const noteColumns = listPreference<NoteColumn>('spares_notes_columns', NOTE_COLUMNS, ['id', 'data', 'tags', 'keywords', 'cards']);
+export const setNoteColumns = noteColumns.set;
+export const useNoteColumns = noteColumns.use;

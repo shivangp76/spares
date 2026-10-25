@@ -222,6 +222,20 @@ pub mod note {
         pub page: usize,
         /// How many results a page has, from 1 to 1000.
         pub limit: usize,
+        /// Sorts the results by this first, as `sort_by_asc` or `sort_by_desc` at the start of
+        /// `query` would, so sorts in `query` only break ties. `None` keeps the order of `query`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub sort: Option<SearchSort>,
+    }
+
+    /// A field of a search to sort by, like a table column a person clicked.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct SearchSort {
+        /// A field that `sort_by_asc` takes, like `c.due` or `created_at`.
+        pub field: String,
+        /// Largest first.
+        #[serde(default)]
+        pub descending: bool,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -234,7 +248,29 @@ pub mod note {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub enum SearchPageItems {
         Notes(Vec<NoteMatch>),
-        Cards(Vec<(CardResponse, String)>),
+        Cards(Vec<CardMatch>),
+    }
+
+    /// A card a search found, with what its table shows besides the card.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct CardMatch {
+        pub card: CardResponse,
+        pub parser_name: String,
+        pub stats: CardStats,
+    }
+
+    /// What a card's reviews say about it, as the search fields of the same names count it.
+    #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+    pub struct CardStats {
+        /// Days from the last review to when the card is due, as `c.interval`. `None` for a new
+        /// card, or one never reviewed.
+        pub interval_days: Option<f64>,
+        /// How many times the card was reviewed, leaving out crams, as `c.reps`.
+        pub reps: u32,
+        /// How many times the card lapsed, as `c.lapses`.
+        pub lapses: u32,
+        /// When the card was last reviewed, leaving out crams, as `c.reviewed`.
+        pub last_reviewed: Option<DateTime<Utc>>,
     }
 
     /// A note a search found, and where its text has what the search looks for.

@@ -10,7 +10,9 @@ import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import Pagination from '../components/Pagination';
 import { QueueOrder } from '../components/QueuePositions';
-import { setCardsPageSize, useCardsPageSize, type PageSize } from '../preferences';
+import { setCardColumns, setCardsPageSize, useCardColumns, useCardsPageSize, type CardColumn, type PageSize } from '../preferences';
+import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
+import { useTableSort } from '../hooks/useTableSort';
 import { useAuth } from '../hooks/useAuth';
 import { useCardStates } from '../hooks/useCardStates';
 import { useDetailView } from '../hooks/useDetailView';
@@ -19,7 +21,7 @@ import { useRowSelection } from '../hooks/useRowSelection';
 import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import { selectedCount, type IdsOrQuery } from '../selection';
-import type { CardResponse, UpdateCardsRequest } from '../types/spares';
+import type { CardResponse, CardStats, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
@@ -105,6 +107,45 @@ const BULK_ACTIONS: BulkAction[] = [
   FILTERED_TAG_ACTION,
 ];
 
+/** A row of the cards table: a card, with what its reviews say when the page was read from a search. */
+interface CardRow {
+  card: CardResponse;
+  stats: CardStats | undefined;
+}
+
+/** `days` as a short length of time, like `10m`, `5h`, `12d` or `1.5y`. */
+function formatDays(days: number): string {
+  if (days < 1 / 24) return `${Math.round(days * 24 * 60)}m`;
+  if (days < 1) return `${Math.round(days * 24)}h`;
+  if (days < 365) return `${Math.round(days)}d`;
+  return `${(days / 365).toFixed(1)}y`;
+}
+
+/** The columns read from a card's reviews, which only a search returns. */
+const STATS_COLUMNS: readonly CardColumn[] = ['interval', 'reps', 'lapses', 'reviewed'];
+
+function cardColumns(stateName: (state: number) => string): Column<CardRow, CardColumn>[] {
+  const date = (at: string | null | undefined) => (at ? new Date(at).toLocaleDateString() : '—');
+  const nowrap = { whiteSpace: 'nowrap' } as const;
+  return [
+    { id: 'id', label: 'ID', sortField: 'c.id', render: r => r.card.id },
+    { id: 'note', label: 'Note', sortField: 'id', render: r => formatNoteId(r.card.note_id) },
+    { id: 'order', label: 'Order', hideNarrow: true, render: r => r.card.order },
+    { id: 'state', label: 'State', sortField: 'c.state', render: r => stateName(r.card.state) },
+    { id: 'due', label: 'Due', sortField: 'c.due', tdStyle: nowrap, render: r => date(r.card.due) },
+    { id: 'retention', label: 'Retention', sortField: 'c.desired_retention', hideNarrow: true, render: r => r.card.desired_retention },
+    { id: 'special', label: 'Special', hideNarrow: true, render: r => r.card.special_state ?? '—' },
+    { id: 'stability', label: 'Stability', sortField: 'c.stability', hideNarrow: true, render: r => (r.card.state === 0 ? '—' : formatDays(r.card.stability)) },
+    { id: 'difficulty', label: 'Difficulty', sortField: 'c.difficulty', hideNarrow: true, render: r => (r.card.state === 0 ? '—' : r.card.difficulty.toFixed(1)) },
+    { id: 'interval', label: 'Interval', sortField: 'c.interval', render: r => (r.stats?.interval_days != null ? formatDays(r.stats.interval_days) : '—') },
+    { id: 'reps', label: 'Reviews', sortField: 'c.reps', hideNarrow: true, render: r => r.stats?.reps ?? '—' },
+    { id: 'lapses', label: 'Lapses', sortField: 'c.lapses', hideNarrow: true, render: r => r.stats?.lapses ?? '—' },
+    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', tdStyle: nowrap, render: r => date(r.stats?.last_reviewed) },
+    { id: 'created', label: 'Created', sortField: 'c.created_at', tdStyle: nowrap, hideNarrow: true, render: r => date(r.card.created_at) },
+    { id: 'updated', label: 'Modified', sortField: 'c.updated_at', tdStyle: nowrap, hideNarrow: true, render: r => date(r.card.updated_at) },
+  ];
+}
+
 /** Replaces `card` in `cards` by id, keeping everything else. */
 function replaceCard(cards: CardResponse[], card: CardResponse): CardResponse[] {
   return cards.map(c => (c.id === card.id ? card : c));
@@ -119,6 +160,16 @@ export default function CardsPage() {
   const pageSizeChoice = useCardsPageSize();
   const pageSize = Number(pageSizeChoice);
   const [cards, setCards] = useState<CardResponse[]>([]);
+  // What the cards' reviews say, by card id, for the pages read from a search
+  const [stats, setStats] = useState<Map<number, CardStats>>(new Map());
+  const { sort, cycle: cycleSort } = useTableSort();
+  const shownColumnIds = useCardColumns();
+  const allColumns = cardColumns(stateName);
+  const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
+  // Without a search, the list is read from a search for every card when sorted or showing what
+  // only a search returns, and how many cards there are in all
+  const listBySearch = sort !== null || shownColumnIds.some(c => STATS_COLUMNS.includes(c));
+  const [listTotal, setListTotal] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   // The search is kept in the URL so it survives navigating away and back
@@ -142,12 +193,35 @@ export default function CardsPage() {
   // Whether the search lists its cards in the order the default review shows them
   const queueOrder = searchParams.get('order') === 'queue' && searchQuery !== null;
 
+  const sortField = sort?.field ?? null;
+  const sortDescending = sort?.descending ?? false;
+
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
-    if (searchQuery !== null) return;
+    if (searchQuery !== null || !listBySearch) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
+    setLoading(true);
+    let cancelled = false;
+    searchCardsPage('', page, pageSize, sortField === null ? null : { field: sortField, descending: sortDescending })
+      .then(data => {
+        if (cancelled) return;
+        setCards(data.items.map(m => m.card));
+        setStats(new Map(data.items.map(m => [m.card.id, m.stats])));
+        setListTotal(data.total);
+        setError(null);
+      })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch, sortField, sortDescending]);
+
+  useEffect(() => {
+    if (!credentials) { navigate('/login'); return; }
+    if (searchQuery !== null || listBySearch) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the total is only known from a search
+    setListTotal(null);
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedCardsPage(page, pageSize);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     if (cached) setCards(cached);
     setLoading(cached === undefined);
     let cancelled = false;
@@ -162,7 +236,7 @@ export default function CardsPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_cards_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -176,10 +250,11 @@ export default function CardsPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchCardsPage(searchQuery, page, pageSize)
+    searchCardsPage(searchQuery, page, pageSize, sortField === null ? null : { field: sortField, descending: sortDescending })
       .then(data => {
         if (cancelled) return;
-        setSearchResults(data.items);
+        setSearchResults(data.items.map(m => m.card));
+        setStats(new Map(data.items.map(m => [m.card.id, m.stats])));
         setSearchTotal(data.total);
         saveRecentSearch(searchQuery);
         if (!reloading.current) setBrowse(null);
@@ -194,7 +269,7 @@ export default function CardsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch, sortField, sortDescending]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -217,8 +292,8 @@ export default function CardsPage() {
     setBrowse(null);
   }
 
-  const pageCount = Math.max(1, Math.ceil(searchTotal / pageSize));
-  const hasNextPage = searchResults !== null ? page < pageCount : cards.length === pageSize;
+  const pageCount = Math.max(1, Math.ceil((searchResults !== null ? searchTotal : listTotal ?? 0) / pageSize));
+  const hasNextPage = searchResults !== null || listTotal !== null ? page < pageCount : cards.length === pageSize;
 
   function onCardChanged(card: CardResponse) {
     setCards(prev => replaceCard(prev, card));
@@ -322,16 +397,17 @@ export default function CardsPage() {
           {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{savedSearchError}</div>}
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
-          {searchResults !== null && (
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              <span>{searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"</span>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+            {searchResults !== null && <span>{searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"</span>}
+            {searchResults !== null && (
               <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 Order
                 <select
                   value={queueOrder ? 'queue' : 'search'}
                   onChange={e => setSearchParams(prev => {
                     const next = new URLSearchParams(prev);
-                    if (e.target.value === 'queue') next.set('order', 'queue');
+                    // The queue order has no columns to sort by
+                    if (e.target.value === 'queue') { next.set('order', 'queue'); next.delete('sort'); next.delete('dir'); }
                     else next.delete('order');
                     return next;
                   })}
@@ -341,8 +417,13 @@ export default function CardsPage() {
                   <option value="queue">Queue position</option>
                 </select>
               </label>
-            </div>
-          )}
+            )}
+            {!queueOrder && (
+              <span style={{ marginLeft: 'auto' }}>
+                <ColumnPicker columns={allColumns} shown={shownColumnIds} onChange={setCardColumns} />
+              </span>
+            )}
+          </div>
 
           <BulkActionBar
             ref={bulkBar}
@@ -381,13 +462,7 @@ export default function CardsPage() {
                         label={searchQuery !== null ? 'Select all cards found' : 'Select the cards on this page'}
                       />
                     </th>
-                    <th style={th}>ID</th>
-                    <th style={th}>Note</th>
-                    <th style={th} className="hide-narrow">Order</th>
-                    <th style={th}>State</th>
-                    <th style={th}>Due</th>
-                    <th style={th} className="hide-narrow">Retention</th>
-                    <th style={th} className="hide-narrow">Special</th>
+                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} />)}
                   </tr>
                 </thead>
                 <tbody ref={tableBody}>
@@ -401,18 +476,16 @@ export default function CardsPage() {
                       <td style={checkTd} onClick={e => { e.stopPropagation(); rows.toggleRow(displayedCards, i, e.shiftKey); }}>
                         <Checkbox checked={rows.isSelected(card.id)} onClick={e => rows.toggleRow(displayedCards, i, e.shiftKey)} label={`Select card ${card.id}`} />
                       </td>
-                      <td style={td}>{card.id}</td>
-                      <td style={td}>{formatNoteId(card.note_id)}</td>
-                      <td style={td} className="hide-narrow">{card.order}</td>
-                      <td style={td}>{stateName(card.state)}</td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(card.due).toLocaleDateString()}</td>
-                      <td style={td} className="hide-narrow">{card.desired_retention}</td>
-                      <td style={td} className="hide-narrow">{card.special_state ?? '—'}</td>
+                      {columns.map(column => (
+                        <td key={column.id} style={column.tdStyle ? { ...td, ...column.tdStyle } : td} className={column.hideNarrow ? 'hide-narrow' : undefined}>
+                          {column.render({ card, stats: stats.get(card.id) })}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                   {displayedCards.length === 0 && (
                     <tr>
-                      <td colSpan={8} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                      <td colSpan={columns.length + 1} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
                         {searchResults === null && page === 1
                           ? <>No cards yet. Cards are made by the clozes of notes, written on the <Link to="/notes">Notes</Link> page.</>
                           : 'No cards found'}
@@ -424,7 +497,7 @@ export default function CardsPage() {
             </div>
           )}
 
-          {!queueOrder && <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />}
+          {!queueOrder && <Pagination page={page} pageCount={searchResults !== null || listTotal !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />}
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

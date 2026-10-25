@@ -16,7 +16,9 @@ import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
 import NoteDetail, { type NotePaneHandle } from '../components/NoteDetail';
 import Pagination from '../components/Pagination';
-import { setNotesPageSize, useNotesPageSize, type PageSize } from '../preferences';
+import { setNoteColumns, setNotesPageSize, useNoteColumns, useNotesPageSize, type NoteColumn, type PageSize } from '../preferences';
+import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
+import { useTableSort } from '../hooks/useTableSort';
 import type { NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -39,6 +41,39 @@ async function tagsByUse(notes: NoteResponse[]): Promise<string[]> {
   return [...uses].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag);
 }
 
+/** The columns the notes table can show, marking where each note's text matches the search. */
+function noteColumns(matches: Map<number, [number, number][]>): Column<NoteResponse, NoteColumn>[] {
+  const date = (at: string) => new Date(at).toLocaleDateString();
+  const nowrap = { whiteSpace: 'nowrap' } as const;
+  return [
+    {
+      id: 'id', label: 'ID', sortField: 'id',
+      render: note => (
+        <>
+          {formatNoteId(note.id)}
+          {note.tags.includes(SYNC_CONFLICT_TAG) && <span className="sync-conflict-badge" title="A sync could not merge this note. Resolve it with `spares sync conflicts`." style={{ marginLeft: 6 }}>conflict</span>}
+        </>
+      ),
+    },
+    {
+      id: 'data', label: 'Data', sortField: 'data',
+      render: note => (
+        <span title={note.data}>
+          {highlightPreview(note.data, matches.get(note.id) ?? [], DATA_PREVIEW_LEN).map((part, i) =>
+            part.mark ? <mark key={i} className="search-match">{part.text}</mark> : part.text,
+          )}
+        </span>
+      ),
+    },
+    { id: 'tags', label: 'Tags', sortField: 'tag', render: note => note.tags.join(', ') || '—' },
+    { id: 'keywords', label: 'Keywords', sortField: 'keyword', hideNarrow: true, render: note => <>{note.keywords.slice(0, 4).join(', ')}{note.keywords.length > 4 ? '…' : ''}</> },
+    { id: 'cards', label: 'Cards', hideNarrow: true, render: note => note.card_count },
+    { id: 'parser', label: 'Parser', sortField: 'parser_name', hideNarrow: true, render: note => note.parser_name },
+    { id: 'created', label: 'Created', sortField: 'created_at', hideNarrow: true, tdStyle: nowrap, render: note => date(note.created_at) },
+    { id: 'updated', label: 'Modified', sortField: 'updated_at', hideNarrow: true, tdStyle: nowrap, render: note => date(note.updated_at) },
+  ];
+}
+
 export default function NotesPage() {
   const { credentials, logout } = useAuth();
   const navigate = useNavigate();
@@ -57,6 +92,15 @@ export default function NotesPage() {
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchMatches, setSearchMatches] = useState<Map<number, [number, number][]>>(new Map());
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
+  const { sort, cycle: cycleSort } = useTableSort();
+  const sortField = sort?.field ?? null;
+  const sortDescending = sort?.descending ?? false;
+  // Without a search, a sorted list is read from a search for every note, which also says how
+  // many there are in all
+  const [listTotal, setListTotal] = useState<number | null>(null);
+  const shownColumnIds = useNoteColumns();
+  const allColumns = noteColumns(searchMatches);
+  const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
   // The new note form stays mounted, hidden, while other notes are viewed, so its unsaved
@@ -77,10 +121,30 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
-    if (searchQuery !== null) return;
+    if (searchQuery !== null || sortField === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
+    setLoading(true);
+    let cancelled = false;
+    searchNotesPage('', page, pageSize, { field: sortField, descending: sortDescending })
+      .then(data => {
+        if (cancelled) return;
+        setNotes(data.items.map(m => m.note));
+        for (const { note } of data.items) seenNotes.current.set(note.id, note);
+        setListTotal(data.total);
+        setError(null);
+      })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, sortField, sortDescending]);
+
+  useEffect(() => {
+    if (!credentials) { navigate('/login'); return; }
+    if (searchQuery !== null || sortField !== null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the total is only known from a search
+    setListTotal(null);
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedNotesPage(page, pageSize);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     if (cached) setNotes(cached);
     setLoading(cached === undefined);
     let cancelled = false;
@@ -96,7 +160,7 @@ export default function NotesPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, sortField]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_notes_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -110,7 +174,7 @@ export default function NotesPage() {
     setLoading(true);
     setError(null);
     let cancelled = false;
-    searchNotesPage(searchQuery, page, pageSize)
+    searchNotesPage(searchQuery, page, pageSize, sortField === null ? null : { field: sortField, descending: sortDescending })
       .then(data => {
         if (cancelled) return;
         setSearchResults(data.items.map(m => m.note));
@@ -128,7 +192,7 @@ export default function NotesPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch]);
+  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch, sortField, sortDescending]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -158,8 +222,8 @@ export default function NotesPage() {
     setSearchParams(prev => withPage(withSearch(prev, null), null));
   }
 
-  const pageCount = Math.max(1, Math.ceil(searchTotal / pageSize));
-  const hasNextPage = searchResults !== null ? page < pageCount : notes.length === pageSize;
+  const pageCount = Math.max(1, Math.ceil((searchResults !== null ? searchTotal : listTotal ?? 0) / pageSize));
+  const hasNextPage = searchResults !== null || listTotal !== null ? page < pageCount : notes.length === pageSize;
 
   const displayedNotes = searchResults ?? notes;
   // -1 if the selected note was opened from a link and isn't in the table
@@ -337,11 +401,12 @@ export default function NotesPage() {
           {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{savedSearchError}</div>}
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
-          {searchResults !== null && (
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              {searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+            {searchResults !== null && <span>{searchTotal} result{searchTotal !== 1 ? 's' : ''} for "{searchQuery}"</span>}
+            <span style={{ marginLeft: 'auto' }}>
+              <ColumnPicker columns={allColumns} shown={shownColumnIds} onChange={setNoteColumns} />
+            </span>
+          </div>
 
           <BulkActionBar
             noun="note"
@@ -372,11 +437,7 @@ export default function NotesPage() {
                         label={searchQuery !== null ? 'Select all notes found' : 'Select the notes on this page'}
                       />
                     </th>
-                    <th style={th}>ID</th>
-                    <th style={th}>Data</th>
-                    <th style={th}>Tags</th>
-                    <th style={th} className="hide-narrow">Keywords</th>
-                    <th style={th} className="hide-narrow">Cards</th>
+                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} />)}
                   </tr>
                 </thead>
                 <tbody ref={tableBody}>
@@ -390,28 +451,16 @@ export default function NotesPage() {
                       <td style={checkTd} onClick={e => { e.stopPropagation(); rows.toggleRow(displayedNotes, i, e.shiftKey); }}>
                         <Checkbox checked={rows.isSelected(note.id)} onClick={e => rows.toggleRow(displayedNotes, i, e.shiftKey)} label={`Select note ${note.id}`} />
                       </td>
-                      <td style={td}>
-                        {formatNoteId(note.id)}
-                        {note.tags.includes(SYNC_CONFLICT_TAG) && <span className="sync-conflict-badge" title="A sync could not merge this note. Resolve it with `spares sync conflicts`." style={{ marginLeft: 6 }}>conflict</span>}
-                      </td>
-                      <td style={dataTd} className="clamp-narrow" title={note.data}>
-                        <span>
-                          {highlightPreview(note.data, searchMatches.get(note.id) ?? [], DATA_PREVIEW_LEN).map((part, i) =>
-                            part.mark ? <mark key={i} className="search-match">{part.text}</mark> : part.text,
-                          )}
-                        </span>
-                      </td>
-                      <td style={td}>{note.tags.join(', ') || '—'}</td>
-                      <td style={td} className="hide-narrow">
-                        {note.keywords.slice(0, 4).join(', ')}
-                        {note.keywords.length > 4 ? '…' : ''}
-                      </td>
-                      <td style={td} className="hide-narrow">{note.card_count}</td>
+                      {columns.map(column => {
+                        const className = [column.hideNarrow && 'hide-narrow', column.id === 'data' && 'clamp-narrow'].filter(Boolean).join(' ') || undefined;
+                        const style = column.id === 'data' ? dataTd : column.tdStyle ? { ...td, ...column.tdStyle } : td;
+                        return <td key={column.id} style={style} className={className}>{column.render(note)}</td>;
+                      })}
                     </tr>
                   ))}
                   {displayedNotes.length === 0 && (
                     <tr>
-                      <td colSpan={6} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
+                      <td colSpan={columns.length + 1} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>
                         {searchResults === null && page === 1 ? (
                           <>No notes yet. <button onClick={startNewNote} style={{ padding: '2px 8px', fontSize: 12 }}>Write one</button>, or press <kbd>?</kbd> to learn how.</>
                         ) : 'No notes found'}
@@ -423,7 +472,7 @@ export default function NotesPage() {
             </div>
           )}
 
-          <Pagination page={page} pageCount={searchResults !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
+          <Pagination page={page} pageCount={searchResults !== null || listTotal !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

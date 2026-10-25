@@ -1,4 +1,5 @@
 import type {
+  CardMatch,
   CardResponse,
   CardReviewEntry,
   CardState,
@@ -33,6 +34,7 @@ import type {
   SavedSearch,
   SearchField,
   SearchPage,
+  SearchSort,
   StatisticsGraphsRequest,
   StatisticsGraphsResponse,
   StatisticsResponse,
@@ -714,10 +716,10 @@ export async function searchNotes(query: string): Promise<NoteResponse[]> {
 }
 
 /** One page of the notes a search finds, with where each one's text matches. */
-export async function searchNotesPage(query: string, page: number, limit: number): Promise<SearchPage<NoteMatch>> {
+export async function searchNotesPage(query: string, page: number, limit: number, sort: SearchSort | null = null): Promise<SearchPage<NoteMatch>> {
   const data = await apiFetch<{ total: number; items: { Notes: NoteMatch[] } }>('Search', '/api/notes/search/page', {
     method: 'POST',
-    body: JSON.stringify({ query, output_type: 'Notes', page, limit }),
+    body: JSON.stringify({ query, output_type: 'Notes', page, limit, sort }),
   });
   return { total: data.total, items: data.items.Notes };
 }
@@ -803,13 +805,13 @@ export async function searchCards(query: string): Promise<CardResponse[]> {
   return data.Cards.map(([card]) => card);
 }
 
-/** One page of the cards a search finds. */
-export async function searchCardsPage(query: string, page: number, limit: number): Promise<SearchPage<CardResponse>> {
-  const data = await apiFetch<{ total: number; items: { Cards: [CardResponse, string][] } }>('Search', '/api/notes/search/page', {
+/** One page of the cards a search finds, sorted by `sort` first. An empty query finds every card. */
+export async function searchCardsPage(query: string, page: number, limit: number, sort: SearchSort | null = null): Promise<SearchPage<CardMatch>> {
+  const data = await apiFetch<{ total: number; items: { Cards: CardMatch[] } }>('Search', '/api/notes/search/page', {
     method: 'POST',
-    body: JSON.stringify({ query, output_type: 'Cards', page, limit }),
+    body: JSON.stringify({ query, output_type: 'Cards', page, limit, sort }),
   });
-  return { total: data.total, items: data.items.Cards.map(([card]) => card) };
+  return { total: data.total, items: data.items.Cards };
 }
 
 /** Cards that are frequently forgotten. */

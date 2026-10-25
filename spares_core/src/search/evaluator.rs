@@ -2127,13 +2127,13 @@ fn evaluate_comparison(
 
 /// When the card was last reviewed, or NULL if it never was. Crams and forgets are left out, as in
 /// statistics. The `0` is [`ReviewLogKind::Review`].
-fn last_rated_sql() -> String {
+pub(crate) fn last_rated_sql() -> String {
     "(SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = 0)"
         .to_string()
 }
 
 /// How many times the card was reviewed, leaving out crams.
-fn reps_sql() -> String {
+pub(crate) fn reps_sql() -> String {
     format!(
         "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {})",
         ReviewLogKind::Review as u8
@@ -2141,7 +2141,7 @@ fn reps_sql() -> String {
 }
 
 /// How many times the card lapsed, counted like the scheduler's `lapses`.
-fn lapses_sql() -> String {
+pub(crate) fn lapses_sql() -> String {
     format!(
         "(SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = c.id AND {})",
         lapse_sql("rl")
@@ -2165,7 +2165,7 @@ fn leech_sql(value_str: &str) -> Result<String, Error> {
 }
 
 /// Days from the card's last review to when it is due, as in statistics, or NULL for a new card.
-fn interval_sql() -> String {
+pub(crate) fn interval_sql() -> String {
     format!(
         "(CASE WHEN c.state != {} THEN (c.due - {}) / 86400.0 END)",
         NEW_CARD_STATE,
