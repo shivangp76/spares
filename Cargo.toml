@@ -4,6 +4,8 @@ members = [
     "spares_cli",
     "spares_server",
     "spares_frontend",
+    "spares_wasm",
+    "xtask",
 ]
 resolver = "2"
 exclude = ["vendor"]
@@ -18,6 +20,14 @@ sqlx-sqlite = { path = "vendor/sqlx-sqlite-0.9.0" }
 
 [profile.release]
 debug = true
+
+# The browser build of `spares_wasm`, which the web app downloads: small rather than fast.
+[profile.wasm]
+inherits = "release"
+debug = false
+lto = true
+codegen-units = 1
+opt-level = "z"
 
 # SQLite unoptimized makes queries several times slower, e.g. picking the next card to review
 [profile.dev.package.libsqlite3-sys]

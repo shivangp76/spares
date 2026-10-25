@@ -27,16 +27,24 @@ cargo fmt
 cargo clippy
 ```
 
-`spares_core` also builds for the browser, so that the web app can keep a copy of the collection there (in progress). Check that it still does:
+`spares_core` and `spares_server`'s router also build for the browser, where the web app can keep a copy of the collection. Check that they still do:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 # SQLite's C needs a clang that targets wasm. On macOS, Apple's doesn't: use Homebrew's LLVM.
 export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
-cargo clippy -p spares_core --target wasm32-unknown-unknown
+cargo clippy -p spares_wasm --target wasm32-unknown-unknown  # spares_core and spares_server's library too
 ```
 
 There, sqlx is the patched copy in `vendor/` (see `vendor/README.md`).
+
+The web app runs `spares_wasm` (spares in a browser, see its crate docs) in a worker. Build it with:
+
+```sh
+cargo xtask build-wasm
+```
+
+It writes the wasm module and its JS bindings to `spares_frontend/frontend/src/local/pkg`. The `wasm` profile builds it small (LTO, `opt-level = "z"`): about 7.6 MB, 1.75 MB with brotli. Its JS bindings come from `wasm-bindgen-cli-support`, at the version of the `wasm-bindgen` crate, so there is no `wasm-bindgen` CLI to install. When upgrading `wasm-bindgen`, upgrade both (in `spares_wasm/Cargo.toml` and `xtask/Cargo.toml`).
 
 ## Documentation
 

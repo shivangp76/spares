@@ -1,0 +1,3 @@
+[alias]
+# Development tasks, e.g. `cargo xtask build-wasm` (see xtask/src/main.rs)
+xtask = "run -q -p xtask --"
