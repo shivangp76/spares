@@ -127,17 +127,17 @@ export default function NewNoteForm({ onCreated, onCancel, ref }: { onCreated: (
             <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
           </div>
         </div>
-        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} placeholder={firstExample && `e.g. ${firstExample}`} extensions={editor.dataExtensions} basicSetup={{ lineNumbers: editor.lineNumbers }} minHeight="120px" style={cmStyle} />
+        <CodeMirror ref={dataEditorRef} theme={theme} value={data} onChange={setData} placeholder={firstExample && `e.g. ${firstExample}`} extensions={editor.dataExtensions} basicSetup={editor.dataSetup} minHeight="120px" style={cmStyle} />
       </div>
 
       <div className="form-grid">
         <div>
           <div style={fieldLabel}>Tags <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
-          <CodeMirror theme={theme} value={tags} onChange={setTags} extensions={editor.extensions} basicSetup={{ lineNumbers: false }} style={cmStyle} />
+          <CodeMirror theme={theme} value={tags} onChange={setTags} extensions={editor.extensions} basicSetup={editor.fieldSetup} style={cmStyle} />
         </div>
         <div>
           <div style={fieldLabel}>Keywords <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(one per line)</span></div>
-          <CodeMirror theme={theme} value={keywords} onChange={setKeywords} extensions={editor.extensions} basicSetup={{ lineNumbers: false }} style={cmStyle} />
+          <CodeMirror theme={theme} value={keywords} onChange={setKeywords} extensions={editor.extensions} basicSetup={editor.fieldSetup} style={cmStyle} />
         </div>
       </div>
 

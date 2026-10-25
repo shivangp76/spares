@@ -280,7 +280,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
             // Vim's insert mode is the first sign of trying to edit
             if (live) getCM(view)?.on('vim-mode-change', (e: { mode: string }) => { if (e.mode === 'insert') setLiveEditTried(true); });
           }}
-          basicSetup={{ lineNumbers: editor.lineNumbers }}
+          basicSetup={editor.dataSetup}
           style={cmStyle}
         />
       </div>
@@ -293,7 +293,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
             value={tagsContent}
             onChange={setTagsContent}
             extensions={editor.extensions}
-            basicSetup={{ lineNumbers: false }}
+            basicSetup={editor.fieldSetup}
             style={cmStyle}
           />
         </div>
@@ -304,7 +304,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
             value={keywordsContent}
             onChange={setKeywordsContent}
             extensions={editor.extensions}
-            basicSetup={{ lineNumbers: false }}
+            basicSetup={editor.fieldSetup}
             style={cmStyle}
           />
         </div>

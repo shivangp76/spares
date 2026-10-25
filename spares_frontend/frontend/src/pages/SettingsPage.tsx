@@ -4,9 +4,10 @@ import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
   CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, LINE_WRAPPING_LABELS, LINE_WRAPPINGS, PAGE_WIDTH_LABELS,
-  PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setEditorFont, setEditorFontSize, setEditorLineNumbers,
-  setLineWrapping, setPageWidth, setPagesPerRow, setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom,
-  useEditorFont, useEditorFontSize, useEditorLineNumbers, useLineWrapping, usePageWidth, usePagesPerRow, useReadAloud,
+  PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setCloseBrackets, setEditorFont, setEditorFontSize,
+  setEditorLineNumbers, setEditorSpellcheck, setLineWrapping, setPageWidth, setPagesPerRow, setReadAloud,
+  setShowReviewTimer, setVimKeybindings, useCardZoom, useCloseBrackets, useEditorFont, useEditorFontSize,
+  useEditorLineNumbers, useEditorSpellcheck, useLineWrapping, usePageWidth, usePagesPerRow, useReadAloud,
   useShowReviewTimer, useVimKeybindings,
   type CardZoom, type EditorFontSize,
 } from '../preferences';
@@ -55,6 +56,8 @@ export default function SettingsPage() {
   const editorFont = useEditorFont();
   const lineWrapping = useLineWrapping();
   const editorLineNumbers = useEditorLineNumbers();
+  const editorSpellcheck = useEditorSpellcheck();
+  const closeBrackets = useCloseBrackets();
   const pageWidth = usePageWidth();
   const cardZoom = useCardZoom();
   const pagesPerRow = usePagesPerRow();
@@ -267,6 +270,25 @@ export default function SettingsPage() {
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Never on phones, to give the text the width.
         </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={editorSpellcheck}
+            onChange={e => setEditorSpellcheck(e.target.checked)}
+          />
+          Mark misspelled words in the note&apos;s text
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          With the browser&apos;s spellchecker, in the languages it is set to check.
+        </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={closeBrackets}
+            onChange={e => setCloseBrackets(e.target.checked)}
+          />
+          Type the closing bracket or quote along with the opening one
+        </label>
       </fieldset>
     </div>
   );

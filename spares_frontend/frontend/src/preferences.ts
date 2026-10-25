@@ -157,6 +157,17 @@ const editorLineNumbers = booleanPreference('spares_editor_line_numbers', () => 
 export const setEditorLineNumbers = editorLineNumbers.set;
 export const useEditorLineNumbers = editorLineNumbers.use;
 
+/** Whether the browser marks misspelled words in the note's text. Off unless turned on, as notes of
+    code or Typst markup would be full of marks. */
+const editorSpellcheck = booleanPreference('spares_editor_spellcheck', () => false);
+export const setEditorSpellcheck = editorSpellcheck.set;
+export const useEditorSpellcheck = editorSpellcheck.use;
+
+/** Whether the note editors type the closing bracket or quote along with the opening one. */
+const closeBrackets = booleanPreference('spares_editor_close_brackets', () => true);
+export const setCloseBrackets = closeBrackets.set;
+export const useCloseBrackets = closeBrackets.use;
+
 export const PAGE_WIDTHS = ['normal', 'wide', 'full'] as const;
 export type PageWidth = typeof PAGE_WIDTHS[number];
 export const PAGE_WIDTH_LABELS: Record<PageWidth, string> = { normal: 'Normal', wide: 'Wide', full: 'Full Screen' };
