@@ -454,15 +454,22 @@ async fn test_push_rejections(pool: SqlitePool) {
 
     let cases: Vec<(&str, Box<Change>)> = vec![
         (
-            "adds a note",
+            "does not exist in spares; name a new note's file `new-<name>`",
             Box::new(|c: &Path| {
                 std::fs::copy(note_path(c, first()), c.join("markdown/zzz.md")).unwrap();
             }),
         ),
         (
-            "deletes a note",
-            Box::new(move |c: &Path| {
-                std::fs::remove_file(note_path(c, first())).unwrap();
+            "a new note's file must not have a note id",
+            Box::new(|c: &Path| {
+                std::fs::copy(note_path(c, first()), c.join("markdown/new-copy.md")).unwrap();
+            }),
+        ),
+        (
+            "has no notes of",
+            Box::new(|c: &Path| {
+                std::fs::create_dir_all(c.join("typst")).unwrap();
+                std::fs::write(c.join("typst/new-x.typ"), "x").unwrap();
             }),
         ),
         (
@@ -1083,4 +1090,123 @@ async fn test_push_live_note(pool: SqlitePool) {
         note.custom_data.get("live_sync_name"),
         Some(&"lecture".into())
     );
+}
+
+/// A new note's file made from the first note's: without its note id, with other data
+fn new_note_file(clone: &Path, data: &str) -> String {
+    let file = read(&note_path(clone, first()));
+    let without_id = file.replace(&format!("<!--- # note-id: {} --->\n", first()), "");
+    assert_ne!(without_id, file);
+    without_id.replace("First {{[o:1] Cloze here }}", data)
+}
+
+async fn note_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM note")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test]
+async fn test_push_creates_and_deletes_notes(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let clone = clone();
+    let new_file = new_note_file(&clone, "Fourth {{ New cloze }}");
+    std::fs::write(clone.join("markdown/new-fourth.md"), new_file).unwrap();
+    std::fs::remove_file(note_path(&clone, ids[1])).unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "create and delete"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let message = &pushed.receive.message;
+    assert!(message.contains("created note"), "{message}");
+    assert!(
+        message.contains(&format!("DELETED note {}", ids[1])),
+        "{message}"
+    );
+    assert!(get_note(&pool, ids[1]).await.is_err());
+    let created: NoteId = sqlx::query_scalar("SELECT id FROM note WHERE data LIKE 'Fourth%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // The deleted note is not rendered, the created one is.
+    let finish = pushed.finish.unwrap();
+    assert!(finish.imported.contains(&created), "{:?}", finish.imported);
+    assert!(!finish.imported.contains(&ids[1]), "{:?}", finish.imported);
+
+    // spares renamed the new file to the note's id on top of the push.
+    assert!(finish.normalized, "{}", finish.message);
+    assert!(!repo().join("markdown/new-fourth.md").exists());
+    assert!(read(&note_path(&repo(), created)).contains("Fourth {{[o:1] New cloze }}"));
+    let changed = git(
+        &repo(),
+        &["diff", "--name-status", "--no-renames", "HEAD~", "HEAD"],
+    );
+    assert!(changed.contains("D\tmarkdown/new-fourth.md"), "{changed}");
+    assert!(
+        changed.contains(&format!("A\tmarkdown/{created}.md")),
+        "{changed}"
+    );
+    assert_eq!(status(&repo()), "");
+
+    // One undo restores the deleted note and removes the created one.
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(get_note(&pool, ids[1]).await.is_ok());
+    assert!(get_note(&pool, created).await.is_err());
+}
+
+#[sqlx::test]
+async fn test_push_creating_and_deleting_rolls_back(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let clone = clone();
+    let before = head(&repo());
+    let count = note_count(&pool).await;
+    std::fs::write(
+        clone.join("markdown/new-fourth.md"),
+        new_note_file(&clone, "Fourth {{ Never reaches main }}"),
+    )
+    .unwrap();
+    std::fs::remove_file(note_path(&clone, ids[1])).unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "create and delete"]);
+    let pushed = push(&pool, &clone, false).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let finish = pushed.finish.unwrap();
+    assert!(finish.message.contains("rolled back"), "{}", finish.message);
+    assert!(!finish.message.contains("partial"), "{}", finish.message);
+    assert_eq!(note_count(&pool).await, count);
+    assert!(get_note(&pool, ids[1]).await.is_ok());
+    assert!(note_path(&repo(), ids[1]).exists());
+    assert_eq!(head(&repo()), before);
+    assert_eq!(status(&repo()), "");
+    assert!(
+        notes_vcs::status().saved_copies.is_empty(),
+        "{:?}",
+        notes_vcs::status().saved_copies
+    );
+}
+
+#[sqlx::test]
+async fn test_push_deleting_every_note_of_a_parser(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let clone = clone();
+    git(&clone, &["rm", "-qr", "markdown"]);
+    git(&clone, &["commit", "-qm", "delete all"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    for id in ids {
+        assert!(get_note(&pool, id).await.is_err());
+    }
+    assert_eq!(status(&repo()), "");
 }

@@ -86,6 +86,29 @@ pub fn parse_note_rel_path(rel_path: &Path) -> Option<(Box<dyn Parseable>, NoteI
     (note_file_name(parser.as_ref(), note_id) == file_name).then_some((parser, note_id))
 }
 
+/// The parser of a new note's file relative to the notes directory, `<parser>/new-<name>.<ext>`
+/// (e.g. `typst/new-bayes.typ`), or `None` if `rel_path` is not one. `<name>` is lowercase ASCII
+/// letters, digits and `-`, so the file name never parses as a note id, which has no `-`.
+pub fn parse_new_note_rel_path(rel_path: &Path) -> Option<Box<dyn Parseable>> {
+    let mut components = rel_path.components();
+    let parser_name = components.next()?.as_os_str().to_str()?;
+    let file_name = components.next()?.as_os_str().to_str()?;
+    if components.next().is_some() {
+        return None;
+    }
+    let parser = get_all_parsers()
+        .into_iter()
+        .map(|parser| parser())
+        .find(|parser| parser.get_parser_name() == parser_name)?;
+    let (stem, extension) = file_name.rsplit_once('.')?;
+    let name = stem.strip_prefix("new-")?;
+    let valid = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    (valid && extension == parser.file_extension()).then_some(parser)
+}
+
 /// Holds `blake3` of the raw file a note was last compiled from. In the notes repository, raw files
 /// do not carry their hash (see [`crate::parsers::generate_files::file_in_cache`]).
 pub fn render_hash_path(parser_name: &str, note_id: NoteId) -> PathBuf {
@@ -120,6 +143,7 @@ pub fn remove_render_hash(parser_name: &str, note_id: NoteId) {
 mod tests {
     use std::path::Path;
 
+    use super::parse_new_note_rel_path;
     use super::parse_note_rel_path;
 
     #[test]
@@ -144,5 +168,30 @@ mod tests {
         ] {
             assert!(parse_note_rel_path(Path::new(path)).is_none(), "{path}");
         }
+    }
+
+    #[test]
+    fn test_parse_new_note_rel_path() {
+        for path in [
+            "typst/new-bayes.typ",
+            "typst/new-anki-1712345.typ",
+            "markdown/new-a-b.md",
+        ] {
+            assert!(parse_new_note_rel_path(Path::new(path)).is_some(), "{path}");
+        }
+        for path in [
+            "typst/new.typ",
+            "typst/new-.typ",
+            "typst/new-Bayes.typ",
+            "typst/new-bayes.md",
+            "typst/new-b_c.typ",
+            "typst/sub/new-bayes.typ",
+            "unknown/new-bayes.typ",
+            "typst/gir.typ",
+        ] {
+            assert!(parse_new_note_rel_path(Path::new(path)).is_none(), "{path}");
+        }
+        // A new note's name is never a note's.
+        assert!(parse_note_rel_path(Path::new("typst/new-bayes.typ")).is_none());
     }
 }

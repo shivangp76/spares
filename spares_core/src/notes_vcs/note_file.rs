@@ -117,6 +117,63 @@ pub fn parse_note_file(
     expected_id: NoteId,
     move_files: bool,
 ) -> Result<ParsedNoteFile, Vec<String>> {
+    let (settings, data, mut errors) = parse_one_note(parser, contents, move_files)?;
+    match settings.action {
+        NoteImportAction::Update(id) if id == expected_id => {}
+        NoteImportAction::Update(id) => errors.push(format!(
+            "names note {}, but the file belongs to note {}",
+            id.letters(),
+            expected_id.letters()
+        )),
+        NoteImportAction::Add => errors.push(
+            "would create a new note; create notes in a `new-*` file, e.g. `<parser>/new-name.<ext>`, without a note id"
+                .into(),
+        ),
+        NoteImportAction::Delete(_) => {
+            errors.push("would delete the note; delete notes by deleting their file".into());
+        }
+    }
+    finish_parse(settings, data, errors).map(|(settings, data)| ParsedNoteFile {
+        note_id: expected_id,
+        settings,
+        data,
+    })
+}
+
+/// A new note's file (see [`super::parse_new_note_rel_path`]): exactly one valid note, without a
+/// note id.
+#[derive(Debug)]
+pub struct ParsedNewNoteFile {
+    pub settings: NoteSettings,
+    pub data: String,
+}
+
+/// Parses `contents` as the file of a note to create, with the same rules as [`parse_note_file`],
+/// except that the note must not name a note id.
+pub fn parse_new_note_file(
+    parser: &dyn Parseable,
+    contents: &str,
+    move_files: bool,
+) -> Result<ParsedNewNoteFile, Vec<String>> {
+    let (settings, data, mut errors) = parse_one_note(parser, contents, move_files)?;
+    match settings.action {
+        NoteImportAction::Add => {}
+        NoteImportAction::Update(id) => errors.push(format!(
+            "names note {}; a new note's file must not have a note id",
+            id.letters()
+        )),
+        NoteImportAction::Delete(_) => errors.push("would delete a note".into()),
+    }
+    finish_parse(settings, data, errors)
+        .map(|(settings, data)| ParsedNewNoteFile { settings, data })
+}
+
+/// The one note in `contents`, with its errors other than warnings.
+fn parse_one_note(
+    parser: &dyn Parseable,
+    contents: &str,
+    move_files: bool,
+) -> Result<(NoteSettings, Option<String>, Vec<String>), Vec<String>> {
     let adapter = SparesAdapter::new(SparesRequestProcessor::Server);
     let config = read_external_config().ok();
     let notes = get_file_notes(
@@ -139,31 +196,24 @@ pub fn parse_note_file(
         }
         (_, n) => {
             return Err(vec![format!(
-                "holds {n} notes; a note file must hold exactly one. Create notes with `spares note add` or `spares import`"
+                "holds {n} notes; a note file must hold exactly one. Create notes in `new-*` files, one per file"
             )]);
         }
     };
-    let mut errors: Vec<String> = settings
+    let errors: Vec<String> = settings
         .errors_and_warnings
         .iter()
         .filter(|e| !is_warning(e))
         .map(ToString::to_string)
         .collect();
-    match settings.action {
-        NoteImportAction::Update(id) if id == expected_id => {}
-        NoteImportAction::Update(id) => errors.push(format!(
-            "names note {}, but the file belongs to note {}",
-            id.letters(),
-            expected_id.letters()
-        )),
-        NoteImportAction::Add => errors.push(
-            "would create a new note; create notes with `spares note add` or `spares import`"
-                .into(),
-        ),
-        NoteImportAction::Delete(_) => {
-            errors.push("would delete the note; delete notes with `spares note delete`".into());
-        }
-    }
+    Ok((settings, data, errors))
+}
+
+fn finish_parse(
+    settings: NoteSettings,
+    data: Option<String>,
+    mut errors: Vec<String>,
+) -> Result<(NoteSettings, String), Vec<String>> {
     let Some(data) = data else {
         if errors.is_empty() {
             errors.push("has no note data".into());
@@ -171,11 +221,7 @@ pub fn parse_note_file(
         return Err(errors);
     };
     if errors.is_empty() {
-        Ok(ParsedNoteFile {
-            note_id: expected_id,
-            settings,
-            data,
-        })
+        Ok((settings, data))
     } else {
         Err(errors)
     }

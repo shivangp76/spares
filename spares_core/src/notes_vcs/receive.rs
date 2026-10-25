@@ -35,9 +35,12 @@ use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
 use super::note_file::is_warning;
+use super::note_file::parse_new_note_file;
 use super::note_file::parse_note_file;
 use super::note_file::same_note;
 use super::paths::enabled;
+use super::paths::note_rel_paths_all_parsers;
+use super::paths::parse_new_note_rel_path;
 use super::paths::parse_note_rel_path;
 use super::paths::server_repo_dir;
 use super::reconcile::ReconcileScope;
@@ -47,6 +50,8 @@ use super::reconcile::reconcile;
 use super::reconcile::saved_copies;
 use super::reconcile::write_db_note_files;
 use crate::Error;
+use crate::api::note::create_notes;
+use crate::api::note::delete_notes;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::update_notes;
@@ -55,8 +60,12 @@ use crate::api::undo::join_event_group;
 use crate::api::undo::undo_event;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
+use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::get_all_parsers;
+use crate::schema::note::CreateNoteRequest;
+use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateTags;
@@ -134,7 +143,15 @@ struct Journal {
     session: String,
     old: String,
     new: String,
+    /// Every note the import changes, created and deleted ones included, to regenerate if it is
+    /// rolled back
     ids: Vec<NoteId>,
+    /// Notes the push created, as they are created
+    #[serde(default)]
+    created: Vec<NoteId>,
+    /// Notes the push deleted
+    #[serde(default)]
+    deleted: Vec<NoteId>,
     /// Events of the import, to undo if the push does not go through
     event_ids: Vec<i64>,
     /// Paths to commit once git moved `main`
@@ -230,7 +247,7 @@ pub async fn receive(db: SqlitePool, request: ReceiveRequest) -> Result<ReceiveR
             },
             Outcome::Accepted { journal, message } => {
                 let session_id = journal.session.clone();
-                let imported = journal.ids.clone();
+                let imported = imported_ids(&journal);
                 *session() = Some(Session {
                     journal,
                     _guard: guard,
@@ -325,7 +342,7 @@ async fn settle(db: &SqlitePool, session: Session) -> Result<FinishResponse, Err
         };
         return Ok(FinishResponse {
             message,
-            imported: journal.ids,
+            imported: imported_ids(&journal),
             normalized,
         });
     }
@@ -382,6 +399,9 @@ fn add_existing(repo: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, Error> {
 /// The import's events form one group, so the first undo reverts them all. Journals written before
 /// imports were grouped hold one ungrouped event per note, which the later iterations revert.
 async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
+    // Undoing reconciles the notes it changes, which would save created files as written by
+    // someone else. If the undo fails, reconciling writes them again.
+    remove_created_files(journal);
     let mut failure = None;
     for event_id in journal.event_ids.iter().rev() {
         match is_reverted(db, *event_id).await {
@@ -438,12 +458,57 @@ async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
     }
 }
 
+/// Removes the files of notes the import created that `HEAD` does not have, so reconciling does
+/// not save them as files spares did not write.
+fn remove_created_files(journal: &Journal) {
+    let repo = server_repo_dir();
+    for id in &journal.created {
+        for rel in note_rel_paths_all_parsers(*id) {
+            let head_has_it = git_output(
+                &repo,
+                &["cat-file", "-e", &format!("HEAD:{}", rel.display())],
+                None,
+            )
+            .is_ok_and(|out| out.status.success());
+            if !head_has_it {
+                let _ = std::fs::remove_file(repo.join(&rel));
+            }
+        }
+    }
+}
+
 struct PushedNote {
     rel: PathBuf,
     parser: Box<dyn Parseable>,
-    id: NoteId,
-    old_blob: Vec<u8>,
-    new_blob: String,
+    change: PushedChange,
+}
+
+enum PushedChange {
+    Update {
+        id: NoteId,
+        old_blob: Vec<u8>,
+        new_blob: String,
+    },
+    Delete {
+        id: NoteId,
+        old_blob: Vec<u8>,
+    },
+    /// A `new-*` file
+    Create {
+        new_blob: String,
+    },
+}
+
+impl PushedNote {
+    /// The note the push changes, and the file it is based on, unless it creates one
+    fn existing(&self) -> Option<(NoteId, &[u8])> {
+        match &self.change {
+            PushedChange::Update { id, old_blob, .. } | PushedChange::Delete { id, old_blob } => {
+                Some((*id, old_blob))
+            }
+            PushedChange::Create { .. } => None,
+        }
+    }
 }
 
 #[expect(clippy::too_many_lines)]
@@ -552,67 +617,133 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             continue;
         }
         let note = parse_note_rel_path(Path::new(&path));
-        let reason = match (status, &note) {
-            (_, _) if path == ".gitignore" || path == ".gitattributes" => {
+        let new_note = parse_new_note_rel_path(Path::new(&path));
+        let reason = match (status, &note, &new_note) {
+            (_, _, _) if path == ".gitignore" || path == ".gitattributes" => {
                 Some("is managed by spares and cannot be changed".to_string())
             }
-            ("A", Some(_)) => Some(
-                "adds a note; create notes with `spares note add` or `spares import`".to_string(),
-            ),
-            ("D", Some(_)) => {
-                Some("deletes a note; delete notes with `spares note delete`".to_string())
-            }
-            ("T", _) => Some("changes the file type".to_string()),
-            ("M", Some((parser, _))) if !head_dirs.contains(parser.get_parser_name()) => {
-                Some("is in a parser directory spares has not created".to_string())
-            }
-            ("M", Some(_)) if old_mode != "100644" || new_mode != "100644" => Some(format!(
+            ("T", _, _) => Some("changes the file type".to_string()),
+            ("A" | "M", Some(_), _) | ("A", _, Some(_)) if new_mode != "100644" => Some(format!(
                 "has mode {new_mode}; only regular files (100644) are allowed"
             )),
-            ("M", Some(_)) => None,
-            (_, None) => Some(format!(
-                "is not a note file; only existing notes (`<parser>/<id>.<ext>`, e.g. `typst/0042.typ`) and `{README}` can be pushed"
+            ("M", Some((parser, _)), _) if !head_dirs.contains(parser.get_parser_name()) => {
+                Some("is in a parser directory spares has not created".to_string())
+            }
+            ("M", Some(_), _) if old_mode != "100644" => Some(format!(
+                "has mode {old_mode}; only regular files (100644) are allowed"
             )),
-            (status, Some(_)) => Some(format!("has an unsupported change ({status})")),
+            ("A", Some((_, id)), _) => Some(if note_exists(db, *id).await? {
+                format!(
+                    "adds a second file for note {}, which has one under another parser",
+                    id.letters()
+                )
+            } else {
+                format!(
+                    "adds note {}, which does not exist in spares; name a new note's file `new-<name>`, e.g. `{}/new-{}.{}`, and spares gives it an id",
+                    id.letters(),
+                    note.as_ref()
+                        .map(|(p, _)| p.get_parser_name())
+                        .unwrap_or_default(),
+                    id.letters(),
+                    note.as_ref()
+                        .map(|(p, _)| p.file_extension())
+                        .unwrap_or_default(),
+                )
+            }),
+            ("A", None, Some(parser))
+                if parser_id(db, parser.get_parser_name()).await?.is_none() =>
+            {
+                Some(format!(
+                    "creates a note with parser `{}`, which spares has no notes of; create the first one with `spares note add`",
+                    parser.get_parser_name()
+                ))
+            }
+            ("M" | "D", Some(_), _) | ("A", None, Some(_)) => None,
+            (_, None, None) => Some(format!(
+                "is not a note file; only notes (`<parser>/<id>.<ext>`, e.g. `typst/gir.typ`), new notes (`<parser>/new-<name>.<ext>`) and `{README}` can be pushed"
+            )),
+            (status, _, _) => Some(format!("has an unsupported change ({status})")),
         };
         if let Some(reason) = reason {
             errors.push(format!("{path}: {reason}"));
             continue;
         }
-        let Some((parser, id)) = note else { continue };
+        let old_blob = || git(&repo, &["cat-file", "blob", old_sha], None);
+        let (parser, change) = match (status, note, new_note) {
+            ("D", Some((parser, id)), _) => (
+                parser,
+                PushedChange::Delete {
+                    id,
+                    old_blob: old_blob()?,
+                },
+            ),
+            ("M", Some((parser, id)), _) => (
+                parser,
+                PushedChange::Update {
+                    id,
+                    old_blob: old_blob()?,
+                    new_blob: String::new(),
+                },
+            ),
+            (_, _, Some(parser)) => (
+                parser,
+                PushedChange::Create {
+                    new_blob: String::new(),
+                },
+            ),
+            _ => continue,
+        };
 
         // 5. Content and parse rules
-        let new_blob = git(&repo, &["cat-file", "blob", new_sha], None)?;
-        let old_blob = git(&repo, &["cat-file", "blob", old_sha], None)?;
-        let Ok(new_blob) = String::from_utf8(new_blob) else {
-            errors.push(format!("{path}: is not valid UTF-8"));
-            continue;
-        };
-        if new_blob.contains('\0') {
-            errors.push(format!("{path}: contains a NUL byte"));
-            continue;
-        }
-        if let Some(line) = conflict_marker_line(&new_blob) {
-            errors.push(format!(
-                "{path}: line {line} is a conflict marker; resolve the conflict first"
-            ));
-            continue;
-        }
-        match parse_note_file(parser.as_ref(), &new_blob, id, false) {
-            Ok(parsed) => {
-                if let Some(reason) = live_note_edit(parser.as_ref(), id, &old_blob, &parsed) {
-                    errors.push(format!("{path}: {reason}"));
-                    continue;
-                }
-                warnings.extend(
-                    parsed
-                        .settings
-                        .errors_and_warnings
-                        .iter()
-                        .filter(|e| is_warning(e))
-                        .map(|e| format!("{path}: {e}")),
-                );
+        let mut change = change;
+        if let PushedChange::Update { new_blob, .. } | PushedChange::Create { new_blob } =
+            &mut change
+        {
+            let blob = git(&repo, &["cat-file", "blob", new_sha], None)?;
+            let Ok(blob) = String::from_utf8(blob) else {
+                errors.push(format!("{path}: is not valid UTF-8"));
+                continue;
+            };
+            if blob.contains('\0') {
+                errors.push(format!("{path}: contains a NUL byte"));
+                continue;
             }
+            if let Some(line) = conflict_marker_line(&blob) {
+                errors.push(format!(
+                    "{path}: line {line} is a conflict marker; resolve the conflict first"
+                ));
+                continue;
+            }
+            *new_blob = blob;
+        }
+        let parsed_settings = match &change {
+            PushedChange::Update {
+                id,
+                old_blob,
+                new_blob,
+            } => match parse_note_file(parser.as_ref(), new_blob, *id, false) {
+                Ok(parsed) => {
+                    if let Some(reason) = live_note_edit(parser.as_ref(), *id, old_blob, &parsed) {
+                        errors.push(format!("{path}: {reason}"));
+                        continue;
+                    }
+                    Ok(parsed.settings)
+                }
+                Err(problems) => Err(problems),
+            },
+            PushedChange::Create { new_blob } => {
+                parse_new_note_file(parser.as_ref(), new_blob, false).map(|parsed| parsed.settings)
+            }
+            PushedChange::Delete { .. } => Ok(NoteSettings::default()),
+        };
+        match parsed_settings {
+            Ok(settings) => warnings.extend(
+                settings
+                    .errors_and_warnings
+                    .iter()
+                    .filter(|e| is_warning(e))
+                    .map(|e| format!("{path}: {e}")),
+            ),
             Err(problems) => {
                 for problem in problems {
                     errors.push(format!("{path}: {problem}"));
@@ -623,9 +754,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         pushed.push(PushedNote {
             rel: PathBuf::from(&path),
             parser,
-            id,
-            old_blob,
-            new_blob,
+            change,
         });
     }
     if !errors.is_empty() {
@@ -640,33 +769,37 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     }
 
     // 6. Compare-and-swap: the database must still hold what the push is based on.
-    let ids: Vec<NoteId> = pushed.iter().map(|n| n.id).collect();
-    if !ids.is_empty() {
-        let rows = get_render_note_data(db, Some(ids.clone())).await?;
-        let links = get_note_links_map(db, &ids).await?;
+    let existing: Vec<(&PushedNote, NoteId, &[u8])> = pushed
+        .iter()
+        .filter_map(|note| note.existing().map(|(id, old_blob)| (note, id, old_blob)))
+        .collect();
+    let based_on: Vec<NoteId> = existing.iter().map(|(_, id, _)| *id).collect();
+    if !based_on.is_empty() {
+        let rows = get_render_note_data(db, Some(based_on.clone())).await?;
+        let links = get_note_links_map(db, &based_on).await?;
         let mut missing = Vec::new();
         let mut changed = Vec::new();
-        for note in &pushed {
-            let Some(row) = rows.iter().find(|r| r.note_id == note.id) else {
-                missing.push(note.id);
+        for (note, id, old_blob) in &existing {
+            let Some(row) = rows.iter().find(|r| r.note_id == *id) else {
+                missing.push(*id);
                 continue;
             };
             if row.parser_name != note.parser.get_parser_name() {
-                changed.push(note.id);
+                changed.push(*id);
                 continue;
             }
             let db_file = construct_db_note_file(note.parser.as_ref(), row, &links)?;
-            if db_file.as_bytes() == note.old_blob.as_slice() {
+            if db_file.as_bytes() == *old_blob {
                 continue;
             }
-            let base_fields = std::str::from_utf8(&note.old_blob)
+            let base_fields = std::str::from_utf8(old_blob)
                 .ok()
-                .and_then(|old| file_note_fields(note.parser.as_ref(), old, note.id));
+                .and_then(|old| file_note_fields(note.parser.as_ref(), old, *id));
             let unchanged = base_fields.is_some_and(|base| {
-                same_note(note.parser.as_ref(), note.id, &base, &db_note_fields(row))
+                same_note(note.parser.as_ref(), *id, &base, &db_note_fields(row))
             });
             if !unchanged {
-                changed.push(note.id);
+                changed.push(*id);
             }
         }
         if !missing.is_empty() || !changed.is_empty() {
@@ -696,13 +829,22 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             )));
         }
     }
+    let deleted: Vec<NoteId> = pushed
+        .iter()
+        .filter_map(|note| match note.change {
+            PushedChange::Delete { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect();
 
     // 7. Journal, so a server that dies from here on settles the push on startup
     let mut journal = Journal {
         session: format!("{}-{}", Utc::now().timestamp_millis(), short(&new)),
         old: old.clone(),
         new: new.clone(),
-        ids: ids.clone(),
+        ids: based_on.clone(),
+        created: Vec::new(),
+        deleted: deleted.clone(),
         event_ids: Vec::new(),
         paths: pushed.iter().map(|n| n.rel.clone()).collect(),
         readme_changed,
@@ -739,7 +881,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 }
             }
         }
-        write_db_note_files(db, &ids).await?;
+        write_db_note_files(db, &journal.ids).await?;
         if readme_changed {
             journal.paths.push(PathBuf::from(README));
         }
@@ -767,11 +909,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         )));
     }
 
-    let mut message = if ids.is_empty() {
-        "no notes changed".to_string()
-    } else {
-        format!("imported {} into spares", describe_ids(&ids))
-    };
+    let mut message = describe_import(&journal);
     if !warnings.is_empty() {
         message.push_str(" with warnings:");
         for warning in &warnings {
@@ -781,6 +919,9 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     Ok(Outcome::Accepted { journal, message })
 }
 
+/// Imports the push: deletes first, then updates, then creates, so a note moved to another parser
+/// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Its
+/// events form one group, so one undo reverts it all.
 async fn import(
     db: &SqlitePool,
     pushed: &[PushedNote],
@@ -788,18 +929,35 @@ async fn import(
 ) -> Result<(), Error> {
     let parsers = get_all_parsers();
     let at = Utc::now();
-    // The first event of the import, whose group the later ones join, so one undo reverts it all
+    // The first event of the import, whose group the later ones join
     let mut leader = None;
+    if !journal.deleted.is_empty() {
+        let response = delete_notes(
+            db,
+            DeleteNotesRequest {
+                selector: NotesSelector::Ids(journal.deleted.clone()),
+            },
+            &parsers,
+            true,
+        )
+        .await?;
+        join_import_group(db, &mut leader, response.event_id, journal).await?;
+        write_journal(journal)?;
+    }
+
     for note in pushed {
-        let parser_id: i64 = sqlx::query_scalar(r"SELECT id FROM parser WHERE name = ?")
-            .bind(note.parser.get_parser_name())
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        let parsed = parse_note_file(note.parser.as_ref(), &note.new_blob, note.id, true)
+        let PushedChange::Update { id, new_blob, .. } = &note.change else {
+            continue;
+        };
+        let parser_id = parser_id(db, note.parser.get_parser_name())
+            .await?
+            .ok_or_else(|| {
+                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
+            })?;
+        let parsed = parse_note_file(note.parser.as_ref(), new_blob, *id, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let request = UpdateNotesRequest {
-            selector: NotesSelector::Ids(vec![note.id]),
+            selector: NotesSelector::Ids(vec![*id]),
             parser_id: Some(parser_id),
             data: Some(parsed.data),
             keywords: Some(parsed.settings.keywords),
@@ -807,16 +965,120 @@ async fn import(
             custom_data: Some(parsed.settings.custom_data),
         };
         let response = update_notes(db, request, at, &parsers, true).await?;
-        if let Some(event_id) = response.event_id {
-            match leader {
-                None => leader = Some(event_id),
-                Some(leader) => join_event_group(db, leader, event_id).await?,
-            }
-            journal.event_ids.push(event_id);
-            write_journal(journal)?;
+        join_import_group(db, &mut leader, response.event_id, journal).await?;
+        write_journal(journal)?;
+    }
+
+    for note in pushed {
+        let PushedChange::Create { new_blob } = &note.change else {
+            continue;
+        };
+        let parser_id = parser_id(db, note.parser.get_parser_name())
+            .await?
+            .ok_or_else(|| {
+                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
+            })?;
+        let parsed = parse_new_note_file(note.parser.as_ref(), new_blob, true)
+            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
+        let response = create_notes(
+            db,
+            CreateNotesRequest {
+                parser_id,
+                requests: vec![CreateNoteRequest {
+                    data: parsed.data,
+                    keywords: parsed.settings.keywords,
+                    tags: parsed.settings.tags,
+                    is_suspended: parsed.settings.is_suspended,
+                    custom_data: parsed.settings.custom_data,
+                }],
+            },
+            at,
+            &parsers,
+            true,
+        )
+        .await?;
+        for created in &response.notes {
+            journal.created.push(created.id);
+            journal.ids.push(created.id);
         }
+        // Before the event, so a failure from here on still reconciles the created files away
+        write_journal(journal)?;
+        join_import_group(db, &mut leader, response.event_id, journal).await?;
+        write_journal(journal)?;
     }
     Ok(())
+}
+
+/// Records an event of the import, in the group of its first event.
+async fn join_import_group(
+    db: &SqlitePool,
+    leader: &mut Option<i64>,
+    event_id: Option<i64>,
+    journal: &mut Journal,
+) -> Result<(), Error> {
+    let Some(event_id) = event_id else {
+        return Ok(());
+    };
+    match *leader {
+        None => *leader = Some(event_id),
+        Some(leader) => join_event_group(db, leader, event_id).await?,
+    }
+    journal.event_ids.push(event_id);
+    Ok(())
+}
+
+async fn parser_id(db: &SqlitePool, parser_name: &str) -> Result<Option<i64>, Error> {
+    sqlx::query_scalar(r"SELECT id FROM parser WHERE name = ?")
+        .bind(parser_name)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
+async fn note_exists(db: &SqlitePool, id: NoteId) -> Result<bool, Error> {
+    let found: Option<i64> = sqlx::query_scalar(r"SELECT 1 FROM note WHERE id = ?")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(found.is_some())
+}
+
+/// What an accepted push did, for the pusher
+fn describe_import(journal: &Journal) -> String {
+    let updated = imported_ids(journal);
+    let updated: Vec<NoteId> = updated
+        .into_iter()
+        .filter(|id| !journal.created.contains(id))
+        .collect();
+    let mut parts = Vec::new();
+    if !updated.is_empty() {
+        parts.push(format!("imported {} into spares", describe_ids(&updated)));
+    }
+    if !journal.created.is_empty() {
+        parts.push(format!("created {}", describe_ids(&journal.created)));
+    }
+    if !journal.deleted.is_empty() {
+        parts.push(format!(
+            "DELETED {} with their review history (`spares undo` restores them; notes linking to them update on their next render)",
+            describe_ids(&journal.deleted)
+        ));
+    }
+    if parts.is_empty() {
+        "no notes changed".to_string()
+    } else {
+        parts.join("; ")
+    }
+}
+
+/// Notes the push imported or created, which exist and can be rendered
+fn imported_ids(journal: &Journal) -> Vec<NoteId> {
+    journal
+        .ids
+        .iter()
+        .filter(|id| !journal.deleted.contains(id))
+        .copied()
+        .collect()
 }
 
 /// Why a pushed change to a note is refused because the note is live, or would become live. A
