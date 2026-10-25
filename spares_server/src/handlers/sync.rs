@@ -37,6 +37,9 @@ use spares_core::sync::devices::EnrollRequest;
 use spares_core::sync::devices::UnenrollRequest;
 use spares_core::sync::files;
 use spares_core::sync::http::SYNC_API_KEY_ENV;
+use spares_core::sync::media;
+use spares_core::sync::media::MediaKind;
+use spares_core::sync::media::RenderedFilesQuery;
 use spares_core::sync::protocol::PullRequest;
 use spares_core::sync::protocol::PushRequest;
 use spares_core::sync::run::LocalSyncState;
@@ -49,6 +52,10 @@ use crate::handlers::error_to_response;
 
 /// Pushes and full uploads carry whole databases.
 pub(crate) const SYNC_BODY_LIMIT: usize = 1024 * 1024 * 1024;
+
+/// A device's uploaded image or clip, with room above `spares_core`'s own limits so that it, not
+/// the body limit, says what is too large.
+pub(crate) const MEDIA_BODY_LIMIT: usize = 128 * 1024 * 1024;
 
 type HandlerError = (StatusCode, Json<Value>);
 
@@ -228,6 +235,28 @@ pub(crate) async fn sync_unenroll_handler(
 pub(crate) async fn sync_config_handler() -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
     Ok(Json(devices::device_config().map_err(error_to_response)?))
+}
+
+/// The rendered files a device can show offline (`spares_core::sync::media`).
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_files_handler(
+    Query(query): Query<RenderedFilesQuery>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    Ok(Json(
+        media::rendered_files(&query).map_err(error_to_response)?,
+    ))
+}
+
+/// An image or clip a device added offline, before the push whose notes name it.
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_media_handler(
+    Path((kind, name)): Path<(MediaKind, String)>,
+    body: Bytes,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    let path = media::store_media(kind, &name, &body).map_err(error_to_response)?;
+    Ok(Json(json!({ "path": path })))
 }
 
 pub(crate) async fn sync_devices_handler(

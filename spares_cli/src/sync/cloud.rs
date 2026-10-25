@@ -189,7 +189,8 @@ fn dir_source(dir: &Path) -> Result<String, String> {
 /// here (`render: false` in `api::note`), so its files are from before the edit, while the server
 /// rendered the edit when this machine's changes reached it. Likewise a note edited on the server
 /// between the sync and this. Otherwise the server's render cache, whose hash is the edit's, would
-/// take the older files for its own. This needs the two clocks to roughly agree.
+/// take the older files for its own, and devices would keep theirs, since the mtime is older. This
+/// needs the two clocks to roughly agree.
 fn sync_rendered_files(
     remote_host: &str,
     remote_rendered_dir: &str,
