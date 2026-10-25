@@ -1,4 +1,4 @@
-use std::time::Instant;
+use web_time::Instant;
 
 use crate::connection::LogSettings;
 use crate::sql_str::SqlStr;

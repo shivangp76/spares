@@ -7,18 +7,19 @@ use std::fmt::{self};
 use std::os::raw::c_int;
 use std::str;
 
-use libsqlite3_sys::SQLITE_CONSTRAINT_CHECK;
-use libsqlite3_sys::SQLITE_CONSTRAINT_FOREIGNKEY;
-use libsqlite3_sys::SQLITE_CONSTRAINT_NOTNULL;
-use libsqlite3_sys::SQLITE_CONSTRAINT_PRIMARYKEY;
-use libsqlite3_sys::SQLITE_CONSTRAINT_UNIQUE;
-use libsqlite3_sys::SQLITE_ERROR;
-use libsqlite3_sys::SQLITE_NOMEM;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_errmsg;
-use libsqlite3_sys::sqlite3_errstr;
-use libsqlite3_sys::sqlite3_extended_errcode;
 pub(crate) use sqlx_core::error::*;
+
+use crate::ffi::SQLITE_CONSTRAINT_CHECK;
+use crate::ffi::SQLITE_CONSTRAINT_FOREIGNKEY;
+use crate::ffi::SQLITE_CONSTRAINT_NOTNULL;
+use crate::ffi::SQLITE_CONSTRAINT_PRIMARYKEY;
+use crate::ffi::SQLITE_CONSTRAINT_UNIQUE;
+use crate::ffi::SQLITE_ERROR;
+use crate::ffi::SQLITE_NOMEM;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_errmsg;
+use crate::ffi::sqlite3_errstr;
+use crate::ffi::sqlite3_extended_errcode;
 
 // Error Codes And Messages
 // https://www.sqlite.org/c3ref/errcode.html

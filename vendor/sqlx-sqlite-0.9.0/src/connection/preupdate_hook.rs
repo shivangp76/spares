@@ -7,17 +7,16 @@ use std::panic::catch_unwind;
 use std::ptr;
 use std::ptr::NonNull;
 
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_preupdate_count;
-use libsqlite3_sys::sqlite3_preupdate_depth;
-use libsqlite3_sys::sqlite3_preupdate_new;
-use libsqlite3_sys::sqlite3_preupdate_old;
-use libsqlite3_sys::sqlite3_value;
-
 use super::SqliteOperation;
 use crate::SqliteError;
 use crate::SqliteValueRef;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_preupdate_count;
+use crate::ffi::sqlite3_preupdate_depth;
+use crate::ffi::sqlite3_preupdate_new;
+use crate::ffi::sqlite3_preupdate_old;
+use crate::ffi::sqlite3_value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PreupdateError {

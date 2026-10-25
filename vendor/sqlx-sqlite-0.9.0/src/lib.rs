@@ -90,6 +90,10 @@ pub use connection::UpdateHookResult;
 pub use connection::deserialize::SqliteOwnedBuf;
 pub use database::Sqlite;
 pub use error::SqliteError;
+// The SQLite C API: `libsqlite3-sys` natively, and `sqlite-wasm-rs` (SQLite compiled to wasm, with
+// the same `sqlite3_*` functions) on `wasm32-unknown-unknown`.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub(crate) use libsqlite3_sys as ffi;
 pub use options::SqliteAutoVacuum;
 pub use options::SqliteConnectOptions;
 pub use options::SqliteJournalMode;
@@ -97,6 +101,8 @@ pub use options::SqliteLockingMode;
 pub use options::SqliteSynchronous;
 pub use query_result::SqliteQueryResult;
 pub use row::SqliteRow;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub(crate) use sqlite_wasm_rs as ffi;
 use sqlx_core::config;
 use sqlx_core::describe::Describe;
 pub(crate) use sqlx_core::driver_prelude::*;

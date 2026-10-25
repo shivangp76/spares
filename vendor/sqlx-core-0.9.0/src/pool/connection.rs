@@ -7,7 +7,8 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
+
+use web_time::Instant;
 
 use super::inner::DecrementSizeGuard;
 use super::inner::PoolInner;

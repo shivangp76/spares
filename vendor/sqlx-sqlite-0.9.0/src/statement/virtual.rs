@@ -7,11 +7,6 @@ use std::ptr::null;
 use std::ptr::null_mut;
 use std::sync::Arc;
 
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::SQLITE_PREPARE_PERSISTENT;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_prepare_v3;
-use libsqlite3_sys::sqlite3_stmt;
 use sqlx_core::HashMap;
 use sqlx_core::SmallVec;
 use sqlx_core::bytes::Buf;
@@ -22,6 +17,11 @@ use sqlx_core::ext::ustr::UStr;
 use crate::SqliteColumn;
 use crate::SqliteError;
 use crate::connection::ConnectionHandle;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::SQLITE_PREPARE_PERSISTENT;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_prepare_v3;
+use crate::ffi::sqlite3_stmt;
 use crate::statement::StatementHandle;
 
 // A virtual statement consists of *zero* or more raw SQLite3 statements. We chop up a SQL statement

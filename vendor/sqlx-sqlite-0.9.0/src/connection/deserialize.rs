@@ -5,20 +5,19 @@ use std::ops::DerefMut;
 use std::ptr;
 use std::ptr::NonNull;
 
-use libsqlite3_sys::SQLITE_DESERIALIZE_FREEONCLOSE;
-use libsqlite3_sys::SQLITE_DESERIALIZE_READONLY;
-use libsqlite3_sys::SQLITE_DESERIALIZE_RESIZEABLE;
-use libsqlite3_sys::SQLITE_NOMEM;
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::sqlite3_deserialize;
-use libsqlite3_sys::sqlite3_free;
-use libsqlite3_sys::sqlite3_malloc64;
-use libsqlite3_sys::sqlite3_serialize;
-
 use super::ConnectionState;
 use crate::SqliteConnection;
 use crate::SqliteError;
 use crate::error::Error;
+use crate::ffi::SQLITE_DESERIALIZE_FREEONCLOSE;
+use crate::ffi::SQLITE_DESERIALIZE_READONLY;
+use crate::ffi::SQLITE_DESERIALIZE_RESIZEABLE;
+use crate::ffi::SQLITE_NOMEM;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::sqlite3_deserialize;
+use crate::ffi::sqlite3_free;
+use crate::ffi::sqlite3_malloc64;
+use crate::ffi::sqlite3_serialize;
 
 impl SqliteConnection {
     /// Serialize the given SQLite database schema using [`sqlite3_serialize()`].

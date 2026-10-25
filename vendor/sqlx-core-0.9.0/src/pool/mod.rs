@@ -63,11 +63,11 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::ready;
 use std::time::Duration;
-use std::time::Instant;
 
 use event_listener::EventListener;
 use futures_core::FusedFuture;
 use futures_util::FutureExt;
+use web_time::Instant;
 
 pub use self::connection::PoolConnection;
 use self::inner::PoolInner;

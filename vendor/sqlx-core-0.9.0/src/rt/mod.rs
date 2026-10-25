@@ -13,6 +13,9 @@ pub mod rt_async_io;
 #[cfg(feature = "_rt-tokio")]
 pub mod rt_tokio;
 
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+mod rt_wasm;
+
 #[derive(Debug, thiserror::Error)]
 #[error("operation timed out")]
 pub struct TimeoutError;
@@ -27,6 +30,10 @@ pub enum JoinHandle<T> {
     // Implementation shared by `smol` and `async-global-executor`
     #[cfg(feature = "_rt-async-task")]
     AsyncTask(Option<async_task::Task<T>>),
+
+    // A task on the browser's event loop (`wasm_bindgen_futures::spawn_local`)
+    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+    Wasm(futures_channel::oneshot::Receiver<T>),
 
     // `PhantomData<T>` requires `T: Unpin`
     _Phantom(PhantomData<fn() -> T>),
@@ -46,6 +53,8 @@ pub async fn timeout<F: Future>(duration: Duration, f: F) -> Result<F::Output, T
     cfg_if! {
         if #[cfg(feature = "_rt-async-io")] {
             rt_async_io::timeout(duration, f).await
+        } else if #[cfg(all(target_family = "wasm", target_os = "unknown"))] {
+            rt_wasm::timeout(duration, f).await
         } else {
             missing_rt((duration, f))
         }
@@ -61,6 +70,8 @@ pub async fn sleep(duration: Duration) {
     cfg_if! {
         if #[cfg(feature = "_rt-async-io")] {
             rt_async_io::sleep(duration).await
+        } else if #[cfg(all(target_family = "wasm", target_os = "unknown"))] {
+            rt_wasm::sleep(duration).await
         } else {
             missing_rt(duration)
         }
@@ -85,6 +96,8 @@ where
             JoinHandle::AsyncTask(Some(smol::spawn(fut)))
         } else if #[cfg(feature = "_rt-async-std")] {
             JoinHandle::AsyncStd(async_std::task::spawn(fut))
+        } else if #[cfg(all(target_family = "wasm", target_os = "unknown"))] {
+            JoinHandle::Wasm(rt_wasm::spawn(fut))
         } else {
             missing_rt(fut)
         }
@@ -109,6 +122,9 @@ where
             JoinHandle::AsyncTask(Some(smol::unblock(f)))
         } else if #[cfg(feature = "_rt-async-std")] {
             JoinHandle::AsyncStd(async_std::task::spawn_blocking(f))
+        } else if #[cfg(all(target_family = "wasm", target_os = "unknown"))] {
+            // There are no threads to block, so `f` runs on this one.
+            JoinHandle::Wasm(rt_wasm::spawn(async move { f() }))
         } else {
             missing_rt(f)
         }
@@ -189,6 +205,11 @@ impl<T: Send + 'static> Future for JoinHandle<T> {
             Self::Tokio(handle) => Pin::new(handle)
                 .poll(cx)
                 .map(|res| res.expect("spawned task panicked")),
+
+            #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+            Self::Wasm(handle) => Pin::new(handle)
+                .poll(cx)
+                .map(|res| res.expect("spawned task was dropped before it finished")),
 
             Self::_Phantom(_) => {
                 let _ = cx;

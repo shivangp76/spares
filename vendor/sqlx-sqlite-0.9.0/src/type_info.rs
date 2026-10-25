@@ -4,14 +4,14 @@ use std::fmt::{self};
 use std::os::raw::c_int;
 use std::str::FromStr;
 
-use libsqlite3_sys::SQLITE_BLOB;
-use libsqlite3_sys::SQLITE_FLOAT;
-use libsqlite3_sys::SQLITE_INTEGER;
-use libsqlite3_sys::SQLITE_NULL;
-use libsqlite3_sys::SQLITE_TEXT;
 pub(crate) use sqlx_core::type_info::*;
 
 use crate::error::BoxDynError;
+use crate::ffi::SQLITE_BLOB;
+use crate::ffi::SQLITE_FLOAT;
+use crate::ffi::SQLITE_INTEGER;
+use crate::ffi::SQLITE_NULL;
+use crate::ffi::SQLITE_TEXT;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "offline", derive(serde::Serialize, serde::Deserialize))]

@@ -10,11 +10,11 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::time::Duration;
-use std::time::Instant;
 
 use crossbeam_queue::ArrayQueue;
 use futures_util::FutureExt;
 use tracing::Level;
+use web_time::Instant;
 
 use super::connection::Floating;
 use super::connection::Idle;
@@ -235,6 +235,9 @@ impl<DB: Database> PoolInner<DB> {
         self: &'a Arc<Self>,
         permit: AsyncSemaphoreReleaser<'a>,
     ) -> Result<DecrementSizeGuard<DB>, AsyncSemaphoreReleaser<'a>> {
+        // Vendored by spares: `fetch_update` is deprecated in newer Rust, and a path dependency's
+        // warnings aren't capped like a crates.io dependency's.
+        #[allow(deprecated)]
         let result = self
             .size
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |size| {

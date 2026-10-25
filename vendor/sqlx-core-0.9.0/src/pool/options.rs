@@ -3,10 +3,10 @@ use std::fmt::Formatter;
 use std::fmt::{self};
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use futures_core::future::BoxFuture;
 use log::LevelFilter;
+use web_time::Instant;
 
 use crate::connection::Connection;
 use crate::database::Database;

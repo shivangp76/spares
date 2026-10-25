@@ -16,9 +16,10 @@
 
 use std::sync::Arc;
 
-use libsqlite3_sys as ffi;
 use log::error;
 use regex::Regex;
+
+use crate::ffi;
 
 /// The function name for sqlite3. This must be "regexp\0"
 static FN_NAME: &[u8] = b"regexp\0";

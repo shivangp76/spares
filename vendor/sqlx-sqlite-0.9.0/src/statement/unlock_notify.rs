@@ -4,11 +4,10 @@ use std::slice;
 use std::sync::Condvar;
 use std::sync::Mutex;
 
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_unlock_notify;
-
 use crate::SqliteError;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_unlock_notify;
 
 // Wait for unlock notification (https://www.sqlite.org/unlock_notify.html)
 pub unsafe fn wait(conn: *mut sqlite3) -> Result<(), SqliteError> {

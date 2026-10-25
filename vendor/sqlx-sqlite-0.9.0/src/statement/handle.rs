@@ -8,45 +8,6 @@ use std::slice::from_raw_parts;
 use std::str::from_utf8;
 use std::sync::Arc;
 
-use libsqlite3_sys::SQLITE_DONE;
-use libsqlite3_sys::SQLITE_MISUSE;
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::SQLITE_ROW;
-use libsqlite3_sys::SQLITE_TRANSIENT;
-use libsqlite3_sys::SQLITE_UTF8;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_bind_blob64;
-use libsqlite3_sys::sqlite3_bind_double;
-use libsqlite3_sys::sqlite3_bind_int;
-use libsqlite3_sys::sqlite3_bind_int64;
-use libsqlite3_sys::sqlite3_bind_null;
-use libsqlite3_sys::sqlite3_bind_parameter_count;
-use libsqlite3_sys::sqlite3_bind_parameter_name;
-use libsqlite3_sys::sqlite3_bind_text64;
-use libsqlite3_sys::sqlite3_changes;
-use libsqlite3_sys::sqlite3_clear_bindings;
-use libsqlite3_sys::sqlite3_column_blob;
-use libsqlite3_sys::sqlite3_column_bytes;
-use libsqlite3_sys::sqlite3_column_count;
-use libsqlite3_sys::sqlite3_column_database_name;
-use libsqlite3_sys::sqlite3_column_decltype;
-use libsqlite3_sys::sqlite3_column_double;
-use libsqlite3_sys::sqlite3_column_int;
-use libsqlite3_sys::sqlite3_column_int64;
-use libsqlite3_sys::sqlite3_column_name;
-use libsqlite3_sys::sqlite3_column_origin_name;
-use libsqlite3_sys::sqlite3_column_table_name;
-use libsqlite3_sys::sqlite3_column_type;
-use libsqlite3_sys::sqlite3_column_value;
-use libsqlite3_sys::sqlite3_db_handle;
-use libsqlite3_sys::sqlite3_finalize;
-use libsqlite3_sys::sqlite3_reset;
-use libsqlite3_sys::sqlite3_sql;
-use libsqlite3_sys::sqlite3_step;
-use libsqlite3_sys::sqlite3_stmt;
-use libsqlite3_sys::sqlite3_stmt_readonly;
-use libsqlite3_sys::sqlite3_table_column_metadata;
-use libsqlite3_sys::sqlite3_value;
 use sqlx_core::column::ColumnOrigin;
 use sqlx_core::column::TableColumn;
 
@@ -54,6 +15,45 @@ use crate::SqliteError;
 use crate::SqliteTypeInfo;
 use crate::error::BoxDynError;
 use crate::error::Error;
+use crate::ffi::SQLITE_DONE;
+use crate::ffi::SQLITE_MISUSE;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::SQLITE_ROW;
+use crate::ffi::SQLITE_TRANSIENT;
+use crate::ffi::SQLITE_UTF8;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_bind_blob64;
+use crate::ffi::sqlite3_bind_double;
+use crate::ffi::sqlite3_bind_int;
+use crate::ffi::sqlite3_bind_int64;
+use crate::ffi::sqlite3_bind_null;
+use crate::ffi::sqlite3_bind_parameter_count;
+use crate::ffi::sqlite3_bind_parameter_name;
+use crate::ffi::sqlite3_bind_text64;
+use crate::ffi::sqlite3_changes;
+use crate::ffi::sqlite3_clear_bindings;
+use crate::ffi::sqlite3_column_blob;
+use crate::ffi::sqlite3_column_bytes;
+use crate::ffi::sqlite3_column_count;
+use crate::ffi::sqlite3_column_database_name;
+use crate::ffi::sqlite3_column_decltype;
+use crate::ffi::sqlite3_column_double;
+use crate::ffi::sqlite3_column_int;
+use crate::ffi::sqlite3_column_int64;
+use crate::ffi::sqlite3_column_name;
+use crate::ffi::sqlite3_column_origin_name;
+use crate::ffi::sqlite3_column_table_name;
+use crate::ffi::sqlite3_column_type;
+use crate::ffi::sqlite3_column_value;
+use crate::ffi::sqlite3_db_handle;
+use crate::ffi::sqlite3_finalize;
+use crate::ffi::sqlite3_reset;
+use crate::ffi::sqlite3_sql;
+use crate::ffi::sqlite3_step;
+use crate::ffi::sqlite3_stmt;
+use crate::ffi::sqlite3_stmt_readonly;
+use crate::ffi::sqlite3_table_column_metadata;
+use crate::ffi::sqlite3_value;
 use crate::type_info::DataType;
 
 #[derive(Debug)]
@@ -463,7 +463,7 @@ impl StatementHandle {
                     SQLITE_DONE => return Ok(false),
                     SQLITE_MISUSE => panic!("misuse!"),
                     #[cfg(feature = "unlock-notify")]
-                    libsqlite3_sys::SQLITE_LOCKED_SHAREDCACHE => {
+                    crate::ffi::SQLITE_LOCKED_SHAREDCACHE => {
                         // The shared cache is locked by another connection. Wait for unlock
                         // notification and try again.
                         super::unlock_notify::wait(self.db_handle())?;

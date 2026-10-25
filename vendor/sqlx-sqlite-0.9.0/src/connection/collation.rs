@@ -8,12 +8,11 @@ use std::os::raw::c_void;
 use std::slice;
 use std::sync::Arc;
 
-use libsqlite3_sys::SQLITE_OK;
-use libsqlite3_sys::SQLITE_UTF8;
-use libsqlite3_sys::sqlite3_create_collation_v2;
-
 use crate::connection::handle::ConnectionHandle;
 use crate::error::Error;
+use crate::ffi::SQLITE_OK;
+use crate::ffi::SQLITE_UTF8;
+use crate::ffi::sqlite3_create_collation_v2;
 
 #[derive(Clone)]
 pub struct Collation {

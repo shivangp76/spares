@@ -5,16 +5,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use libsqlite3_sys::SQLITE_OPEN_CREATE;
-use libsqlite3_sys::SQLITE_OPEN_FULLMUTEX;
-use libsqlite3_sys::SQLITE_OPEN_MEMORY;
-use libsqlite3_sys::SQLITE_OPEN_NOMUTEX;
-use libsqlite3_sys::SQLITE_OPEN_PRIVATECACHE;
-use libsqlite3_sys::SQLITE_OPEN_READONLY;
-use libsqlite3_sys::SQLITE_OPEN_READWRITE;
-use libsqlite3_sys::SQLITE_OPEN_SHAREDCACHE;
-use libsqlite3_sys::SQLITE_OPEN_URI;
-use libsqlite3_sys::sqlite3_busy_timeout;
 use percent_encoding::NON_ALPHANUMERIC;
 #[cfg(feature = "load-extension")]
 use sqlx_core::IndexMap;
@@ -25,6 +15,16 @@ use crate::connection::LogSettings;
 use crate::connection::Statements;
 use crate::connection::handle::ConnectionHandle;
 use crate::error::Error;
+use crate::ffi::SQLITE_OPEN_CREATE;
+use crate::ffi::SQLITE_OPEN_FULLMUTEX;
+use crate::ffi::SQLITE_OPEN_MEMORY;
+use crate::ffi::SQLITE_OPEN_NOMUTEX;
+use crate::ffi::SQLITE_OPEN_PRIVATECACHE;
+use crate::ffi::SQLITE_OPEN_READONLY;
+use crate::ffi::SQLITE_OPEN_READWRITE;
+use crate::ffi::SQLITE_OPEN_SHAREDCACHE;
+use crate::ffi::SQLITE_OPEN_URI;
+use crate::ffi::sqlite3_busy_timeout;
 
 // This was originally `AtomicU64` but that's not supported on MIPS (or PowerPC):
 // https://github.com/launchbadge/sqlx/issues/2859
@@ -39,6 +39,7 @@ pub struct EstablishParams {
     log_settings: LogSettings,
     #[cfg(feature = "load-extension")]
     extensions: IndexMap<CString, Option<CString>>,
+    #[cfg_attr(all(target_family = "wasm", target_os = "unknown"), allow(dead_code))]
     pub(crate) thread_name: String,
     pub(crate) command_channel_size: usize,
     #[cfg(feature = "regexp")]
@@ -176,7 +177,7 @@ impl EstablishParams {
         if self.register_regexp_function {
             // configure a `regexp` function for sqlite, it does not come with one by default
             let status = crate::regexp::register(handle.as_ptr());
-            if status != libsqlite3_sys::SQLITE_OK {
+            if status != crate::ffi::SQLITE_OK {
                 return Err(Error::Database(Box::new(handle.expect_error())));
             }
         }
@@ -210,16 +211,16 @@ impl EstablishParams {
         use std::ffi::c_int;
         use std::ptr;
 
-        use libsqlite3_sys::sqlite3_free;
-        use libsqlite3_sys::sqlite3_load_extension;
+        use crate::ffi::sqlite3_free;
+        use crate::ffi::sqlite3_load_extension;
 
         /// `true` enables *just* `sqlite3_load_extension`, false disables *all* extension loading.
         fn enable_load_extension(
             handle: &mut ConnectionHandle,
             enabled: bool,
         ) -> Result<(), Error> {
-            use libsqlite3_sys::SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION;
-            use libsqlite3_sys::sqlite3_db_config;
+            use crate::ffi::SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION;
+            use crate::ffi::sqlite3_db_config;
 
             // SAFETY: we have exclusive access and this matches the expected signature
             // <https://www.sqlite.org/c3ref/c_dbconfig_defensive.html#sqlitedbconfigenableloadextension>
