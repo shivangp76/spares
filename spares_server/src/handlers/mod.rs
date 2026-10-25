@@ -60,6 +60,13 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": reason, "full_sync_required": true })),
             );
         }
+        // The device has to enroll again (`spares_core::sync::devices`).
+        Error::NotEnrolled(_) => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "message": e.to_string(), "not_enrolled": true })),
+            );
+        }
         // A search error's message marks the problem in the query, `span` says where it is, and
         // `query_field` which of the request's queries it is in, if it has several.
         Error::Library(LibraryError::Search {

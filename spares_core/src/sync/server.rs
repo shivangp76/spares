@@ -17,6 +17,7 @@ use super::SYNC_EPOCH_KEY;
 use super::SYNC_USN_KEY;
 use super::apply::Applied;
 use super::apply::apply_changes;
+use super::devices::check_enrolled;
 use super::full;
 use super::get_state;
 use super::get_state_i64;
@@ -73,6 +74,9 @@ pub async fn meta(db: &SqlitePool, client_replica: Option<u8>) -> Result<MetaRes
         .fetch_one(&mut *conn)
         .await
         .map_err(sqlx_error)?;
+    if let Some(replica) = client_replica {
+        check_enrolled(&mut conn, replica).await?;
+    }
     let client_last_usn = match client_replica {
         Some(replica) => sqlx::query_scalar("SELECT last_usn FROM sync_client WHERE replica = ?")
             .bind(i64::from(replica))
@@ -97,6 +101,7 @@ pub async fn pull(db: &SqlitePool, request: PullRequest) -> Result<PullResponse,
     let mut tx = db.begin().await.map_err(sqlx_error)?;
     // A write first, so the transaction holds the write lock before it reads anything.
     set_applying(&mut tx, true).await?;
+    check_enrolled(&mut tx, request.replica).await?;
     let mut usn = get_state_i64(&mut tx, SYNC_USN_KEY).await?.unwrap_or(0);
     if has_dirty(&mut tx).await? {
         usn += 1;
@@ -133,6 +138,7 @@ pub async fn pull(db: &SqlitePool, request: PullRequest) -> Result<PullResponse,
 pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse, Applied), Error> {
     let mut tx = db.begin().await.map_err(sqlx_error)?;
     set_applying(&mut tx, true).await?;
+    check_enrolled(&mut tx, request.replica).await?;
     let usn = get_state_i64(&mut tx, SYNC_USN_KEY).await?.unwrap_or(0);
     if usn != request.pull_usn || has_dirty(&mut tx).await? {
         return Err(Error::SyncRetry);
@@ -168,6 +174,18 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;
+    }
+    for counter in &request.id_counters {
+        sqlx::query(
+            "INSERT INTO id_counter (replica, tbl, last) VALUES (?, ?, ?)
+             ON CONFLICT (replica, tbl) DO UPDATE SET last = MAX(last, excluded.last)",
+        )
+        .bind(i64::from(request.replica))
+        .bind(&counter.tbl)
+        .bind(counter.last)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_error)?;
     }
     set_state(&mut tx, SYNC_USN_KEY, new_usn).await?;
     sqlx::query(
@@ -208,23 +226,31 @@ pub async fn full_upload(
     path: &Path,
     replica: u8,
 ) -> Result<FullUploadResponse, Error> {
+    check_enrolled(&mut *db.acquire().await.map_err(sqlx_error)?, replica).await?;
     full::restore(db, path).await?;
     let mut tx = db.begin().await.map_err(sqlx_error)?;
     let usn = get_state_i64(&mut tx, SYNC_USN_KEY).await?.unwrap_or(0) + 1;
     let epoch = new_epoch();
     set_state(&mut tx, SYNC_USN_KEY, usn).await?;
     set_state(&mut tx, SYNC_EPOCH_KEY, &epoch).await?;
-    sqlx::query("DELETE FROM sync_client")
+    // Every other client's last usn is from the old epoch, so it says nothing about the client
+    // any more. 0 is below every usn, which is never taken for a backup or an applied push (see
+    // `super::run`). When each last synced stays, for the list of devices.
+    sqlx::query("UPDATE sync_client SET last_usn = 0")
         .execute(&mut *tx)
         .await
         .map_err(sqlx_error)?;
-    sqlx::query("INSERT INTO sync_client (replica, last_usn, last_sync_at) VALUES (?, ?, ?)")
-        .bind(i64::from(replica))
-        .bind(usn)
-        .bind(Utc::now().timestamp())
-        .execute(&mut *tx)
-        .await
-        .map_err(sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO sync_client (replica, last_usn, last_sync_at) VALUES (?, ?, ?)
+         ON CONFLICT (replica) DO UPDATE SET last_usn = excluded.last_usn,
+             last_sync_at = excluded.last_sync_at",
+    )
+    .bind(i64::from(replica))
+    .bind(usn)
+    .bind(Utc::now().timestamp())
+    .execute(&mut *tx)
+    .await
+    .map_err(sqlx_error)?;
     tx.commit().await.map_err(sqlx_error)?;
     Ok(FullUploadResponse { usn, epoch })
 }
