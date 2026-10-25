@@ -9,6 +9,9 @@
 //!   server ([`spares_server::route::create_local_router`]). Requests it can't answer get
 //!   `503 {"needs_server": true}`, which the web app sends to the server instead.
 //! - [`enroll`], [`sync`] and [`unenroll`] talk to the server, through the browser's `fetch`.
+//! - [`pending_notes`] and [`render_assets`] tell the web app what to show for notes the server
+//!   hasn't rendered yet, and what to download for Typst cards. [`web_renders`] tells the device
+//!   which HTML files for web clients the web app has downloaded.
 //!
 //! **What runs where.** The device runs `spares_core` on its own database: reviews and their
 //! scheduling, searches, statistics, creating and editing notes, tags and undo. It writes no note
@@ -206,4 +209,44 @@ pub async fn unenroll(server: String, key: Option<String>) -> Result<(), JsValue
             .map_err(|e| core_error(&e))?;
     }
     storage::forget(&opened).await
+}
+
+/// Deletes the copy without telling the server, for a device the server no longer has enrolled
+/// (`not_enrolled`): its number may belong to another device by now.
+#[wasm_bindgen]
+pub async fn forget() -> Result<(), JsValue> {
+    storage::forget(&opened()?).await
+}
+
+/// The ids of the notes changed here since the last sync, which the server hasn't rendered yet.
+#[wasm_bindgen]
+pub async fn pending_notes() -> Result<Vec<i64>, JsValue> {
+    sqlx::query_scalar("SELECT id FROM note WHERE usn < 0")
+        .fetch_all(&opened()?.db)
+        .await
+        .map_err(|e| js_error(&e.to_string()))
+}
+
+/// `[{path, hash}]`: every file the server read while rendering notes (`render_asset`), such as
+/// Typst preambles and images, which Typst cards need to compile offline. A device downloads them
+/// with `GET /api/render-assets?path=`, again when the hash changes.
+#[wasm_bindgen]
+pub async fn render_assets() -> Result<JsValue, JsValue> {
+    let assets: Vec<(String, String)> = sqlx::query_as("SELECT path, hash FROM render_asset")
+        .fetch_all(&opened()?.db)
+        .await
+        .map_err(|e| js_error(&e.to_string()))?;
+    let assets: Vec<serde_json::Value> = assets
+        .into_iter()
+        .map(|(path, hash)| serde_json::json!({ "path": path, "hash": hash }))
+        .collect();
+    to_js(&assets)
+}
+
+/// Records `paths`, relative to the files directory, as the non-empty HTML files for web clients
+/// the web app has downloaded (`GET /api/sync/files` lists them next to each rendered file). Notes
+/// and cards are shown with them (`web_path`) only then, since the device can't look at the files.
+#[wasm_bindgen]
+pub async fn web_renders(paths: Vec<String>) -> Result<(), JsValue> {
+    storage::save_web_renders(&opened()?.device, &paths.into_iter().collect()).await
 }

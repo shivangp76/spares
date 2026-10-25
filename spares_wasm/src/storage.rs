@@ -5,7 +5,8 @@
 //!   ([`spares_core::sync::full::restore`]), never the file, so its own `id_counter` is merged.
 //! - `device.sqlite`: what the device knows about itself, kept out of the collection (decision 6
 //!   in `spares_core::sync`): its replica number, and the config and parser templates from the
-//!   server's last `GET /api/sync/config`, which [`spares_core::platform`] reads.
+//!   server's last `GET /api/sync/config`, which [`spares_core::platform`] reads, and which
+//!   HTML files for web clients the web app has downloaded.
 //! - `spares-download.sqlite` and `spares-upload.sqlite`: a full sync's snapshot, while it runs.
 //!
 //! The VFS has no locks between tabs, so one tab at a time may open the storage (the web app
@@ -13,12 +14,14 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use rsqlite_vfs::VfsFilesManager;
 use spares_core::config::Replica;
 use spares_core::config::get_config_dir;
+use spares_core::config::get_files_dir;
 use spares_core::config::set_device_replica;
 use spares_core::sync::devices::DeviceConfig;
 use spares_server::AppState;
@@ -110,6 +113,7 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
     for statement in [
         "CREATE TABLE IF NOT EXISTS device_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS config_file (path TEXT PRIMARY KEY NOT NULL, contents TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS web_render_file (path TEXT PRIMARY KEY NOT NULL)",
     ] {
         sqlx::query(statement)
             .execute(&device)
@@ -123,6 +127,7 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
         .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;
     set_device_replica(load_replica(&device).await?);
     load_config(&device).await?;
+    load_web_renders(&device).await?;
     let router = create_local_router(Arc::new(AppState {
         db: db.clone(),
         api_key: None,
@@ -231,14 +236,49 @@ pub(crate) async fn save_config(device: &SqlitePool, config: &DeviceConfig) -> R
     load_config(device).await
 }
 
-/// Forgets the device's copy: its collection, replica number and config. The next [`open`] in a
-/// new worker starts empty.
+/// Puts the saved HTML files for web clients in [`spares_core::platform`].
+async fn load_web_renders(device: &SqlitePool) -> Result<(), JsValue> {
+    let paths: Vec<String> = sqlx::query_scalar("SELECT path FROM web_render_file")
+        .fetch_all(device)
+        .await
+        .map_err(sqlx_error)?;
+    let dir = get_files_dir();
+    let paths = paths.into_iter().map(|path| dir.join(path)).collect();
+    spares_core::platform::load_web_renders(paths);
+    Ok(())
+}
+
+/// Replaces the saved HTML files for web clients with `paths`, relative to the files directory, and
+/// uses them from now on.
+pub(crate) async fn save_web_renders(
+    device: &SqlitePool,
+    paths: &BTreeSet<String>,
+) -> Result<(), JsValue> {
+    let mut tx = device.begin().await.map_err(sqlx_error)?;
+    sqlx::query("DELETE FROM web_render_file")
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_error)?;
+    for path in paths {
+        sqlx::query("INSERT INTO web_render_file (path) VALUES (?)")
+            .bind(path)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_error)?;
+    }
+    tx.commit().await.map_err(sqlx_error)?;
+    load_web_renders(device).await
+}
+
+/// Forgets the device's copy: its collection, replica number, config and downloaded files. The
+/// next [`open`] in a new worker starts empty.
 pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     opened.db.close().await;
     opened.device.close().await;
     OPENED.with(|o| *o.borrow_mut() = None);
     set_device_replica(None);
     spares_core::platform::load(BTreeMap::new());
+    spares_core::platform::load_web_renders(BTreeSet::new());
     for file in [DB_FILE, DEVICE_FILE]
         .into_iter()
         .chain(TEMP_FILES)
