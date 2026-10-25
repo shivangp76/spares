@@ -302,6 +302,12 @@ pub(crate) enum NoteCommands {
         #[arg(long)]
         repair_hooks: bool,
     },
+    /// Update the notes repository's `anki` branch with Anki's notes, so it can be fetched.
+    ///
+    /// Reads Anki through `AnkiConnect` while Anki is open, and otherwise from `ANKI_DB_PATH`. Only
+    /// notes of Anki's `Basic` note type with a `SparesId` field are on the branch. See "Syncing
+    /// notes with Anki" in the manual's Workflows page.
+    AnkiRefresh,
     /// Compare the notes repository with the database
     VcsCheck {
         /// Rewrite note files that differ from the database, and commit them

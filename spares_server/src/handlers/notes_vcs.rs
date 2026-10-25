@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use spares_core::adapters::impls::anki::backend;
 use spares_core::notes_vcs;
 use spares_core::notes_vcs::CheckRequest;
 use spares_core::notes_vcs::FinishRequest;
@@ -33,6 +34,17 @@ pub(crate) async fn notes_vcs_finish_handler(
     Json(body): Json<FinishRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = notes_vcs::finish(data.db.clone(), body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
+/// Updates the notes repository's `anki` branch with Anki's notes (`spares note anki-refresh`).
+pub(crate) async fn notes_vcs_anki_refresh_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let backend = backend::connect().await.map_err(error_to_response)?;
+    let result = notes_vcs::anki::refresh(data.db.clone(), Arc::from(backend))
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))

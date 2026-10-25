@@ -53,6 +53,7 @@ use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
 use crate::handlers::note::search_page_handler;
 use crate::handlers::note::update_notes_handler;
+use crate::handlers::notes_vcs::notes_vcs_anki_refresh_handler;
 use crate::handlers::notes_vcs::notes_vcs_check_handler;
 use crate::handlers::notes_vcs::notes_vcs_finish_handler;
 use crate::handlers::notes_vcs::notes_vcs_init_handler;
@@ -160,6 +161,10 @@ fn notes_vcs_routes() -> Router<Arc<AppState>> {
         .route("/api/notes/vcs/finish", post(notes_vcs_finish_handler))
         .route("/api/notes/vcs/init", post(notes_vcs_init_handler))
         .route("/api/notes/vcs/check", post(notes_vcs_check_handler))
+        .route(
+            "/api/notes/vcs/anki/refresh",
+            post(notes_vcs_anki_refresh_handler),
+        )
         .route(
             "/api/notes/vcs/saved-copies/remove",
             post(notes_vcs_remove_saved_copies_handler),

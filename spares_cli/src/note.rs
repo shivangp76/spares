@@ -288,6 +288,9 @@ pub(crate) async fn handle(
         NoteCommands::InitVcs { jj, repair_hooks } => {
             crate::notes_vcs::init_vcs(base_url, client, jj, repair_hooks).await?;
         }
+        NoteCommands::AnkiRefresh => {
+            crate::notes_vcs::anki_refresh(base_url, client).await?;
+        }
         NoteCommands::VcsCheck { fix } => {
             crate::notes_vcs::check(base_url, client, fix).await?;
         }

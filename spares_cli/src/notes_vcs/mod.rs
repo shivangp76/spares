@@ -11,6 +11,7 @@ use miette::miette;
 use reqwest::Client;
 use spares_core::notes_vcs::CheckRequest;
 use spares_core::notes_vcs::CheckResponse;
+use spares_core::notes_vcs::anki::RefreshResponse;
 
 use crate::utils::ensure_ok;
 
@@ -80,6 +81,31 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
             &format!("Copies saved before overwriting, in {}", dir.display()),
             &saved,
         );
+    }
+    Ok(())
+}
+
+/// `spares note anki-refresh`
+pub(crate) async fn anki_refresh(base_url: &str, client: &Client) -> Result<(), Error> {
+    let response = client
+        .post(format!("{base_url}/api/notes/vcs/anki/refresh"))
+        .send()
+        .await
+        .map_err(|e| miette!("{}", e))?;
+    let refresh: RefreshResponse = ensure_ok(response)
+        .await?
+        .json()
+        .await
+        .map_err(|e| miette!("{}", e))?;
+    let short = |sha: &str| sha[..sha.len().min(12)].to_string();
+    match (&refresh.old, refresh.changed) {
+        (None, _) => eprintln!("Created `anki` at {}.", short(&refresh.new)),
+        (Some(old), true) => eprintln!(
+            "Anki changed: moved `anki` from {} to {}.",
+            short(old),
+            short(&refresh.new)
+        ),
+        (Some(_), false) => eprintln!("`anki` already matches Anki."),
     }
     Ok(())
 }

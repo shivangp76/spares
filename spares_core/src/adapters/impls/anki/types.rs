@@ -64,6 +64,12 @@ pub enum ApiAction {
     GetModelFieldNames,
     #[serde(rename = "modelFieldAdd")]
     AddFieldToModel,
+    #[serde(rename = "version")]
+    Version,
+    #[serde(rename = "findNotes")]
+    FindNotes,
+    #[serde(rename = "notesInfo")]
+    NotesInfo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -77,6 +83,9 @@ pub enum ApiRequestParams {
     Suspend(SuspendApiRequestData),
     GetModelFieldNames(GetModelFieldNamesApiRequestData),
     AddFieldToModel(AddFieldToModelApiRequestData),
+    FindNotes(FindNotesApiRequestData),
+    NotesInfo(NotesInfoApiRequestData),
+    None(NoParams),
 }
 
 // General Note Fields
@@ -175,4 +184,35 @@ pub struct AddFieldToModelApiRequestData {
     pub field_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoParams {}
+
+// Find notes
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FindNotesApiRequestData {
+    pub query: String,
+}
+
+// Notes info
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NotesInfoApiRequestData {
+    pub notes: Vec<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoteInfo {
+    #[serde(rename = "noteId")]
+    pub note_id: i64,
+    #[serde(rename = "modelName")]
+    pub model_name: String,
+    pub tags: Vec<String>,
+    pub fields: std::collections::HashMap<String, NoteInfoField>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoteInfoField {
+    pub value: String,
+    pub order: usize,
 }

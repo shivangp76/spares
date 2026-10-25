@@ -1,5 +1,8 @@
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use chrono::DateTime;
 use chrono::Duration;
@@ -28,7 +31,6 @@ use crate::adapters::migration::MigrationData;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::card::update_cards;
 use crate::api::review::submit_study_action;
-use crate::config::get_data_dir;
 use crate::helpers::parse_list;
 use crate::model::Card;
 use crate::model::DEFAULT_DESIRED_RETENTION;
@@ -175,7 +177,8 @@ pub async fn populate_reviews(
     anki_db_path: &Path,
 ) -> Result<(), Error> {
     // Get Anki pool
-    let anki_pool = read_database_file(anki_db_path).await?;
+    let anki_copy = read_database_file(anki_db_path).await?;
+    let anki_pool = &anki_copy.pool;
 
     // Modify cards
     if !dry_run {
@@ -189,7 +192,7 @@ pub async fn populate_reviews(
                 "SELECT id, queue, type, due, data FROM cards WHERE nid = ? ORDER BY id ASC",
             )
             .bind(anki_note_id)
-            .fetch_all(&anki_pool)
+            .fetch_all(anki_pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -253,7 +256,7 @@ pub async fn populate_reviews(
                 let review_log_rows: Vec<DbRevLogRow> =
                     sqlx::query_as("SELECT * FROM revlog WHERE cid = ? ORDER BY id ASC")
                         .bind(anki_card.id)
-                        .fetch_all(&anki_pool)
+                        .fetch_all(anki_pool)
                         .await
                         .map_err(|e| Error::Sqlx { source: e })?;
                 let review_histories = parse_anki_revlog_rows(&review_log_rows, card.id)
@@ -358,16 +361,34 @@ pub async fn db_row_to_request(
         .map_err(|e| Error::Sqlx { source: e })?;
     assert!(!card_rows.is_empty());
     let is_suspended = card_rows.into_iter().any(|c| c.queue == -1);
+    Ok(anki_note_from_fields(
+        row.id,
+        &row.flds,
+        &row.tags,
+        is_suspended,
+        migration_func,
+    ))
+}
 
-    let tags = row
-        .tags
+/// The spares note an Anki note of the `Basic` model describes. `flds` are its fields in the
+/// model's order separated by U+001F (front, back, keywords, `SparesId`, `SparesParserName`), and
+/// `tags` its tags separated by spaces, as Anki stores them. Anki's HTML line breaks and entities
+/// are turned back into text.
+pub fn anki_note_from_fields(
+    anki_note_id: i64,
+    flds: &str,
+    tags: &str,
+    is_suspended: bool,
+    migration_func: Option<MigrationFunc>,
+) -> AnkiNote {
+    let tags = tags
         .split(' ')
         .map(|v| v.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect::<Vec<_>>();
 
     // Extract note_data and keywords
-    let mut fields = row.flds.clone();
+    let mut fields = flds.to_string();
     let replacements = [
         ("<br>", "\n"),
         ("<br/>", "\n"),
@@ -417,7 +438,7 @@ pub async fn db_row_to_request(
 
     let mut custom_data = Map::new();
     let note_id_key = format!("{}-{}", "anki", NOTE_ID_KEY);
-    custom_data.insert(note_id_key, Value::String(format!("{}", row.id)));
+    custom_data.insert(note_id_key, Value::String(format!("{}", anki_note_id)));
     if let Some(tts) = tts_settings.first() {
         // The note setting reads the whole note with one voice
         if front_unspoken || back_unspoken || tts_settings.iter().any(|other| other != tts) {
@@ -425,7 +446,7 @@ pub async fn db_row_to_request(
                 "Anki read only parts of note {} aloud, or with several voices. Spares reads all \
                  of it with `{tts}`; to read only some clozes, or with other voices, give them \
                  the cloze key `tts` instead.",
-                row.id
+                anki_note_id
             );
         }
         custom_data.insert(TtsSetting::KEY.to_string(), Value::String(tts.to_string()));
@@ -435,24 +456,58 @@ pub async fn db_row_to_request(
         info!("Failed to parse spares id.");
     }
 
-    Ok(AnkiNote {
+    AnkiNote {
         parser_name: spares_parser_name_string,
         spares_id,
         note_data,
         keywords,
         custom_data,
         tags,
-    })
+    }
 }
 
-pub async fn read_database_file(original_db_path: &Path) -> Result<SqlitePool, Error> {
-    // Copy to prevent corrupting the database
-    let mut db_path = get_data_dir();
-    db_path.push(original_db_path.file_name().unwrap());
+/// A copy of Anki's database, removed when dropped. Reading a copy keeps a running Anki from
+/// seeing a reader's locks, and Anki's database safe from spares.
+pub struct AnkiDbCopy {
+    pub pool: SqlitePool,
+    dir: PathBuf,
+}
+
+impl Drop for AnkiDbCopy {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Copies Anki's database, and its write-ahead log if there is one, to a directory of its own, so
+/// concurrent readers do not overwrite each other's copy. While Anki is open, the copy can miss its
+/// latest writes, so read through `AnkiConnect` then (see [`super::backend`]).
+pub async fn read_database_file(original_db_path: &Path) -> Result<AnkiDbCopy, Error> {
+    static COPIES: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "spares-anki-{}-{}",
+        std::process::id(),
+        COPIES.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(&dir).map_err(|e| Error::Io {
+        source: e,
+        description: format!("Failed to create {}", dir.display()),
+    })?;
+    let file_name = original_db_path.file_name().unwrap_or_default();
+    let db_path = dir.join(file_name);
     fs::copy(original_db_path, &db_path).map_err(|e| Error::Io {
         source: e,
         description: "Failed to copy Anki's DB.".to_string(),
     })?;
+    for suffix in ["-wal", "-shm"] {
+        let mut companion = original_db_path.as_os_str().to_owned();
+        companion.push(suffix);
+        let mut target = db_path.as_os_str().to_owned();
+        target.push(suffix);
+        if Path::new(&companion).exists() {
+            let _ = fs::copy(&companion, &target);
+        }
+    }
     info!("Database copied to: {}", db_path.display());
 
     // Create a connection pool
@@ -460,7 +515,57 @@ pub async fn read_database_file(original_db_path: &Path) -> Result<SqlitePool, E
     let pool = SqlitePool::connect(&db_url)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(pool)
+    Ok(AnkiDbCopy { pool, dir })
+}
+
+/// Ids of the note types spares writes: `Basic`, with a `SparesId` field.
+async fn spares_model_ids(pool: &SqlitePool) -> Result<Vec<i64>, Error> {
+    // Anki 2.1.28 and newer keep note types in tables, older versions as JSON in `col.models`.
+    let from_tables: Result<Vec<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT nt.id FROM notetypes nt JOIN fields f ON f.ntid = nt.id \
+         WHERE nt.name = 'Basic' AND f.name = 'SparesId'",
+    )
+    .fetch_all(pool)
+    .await;
+    if let Ok(ids) = from_tables {
+        return Ok(ids);
+    }
+    let models: String = sqlx::query_scalar("SELECT models FROM col")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let models: Map<String, Value> = serde_json::from_str(&models).unwrap_or_default();
+    Ok(models
+        .iter()
+        .filter(|(_, model)| {
+            model.get("name").and_then(Value::as_str) == Some("Basic")
+                && model
+                    .get("flds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|fields| {
+                        fields
+                            .iter()
+                            .any(|f| f.get("name").and_then(Value::as_str) == Some("SparesId"))
+                    })
+        })
+        .filter_map(|(id, _)| id.parse().ok())
+        .collect())
+}
+
+/// The notes of the note types spares writes (see [`spares_model_ids`]), oldest first.
+pub async fn read_spares_model_notes(pool: &SqlitePool) -> Result<Vec<DbNoteRow>, Error> {
+    let mut notes = Vec::new();
+    for model_id in spares_model_ids(pool).await? {
+        let rows: Vec<DbNoteRow> =
+            sqlx::query_as("SELECT id, flds, tags FROM notes WHERE mid = ? ORDER BY id ASC")
+                .bind(model_id)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        notes.extend(rows);
+    }
+    notes.sort_by_key(|row| row.id);
+    Ok(notes)
 }
 
 impl AnkiAdapter {
@@ -468,20 +573,21 @@ impl AnkiAdapter {
         original_db_path: &Path,
         migration_func: Option<MigrationFunc>,
     ) -> Result<Vec<AnkiNote>, Error> {
-        let pool = read_database_file(original_db_path).await?;
+        let copy = read_database_file(original_db_path).await?;
+        let pool = &copy.pool;
 
         // Run the query
         // The field `notes.id` is the epoch milliseconds of when the note was created, so ordering
         // ascending means the notes are inserted the order in which they were created.
         let rows: Vec<DbNoteRow> =
             sqlx::query_as("SELECT id, flds, tags FROM notes ORDER BY id ASC")
-                .fetch_all(&pool)
+                .fetch_all(pool)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
 
         let mut requests = Vec::new();
         for row in rows.iter().progress() {
-            let request = db_row_to_request(row, &pool, migration_func).await?;
+            let request = db_row_to_request(row, pool, migration_func).await?;
             requests.push(request);
         }
 

@@ -6,10 +6,15 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde_json::Map;
+use serde_json::json;
+use spares_core::adapters::impls::anki::backend::AnkiBackend;
+use spares_core::adapters::impls::anki::backend::AnkiRawNote;
+use spares_core::adapters::impls::anki::backend::FakeAnki;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::delete_notes;
 use spares_core::api::note::get_note;
@@ -27,6 +32,7 @@ use spares_core::notes_vcs::ReceiveRequest;
 use spares_core::notes_vcs::ReceiveResponse;
 use spares_core::notes_vcs::ReconcileScope;
 use spares_core::notes_vcs::RemoveSavedCopiesRequest;
+use spares_core::parsers::find_parser;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::note::CreateNoteRequest;
 use spares_core::schema::note::CreateNotesRequest;
@@ -1209,4 +1215,244 @@ async fn test_push_deleting_every_note_of_a_parser(pool: SqlitePool) {
         assert!(get_note(&pool, id).await.is_err());
     }
     assert_eq!(status(&repo()), "");
+}
+
+// The `anki` branch
+
+fn anki_ref(dir: &Path) -> String {
+    git(dir, &["rev-parse", "refs/heads/anki"])
+}
+
+/// What spares writes to Anki for the note in `contents`
+fn stored_in_anki(id: NoteId, contents: &str) -> (String, String) {
+    let parser = find_parser("markdown", &get_all_parsers()).unwrap();
+    let mut parsed = notes_vcs::parse_note_file(parser.as_ref(), contents, id, false).unwrap();
+    parsed
+        .settings
+        .custom_data
+        .insert("note-id".to_string(), json!(id.letters()));
+    FakeAnki::stored(parser.as_ref(), &parsed.settings, &parsed.data).unwrap()
+}
+
+/// The Anki id [`link_to_anki`] gives the `i`th note
+fn anki_id(i: usize) -> i64 {
+    1_000 + i64::try_from(i).unwrap()
+}
+
+/// Puts `ids` in Anki as spares writes them, and records their Anki ids in spares.
+async fn link_to_anki(pool: &SqlitePool, anki: &FakeAnki, ids: &[NoteId]) {
+    for (i, id) in ids.iter().enumerate() {
+        let mut custom_data = get_note(pool, *id).await.unwrap().custom_data;
+        custom_data.insert("anki-note-id".to_string(), json!(anki_id(i).to_string()));
+        update_notes(
+            pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![*id]),
+                parser_id: None,
+                data: None,
+                keywords: None,
+                tags: UpdateTags::None,
+                custom_data: Some(custom_data),
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let (flds, tags) = stored_in_anki(*id, &read(&note_path(&repo(), *id)));
+        anki.put(AnkiRawNote {
+            id: anki_id(i),
+            flds,
+            tags,
+        });
+    }
+}
+
+async fn refresh(pool: &SqlitePool, anki: &Arc<FakeAnki>) -> notes_vcs::anki::RefreshResponse {
+    notes_vcs::anki::refresh(pool.clone(), Arc::clone(anki) as Arc<dyn AnkiBackend>)
+        .await
+        .unwrap()
+}
+
+fn files_at(dir: &Path, rev: &str) -> Vec<String> {
+    git(dir, &["ls-tree", "-r", "--name-only", rev])
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Edits Anki's front field of a note
+fn edit_in_anki(anki: &FakeAnki, anki_id: i64, edit: impl FnOnce(&str) -> String) {
+    let mut note = anki.note(anki_id).unwrap();
+    let mut fields: Vec<String> = note.flds.split('\u{1f}').map(str::to_string).collect();
+    fields[0] = edit(&fields[0]);
+    note.flds = fields.join("\u{1f}");
+    anki.put(note);
+}
+
+#[sqlx::test]
+async fn test_anki_refresh_of_round_tripped_notes_is_empty(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    // Anki holds only the first card, so a note of several cards loses data there.
+    update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![ids[0]]),
+            parser_id: None,
+            data: Some("First {{ one }} and {{ two }}".to_string()),
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: None,
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        false,
+    )
+    .await
+    .unwrap();
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids).await;
+    let main = head(&repo());
+
+    let refreshed = refresh(&pool, &anki).await;
+    assert!(refreshed.changed);
+    assert_eq!(refreshed.old, None);
+    assert_eq!(anki_ref(&repo()), main);
+    // Refreshing again with nothing changed in Anki commits nothing.
+    let again = refresh(&pool, &anki).await;
+    assert!(!again.changed);
+    assert_eq!(anki_ref(&repo()), main);
+    assert_eq!(head(&repo()), main);
+    assert_eq!(status(&repo()), "");
+}
+
+#[sqlx::test]
+async fn test_anki_refresh_keeps_notes_never_in_anki(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids[..1]).await;
+    // A note of another note type is not read, and one without a spares id is new.
+    edit_in_anki(&anki, anki_id(0), |front| format!("{front} changed"));
+    let refreshed = refresh(&pool, &anki).await;
+    assert!(refreshed.changed);
+    let files = files_at(&repo(), "refs/heads/anki");
+    for id in &ids {
+        assert!(files.contains(&format!("markdown/{id}.md")), "{files:?}");
+    }
+    // Only the note Anki changed differs.
+    let diff = git(&repo(), &["diff", "--name-only", "main", "anki"]);
+    assert_eq!(diff, format!("markdown/{}.md", ids[0]));
+    let file = git(&repo(), &["show", &format!("anki:markdown/{}.md", ids[0])]);
+    assert!(file.contains("changed"), "{file}");
+    assert!(file.contains("anki-note-id"), "{file}");
+}
+
+#[sqlx::test]
+async fn test_anki_refresh_drops_notes_deleted_in_anki(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids[..2]).await;
+    refresh(&pool, &anki).await;
+    anki.remove(anki_id(1));
+    let refreshed = refresh(&pool, &anki).await;
+    assert!(refreshed.changed);
+    let files = files_at(&repo(), "refs/heads/anki");
+    assert!(
+        !files.contains(&format!("markdown/{}.md", ids[1])),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&format!("markdown/{}.md", ids[0])),
+        "{files:?}"
+    );
+    // The third note was never in Anki, so it stays.
+    assert!(
+        files.contains(&format!("markdown/{}.md", ids[2])),
+        "{files:?}"
+    );
+}
+
+/// Merges `anki` into `main` in the clone and pushes it
+async fn merge_anki_and_push(pool: &SqlitePool, clone: &Path) -> Pushed {
+    git(
+        clone,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(clone, &["reset", "-q", "--hard", "origin/main"]);
+    git(clone, &["merge", "-q", "--no-edit", "origin/anki"]);
+    push(pool, clone, true).await
+}
+
+#[sqlx::test]
+async fn test_anki_edits_and_new_notes_merge_into_spares(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids).await;
+    edit_in_anki(&anki, anki_id(0), |front| {
+        front.replace("First", "First, edited in Anki")
+    });
+    // A note made in Anki, without a spares id
+    let new_anki_id = 5_000;
+    anki.put(AnkiRawNote {
+        id: new_anki_id,
+        flds: ["Made in Anki ", "{{[o:1] cloze }}", "", "", "markdown"].join("\u{1f}"),
+        tags: "anki".to_string(),
+    });
+    refresh(&pool, &anki).await;
+    let new_path = format!("markdown/new-anki-{new_anki_id}.md");
+    assert!(files_at(&repo(), "refs/heads/anki").contains(&new_path));
+
+    let clone = clone();
+    let pushed = merge_anki_and_push(&pool, &clone).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(
+        note_data(&pool, ids[0])
+            .await
+            .starts_with("First, edited in Anki"),
+        "{}",
+        note_data(&pool, ids[0]).await
+    );
+    let created: NoteId = sqlx::query_scalar("SELECT id FROM note WHERE data LIKE 'Made in Anki%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let custom_data = get_note(&pool, created).await.unwrap().custom_data;
+    assert_eq!(
+        custom_data.get("anki-note-id"),
+        Some(&json!(new_anki_id.to_string()))
+    );
+    assert_eq!(status(&repo()), "");
+
+    // The Anki note still has no spares id, but is not duplicated: its Anki id finds the note.
+    refresh(&pool, &anki).await;
+    let files = files_at(&repo(), "refs/heads/anki");
+    assert!(!files.iter().any(|f| f.contains("new-anki")), "{files:?}");
+    assert!(
+        files.contains(&format!("markdown/{created}.md")),
+        "{files:?}"
+    );
+    assert_eq!(
+        git(&repo(), &["show", &format!("anki:markdown/{created}.md")]),
+        git(&repo(), &["show", &format!("main:markdown/{created}.md")]),
+    );
+    // So merging `anki` again is clean and changes nothing.
+    let before = note_data(&pool, ids[0]).await;
+    let pushed = merge_anki_and_push(&pool, &clone).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(
+        pushed.receive.imported.is_empty(),
+        "{}",
+        pushed.receive.message
+    );
+    assert_eq!(note_data(&pool, ids[0]).await, before);
 }

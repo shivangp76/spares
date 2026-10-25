@@ -14,6 +14,7 @@
 //!
 //! Without the server copy, notes are written to `<data dir>/notes` as before.
 
+pub mod anki;
 mod commit;
 pub mod git;
 mod init;

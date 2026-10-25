@@ -47,6 +47,7 @@ use crate::parsers::Parseable;
 use crate::parsers::get_cards;
 
 mod api;
+pub mod backend;
 mod database;
 pub use database::AnkiNote;
 mod types;
@@ -75,17 +76,22 @@ impl AnkiAdapter {
         }
     }
 
-    /// After non-suspended Add requests have been executed, correlates each result with its
-    /// `spares_id` and updates the corresponding Spares note's `custom_data` to record the
-    /// newly assigned Anki note ID.
-    async fn update_spares_with_anki_ids(
-        &self,
+    /// An adapter that never asks whether Anki is open, for the server, which cannot prompt.
+    /// Callers check that `AnkiConnect` answers instead (see [`backend::anki_connect_is_up`]).
+    pub fn without_prompt() -> Self {
+        Self {
+            confirm_bypass: true,
+        }
+    }
+
+    /// Correlates each executed Add request that carried a `SparesId` with its result, the
+    /// newly assigned Anki note id.
+    fn added_anki_ids(
         requests: &[ApiRequest],
         anki_results: &[Value],
         added_notes: Vec<(Option<NoteId>, CustomData)>,
-        dry_run: bool,
-    ) -> Result<(), Error> {
-        let relevant_data: Vec<(String, NoteId, CustomData)> = requests
+    ) -> Vec<(NoteId, i64, CustomData)> {
+        requests
             .iter()
             .zip(anki_results.iter())
             .filter(|(request, _)| matches!(request.action, ApiAction::AddNote))
@@ -100,25 +106,121 @@ impl AnkiAdapter {
             .filter_map(|(anki_note_id, (spares_id, custom_data))| {
                 match (anki_note_id, spares_id) {
                     (Ok(anki_note_id), Some(spares_id)) => {
-                        Some((anki_note_id.to_string(), spares_id, custom_data))
+                        Some((spares_id, anki_note_id, custom_data))
                     }
                     _ => None,
                 }
             })
-            .collect();
-        if !dry_run {
-            let spares_adapter = SparesAdapter::new(SparesRequestProcessor::Server);
-            let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
-            for (anki_note_id, spares_note_id, mut custom_data) in relevant_data {
-                custom_data.remove(NOTE_ID_KEY);
-                custom_data.insert(new_key.clone(), Value::String(anki_note_id));
-                spares_adapter
-                    .update_custom_data(spares_note_id, custom_data, dry_run, Utc::now())
-                    .await?;
-            }
+            .collect()
+    }
+
+    /// Records in the spares notes the Anki note ids they were just added as, through the server.
+    async fn update_spares_with_anki_ids(
+        &self,
+        added: Vec<(NoteId, i64, CustomData)>,
+        dry_run: bool,
+    ) -> Result<(), Error> {
+        if dry_run {
+            return Ok(());
+        }
+        let spares_adapter = SparesAdapter::new(SparesRequestProcessor::Server);
+        let new_key = format!("{}-{}", self.get_adapter_name(), NOTE_ID_KEY);
+        for (spares_note_id, anki_note_id, mut custom_data) in added {
+            custom_data.remove(NOTE_ID_KEY);
+            custom_data.insert(new_key.clone(), Value::String(anki_note_id.to_string()));
+            spares_adapter
+                .update_custom_data(spares_note_id, custom_data, dry_run, Utc::now())
+                .await?;
         }
         Ok(())
     }
+}
+
+/// What spares writes to an Anki note for a note: the fields of the `Basic` model and the tags.
+///
+/// Anki only gets the note's first card, split into front and back at its first cloze, with the
+/// rest of the note's markup lost. So a note read back from Anki is compared with this projection
+/// of the spares note, never with the note itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnkiFields {
+    pub front: String,
+    pub back: String,
+    pub keywords: Option<String>,
+    pub spares_id: Option<String>,
+    pub spares_parser_name: String,
+    pub tags: Vec<String>,
+}
+
+impl AnkiFields {
+    /// The fields as Anki stores them: in the model's order, separated by U+001F.
+    pub fn joined(&self) -> String {
+        [
+            self.front.as_str(),
+            self.back.as_str(),
+            self.keywords.as_deref().unwrap_or_default(),
+            self.spares_id.as_deref().unwrap_or_default(),
+            self.spares_parser_name.as_str(),
+        ]
+        .join("\u{1f}")
+    }
+}
+
+/// The Anki fields of a note, as [`AnkiAdapter::process_data`] writes them. The spares id is
+/// `settings.custom_data[NOTE_ID_KEY]`.
+pub fn to_anki_fields(
+    parser: &dyn Parseable,
+    settings: &NoteSettings,
+    note_data: &str,
+) -> Result<AnkiFields, Error> {
+    let parser_name = parser.get_parser_name();
+    let is_latex = parser_name.contains("latex");
+    // The note's cards should be validated before being passed in, so this should not error.
+    let cards = get_cards(parser, None, note_data, false, true)?;
+    // NOTE: Workaround: Only extract first card in Anki
+    let (front, back) = if let Some(first_card) = cards.first() {
+        // NOTE: Workaround: Add data after cloze to back
+        let first_cloze_index = first_card
+            .data
+            .iter()
+            .position(|p| matches!(*p, NotePart::ClozeStart(_)))
+            .unwrap_or(cards.len());
+        let front_data =
+            AnkiAdapter::note_parts_to_data(&first_card.data[..first_cloze_index], parser);
+        let front = to_anki_html(front_data.as_str(), is_latex);
+        let back_data =
+            AnkiAdapter::note_parts_to_data(&first_card.data[first_cloze_index..], parser);
+        let back = to_anki_html(back_data.as_str(), is_latex);
+        (front, back)
+    } else {
+        (note_data.to_string(), String::new())
+    };
+    // NOTE: Anki stores all tags sorted alphabetically, so for syncing notes between Spares and Anki, tags are inserted and updated alphabetically as well. This way when rendering notes for syncing, the diff is empty.
+    let tags = settings.tags.clone();
+    let keywords = if settings.keywords.is_empty() {
+        None
+    } else {
+        Some(settings.keywords.join(", "))
+    };
+    let spares_id: Option<String> = settings
+        .custom_data
+        .get(NOTE_ID_KEY)
+        .map(|x: &Value| {
+            serde_json::from_value(x.clone()).map_err(|_| {
+                Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                    adapter_name: ANKI_ADAPTER_NAME.to_string(),
+                    error: "Failed to parse spares note id".to_string(),
+                }))
+            })
+        })
+        .transpose()?;
+    Ok(AnkiFields {
+        front,
+        back,
+        keywords,
+        spares_id,
+        spares_parser_name: parser_name.to_string(),
+        tags,
+    })
 }
 
 #[async_trait]
@@ -235,7 +337,6 @@ impl SrsAdapter for AnkiAdapter {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines)]
     async fn process_data(
         &mut self,
         notes: Vec<(NoteSettings, Option<String>)>,
@@ -245,67 +346,49 @@ impl SrsAdapter for AnkiAdapter {
         _at: DateTime<Utc>,
         _live_update_note_ids: Vec<NoteId>,
     ) -> Result<(), Error> {
+        let added = self.apply_notes(notes, parser, dry_run, quiet).await?;
+        // Update Spares with Anki note id if it was:
+        // 1. Already added to Spares
+        // 2. Just added to Anki
+        self.update_spares_with_anki_ids(added, dry_run).await
+    }
+}
+
+impl AnkiAdapter {
+    /// Adds, updates and deletes Anki notes. Entries without note data are skipped. Returns the
+    /// spares id, new Anki note id and custom data of each note added with a spares id, which the
+    /// caller records in spares.
+    #[expect(clippy::too_many_lines)]
+    pub async fn apply_notes(
+        &mut self,
+        notes: Vec<(NoteSettings, Option<String>)>,
+        parser: &dyn Parseable,
+        dry_run: bool,
+        quiet: bool,
+    ) -> Result<Vec<(NoteId, i64, CustomData)>, Error> {
         if !dry_run {
             self.verify_anki_is_open()?;
         }
         let mut requests: Vec<ApiRequest> = Vec::new();
-        let parser_name = parser.get_parser_name();
-        let is_latex = parser_name.contains("latex");
         let client = Client::new();
         let mut added_notes = Vec::new();
+        // Suspended notes are added right away, to suspend their cards
+        let mut added_right_away = Vec::new();
         for (local_settings, note_data_res) in notes {
-            if note_data_res.is_none() {
+            let Some(note_data) = note_data_res else {
                 continue;
-            }
-            let note_data = note_data_res.unwrap();
-            // The note's cards should be validated before being passed in, so this should not error.
-            let cards = get_cards(parser, None, note_data.as_str(), false, true)?;
-            // NOTE: Workaround: Only extract first card in Anki
-            let (front, back) = if let Some(first_card) = cards.first() {
-                // NOTE: Workaround: Add data after cloze to back
-                let first_cloze_index = first_card
-                    .data
-                    .iter()
-                    .position(|p| matches!(*p, NotePart::ClozeStart(_)))
-                    .unwrap_or(cards.len());
-                let front_data = AnkiAdapter::note_parts_to_data(
-                    &first_card.data[..first_cloze_index],
-                    // &card.grouping,
-                    parser,
-                );
-                let front = to_anki_html(front_data.as_str(), is_latex);
-                let back_data = AnkiAdapter::note_parts_to_data(
-                    &first_card.data[first_cloze_index..],
-                    // &card.grouping,
-                    parser,
-                );
-                let back = to_anki_html(back_data.as_str(), is_latex);
-                (front, back)
-            } else {
-                (note_data, String::new())
             };
+            let AnkiFields {
+                front,
+                back,
+                keywords,
+                spares_id,
+                spares_parser_name,
+                tags,
+            } = to_anki_fields(parser, &local_settings, &note_data)?;
+            let spares_parser_name = Some(spares_parser_name);
             let mut final_note_id: Option<i64> = None;
-            // NOTE: Anki stores all tags sorted alphabetically, so for syncing notes between Spares and Anki, tags are inserted and updated alphabetically as well. This way when rendering notes for syncing, the diff is empty.
-            let tags = local_settings.tags.clone();
-            let keywords = if local_settings.keywords.is_empty() {
-                None
-            } else {
-                Some(local_settings.keywords.join(", "))
-            };
-            let spares_parser_name = Some(parser_name.to_string());
-            let spares_id: Option<String> = local_settings
-                .custom_data
-                .get(NOTE_ID_KEY)
-                .map(|x: &Value| {
-                    serde_json::from_value(x.clone()).map_err(|_| {
-                        Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
-                            adapter_name: ANKI_ADAPTER_NAME.to_string(),
-                            error: "Failed to parse spares note id".to_string(),
-                        }))
-                    })
-                })
-                .transpose()?;
-            if spares_id.is_none() {
+            if spares_id.is_none() && !quiet {
                 println!(
                     "WARNING: spares id is missing. If you are using spares, this will cause data to go out of sync."
                 );
@@ -314,10 +397,9 @@ impl SrsAdapter for AnkiAdapter {
             // See <https://git.foosoft.net/alex/anki-connect>
             match local_settings.action {
                 NoteImportAction::Add => {
-                    if let Some(ref spares_id) = spares_id {
-                        let spares_id_parsed = spares_id.parse::<NoteId>().ok();
-                        added_notes.push((spares_id_parsed, local_settings.custom_data));
-                    }
+                    let spares_id_parsed = spares_id
+                        .as_ref()
+                        .and_then(|spares_id| spares_id.parse::<NoteId>().ok());
                     let params = ApiRequestParams::AddNote(AddNoteApiRequestData {
                         note: AddNoteApiRequestNoteData {
                             deck_name: "Default".to_owned(),
@@ -326,7 +408,7 @@ impl SrsAdapter for AnkiAdapter {
                                 front: Some(front),
                                 back: Some(back),
                                 keywords,
-                                spares_id,
+                                spares_id: spares_id.clone(),
                                 spares_parser_name,
                             },
                             tags,
@@ -352,7 +434,17 @@ impl SrsAdapter for AnkiAdapter {
                                 },
                             )))?;
                         final_note_id = Some(created_note_id);
+                        if let Some(spares_id) = spares_id_parsed {
+                            added_right_away.push((
+                                spares_id,
+                                created_note_id,
+                                local_settings.custom_data.clone(),
+                            ));
+                        }
                     } else {
+                        if spares_id.is_some() {
+                            added_notes.push((spares_id_parsed, local_settings.custom_data));
+                        }
                         requests.push(api_request);
                     }
                 }
@@ -442,13 +534,8 @@ impl SrsAdapter for AnkiAdapter {
         }
 
         let anki_results = execute_requests(&requests, dry_run, quiet, &client).await?;
-
-        // Update Spares with Anki note id if it was:
-        // 1. Already added to Spares
-        // 2. Just added to Anki
-        self.update_spares_with_anki_ids(&requests, &anki_results, added_notes, dry_run)
-            .await?;
-
-        Ok(())
+        let mut added = AnkiAdapter::added_anki_ids(&requests, &anki_results, added_notes);
+        added.extend(added_right_away);
+        Ok(added)
     }
 }

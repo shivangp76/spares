@@ -74,7 +74,13 @@ pub async fn execute_requests(
     client: &Client,
 ) -> Result<Vec<Value>, Error> {
     let mut results = Vec::new();
-    for (i, request) in requests.iter().enumerate().progress() {
+    // Quiet callers include the server, which has no terminal to show progress on.
+    let progress = if quiet {
+        indicatif::ProgressBar::hidden()
+    } else {
+        indicatif::ProgressBar::new(requests.len() as u64)
+    };
+    for (i, request) in requests.iter().enumerate().progress_with(progress) {
         if !dry_run {
             let result = execute_request(request, client).await?;
             if !quiet {
