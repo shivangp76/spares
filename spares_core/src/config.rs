@@ -55,6 +55,10 @@ use crate::sync::SyncConfig;
 
 const SPARES: &str = "spares";
 
+/// A browser has no file system. Its config, cache and data directories are paths under this in
+/// the device's own files ([`crate::platform`]), and getting them creates nothing.
+const DEVICE_ROOT: &str = "/spares";
+
 /// True when running under a test harness. `cfg!(test)` alone is not enough: it only reflects
 /// whether *this crate* was compiled in test mode. A dependent crate's test binary (e.g.
 /// `spares_cli`'s tests) compiles `spares_core` as a normal, non-test dependency, so `cfg!(test)`
@@ -67,6 +71,9 @@ pub fn is_test_mode() -> bool {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_config_dir() -> PathBuf {
+    if cfg!(target_family = "wasm") {
+        return PathBuf::from(DEVICE_ROOT).join("config");
+    }
     if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
@@ -92,6 +99,9 @@ pub fn get_config_dir() -> PathBuf {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_cache_dir() -> PathBuf {
+    if cfg!(target_family = "wasm") {
+        return PathBuf::from(DEVICE_ROOT).join("cache");
+    }
     if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
@@ -130,6 +140,9 @@ pub fn resolve_in_files_dir(path: &Path) -> PathBuf {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn get_data_dir() -> PathBuf {
+    if cfg!(target_family = "wasm") {
+        return PathBuf::from(DEVICE_ROOT).join("data");
+    }
     if is_test_mode() {
         let mut tmp_dir = PathBuf::from("/tmp");
         tmp_dir.push(SPARES);
@@ -259,7 +272,30 @@ pub(crate) async fn with_test_replica<F: std::future::Future>(
     TEST_REPLICA.scope((replica, role), f).await
 }
 
+/// The replica of a browser that keeps a copy of the collection. A browser has no environment, so
+/// the device sets it once it knows it.
+#[cfg(target_family = "wasm")]
+static DEVICE_REPLICA: std::sync::RwLock<Option<Replica>> = std::sync::RwLock::new(None);
+
+/// Sets this browser's replica, or clears it with `None`. A browser is always a sync client.
+#[cfg(target_family = "wasm")]
+#[allow(clippy::missing_panics_doc)] // Only if a panic poisoned the lock
+pub fn set_device_replica(replica: Option<Replica>) {
+    *DEVICE_REPLICA.write().unwrap() = replica;
+}
+
+/// This browser's replica, which the device set with [`set_device_replica`]
+#[cfg(target_family = "wasm")]
+#[allow(clippy::missing_panics_doc)] // Only if a panic poisoned the lock
+pub fn get_replica() -> Result<Replica, Error> {
+    DEVICE_REPLICA
+        .read()
+        .unwrap()
+        .ok_or_else(|| invalid_config("this device has no replica yet".to_string()))
+}
+
 /// This instance's replica. Required, with no default, except under tests, which are replica `0`.
+#[cfg(not(target_family = "wasm"))]
 pub fn get_replica() -> Result<Replica, Error> {
     #[cfg(test)]
     if let Ok((replica, _)) = TEST_REPLICA.try_with(|test| *test) {
@@ -277,7 +313,11 @@ pub fn get_replica() -> Result<Replica, Error> {
 }
 
 /// This instance's sync role. Required, with no default, except under tests, which are clients.
+/// A browser is always a client.
 pub fn get_sync_role() -> Result<SyncRole, Error> {
+    if cfg!(target_family = "wasm") {
+        return Ok(SyncRole::Client);
+    }
     #[cfg(test)]
     if let Ok((_, role)) = TEST_REPLICA.try_with(|test| *test) {
         return Ok(role);
