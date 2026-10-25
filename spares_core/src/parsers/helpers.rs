@@ -91,9 +91,10 @@ pub fn web_render_filepath(output_rendered_filepath: &Path) -> PathBuf {
     output_rendered_filepath.with_extension("html")
 }
 
-/// Whether `output_rendered_filepath` has HTML for web clients.
+/// Whether `output_rendered_filepath` has HTML for web clients. In a browser, whether the web app
+/// has downloaded it (see [`crate::platform`]).
 pub fn has_web_render_file(output_rendered_filepath: &Path) -> bool {
-    std::fs::metadata(web_render_filepath(output_rendered_filepath)).is_ok_and(|m| m.len() > 0)
+    crate::platform::has_web_render(&web_render_filepath(output_rendered_filepath))
 }
 
 /// Whether a note's web clients are shown HTML, read from the `render` key of its custom data.
