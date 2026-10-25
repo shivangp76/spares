@@ -19,9 +19,9 @@ pub fn server_repo_dir() -> PathBuf {
 }
 
 /// Whether notes are kept in a git repository that users push to. Without it, notes are written to
-/// the user-facing directory as before.
+/// the user-facing directory as before. Never in a browser, which has neither files nor git.
 pub fn enabled() -> bool {
-    !is_test_mode() && server_repo_dir().join(".git").exists()
+    !cfg!(target_family = "wasm") && !is_test_mode() && server_repo_dir().join(".git").exists()
 }
 
 /// The directory the server writes raw note files to. Readers that show paths to users use

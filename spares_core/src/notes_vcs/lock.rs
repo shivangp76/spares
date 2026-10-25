@@ -25,7 +25,12 @@ pub enum NotesGuard {
 }
 
 pub async fn shared_guard() -> Result<NotesGuard, Error> {
-    tokio::time::timeout(WRITER_WAIT, Arc::clone(&NOTES_LOCK).read_owned())
+    let lock = Arc::clone(&NOTES_LOCK).read_owned();
+    // A browser has no pushes to wait for, and no Tokio timer to wait with.
+    if cfg!(target_family = "wasm") {
+        return Ok(NotesGuard::Shared(lock.await));
+    }
+    tokio::time::timeout(WRITER_WAIT, lock)
         .await
         .map(NotesGuard::Shared)
         .map_err(|_| Error::NotesVcsBusy)
@@ -34,6 +39,10 @@ pub async fn shared_guard() -> Result<NotesGuard, Error> {
 /// Waits for the exclusive guard, forever if `wait` is `None`.
 pub async fn exclusive_guard(wait: Option<Duration>) -> Result<NotesGuard, Error> {
     let lock = Arc::clone(&NOTES_LOCK).write_owned();
+    // As in `shared_guard`
+    if cfg!(target_family = "wasm") {
+        return Ok(NotesGuard::Exclusive(lock.await));
+    }
     match wait {
         Some(wait) => tokio::time::timeout(wait, lock)
             .await
@@ -51,6 +60,11 @@ where
     T: Send + 'static,
     F: Future<Output = Result<T, Error>> + Send + 'static,
 {
+    // A browser has no Tokio runtime to spawn on, and nothing there cancels a request midway.
+    if cfg!(target_family = "wasm") {
+        let _guard = guard;
+        return future.await;
+    }
     let handle = tokio::spawn(async move {
         let _guard = guard;
         future.await

@@ -10,7 +10,6 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Instant;
 
 #[cfg(not(target_family = "wasm"))]
 use indicatif::ParallelProgressIterator;
@@ -20,6 +19,7 @@ use log::debug;
 use log::info;
 use log::warn;
 use rayon::prelude::*;
+use web_time::Instant;
 
 use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;

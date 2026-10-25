@@ -22,7 +22,6 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::time::Instant;
 
 use fancy_regex::Captures;
 use fancy_regex::Regex;
@@ -30,6 +29,7 @@ use sqlx::AssertSqlSafe;
 use sqlx::Connection;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
+use web_time::Instant;
 
 use super::ID_MAP_FILE_NAME;
 use super::MAX_PACKED;
