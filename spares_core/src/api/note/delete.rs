@@ -45,15 +45,17 @@ use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::DeleteNotesResponse;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
-    if is_test_mode() {
-        // Don't clutter the Trash with testing files
-        std::fs::remove_file(file_path).map_err(|e| Error::Io {
+    // Testing files would clutter the Trash, and a browser has none.
+    if is_test_mode() || cfg!(target_family = "wasm") {
+        return std::fs::remove_file(file_path).map_err(|e| Error::Io {
             source: e,
             description: String::new(),
-        })
-    } else {
-        trash::delete(file_path).map_err(Error::Trash)
+        });
     }
+    #[cfg(not(target_family = "wasm"))]
+    return trash::delete(file_path).map_err(Error::Trash);
+    #[cfg(target_family = "wasm")]
+    unreachable!()
 }
 
 /// Deletes a rendered file and the HTML for web clients next to it, if they exist.
