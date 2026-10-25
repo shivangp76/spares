@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { fetchFile } from '../api/client';
-import { audioLinkPath } from '../audio';
-import { scrollClozesIntoView } from '../clozeScroll';
-import { useResolvedTheme } from '../theme';
-import { errorMessage, parseNoteId } from '../utils';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchFile } from "../api/client";
+import { audioLinkPath } from "../audio";
+import { scrollClozesIntoView } from "../clozeScroll";
+import { useResolvedTheme } from "../theme";
+import { errorMessage, parseNoteId } from "../utils";
 
 interface Props {
   path: string;
+  /** The HTML itself, shown instead of fetching `path`. */
+  html?: string;
   version?: number;
   /** Opens a linked note in the app. Without it, note links do nothing. */
   onOpenNote?: (noteId: number) => void;
@@ -19,18 +21,29 @@ interface Props {
   zoom?: number;
 }
 
+type Loaded = { key: string; html?: string; error?: string };
+
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
 const NOTE_LINK = /(?:^|\/)([a-z]{1,8})\.md$/;
-const STYLE_ID = 'spares-theme';
+const STYLE_ID = "spares-theme";
 
 /**
  * HTML rendered by pandoc, in a sandboxed iframe so its CSS cannot style the app and nothing in it
  * can run. `allow-same-origin` lets the app size and theme it, and must never be combined with
  * `allow-scripts`, which would remove the sandbox.
  */
-export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio, scrollToCloze, zoom = 1 }: Props) {
-  const key = `${path}?v=${version}`;
-  const [loaded, setLoaded] = useState<{ key: string; html?: string; error?: string } | null>(null);
+export default function HtmlViewer({
+  path,
+  html,
+  version,
+  onOpenNote,
+  onReady,
+  onPlayAudio,
+  scrollToCloze,
+  zoom = 1,
+}: Props) {
+  const key = html === undefined ? `${path}?v=${version}` : `html:${html}`;
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(0);
   // The key of the document the iframe has loaded, and of the last one scrolled to while shown
@@ -49,15 +62,26 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
   }, [theme, zoom, onOpenNote, onPlayAudio]);
 
   useEffect(() => {
+    if (html !== undefined) return;
     let cancelled = false;
     fetchFile(path)
-      .then(blob => blob.text())
-      .then(html => { if (!cancelled) setLoaded({ key, html }); })
-      .catch(e => { if (!cancelled) setLoaded({ key, error: errorMessage(e) }); });
-    return () => { cancelled = true; };
-  }, [key, path]);
+      .then((blob) => blob.text())
+      .then((html) => {
+        if (!cancelled) setLoaded({ key, html });
+      })
+      .catch((e) => {
+        if (!cancelled) setLoaded({ key, error: errorMessage(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, path, html]);
 
-  const current = loaded?.key === key ? loaded : null;
+  const given = useMemo<Loaded | null>(
+    () => (html === undefined ? null : { key, html }),
+    [key, html],
+  );
+  const current = given ?? (loaded?.key === key ? loaded : null);
 
   useEffect(() => {
     if (current?.error !== undefined) onReady?.();
@@ -73,20 +97,29 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
       const doc = iframe.contentDocument;
       if (!doc) return;
       applyTheme(doc, themeRef.current, zoomRef.current);
-      doc.addEventListener('click', e => onClick(e, onOpenNoteRef.current, onPlayAudioRef.current));
-      observer = new ResizeObserver(() => setHeight(doc.documentElement.scrollHeight));
+      doc.addEventListener("click", (e) =>
+        onClick(e, onOpenNoteRef.current, onPlayAudioRef.current),
+      );
+      observer = new ResizeObserver(() =>
+        setHeight(doc.documentElement.scrollHeight),
+      );
       observer.observe(doc.documentElement);
       setHeight(doc.documentElement.scrollHeight);
       setLoadedKey(loadedFor);
       onReady?.();
     };
-    iframe.addEventListener('load', onLoad);
+    iframe.addEventListener("load", onLoad);
     // WebKit can load a document given as `srcDoc` before this runs. Firefox can have a complete
     // one without a head, whose load event is still to come.
     const doc = iframe.contentDocument;
-    if (doc?.URL === 'about:srcdoc' && doc.readyState === 'complete' && doc.head) onLoad();
+    if (
+      doc?.URL === "about:srcdoc" &&
+      doc.readyState === "complete" &&
+      doc.head
+    )
+      onLoad();
     return () => {
-      iframe.removeEventListener('load', onLoad);
+      iframe.removeEventListener("load", onLoad);
       observer?.disconnect();
     };
   }, [current, onReady]);
@@ -100,13 +133,22 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     }
     const iframe = iframeRef.current;
     const doc = iframe?.contentDocument;
-    if (!iframe || !doc || loadedKey !== current?.key || height === 0 || scrolledKeyRef.current === loadedKey) return;
+    if (
+      !iframe ||
+      !doc ||
+      loadedKey !== current?.key ||
+      height === 0 ||
+      scrolledKeyRef.current === loadedKey
+    )
+      return;
     scrolledKeyRef.current = loadedKey;
     const offset = iframe.getBoundingClientRect().top;
-    scrollClozesIntoView([...doc.querySelectorAll('mark')].map(mark => {
-      const rect = mark.getBoundingClientRect();
-      return { top: offset + rect.top, bottom: offset + rect.bottom };
-    }));
+    scrollClozesIntoView(
+      [...doc.querySelectorAll("mark")].map((mark) => {
+        const rect = mark.getBoundingClientRect();
+        return { top: offset + rect.top, bottom: offset + rect.bottom };
+      }),
+    );
   }, [scrollToCloze, loadedKey, current, height]);
 
   // Re-themes on a theme or zoom change, without reloading
@@ -115,7 +157,12 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
     if (doc?.head) applyTheme(doc, theme, zoom);
   }, [theme, zoom]);
 
-  if (current?.error !== undefined) return <div style={{ color: 'var(--error)' }}>Error loading card: {current.error}</div>;
+  if (current?.error !== undefined)
+    return (
+      <div style={{ color: "var(--error)" }}>
+        Error loading card: {current.error}
+      </div>
+    );
   if (current === null) return <div className="loading-delayed">Loading…</div>;
   return (
     <iframe
@@ -123,7 +170,13 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
       title="Rendered card"
       sandbox="allow-same-origin"
       srcDoc={current.html}
-      style={{ display: 'block', width: '100%', height, border: 'none', colorScheme: theme }}
+      style={{
+        display: "block",
+        width: "100%",
+        height,
+        border: "none",
+        colorScheme: theme,
+      }}
     />
   );
 }
@@ -133,21 +186,21 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
  * defaults file can override them. pandoc's own page styles are left out when rendering. The app's colours are `light-dark()` values, which the iframe
  * resolves with the same `color-scheme`.
  */
-function applyTheme(doc: Document, theme: 'light' | 'dark', zoom: number) {
+function applyTheme(doc: Document, theme: "light" | "dark", zoom: number) {
   const app = getComputedStyle(document.documentElement);
   const appVar = (name: string) => app.getPropertyValue(name).trim();
   const css = `
     :root { color-scheme: ${theme}; }
-    html { color: ${appVar('--text')}; background: transparent; font-family: ${getComputedStyle(document.body).fontFamily}; font-size: ${zoom * 100}%; }
+    html { color: ${appVar("--text")}; background: transparent; font-family: ${getComputedStyle(document.body).fontFamily}; font-size: ${zoom * 100}%; }
     body { margin: 0; padding: 0 4px; line-height: 1.6; overflow-wrap: break-word; }
-    a { color: ${appVar('--link')}; }
+    a { color: ${appVar("--link")}; }
     img, svg { max-width: 100%; height: auto; }
     math[display="block"] { overflow-x: auto; }
     pre { overflow-x: auto; }
   `;
   let style = doc.getElementById(STYLE_ID);
   if (!style) {
-    style = doc.createElement('style');
+    style = doc.createElement("style");
     style.id = STYLE_ID;
     doc.head.prepend(style);
   }
@@ -159,10 +212,10 @@ function onClick(
   onOpenNote: ((noteId: number) => void) | undefined,
   onPlayAudio: ((path: string) => void) | undefined,
 ) {
-  const link = (e.target as Element | null)?.closest?.('a[href]');
+  const link = (e.target as Element | null)?.closest?.("a[href]");
   if (!link) return;
-  const href = link.getAttribute('href') ?? '';
-  if (href.startsWith('#')) return;
+  const href = link.getAttribute("href") ?? "";
+  if (href.startsWith("#")) return;
   e.preventDefault();
   const audioPath = audioLinkPath(href);
   if (audioPath !== null && onPlayAudio) {
@@ -175,5 +228,5 @@ function onClick(
   const noteLink = NOTE_LINK.exec(href);
   const noteId = noteLink ? parseNoteId(noteLink[1]) : null;
   if (noteId !== null) onOpenNote?.(noteId);
-  else window.open(href, '_blank', 'noopener,noreferrer');
+  else window.open(href, "_blank", "noopener,noreferrer");
 }

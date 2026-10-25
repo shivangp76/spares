@@ -107,7 +107,13 @@ export default function Navbar({
       window.removeEventListener("keydown", handleKey, { capture: true });
   }, [navigate, pathname]);
 
-  const [undoStatus, setUndoStatus] = useState<string | null>(null);
+  // What the last undo, redo or sync did, and whether it changed what pages show
+  const [status, setStatus] = useState<{
+    message: string;
+    changed: boolean;
+  } | null>(null);
+  const showStatus = (message: string, changed = false) =>
+    setStatus({ message, changed });
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);
   const currentLinkRef = useRef<HTMLSpanElement>(null);
@@ -130,14 +136,15 @@ export default function Navbar({
       return;
     try {
       const res = await undoEvent(null);
-      setUndoStatus(
+      showStatus(
         res
           ? describeReverted("Undone", res.undone_events)
           : "No event to undo.",
+        !!res,
       );
       setLastUndoId(res?.undo_event_ids[0] ?? null);
     } catch (e) {
-      setUndoStatus(errorMessage(e));
+      showStatus(errorMessage(e));
     }
   }
 
@@ -147,13 +154,14 @@ export default function Navbar({
     try {
       const res = await redoEvent(lastUndoId);
       setLastUndoId(null);
-      setUndoStatus(
+      showStatus(
         res
           ? describeReverted("Redone", res.redone_events)
           : "No undo to redo.",
+        !!res,
       );
     } catch (e) {
-      setUndoStatus(errorMessage(e));
+      showStatus(errorMessage(e));
     }
   }
 
@@ -183,7 +191,7 @@ export default function Navbar({
             <UpdateIndicator />
             <OfflineIndicator />
             <SavedCopiesNotice />
-            <SyncButton onStatus={setUndoStatus} />
+            <SyncButton onStatus={showStatus} />
             <button
               onClick={undoLatest}
               className="navbar-button"
@@ -222,7 +230,7 @@ export default function Navbar({
           {helpOpenOn === pathname && !pageHelpOpener && pageHelp && (
             <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />
           )}
-          {undoStatus && (
+          {status && (
             <div
               style={{
                 flexBasis: "100%",
@@ -234,16 +242,18 @@ export default function Navbar({
                 alignItems: "center",
               }}
             >
-              <span>{undoStatus}</span>
-              {/* Pages don't know what the undone or redone event changed, so offer to refetch everything */}
+              <span>{status.message}</span>
+              {/* Pages don't know what the undone or redone event, or the sync, changed, so offer to refetch everything */}
+              {status.changed && (
+                <button
+                  onClick={() => window.location.reload()}
+                  style={{ padding: "2px 8px", fontSize: 12 }}
+                >
+                  Reload page
+                </button>
+              )}
               <button
-                onClick={() => window.location.reload()}
-                style={{ padding: "2px 8px", fontSize: 12 }}
-              >
-                Reload page
-              </button>
-              <button
-                onClick={() => setUndoStatus(null)}
+                onClick={() => setStatus(null)}
                 style={{ padding: "2px 8px", fontSize: 12 }}
               >
                 Dismiss

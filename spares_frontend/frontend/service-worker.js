@@ -10,57 +10,89 @@ const PRECACHE = __PRECACHE__;
 // Files of this build cached when first loaded, e.g. the Typst compiler, which are kept across
 // builds that have them since their names are hashed
 const KEEP = __KEEP__;
+// A device that keeps a copy of the collection needs those too, such as spares_wasm, to work
+// offline after an update, so it caches them with the page. The app marks such a device with
+// this cache (see src/local/copy.ts).
+const LOCAL_COPY_MARKER = "spares-local-copy";
 
 // Build files have hashed names, so they never change and are kept across builds until the build
 // that drops them takes over. The page itself is replaced on every build.
-const ASSETS_CACHE = 'spares-assets';
+const ASSETS_CACHE = "spares-assets";
 const PAGE_CACHE = `spares-page-${BUILD}`;
 // Typst packages are versioned, so they never change either
-const PACKAGES_CACHE = 'spares-typst-packages';
-const PACKAGES_ORIGIN = 'https://packages.typst.org';
+const PACKAGES_CACHE = "spares-typst-packages";
+const PACKAGES_ORIGIN = "https://packages.typst.org";
 // Likewise Typst's fonts, which the compiler loads from a versioned URL (see src/typst/compiler.ts)
-const FONTS_CACHE = 'spares-typst-fonts';
-const FONTS_URL = 'https://cdn.jsdelivr.net/gh/typst/typst-assets@';
+const FONTS_CACHE = "spares-typst-fonts";
+const FONTS_URL = "https://cdn.jsdelivr.net/gh/typst/typst-assets@";
 
-const PAGE_URL = new URL('index.html', self.registration.scope).href;
-const precacheUrls = PRECACHE.map(path => new URL(path, self.registration.scope).href);
-const keepUrls = KEEP.map(path => new URL(path, self.registration.scope).href);
+const PAGE_URL = new URL("index.html", self.registration.scope).href;
+const precacheUrls = PRECACHE.map(
+  (path) => new URL(path, self.registration.scope).href,
+);
+const keepUrls = KEEP.map(
+  (path) => new URL(path, self.registration.scope).href,
+);
 
-self.addEventListener('install', event => {
-  event.waitUntil((async () => {
-    const page = await caches.open(PAGE_CACHE);
-    await page.add(new Request(PAGE_URL, { cache: 'reload' }));
-    const assets = await caches.open(ASSETS_CACHE);
-    const cached = new Set((await assets.keys()).map(request => request.url));
-    await assets.addAll(precacheUrls.filter(url => url !== PAGE_URL && !cached.has(url)));
-  })());
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    (async () => {
+      const page = await caches.open(PAGE_CACHE);
+      await page.add(new Request(PAGE_URL, { cache: "reload" }));
+      const assets = await caches.open(ASSETS_CACHE);
+      const cached = new Set(
+        (await assets.keys()).map((request) => request.url),
+      );
+      const urls = (await caches.has(LOCAL_COPY_MARKER))
+        ? [...precacheUrls, ...keepUrls]
+        : precacheUrls;
+      await assets.addAll(
+        urls.filter((url) => url !== PAGE_URL && !cached.has(url)),
+      );
+    })(),
+  );
 });
 
 // A new build takes over once no page uses the old one, so the old page can still load its
 // lazily loaded chunks until then. That is also when the files only the old build used are dropped.
-self.addEventListener('activate', event => {
-  event.waitUntil((async () => {
-    for (const name of await caches.keys()) {
-      if (name.startsWith('spares-page-') && name !== PAGE_CACHE) await caches.delete(name);
-    }
-    const assets = await caches.open(ASSETS_CACHE);
-    const current = new Set([...precacheUrls, ...keepUrls]);
-    for (const request of await assets.keys()) {
-      // Other files cached when first loaded (e.g. files without a hash in their name) are dropped
-      // too, and fetched again the next time they are needed.
-      if (!current.has(request.url)) await assets.delete(request);
-    }
-    await self.clients.claim();
-  })());
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      for (const name of await caches.keys()) {
+        if (name.startsWith("spares-page-") && name !== PAGE_CACHE)
+          await caches.delete(name);
+      }
+      const assets = await caches.open(ASSETS_CACHE);
+      const current = new Set([...precacheUrls, ...keepUrls]);
+      for (const request of await assets.keys()) {
+        // Other files cached when first loaded (e.g. files without a hash in their name) are dropped
+        // too, and fetched again the next time they are needed.
+        if (!current.has(request.url)) await assets.delete(request);
+      }
+      await self.clients.claim();
+    })(),
+  );
 });
 
-self.addEventListener('message', event => {
-  if (event.data === 'skipWaiting') self.skipWaiting();
+self.addEventListener("message", (event) => {
+  if (event.data === "skipWaiting") self.skipWaiting();
+  // From a page that set up a copy of the collection
+  if (event.data === "cacheLocalCopy") {
+    event.waitUntil(
+      (async () => {
+        const assets = await caches.open(ASSETS_CACHE);
+        const cached = new Set(
+          (await assets.keys()).map((request) => request.url),
+        );
+        await assets.addAll(keepUrls.filter((url) => !cached.has(url)));
+      })(),
+    );
+  }
 });
 
-self.addEventListener('fetch', event => {
+self.addEventListener("fetch", (event) => {
   const { request } = event;
-  if (request.method !== 'GET') return;
+  if (request.method !== "GET") return;
   const url = new URL(request.url);
 
   if (url.origin === PACKAGES_ORIGIN) {
@@ -73,9 +105,10 @@ self.addEventListener('fetch', event => {
   }
   if (url.origin !== self.location.origin) return;
   // The server's data, which the app caches itself
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/files/')) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/files/"))
+    return;
 
-  if (request.mode === 'navigate') {
+  if (request.mode === "navigate") {
     event.respondWith(navigate(request));
     return;
   }
@@ -93,7 +126,7 @@ async function navigate(request) {
     const cached = await caches.match(request);
     if (cached) return cached;
     // The image occlusion editor is its own page, and is not available offline
-    if (!new URL(request.url).pathname.startsWith('/svgedit/')) {
+    if (!new URL(request.url).pathname.startsWith("/svgedit/")) {
       const page = await caches.match(PAGE_URL);
       if (page) return page;
     }
