@@ -365,6 +365,7 @@ pub(crate) fn create_router(
         .merge(offline_review_routes())
         .merge(notes_vcs_routes())
         .merge(sync_routes())
+        .layer(middleware::map_response(not_stored))
         // Rendered notes and cards
         .nest_service("/files", ServeDir::new(files_dir))
         .route_layer(middleware::from_fn_with_state(
@@ -394,4 +395,50 @@ pub(crate) fn create_router(
     }
 
     router
+}
+
+/// `Cache-Control: no-store` for an API response that doesn't say otherwise. Without it, Firefox
+/// keeps responses such as `GET /api/sync/meta` and answers later requests with them, so a sync
+/// would run against the server as it was.
+async fn not_stored(mut response: axum::response::Response) -> axum::response::Response {
+    response
+        .headers_mut()
+        .entry(axum::http::header::CACHE_CONTROL)
+        .or_insert(axum::http::HeaderValue::from_static("no-store"));
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::http::StatusCode;
+    use sqlx::SqlitePool;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// Browsers don't keep API responses, which would answer later requests with old data.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn api_responses_are_not_stored(pool: SqlitePool) {
+        let files = std::env::temp_dir();
+        let router = create_router(
+            Arc::new(AppState {
+                db: pool,
+                api_key: None,
+            }),
+            files,
+            None,
+        );
+        let request = Request::builder()
+            .uri("/api/parsers")
+            .body(Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[axum::http::header::CACHE_CONTROL],
+            "no-store"
+        );
+    }
 }
