@@ -1,12 +1,12 @@
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use std::time::Instant;
 
 use futures_core::future::BoxFuture;
 pub(crate) use sqlx_core::migrate::*;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::sql_str::AssertSqlSafe;
+use web_time::Instant;
 
 use crate::Sqlite;
 use crate::SqliteConnectOptions;

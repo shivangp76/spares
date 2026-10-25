@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use atoi::atoi;
-use libsqlite3_sys::SQLITE_OK;
 pub(crate) use sqlx_core::arguments::*;
 use sqlx_core::error::BoxDynError;
 
@@ -9,6 +8,7 @@ use crate::Sqlite;
 use crate::encode::Encode;
 use crate::encode::IsNull;
 use crate::error::Error;
+use crate::ffi::SQLITE_OK;
 use crate::statement::StatementHandle;
 
 #[derive(Debug, Clone)]
