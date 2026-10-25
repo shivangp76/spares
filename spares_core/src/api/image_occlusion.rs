@@ -16,8 +16,6 @@ use std::fs::read;
 use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -165,8 +163,8 @@ fn store_image_occlusion_files(
         description: format!("Failed to create {}", directory.display()),
         source: e,
     })?;
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    let nanos = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let (image_path, clozes_path) = (0u32..1000)

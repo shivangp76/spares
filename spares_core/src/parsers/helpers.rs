@@ -11,10 +11,10 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::thread;
 use std::time::Duration;
-use std::time::Instant;
 
 use serde::Deserialize;
 use serde::Serialize;
+use web_time::Instant;
 
 use crate::Error;
 use crate::config::get_data_dir;

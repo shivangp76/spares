@@ -16,8 +16,12 @@ use serde_json::Value;
 use crate::DelimiterErrorKind;
 
 /// Runs CPU-heavy `f` on a blocking thread, so it does not stall other requests on the async
-/// runtime. A panic in `f` is resumed in the caller.
+/// runtime. A panic in `f` is resumed in the caller. In a browser, which has neither threads nor a
+/// Tokio runtime, `f` runs on the caller's thread.
 pub(crate) async fn run_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    if cfg!(target_family = "wasm") {
+        return f();
+    }
     tokio::task::spawn_blocking(f)
         .await
         .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
