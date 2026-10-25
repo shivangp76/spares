@@ -59,6 +59,10 @@ pub enum Error {
     /// database (`spares sync cloud --full-upload` or `--full-download`).
     #[error("A full sync is required: {0}")]
     FullSyncRequired(String),
+    /// A replica from 2 up asked to sync without being enrolled with the server (see
+    /// [`sync::devices`]). Its number may belong to another device by now.
+    #[error("Replica {0} is not enrolled with the sync server. Set up this device's copy again.")]
+    NotEnrolled(u8),
     // #[error("{0}")]
     // Other(String),
 }

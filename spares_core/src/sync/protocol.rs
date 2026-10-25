@@ -80,6 +80,16 @@ pub struct RenderAssetRecord {
     pub size: i64,
 }
 
+/// An `id_counter` row of the pushing replica: the largest id it ever handed out for `tbl`. The
+/// server keeps the larger of its own and this, so a full download passes it on to the next device
+/// enrolled under the same number, which then never hands out an id this one did (see
+/// [`crate::ids`]).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, sqlx::FromRow)]
+pub struct IdCounterRecord {
+    pub tbl: String,
+    pub last: i64,
+}
+
 /// `POST /api/sync/push`
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PushRequest {
@@ -93,6 +103,9 @@ pub struct PushRequest {
     pub render_assets: Vec<RenderAssetRecord>,
     #[serde(default)]
     pub render_packages: Vec<String>,
+    /// The client's own `id_counter` rows
+    #[serde(default)]
+    pub id_counters: Vec<IdCounterRecord>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

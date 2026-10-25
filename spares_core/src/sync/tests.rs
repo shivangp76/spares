@@ -1076,6 +1076,274 @@ async fn the_note_change_number_moves_on_after_syncs() {
     assert!(latest(replicas.laptop.clone()).await > after_full);
 }
 
+// More replicas: a browser that keeps a copy of the collection (replica 2, a client), enrolled
+// with the server, besides the laptop.
+
+const DEVICE: Replica = Replica::new_unchecked(2);
+
+/// Runs `f` as the device.
+async fn on_device<F: std::future::Future>(f: F) -> F::Output {
+    with_test_replica(DEVICE, SyncRole::Client, f).await
+}
+
+impl Replicas {
+    /// A third database, enrolled as replica 2, with a full download of the server's.
+    async fn device(&self) -> SqlitePool {
+        let enrolled = super::devices::enroll(
+            &self.server,
+            super::devices::EnrollRequest {
+                name: "phone".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(enrolled.replica, DEVICE.number());
+        let device = open_db(&self.dir.join("device.sqlite")).await;
+        self.sync_device(&device, SyncMode::FullDownload)
+            .await
+            .unwrap();
+        device
+    }
+
+    async fn sync_device(&self, device: &SqlitePool, mode: SyncMode) -> Result<SyncReport, Error> {
+        on_device(sync(device, &self.remote, mode, &self.dir)).await
+    }
+}
+
+#[tokio::test]
+async fn a_device_has_to_enroll_and_its_number_is_its_own() {
+    use super::devices::EnrollRequest;
+    use super::devices::UnenrollRequest;
+    use super::devices::enroll;
+    use super::devices::list;
+    use super::devices::unenroll;
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    let device = open_db(&replicas.dir.join("device.sqlite")).await;
+    let err = replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotEnrolled(2)), "{err}");
+
+    let name = |name: &str| EnrollRequest {
+        name: name.to_string(),
+    };
+    assert!(enroll(&replicas.server, name(" ")).await.is_err());
+    assert_eq!(
+        enroll(&replicas.server, name("phone"))
+            .await
+            .unwrap()
+            .replica,
+        2
+    );
+    assert_eq!(
+        enroll(&replicas.server, name("tablet"))
+            .await
+            .unwrap()
+            .replica,
+        3
+    );
+    replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap();
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    let devices = list(&replicas.server).await.unwrap();
+    assert_eq!(
+        devices
+            .iter()
+            .map(|d| (d.replica, d.name.as_str()))
+            .collect::<Vec<_>>(),
+        [(2, "phone"), (3, "tablet")]
+    );
+
+    // A laptop full upload keeps the numbers taken, and when each device last synced, but the
+    // device has to full sync.
+    let last_sync_at = |devices: &[super::devices::Device]| -> Vec<Option<i64>> {
+        devices.iter().map(|d| d.last_sync_at).collect()
+    };
+    let before = last_sync_at(&devices);
+    assert!(before[0].is_some() && before[1].is_none(), "{before:?}");
+    replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
+    assert_eq!(last_sync_at(&list(&replicas.server).await.unwrap()), before);
+    let err = replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
+    assert_eq!(
+        enroll(&replicas.server, name("laptop 2"))
+            .await
+            .unwrap()
+            .replica,
+        4
+    );
+
+    // Unenrolled, the device can no longer sync, and its number goes to the next device.
+    assert!(
+        unenroll(&replicas.server, UnenrollRequest { replica: 2 })
+            .await
+            .unwrap()
+    );
+    let err = replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotEnrolled(2)), "{err}");
+    assert_eq!(
+        enroll(&replicas.server, name("new phone"))
+            .await
+            .unwrap()
+            .replica,
+        2
+    );
+}
+
+#[tokio::test]
+async fn a_device_under_a_freed_number_never_hands_out_its_ids_again() {
+    use super::devices::EnrollRequest;
+    use super::devices::UnenrollRequest;
+    use super::devices::enroll;
+    use super::devices::unenroll;
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    let device = replicas.device().await;
+    let made = on_device(create(&device, &["B {{ phone }}", "C {{ phone }}"], &[])).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    // Its newest note is gone everywhere, so no table remembers its id.
+    on_device(delete(&device, made[1])).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+
+    unenroll(&replicas.server, UnenrollRequest { replica: 2 })
+        .await
+        .unwrap();
+    let enrolled = enroll(
+        &replicas.server,
+        EnrollRequest {
+            name: "new phone".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(enrolled.replica, DEVICE.number());
+    let new_device = open_db(&replicas.dir.join("new-device.sqlite")).await;
+    replicas
+        .sync_device(&new_device, SyncMode::FullDownload)
+        .await
+        .unwrap();
+    let next = on_device(create(&new_device, &["D {{ new phone }}"], &[])).await;
+    assert_eq!(
+        [made[1].letters(), next[0].letters()],
+        ["aaai", "aaaj"],
+        "the deleted note's id came back"
+    );
+}
+
+#[tokio::test]
+async fn the_laptop_server_and_a_device_converge() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}", "C {{ three }}"]).await;
+    let device = replicas.device().await;
+    // Each side edits a note and creates one, while out of sync.
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    on_server(edit(&replicas.server, ids[1], "B {{ two }} web")).await;
+    on_device(edit(&device, ids[2], "C {{ three }} phone")).await;
+    let on_laptop = create(&replicas.laptop, &["D {{ laptop }}"], &[]).await;
+    let on_web = on_server(create(&replicas.server, &["E {{ web }}"], &[])).await;
+    let on_phone = on_device(create(
+        &device,
+        &["F {{ phone }}", "G {{ phone }}"],
+        &["phone"],
+    ))
+    .await;
+    // Each follows the newest laptop note it has seen, `aac`: the web's and the phone's with letters
+    // of their own, and the laptop's next note takes the next laptop id.
+    assert_eq!(on_laptop[0].letters(), "aad");
+    assert_eq!(on_web[0].letters(), "aaca");
+    assert_eq!(
+        on_phone.iter().map(|id| id.letters()).collect::<Vec<_>>(),
+        ["aach", "aaci"]
+    );
+    let all: std::collections::BTreeSet<NoteId> = [&on_laptop[..], &on_web, &on_phone]
+        .concat()
+        .into_iter()
+        .collect();
+    assert_eq!(all.len(), 4, "ids collided: {all:?}");
+
+    replicas.sync().await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        contents(&device).await.0,
+        contents(&replicas.server).await.0
+    );
+    assert!(
+        data(&replicas.laptop, ids[2])
+            .await
+            .unwrap()
+            .ends_with("phone")
+    );
+    assert!(data(&device, ids[0]).await.unwrap().ends_with("laptop"));
+    assert!(data(&device, ids[1]).await.unwrap().ends_with("web"));
+    assert_eq!(tags_of(&replicas.laptop, on_phone[1]).await, ["phone"]);
+
+    // Reviews on the device go in under its residue, and reach the laptop.
+    let card = cards_of(&device, ids[0]).await[0];
+    on_device(rate(&device, card, 3, Utc::now())).await;
+    let log: i64 = sqlx::query_scalar("SELECT MAX(id) FROM review_log")
+        .fetch_one(&device)
+        .await
+        .unwrap();
+    assert_eq!(log % crate::ids::ID_STEP, 2);
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn the_laptop_and_a_device_editing_one_note_merge() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    let device = replicas.device().await;
+    let laptop_edit = LINES.replacen("Line one", "Line one laptop", 1);
+    edit(&replicas.laptop, ids[0], &laptop_edit).await;
+    on_device(edit(
+        &device,
+        ids[0],
+        &LINES.replacen("Line four", "Line four phone", 1),
+    ))
+    .await;
+    // The device syncs first, then the laptop merges both.
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.assert_converged().await;
+    let merged = data(&device, ids[0]).await.unwrap();
+    assert!(
+        merged.contains("Line one laptop") && merged.contains("Line four phone"),
+        "{merged}"
+    );
+}
+
 /// A browser's pool has one connection. A full download used to wait on a second one, which
 /// never came, until the pool timed out.
 #[tokio::test]

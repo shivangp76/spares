@@ -95,9 +95,10 @@
 //! [`allocate_note_ids`] gets all of a call's notes at once, so an import gets one run of ids. Undo
 //! and redo replay the ids stored in the event and don't allocate.
 //!
-//! **Three devices at most** (replicas `2`–`4`): each lane takes letters from the others, so more
-//! devices would mean fewer 4-letter ids for each. Replicas `5`–`7` create no notes. A second
-//! laptop would be enrolled as a device, and its notes would be a letter longer than the first's.
+//! **Three devices at most** (replicas `2`–`4`, see [`crate::sync::devices`]): each lane takes
+//! letters from the others, so more devices would mean fewer 4-letter ids for each. Replicas
+//! `5`–`7` create no notes. A second laptop would be enrolled as a device, and its notes would be
+//! a letter longer than the first's.
 //!
 //! # The high-water mark
 //!

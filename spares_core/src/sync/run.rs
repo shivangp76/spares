@@ -24,6 +24,7 @@ use super::get_state;
 use super::get_state_i64;
 use super::guard_undo;
 use super::protocol::FullUploadResponse;
+use super::protocol::IdCounterRecord;
 use super::protocol::MetaResponse;
 use super::protocol::PullRequest;
 use super::protocol::PullResponse;
@@ -220,6 +221,18 @@ async fn read_render_assets(
     Ok((assets, packages))
 }
 
+/// `replica`'s own `id_counter` rows, for the server to keep (see [`IdCounterRecord`]).
+async fn read_id_counters(
+    conn: &mut sqlx::SqliteConnection,
+    replica: u8,
+) -> Result<Vec<IdCounterRecord>, Error> {
+    sqlx::query_as("SELECT tbl, last FROM id_counter WHERE replica = ? ORDER BY tbl")
+        .bind(i64::from(replica))
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(sqlx_error)
+}
+
 async fn normal_sync(
     db: &SqlitePool,
     remote: &dyn SyncRemote,
@@ -237,6 +250,7 @@ async fn normal_sync(
         let outcome = merge_pulled(&mut tx, &pulled.changes, pulled.usn, now).await?;
         let changes = read_changes(&mut tx, Selection::Dirty).await?;
         let (render_assets, render_packages) = read_render_assets(&mut tx).await?;
+        let id_counters = read_id_counters(&mut tx, replica).await?;
         let pushed = changes.len();
         let response = match remote
             .push(PushRequest {
@@ -245,6 +259,7 @@ async fn normal_sync(
                 changes,
                 render_assets,
                 render_packages,
+                id_counters,
             })
             .await
         {

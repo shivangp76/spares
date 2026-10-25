@@ -137,6 +137,10 @@ use crate::handlers::sync::SYNC_BODY_LIMIT;
 use crate::handlers::sync::list_sync_conflicts_handler;
 use crate::handlers::sync::resolve_sync_conflict_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_devices_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_enroll_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_full_download_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_full_upload_handler;
@@ -149,6 +153,8 @@ use crate::handlers::sync::sync_push_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_run_handler;
 use crate::handlers::sync::sync_status_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_unenroll_handler;
 use crate::handlers::tag::create_tag_handler;
 use crate::handlers::tag::delete_tag_handler;
 use crate::handlers::tag::get_tag_by_name_handler;
@@ -247,6 +253,9 @@ fn sync_routes() -> Router<Arc<AppState>> {
                 .put(sync_full_upload_handler)
                 .layer(DefaultBodyLimit::max(SYNC_BODY_LIMIT)),
         )
+        .route("/api/sync/enroll", post(sync_enroll_handler))
+        .route("/api/sync/unenroll", post(sync_unenroll_handler))
+        .route("/api/sync/devices", get(sync_devices_handler))
         .route("/api/sync/run", post(sync_run_handler))
 }
 
