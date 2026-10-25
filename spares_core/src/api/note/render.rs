@@ -321,6 +321,11 @@ pub async fn render_notes(
     body: RenderNotesRequest,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<(), Error> {
+    // A browser renders nothing, as in `create_note_files_bulk`. The server renders the notes once
+    // the browser's changes reach it, linked notes included.
+    if cfg!(target_family = "wasm") {
+        return Ok(());
+    }
     let RenderNotesRequest {
         selector: generate_files_note_ids,
         immutable_note_ids,

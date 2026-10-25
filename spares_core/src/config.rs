@@ -25,9 +25,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::create_dir_all;
-use std::fs::read_to_string;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -51,6 +48,10 @@ use crate::LibraryError;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
+use crate::platform::write;
 use crate::sync::SyncConfig;
 
 const SPARES: &str = "spares";
@@ -1255,7 +1256,7 @@ pub fn get_external_config_file() -> PathBuf {
 /// it is.
 pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
-    if !config_file_path.exists() {
+    if !is_file(&config_file_path) {
         write_external_config(&SparesExternalConfig::default())?;
     }
     let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
@@ -1288,7 +1289,7 @@ fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String
 // The `toml_edit` package was used in place of `confy` since `confy` does not support default values when serializing. For example, if a user had an existing config file and then `spares` was changed to add a new config key, deserialization would fail since a key was missing and not defaulted.
 pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     let config_file_path = get_external_config_file();
-    if !config_file_path.exists() {
+    if !is_file(&config_file_path) {
         let config = SparesExternalConfig::default();
         write_external_config(&config)?;
         return Ok(config);

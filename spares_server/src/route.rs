@@ -303,8 +303,8 @@ fn offline_review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/sync", post(sync_offline_actions_handler))
 }
 
-/// The routes that only need the database (and the config and parser templates): what a browser
-/// can answer from its own copy.
+/// The routes that only need the database (and the config and parser templates, see
+/// `spares_core::platform`): what a browser can answer from its own copy.
 #[allow(clippy::too_many_lines, reason = "one line per route")]
 fn shared_routes() -> Router<Arc<AppState>> {
     Router::new()
