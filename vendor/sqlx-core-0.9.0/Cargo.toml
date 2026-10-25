@@ -296,6 +296,20 @@ features = [
 optional = true
 default-features = false
 
+# Vendored by spares: `web_time::Instant` is `std::time::Instant` natively, and works on wasm.
+[dependencies.web-time]
+version = "1.1"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.futures-channel]
+version = "0.3"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.wasm-bindgen-futures]
+version = "0.4"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.gloo-timers]
+version = "0.3"
+features = ["futures"]
+
 [dependencies.tokio-stream]
 version = "0.1.8"
 features = ["fs"]

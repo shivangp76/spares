@@ -14,14 +14,6 @@ use std::ptr::NonNull;
 
 use futures_intrusive::sync::MutexGuard;
 pub(crate) use handle::ConnectionHandle;
-use libsqlite3_sys::SQLITE_DELETE;
-use libsqlite3_sys::SQLITE_INSERT;
-use libsqlite3_sys::SQLITE_UPDATE;
-use libsqlite3_sys::sqlite3;
-use libsqlite3_sys::sqlite3_commit_hook;
-use libsqlite3_sys::sqlite3_progress_handler;
-use libsqlite3_sys::sqlite3_rollback_hook;
-use libsqlite3_sys::sqlite3_update_hook;
 #[cfg(feature = "preupdate-hook")]
 pub use preupdate_hook::*;
 use sqlx_core::common::StatementCache;
@@ -37,6 +29,14 @@ use crate::SqliteConnectOptions;
 use crate::SqliteError;
 use crate::connection::establish::EstablishParams;
 use crate::connection::worker::ConnectionWorker;
+use crate::ffi::SQLITE_DELETE;
+use crate::ffi::SQLITE_INSERT;
+use crate::ffi::SQLITE_UPDATE;
+use crate::ffi::sqlite3;
+use crate::ffi::sqlite3_commit_hook;
+use crate::ffi::sqlite3_progress_handler;
+use crate::ffi::sqlite3_rollback_hook;
+use crate::ffi::sqlite3_update_hook;
 use crate::options::OptimizeOnClose;
 use crate::statement::VirtualStatement;
 
@@ -159,7 +159,7 @@ impl ConnectionState {
     pub(crate) fn remove_preupdate_hook(&mut self) {
         if let Some(mut handler) = self.preupdate_hook_callback.take() {
             unsafe {
-                libsqlite3_sys::sqlite3_preupdate_hook(self.handle.as_ptr(), None, ptr::null_mut());
+                crate::ffi::sqlite3_preupdate_hook(self.handle.as_ptr(), None, ptr::null_mut());
                 let _ = { Box::from_raw(handler.0.as_mut()) };
             }
         }
@@ -467,7 +467,7 @@ impl LockedSqliteHandle<'_> {
             self.guard.remove_preupdate_hook();
             self.guard.preupdate_hook_callback = Some(PreupdateHookHandler(callback));
 
-            libsqlite3_sys::sqlite3_preupdate_hook(
+            crate::ffi::sqlite3_preupdate_hook(
                 self.as_raw_handle().as_mut(),
                 Some(preupdate_hook::<F>),
                 handler,

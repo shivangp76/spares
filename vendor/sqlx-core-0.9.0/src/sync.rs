@@ -20,7 +20,8 @@ pub struct AsyncSemaphore {
         any(
             feature = "_rt-async-global-executor",
             feature = "_rt-async-std",
-            feature = "_rt-smol"
+            feature = "_rt-smol",
+            all(target_family = "wasm", target_os = "unknown")
         ),
         not(feature = "_rt-tokio")
     ))]
@@ -37,6 +38,7 @@ impl AsyncSemaphore {
             feature = "_rt-async-global-executor",
             feature = "_rt-async-std",
             feature = "_rt-smol",
+            all(target_family = "wasm", target_os = "unknown"),
             feature = "_rt-tokio"
         ))) {
             crate::rt::missing_rt((fair, permits));
@@ -47,7 +49,8 @@ impl AsyncSemaphore {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))]
@@ -66,7 +69,8 @@ impl AsyncSemaphore {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))] {
@@ -85,7 +89,8 @@ impl AsyncSemaphore {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))] {
@@ -114,7 +119,8 @@ impl AsyncSemaphore {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))] {
@@ -137,7 +143,8 @@ impl AsyncSemaphore {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))] {
@@ -165,7 +172,8 @@ pub struct AsyncSemaphoreReleaser<'a> {
         any(
             feature = "_rt-async-global-executor",
             feature = "_rt-async-std",
-            feature = "_rt-smol"
+            feature = "_rt-smol",
+            all(target_family = "wasm", target_os = "unknown")
         ),
         not(feature = "_rt-tokio")
     ))]
@@ -178,6 +186,7 @@ pub struct AsyncSemaphoreReleaser<'a> {
         feature = "_rt-async-global-executor",
         feature = "_rt-async-std",
         feature = "_rt-smol",
+        all(target_family = "wasm", target_os = "unknown"),
         feature = "_rt-tokio"
     )))]
     _phantom: std::marker::PhantomData<&'a ()>,
@@ -190,7 +199,8 @@ impl AsyncSemaphoreReleaser<'_> {
                 any(
                     feature = "_rt-async-global-executor",
                     feature = "_rt-async-std",
-                    feature = "_rt-smol"
+                    feature = "_rt-smol",
+                    all(target_family = "wasm", target_os = "unknown")
                 ),
                 not(feature = "_rt-tokio")
             ))] {

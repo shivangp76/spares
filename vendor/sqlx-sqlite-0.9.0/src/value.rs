@@ -4,14 +4,6 @@ use std::ptr::NonNull;
 use std::slice;
 use std::str;
 
-use libsqlite3_sys::sqlite3_value;
-use libsqlite3_sys::sqlite3_value_blob;
-use libsqlite3_sys::sqlite3_value_bytes;
-use libsqlite3_sys::sqlite3_value_double;
-use libsqlite3_sys::sqlite3_value_dup;
-use libsqlite3_sys::sqlite3_value_free;
-use libsqlite3_sys::sqlite3_value_int64;
-use libsqlite3_sys::sqlite3_value_type;
 use sqlx_core::type_info::TypeInfo;
 pub(crate) use sqlx_core::value::Value;
 pub(crate) use sqlx_core::value::ValueRef;
@@ -19,6 +11,14 @@ pub(crate) use sqlx_core::value::ValueRef;
 use crate::Sqlite;
 use crate::SqliteError;
 use crate::SqliteTypeInfo;
+use crate::ffi::sqlite3_value;
+use crate::ffi::sqlite3_value_blob;
+use crate::ffi::sqlite3_value_bytes;
+use crate::ffi::sqlite3_value_double;
+use crate::ffi::sqlite3_value_dup;
+use crate::ffi::sqlite3_value_free;
+use crate::ffi::sqlite3_value_int64;
+use crate::ffi::sqlite3_value_type;
 use crate::type_info::DataType;
 
 /// An owned handle to a [`sqlite3_value`].
