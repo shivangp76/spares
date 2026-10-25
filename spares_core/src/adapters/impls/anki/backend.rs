@@ -65,15 +65,15 @@ pub trait AnkiBackend: Send + Sync {
 
     /// Adds, updates and deletes notes, as [`AnkiAdapter::apply_notes`] does: the ids of
     /// [`NoteImportAction::Update`] and [`NoteImportAction::Delete`] are Anki's, and an added note's
-    /// `SparesId` is `custom_data[NOTE_ID_KEY]`. Returns `(spares id, Anki id)` for each note added
-    /// with a `SparesId`.
+    /// `SparesId` is `custom_data[NOTE_ID_KEY]`. Returns the position in `notes` and the new Anki id
+    /// of each added note.
     ///
     /// Anki has no transactions, so after an error some of the changes may have been made.
     async fn apply(
         &self,
         parser: &dyn Parseable,
         notes: Vec<(NoteSettings, Option<String>)>,
-    ) -> Result<Vec<(NoteId, i64)>, Error>;
+    ) -> Result<Vec<(usize, i64)>, Error>;
 
     /// Sets the `SparesId` field of Anki notes, given as `(Anki id, spares id)`.
     async fn set_spares_ids(&self, ids: &[(i64, NoteId)]) -> Result<(), Error>;
@@ -174,14 +174,10 @@ impl AnkiBackend for AnkiConnect {
         &self,
         parser: &dyn Parseable,
         notes: Vec<(NoteSettings, Option<String>)>,
-    ) -> Result<Vec<(NoteId, i64)>, Error> {
-        let added = AnkiAdapter::without_prompt()
+    ) -> Result<Vec<(usize, i64)>, Error> {
+        AnkiAdapter::without_prompt()
             .apply_notes(notes, parser, false, true)
-            .await?;
-        Ok(added
-            .into_iter()
-            .map(|(spares_id, anki_id, _)| (spares_id, anki_id))
-            .collect())
+            .await
     }
 
     async fn set_spares_ids(&self, ids: &[(i64, NoteId)]) -> Result<(), Error> {
@@ -236,7 +232,7 @@ impl AnkiBackend for AnkiFile {
         &self,
         _parser: &dyn Parseable,
         _notes: Vec<(NoteSettings, Option<String>)>,
-    ) -> Result<Vec<(NoteId, i64)>, Error> {
+    ) -> Result<Vec<(usize, i64)>, Error> {
         Err(anki_error(
             "Anki must be open, with AnkiConnect, to change its notes",
         ))
@@ -357,9 +353,9 @@ impl AnkiBackend for FakeAnki {
         &self,
         parser: &dyn Parseable,
         notes: Vec<(NoteSettings, Option<String>)>,
-    ) -> Result<Vec<(NoteId, i64)>, Error> {
+    ) -> Result<Vec<(usize, i64)>, Error> {
         let mut added = Vec::new();
-        for (settings, data) in notes {
+        for (i, (settings, data)) in notes.into_iter().enumerate() {
             let Some(data) = data else { continue };
             let mut state = self.state();
             if let Some(remaining) = state.fail_after.as_mut() {
@@ -383,9 +379,7 @@ impl AnkiBackend for FakeAnki {
                             tags,
                         },
                     );
-                    if let Some(id) = spares_id.as_ref().and_then(|id| id.parse().ok()) {
-                        added.push((id, anki_id));
-                    }
+                    added.push((i, anki_id));
                     state.calls.push(FakeAnkiCall::Add { anki_id, spares_id });
                 }
                 NoteImportAction::Update(id) => {

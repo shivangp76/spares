@@ -9,6 +9,11 @@ use spares_core::notes_vcs::CheckRequest;
 use spares_core::notes_vcs::FinishRequest;
 use spares_core::notes_vcs::ReceiveRequest;
 use spares_core::notes_vcs::RemoveSavedCopiesRequest;
+use spares_core::notes_vcs::anki::AnkiFinishRequest;
+use spares_core::notes_vcs::anki::AnkiReceiveRequest;
+use spares_core::notes_vcs::anki::AnkiReceiveResponse;
+use spares_core::notes_vcs::anki::LinkSparesIdsRequest;
+use spares_core::notes_vcs::anki::LinkSparesIdsResponse;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -48,6 +53,50 @@ pub(crate) async fn notes_vcs_anki_refresh_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))
+}
+
+/// Called by the `update` hook for a push to `anki`: writes it into Anki. Holds the exclusive
+/// notes lock until the push settles.
+pub(crate) async fn notes_vcs_anki_receive_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<AnkiReceiveRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if !backend::anki_connect_is_up().await {
+        return Ok(Json(AnkiReceiveResponse {
+            ok: false,
+            message: "Anki must be open, with AnkiConnect, to push to `anki`".to_string(),
+            session: None,
+        }));
+    }
+    let result = notes_vcs::anki::receive(data.db.clone(), Arc::new(backend::AnkiConnect), body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
+/// Called by the `post-receive` hook once git has moved `anki`.
+pub(crate) async fn notes_vcs_anki_finish_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<AnkiFinishRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let backend = backend::connect().await.map_err(error_to_response)?;
+    let result = notes_vcs::anki::finish(data.db.clone(), Arc::from(backend), body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
+/// Called by the `post-receive` hook after a push to `main` created notes from Anki notes.
+pub(crate) async fn notes_vcs_anki_link_handler(
+    Json(body): Json<LinkSparesIdsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if !backend::anki_connect_is_up().await {
+        return Ok(Json(LinkSparesIdsResponse { linked: false }));
+    }
+    notes_vcs::anki::link_spares_ids(&backend::AnkiConnect, &body.ids)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(LinkSparesIdsResponse { linked: true }))
 }
 
 /// Creates and activates the server copy of the notes repository (`spares note init-vcs`).

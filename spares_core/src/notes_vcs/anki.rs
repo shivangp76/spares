@@ -27,11 +27,14 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -40,9 +43,11 @@ use sqlx::SqlitePool;
 
 use super::git::git;
 use super::git::git_command;
+use super::git::git_error;
 use super::git::git_output;
 use super::git::nul_split;
 use super::git::rev_parse;
+use super::lock::NotesGuard;
 use super::lock::WRITER_WAIT;
 use super::lock::exclusive_guard;
 use super::lock::run_holding;
@@ -58,19 +63,27 @@ use super::paths::note_rel_path;
 use super::paths::parse_new_note_rel_path;
 use super::paths::parse_note_rel_path;
 use super::paths::server_repo_dir;
+use super::receive::README;
+use super::receive::WATCHDOG_DELAY;
+use super::receive::conflict_marker_line;
+use super::receive::short;
+use super::receive::wrong_repo;
 use crate::Error;
 use crate::adapters::impls::anki::AnkiNote;
 use crate::adapters::impls::anki::backend::AnkiBackend;
 use crate::adapters::impls::anki::backend::AnkiRawNote;
 use crate::adapters::impls::anki::to_anki_fields;
 use crate::api::note::RenderNoteData;
+use crate::api::note::get_note;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
+use crate::api::note::update_notes;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NOTE_ID_KEY;
 use crate::model::NoteId;
 use crate::model::NoteLink;
+use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::TemplateType;
@@ -78,6 +91,9 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_all_parsers;
+use crate::schema::note::NotesSelector;
+use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateTags;
 
 /// The branch describing Anki
 pub const ANKI_REF: &str = "refs/heads/anki";
@@ -132,15 +148,16 @@ pub(crate) async fn refresh_locked(
         None => rev_parse(&repo, "HEAD")?,
     };
     let notes = backend.read_notes().await?;
-    let new = match commit_snapshot(db, &repo, &parent, old.as_deref(), &notes).await? {
-        Some(new) => new,
-        // Anki holds what `main` does: `anki` starts there.
-        None if old.is_none() => {
-            git(&repo, &["update-ref", ANKI_REF, &parent, ""], None)?;
-            parent
-        }
-        None => parent,
-    };
+    let new =
+        match commit_snapshot(db, &repo, &parent, old.as_deref(), &notes, &HashMap::new()).await? {
+            Some(new) => new,
+            // Anki holds what `main` does: `anki` starts there.
+            None if old.is_none() => {
+                git(&repo, &["update-ref", ANKI_REF, &parent, ""], None)?;
+                parent
+            }
+            None => parent,
+        };
     Ok(RefreshResponse {
         changed: old.as_ref() != Some(&new),
         new,
@@ -176,8 +193,20 @@ pub(crate) async fn commit_snapshot(
     parent: &str,
     expected: Option<&str>,
     notes: &[AnkiRawNote],
+    hints: &HashMap<i64, String>,
 ) -> Result<Option<String>, Error> {
-    let tree = snapshot_tree(db, repo, parent, notes).await?;
+    let tree = snapshot_tree(db, repo, parent, notes, hints).await?;
+    commit_tree(repo, &tree, parent, expected)
+}
+
+/// Commits `tree` on top of `parent` and moves `anki` to it, if `anki` is still at `expected`.
+/// Returns `None` without committing if `tree` is `parent`'s.
+fn commit_tree(
+    repo: &Path,
+    tree: &str,
+    parent: &str,
+    expected: Option<&str>,
+) -> Result<Option<String>, Error> {
     let parent_tree = rev_parse(repo, &format!("{parent}^{{tree}}"))?;
     if tree == parent_tree {
         return Ok(None);
@@ -186,7 +215,7 @@ pub(crate) async fn commit_snapshot(
         repo,
         &[
             "commit-tree",
-            &tree,
+            tree,
             "-p",
             parent,
             "-m",
@@ -306,11 +335,14 @@ fn blob_anki_id(blob: &str) -> Option<i64> {
 }
 
 #[expect(clippy::too_many_lines)]
+/// `hints` are paths of Anki notes that a push just added from files without a note id, which Anki
+/// knows no path for.
 async fn snapshot_tree(
     db: &SqlitePool,
     repo: &Path,
     parent: &str,
     notes: &[AnkiRawNote],
+    hints: &HashMap<i64, String>,
 ) -> Result<String, Error> {
     let entries = read_tree(repo, parent)?;
     let note_shas: Vec<&str> = entries
@@ -364,6 +396,7 @@ async fn snapshot_tree(
             .filter(|id| by_id.contains_key(id) || db_notes.rows.contains_key(id));
         let mut path = known_id
             .and_then(path_of_id)
+            .or_else(|| hints.get(&raw.id).cloned())
             .or_else(|| {
                 db_notes
                     .by_anki_id
@@ -583,7 +616,7 @@ fn extra_keywords(parser: &dyn Parseable, settings: &NoteSettings, data: &str) -
 }
 
 /// Rendered in place of a new note's id, which is then removed
-const PLACEHOLDER_ID: NoteId = NoteId::from_packed(0);
+const PLACEHOLDER_ID: NoteId = NoteId::UNSET;
 
 /// A note's file. Without `id`, the file of a new note: without a note id.
 pub(crate) fn render(
@@ -725,4 +758,568 @@ fn run_with_index(
         return Err(super::git::git_error(args, &output));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// A push to `anki`, from the notes repository's `update` hook. It runs after git received the
+/// pushed objects and before it moves the ref.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnkiReceiveRequest {
+    /// The repository the hook runs in, which must be the server's
+    pub repo: PathBuf,
+    /// `anki` before the push
+    pub old: String,
+    /// The commit being pushed to `anki`
+    pub new: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnkiReceiveResponse {
+    /// Whether git may move `anki`
+    pub ok: bool,
+    pub message: String,
+    pub session: Option<String>,
+}
+
+/// From `post-receive`, once git moved `anki`
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnkiFinishRequest {
+    pub session: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AnkiFinishResponse {
+    pub message: String,
+    /// Whether spares committed what Anki holds on top of the push, so there is something to fetch
+    pub changed: bool,
+}
+
+/// An accepted push to `anki` that git has not moved the ref for yet. It holds the exclusive notes
+/// lock, so a refresh cannot move `anki` between Anki being written and git moving the ref.
+struct AnkiSession {
+    id: String,
+    old: String,
+    new: String,
+    /// Paths of the notes added from `new-*` files, by their new Anki id
+    hints: HashMap<i64, String>,
+    _guard: NotesGuard,
+}
+
+static ANKI_SESSION: Mutex<Option<AnkiSession>> = Mutex::new(None);
+
+fn anki_session() -> MutexGuard<'static, Option<AnkiSession>> {
+    ANKI_SESSION.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The session id for `post-receive`, which runs in another process than the `update` hook.
+pub fn anki_session_file_path() -> PathBuf {
+    server_repo_dir().join(".git").join("spares-anki-session")
+}
+
+fn take_anki_session(id: &str) -> Option<AnkiSession> {
+    let mut session = anki_session();
+    if session.as_ref().is_some_and(|s| s.id != id) {
+        return None;
+    }
+    session.take()
+}
+
+enum AnkiOutcome {
+    Accepted {
+        message: String,
+        hints: HashMap<i64, String>,
+    },
+    Rejected(String),
+}
+
+/// Writes a push to `anki` into Anki. If it is accepted, the exclusive notes lock stays held until
+/// [`finish`] (from `post-receive`) or the watchdog records what Anki then holds.
+pub async fn receive(
+    db: SqlitePool,
+    backend: Arc<dyn AnkiBackend>,
+    request: AnkiReceiveRequest,
+) -> Result<AnkiReceiveResponse, Error> {
+    let guard = exclusive_guard(None).await?;
+    // Its own task, so a hook killed mid-request cannot stop writing to Anki halfway.
+    let handle = tokio::spawn(async move {
+        let outcome = receive_locked(&db, backend.as_ref(), &request)
+            .await
+            .unwrap_or_else(|e| {
+                AnkiOutcome::Rejected(format!("spares failed to process the push to `anki`: {e}"))
+            });
+        match outcome {
+            AnkiOutcome::Rejected(message) => AnkiReceiveResponse {
+                ok: false,
+                message,
+                session: None,
+            },
+            AnkiOutcome::Accepted { message, hints } => {
+                let id = format!(
+                    "anki-{}-{}",
+                    chrono::Utc::now().timestamp_millis(),
+                    short(&request.new)
+                );
+                if let Err(e) = std::fs::write(anki_session_file_path(), &id) {
+                    log::error!("Failed to write the `anki` push session: {e}");
+                }
+                *anki_session() = Some(AnkiSession {
+                    id: id.clone(),
+                    old: request.old.clone(),
+                    new: request.new.clone(),
+                    hints,
+                    _guard: guard,
+                });
+                let watchdog_id = id.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(WATCHDOG_DELAY).await;
+                    if let Some(session) = take_anki_session(&watchdog_id) {
+                        log::warn!(
+                            "post-receive did not report the push of {} to `anki`; settling it",
+                            session.new
+                        );
+                        let _ = settle(&db, backend.as_ref(), session).await;
+                    }
+                });
+                AnkiReceiveResponse {
+                    ok: true,
+                    message,
+                    session: Some(id),
+                }
+            }
+        }
+    });
+    handle
+        .await
+        .map_err(|e| Error::NotesVcs(format!("The push task failed: {e}")))
+}
+
+/// Settles an accepted push to `anki` once git moved the ref: commits what Anki now holds on top,
+/// if it differs from the push, and releases the lock.
+pub async fn finish(
+    db: SqlitePool,
+    backend: Arc<dyn AnkiBackend>,
+    request: AnkiFinishRequest,
+) -> Result<AnkiFinishResponse, Error> {
+    let Some(session) = take_anki_session(&request.session) else {
+        return Ok(AnkiFinishResponse {
+            message: "spares has already settled this push".to_string(),
+            changed: false,
+        });
+    };
+    let handle = tokio::spawn(async move { settle(&db, backend.as_ref(), session).await });
+    handle
+        .await
+        .map_err(|e| Error::NotesVcs(format!("Settling the push failed: {e}")))?
+}
+
+async fn settle(
+    db: &SqlitePool,
+    backend: &dyn AnkiBackend,
+    session: AnkiSession,
+) -> Result<AnkiFinishResponse, Error> {
+    let _ = std::fs::remove_file(anki_session_file_path());
+    let repo = server_repo_dir();
+    // git moved `anki` unless something went wrong after the hook; either way, record on top of
+    // where it is what Anki now holds.
+    let tip = anki_tip(&repo)?.unwrap_or(session.old.clone());
+    let notes = backend.read_notes().await?;
+    let committed = commit_snapshot(db, &repo, &tip, Some(&tip), &notes, &session.hints).await?;
+    let message = match (&committed, tip == session.new) {
+        (None, true) => "Anki holds what you pushed".to_string(),
+        (Some(_), true) => "spares committed Anki's ids of the added notes (or how Anki stored them) on top of your push; fetch (`jj spares-anki-pull` / `spares note anki-refresh && git fetch`) before merging again".to_string(),
+        (_, false) => {
+            let message = format!(
+                "the push of {} did not reach `anki` after Anki was written; spares committed what Anki holds to `anki`, so fetch to see it",
+                short(&session.new)
+            );
+            log::warn!("{message}");
+            message
+        }
+    };
+    Ok(AnkiFinishResponse {
+        message,
+        changed: committed.is_some(),
+    })
+}
+
+/// What [`AnkiBackend::apply`] takes
+type ApplyNotes = Vec<(NoteSettings, Option<String>)>;
+
+/// A note the push changes, as Anki gets it
+struct AnkiChange {
+    path: String,
+    /// The pushed file
+    blob: String,
+    parser: Box<dyn Parseable>,
+    settings: NoteSettings,
+    data: String,
+    /// The spares note it is, for a canonical path
+    spares_id: Option<NoteId>,
+}
+
+#[expect(clippy::too_many_lines)]
+async fn receive_locked(
+    db: &SqlitePool,
+    backend: &dyn AnkiBackend,
+    request: &AnkiReceiveRequest,
+) -> Result<AnkiOutcome, Error> {
+    // 1. The hook's repository must be the one this server writes to.
+    if let Some(reason) = wrong_repo(&request.repo) {
+        return Ok(AnkiOutcome::Rejected(reason));
+    }
+    let repo = server_repo_dir();
+    let new = request.new.trim().to_ascii_lowercase();
+    let old = request.old.trim().to_ascii_lowercase();
+    for sha in [&old, &new] {
+        if !(sha.len() == 40 || sha.len() == 64) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(AnkiOutcome::Rejected(format!("invalid commit id `{sha}`")));
+        }
+    }
+    let Some(tip) = anki_tip(&repo)? else {
+        return Ok(AnkiOutcome::Rejected(
+            "`anki` does not exist yet; run `spares note anki-refresh` (or `jj spares-anki-pull`), and push on top of it"
+                .to_string(),
+        ));
+    };
+    if tip != old {
+        return Ok(AnkiOutcome::Rejected(
+            "`anki` moved since your push started; fetch and push again".to_string(),
+        ));
+    }
+
+    // 2. Anki must still hold what `old` describes.
+    let notes = backend.read_notes().await?;
+    let current = snapshot_tree(db, &repo, &old, &notes, &HashMap::new()).await?;
+    if current != rev_parse(&repo, &format!("{old}^{{tree}}"))? {
+        commit_tree(&repo, &current, &old, Some(&old))?;
+        return Ok(AnkiOutcome::Rejected(
+            "Anki has newer notes than your push is based on; spares committed them to `anki`. Fetch them (`jj spares-anki-pull`, or `spares note anki-refresh && git fetch`), merge, and push again"
+                .to_string(),
+        ));
+    }
+
+    // 3. Fast-forward only
+    let is_ancestor = git_output(&repo, &["merge-base", "--is-ancestor", &old, &new], None)?;
+    match is_ancestor.status.code() {
+        Some(0) => {}
+        Some(1) => {
+            return Ok(AnkiOutcome::Rejected(
+                "your push to `anki` is not based on its current commit; fetch, merge or rebase onto `anki@origin`, and push again"
+                    .to_string(),
+            ));
+        }
+        _ => {
+            return Err(git_error(
+                &["merge-base", "--is-ancestor", &old, &new],
+                &is_ancestor,
+            ));
+        }
+    }
+
+    // 4. Which paths may change, and the notes they are
+    let raw = git(
+        &repo,
+        &[
+            "diff",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            &old,
+            &new,
+        ],
+        None,
+    )?;
+    let mut errors: Vec<String> = Vec::new();
+    let mut changes: Vec<AnkiChange> = Vec::new();
+    let mut deletes: Vec<(String, i64)> = Vec::new();
+    let mut tokens = nul_split(&raw);
+    while let Some(header) = tokens.next() {
+        let Some(path) = tokens.next() else { break };
+        let path = String::from_utf8_lossy(path).into_owned();
+        let header = String::from_utf8_lossy(header);
+        let fields: Vec<&str> = header.trim_start_matches(':').split(' ').collect();
+        let [_, new_mode, old_sha, new_sha, status] = fields[..] else {
+            errors.push(format!("{path}: unexpected diff entry `{header}`"));
+            continue;
+        };
+        if path == README {
+            continue;
+        }
+        if path == ".gitignore" || path == ".gitattributes" {
+            errors.push(format!(
+                "{path}: is managed by spares and cannot be changed"
+            ));
+            continue;
+        }
+        let Some(note_path) = NotePath::parse(&path) else {
+            errors.push(format!(
+                "{path}: is not a note file; only notes (`<parser>/<id>.<ext>`), new notes (`<parser>/new-<name>.<ext>`) and `{README}` can be pushed"
+            ));
+            continue;
+        };
+        if status == "D" {
+            let blob = git(&repo, &["cat-file", "blob", old_sha], None)?;
+            // A note that was never in Anki has nothing to delete there.
+            if let Some(anki_id) = blob_anki_id(&String::from_utf8_lossy(&blob)) {
+                deletes.push((path, anki_id));
+            }
+            continue;
+        }
+        if !matches!(status, "A" | "M") {
+            errors.push(format!("{path}: has an unsupported change ({status})"));
+            continue;
+        }
+        if new_mode != "100644" {
+            errors.push(format!(
+                "{path}: has mode {new_mode}; only regular files (100644) are allowed"
+            ));
+            continue;
+        }
+        let blob = git(&repo, &["cat-file", "blob", new_sha], None)?;
+        let Ok(blob) = String::from_utf8(blob) else {
+            errors.push(format!("{path}: is not valid UTF-8"));
+            continue;
+        };
+        if blob.contains('\0') {
+            errors.push(format!("{path}: contains a NUL byte"));
+            continue;
+        }
+        if let Some(line) = conflict_marker_line(&blob) {
+            errors.push(format!(
+                "{path}: line {line} is a conflict marker; resolve the conflict first"
+            ));
+            continue;
+        }
+        let parsed = match &note_path {
+            NotePath::Note(parser, id) => parse_note_file(parser.as_ref(), &blob, *id, false)
+                .map(|parsed| (parsed.settings, parsed.data)),
+            NotePath::New(parser) => parse_new_note_file(parser.as_ref(), &blob, false)
+                .map(|parsed| (parsed.settings, parsed.data)),
+        };
+        let (settings, data) = match parsed {
+            Ok(parsed) => parsed,
+            Err(problems) => {
+                errors.extend(problems.into_iter().map(|p| format!("{path}: {p}")));
+                continue;
+            }
+        };
+        let spares_id = note_path.id();
+        let (NotePath::Note(parser, _) | NotePath::New(parser)) = note_path;
+        changes.push(AnkiChange {
+            path,
+            blob,
+            parser,
+            settings,
+            data,
+            spares_id,
+        });
+    }
+    // A copied note file keeps the Anki id of the note it was copied from, which would update
+    // that Anki note instead of adding one.
+    let new_entries = read_tree(&repo, &new)?;
+    let note_shas: Vec<&str> = new_entries
+        .iter()
+        .filter(|entry| NotePath::parse(&entry.path).is_some())
+        .map(|entry| entry.sha.as_str())
+        .collect();
+    let new_blobs = read_blobs(&repo, &note_shas)?;
+    let mut paths_by_anki_id: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
+    for entry in &new_entries {
+        if let Some(anki_id) = new_blobs
+            .get(&entry.sha)
+            .and_then(|blob| blob_anki_id(blob))
+        {
+            paths_by_anki_id
+                .entry(anki_id)
+                .or_default()
+                .push(&entry.path);
+        }
+    }
+    for change in &changes {
+        let Some(anki_id) = change
+            .settings
+            .custom_data
+            .get(ANKI_NOTE_ID_KEY)
+            .and_then(anki_id_of)
+        else {
+            continue;
+        };
+        let others: Vec<&&str> = paths_by_anki_id
+            .get(&anki_id)
+            .into_iter()
+            .flatten()
+            .filter(|path| **path != change.path)
+            .collect();
+        if let Some(other) = others.first() {
+            errors.push(format!(
+                "{}: has the Anki id of `{other}` (anki-note-id {anki_id}); remove `anki-note-id` from the custom data of a copied note",
+                change.path
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        return Ok(AnkiOutcome::Rejected(format!(
+            "spares rejected the push, so Anki was not changed:\n{}",
+            errors
+                .iter()
+                .map(|e| format!("  - {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )));
+    }
+
+    // 5. What Anki gets: a note it has is updated, any other added, by parser
+    // By parser: the notes for Anki, and the position in `changes` of each note it adds or updates
+    let mut by_parser: BTreeMap<String, (ApplyNotes, Vec<usize>)> = BTreeMap::new();
+    let (mut added, mut updated) = (0, 0);
+    // A note deleted in Anki whose file is restored on `anki` still has its old Anki id.
+    let in_anki: std::collections::HashSet<i64> = notes.iter().map(|note| note.id).collect();
+    for (i, change) in changes.iter().enumerate() {
+        let mut settings = change.settings.clone();
+        let anki_id = settings
+            .custom_data
+            .get(ANKI_NOTE_ID_KEY)
+            .and_then(anki_id_of)
+            .filter(|anki_id| in_anki.contains(anki_id));
+        settings.action = if let Some(anki_id) = anki_id {
+            updated += 1;
+            NoteImportAction::Update(NoteId::from_packed(anki_id))
+        } else {
+            added += 1;
+            NoteImportAction::Add
+        };
+        if let Some(id) = change.spares_id {
+            settings
+                .custom_data
+                .insert(NOTE_ID_KEY.to_string(), Value::String(id.letters()));
+        }
+        let entry = by_parser
+            .entry(change.parser.get_parser_name().to_string())
+            .or_default();
+        entry.0.push((settings, Some(change.data.clone())));
+        entry.1.push(i);
+    }
+    for (path, anki_id) in &deletes {
+        let Some(note_path) = NotePath::parse(path) else {
+            continue;
+        };
+        let settings = NoteSettings {
+            action: NoteImportAction::Delete(NoteId::from_packed(*anki_id)),
+            ..NoteSettings::default()
+        };
+        by_parser
+            .entry(note_path.parser().get_parser_name().to_string())
+            .or_default()
+            .0
+            .push((settings, Some(String::new())));
+    }
+
+    // 6. Write Anki. It has no transactions, so a failure leaves some changes made.
+    let mut added_ids: Vec<(usize, i64)> = Vec::new();
+    for (parser_name, (notes, positions)) in by_parser {
+        let parser = find_parser(&parser_name, &get_all_parsers())?;
+        match backend.apply(parser.as_ref(), notes).await {
+            Ok(added) => added_ids.extend(
+                added
+                    .into_iter()
+                    .filter_map(|(i, anki_id)| Some((*positions.get(i)?, anki_id))),
+            ),
+            Err(e) => {
+                let notes = backend.read_notes().await?;
+                commit_snapshot(db, &repo, &old, Some(&old), &notes, &HashMap::new()).await?;
+                return Ok(AnkiOutcome::Rejected(format!(
+                    "writing to Anki failed partway ({e}), so some of the push is in Anki; spares committed what Anki now holds to `anki`. Fetch it (`jj spares-anki-pull`, or `spares note anki-refresh && git fetch`), merge, and push again"
+                )));
+            }
+        }
+    }
+
+    // 7. Record in spares the Anki ids of the notes it has, if their file is `main`'s, as after
+    // merging `main` into `anki`: `main` then gets the same line as the snapshot writes on `anki`,
+    // and both files stay the same. A file changed on `anki` gets its id there, and `main` gets
+    // it by merging, since the same line added next to a change on one side would conflict.
+    // Recording commits to `main`, which no push is importing, since this holds the exclusive lock.
+    let mut hints = HashMap::new();
+    let mut warnings = Vec::new();
+    for (i, anki_id) in added_ids {
+        let change = &changes[i];
+        let mains = git_output(
+            &repo,
+            &["cat-file", "blob", &format!("HEAD:{}", change.path)],
+            None,
+        )?;
+        let same_as_main = mains.status.success() && mains.stdout == change.blob.as_bytes();
+        match change.spares_id {
+            Some(_) if !same_as_main => {}
+            Some(id) => {
+                if let Err(e) = record_anki_id(db, id, anki_id).await {
+                    warnings.push(format!(
+                        "note {}: recording its Anki id failed ({e}); `spares note anki-refresh` finds it by its SparesId",
+                        id.letters()
+                    ));
+                }
+            }
+            None => {
+                hints.insert(anki_id, change.path.clone());
+            }
+        }
+    }
+    let mut message = format!(
+        "added {added}, updated {updated} and deleted {} Anki note(s)",
+        deletes.len()
+    );
+    for warning in warnings {
+        let _ = write!(message, "\n  - {warning}");
+    }
+    Ok(AnkiOutcome::Accepted { message, hints })
+}
+
+/// Adds the Anki note id to a spares note's custom data.
+async fn record_anki_id(db: &SqlitePool, id: NoteId, anki_id: i64) -> Result<(), Error> {
+    let mut custom_data = get_note(db, id).await?.custom_data;
+    custom_data.insert(
+        ANKI_NOTE_ID_KEY.to_string(),
+        Value::String(anki_id.to_string()),
+    );
+    update_notes(
+        db,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![id]),
+            parser_id: None,
+            data: None,
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: Some(custom_data),
+        },
+        chrono::Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Sets the `SparesId` of Anki notes that a push to `main` created spares notes from, so Anki
+/// knows them by their spares id too. Best effort: refreshes also find them by their Anki id.
+pub async fn link_spares_ids(
+    backend: &dyn AnkiBackend,
+    ids: &[(i64, NoteId)],
+) -> Result<(), Error> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    backend.set_spares_ids(ids).await
+}
+
+/// From `post-receive` after a push to `main`: the [`super::FinishResponse::anki_links`]
+#[derive(Debug, Deserialize, Serialize)]
+pub struct LinkSparesIdsRequest {
+    /// `(Anki id, spares id)`
+    pub ids: Vec<(i64, NoteId)>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct LinkSparesIdsResponse {
+    /// Whether Anki was open to set them
+    pub linked: bool,
 }

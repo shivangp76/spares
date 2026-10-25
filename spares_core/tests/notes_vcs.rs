@@ -15,6 +15,7 @@ use serde_json::json;
 use spares_core::adapters::impls::anki::backend::AnkiBackend;
 use spares_core::adapters::impls::anki::backend::AnkiRawNote;
 use spares_core::adapters::impls::anki::backend::FakeAnki;
+use spares_core::adapters::impls::anki::backend::FakeAnkiCall;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::delete_notes;
 use spares_core::api::note::get_note;
@@ -1103,7 +1104,9 @@ fn new_note_file(clone: &Path, data: &str) -> String {
     let file = read(&note_path(clone, first()));
     let without_id = file.replace(&format!("<!--- # note-id: {} --->\n", first()), "");
     assert_ne!(without_id, file);
-    without_id.replace("First {{[o:1] Cloze here }}", data)
+    let new_file = without_id.replace("First {{[o:1] Cloze here }}", data);
+    assert_ne!(new_file, without_id);
+    new_file
 }
 
 async fn note_count(pool: &SqlitePool) -> i64 {
@@ -1455,4 +1458,359 @@ async fn test_anki_edits_and_new_notes_merge_into_spares(pool: SqlitePool) {
         pushed.receive.message
     );
     assert_eq!(note_data(&pool, ids[0]).await, before);
+}
+
+struct AnkiPushed {
+    receive: notes_vcs::anki::AnkiReceiveResponse,
+    finish: Option<notes_vcs::anki::AnkiFinishResponse>,
+}
+
+/// Does what `git push origin HEAD:anki` and the hooks do
+async fn push_anki(pool: &SqlitePool, anki: &Arc<FakeAnki>, clone: &Path) -> AnkiPushed {
+    let new = head(clone);
+    git(
+        &repo(),
+        &[
+            "fetch",
+            "-q",
+            clone.to_str().unwrap(),
+            "+HEAD:refs/test/incoming",
+        ],
+    );
+    let old = anki_ref(&repo());
+    let backend = Arc::clone(anki) as Arc<dyn AnkiBackend>;
+    let receive = notes_vcs::anki::receive(
+        pool.clone(),
+        Arc::clone(&backend),
+        notes_vcs::anki::AnkiReceiveRequest {
+            repo: repo(),
+            old: old.clone(),
+            new: new.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let finish = if receive.ok {
+        git(&repo(), &["update-ref", "refs/heads/anki", &new, &old]);
+        Some(
+            notes_vcs::anki::finish(
+                pool.clone(),
+                backend,
+                notes_vcs::anki::AnkiFinishRequest {
+                    session: receive.session.clone().unwrap(),
+                },
+            )
+            .await
+            .unwrap(),
+        )
+    } else {
+        None
+    };
+    AnkiPushed { receive, finish }
+}
+
+/// Checks out `anki` in the clone
+fn checkout_anki(clone: &Path) {
+    git(
+        clone,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(clone, &["checkout", "-q", "-B", "work", "origin/anki"]);
+}
+
+#[sqlx::test]
+async fn test_anki_push_writes_anki(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let parser_id: i64 = sqlx::query_scalar("SELECT id FROM parser WHERE name = 'markdown'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let fourth = create_notes(
+        &pool,
+        CreateNotesRequest {
+            parser_id,
+            requests: vec![CreateNoteRequest {
+                data: "Fourth {{ cloze }}".to_string(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: Map::new(),
+            }],
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap()
+    .notes[0]
+        .id;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids[..2]).await;
+    refresh(&pool, &anki).await;
+    // Changed in spares, then sent by merging `main` into `anki`
+    update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![ids[2]]),
+            parser_id: None,
+            data: Some("Third, changed in spares {{ Cloze }}".to_string()),
+            keywords: None,
+            tags: UpdateTags::None,
+            custom_data: None,
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap();
+    let clone = clone();
+    checkout_anki(&clone);
+    git(&clone, &["merge", "-q", "--no-edit", "origin/main"]);
+    std::fs::write(
+        clone.join("markdown/new-fresh.md"),
+        new_note_file(&clone, "Fresh {{ note }}"),
+    )
+    .unwrap();
+    let path = note_path(&clone, ids[0]);
+    std::fs::write(&path, read(&path).replace("Cloze here", "Edited for Anki")).unwrap();
+    // Never in Anki, and changed on `anki` to send it
+    let path = note_path(&clone, fourth);
+    std::fs::write(&path, read(&path).replace("Fourth", "Fourth, sent")).unwrap();
+    std::fs::remove_file(note_path(&clone, ids[1])).unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "for Anki"]);
+    // The new note is a copy of the first, Anki id included.
+    let pushed = push_anki(&pool, &anki, &clone).await;
+    assert!(!pushed.receive.ok);
+    assert!(
+        pushed
+            .receive
+            .message
+            .contains("new-fresh.md: has the Anki id of"),
+        "{}",
+        pushed.receive.message
+    );
+    assert_eq!(anki.take_calls(), []);
+    let fresh = clone.join("markdown/new-fresh.md");
+    let without_id: String = read(&fresh)
+        .split_inclusive('\n')
+        .filter(|line| !line.contains("custom-data"))
+        .collect();
+    std::fs::write(&fresh, without_id).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "for Anki, without the copied id"],
+    );
+    let pushed = push_anki(&pool, &anki, &clone).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(
+        pushed
+            .receive
+            .message
+            .contains("added 3, updated 1 and deleted 1"),
+        "{}",
+        pushed.receive.message
+    );
+
+    let calls = anki.take_calls();
+    assert!(
+        calls.contains(&FakeAnkiCall::Update {
+            anki_id: anki_id(0),
+            spares_id: Some(ids[0].letters()),
+        }),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&FakeAnkiCall::Delete {
+            anki_id: anki_id(1)
+        }),
+        "{calls:?}"
+    );
+    let added: Vec<(i64, Option<String>)> = calls
+        .iter()
+        .filter_map(|call| match call {
+            FakeAnkiCall::Add { anki_id, spares_id } => Some((*anki_id, spares_id.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), 3, "{calls:?}");
+    let added_as = |id: NoteId| {
+        added
+            .iter()
+            .find(|(_, spares_id)| spares_id.as_deref() == Some(id.letters().as_str()))
+            .unwrap()
+            .0
+    };
+    assert!(
+        added.iter().any(|(_, spares_id)| spares_id.is_none()),
+        "{calls:?}"
+    );
+    // spares records the Anki id of the note whose file is `main`'s, so both get the same line.
+    let custom_data = get_note(&pool, ids[2]).await.unwrap().custom_data;
+    assert_eq!(
+        custom_data.get("anki-note-id"),
+        Some(&json!(added_as(ids[2]).to_string()))
+    );
+    // The note changed on `anki` gets its id there, and in spares by merging `anki`.
+    let fourth_anki_id = added_as(fourth);
+    assert!(
+        !get_note(&pool, fourth)
+            .await
+            .unwrap()
+            .custom_data
+            .contains_key("anki-note-id")
+    );
+    // The push only changed Anki, not spares' notes.
+    assert!(!note_data(&pool, ids[0]).await.contains("Edited for Anki"));
+
+    // Anki's ids are committed on top, so the next merge of `main` into `anki` is clean.
+    let finish = pushed.finish.unwrap();
+    assert!(finish.changed, "{}", finish.message);
+    let files = files_at(&repo(), "refs/heads/anki");
+    assert!(
+        files.contains(&"markdown/new-fresh.md".to_string()),
+        "{files:?}"
+    );
+    assert!(!files.iter().any(|f| f.contains("new-anki")), "{files:?}");
+    assert!(git(&repo(), &["show", "anki:markdown/new-fresh.md"]).contains("anki-note-id"));
+    let custom_data_line = |rev: &str| {
+        git(&repo(), &["show", &format!("{rev}:markdown/{}.md", ids[2])])
+            .lines()
+            .find(|line| line.contains("custom-data"))
+            .map(str::to_string)
+    };
+    assert!(custom_data_line("anki").is_some());
+    assert_eq!(custom_data_line("anki"), custom_data_line("main"));
+    checkout_anki(&clone);
+    git(&clone, &["merge", "-q", "--no-edit", "origin/main"]);
+    // A refresh right after finds Anki as the branch describes it.
+    assert!(!refresh(&pool, &anki).await.changed);
+
+    // Merging `anki` into `main` creates the new note, with its Anki id.
+    let pushed = merge_anki_and_push(&pool, &clone).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let created: NoteId = sqlx::query_scalar("SELECT id FROM note WHERE data LIKE 'Fresh%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let fourth_note = get_note(&pool, fourth).await.unwrap();
+    assert!(
+        fourth_note.data.starts_with("Fourth, sent"),
+        "{}",
+        fourth_note.data
+    );
+    assert_eq!(
+        fourth_note.custom_data.get("anki-note-id"),
+        Some(&json!(fourth_anki_id.to_string()))
+    );
+    let anki_links = pushed.finish.unwrap().anki_links;
+    assert_eq!(anki_links.len(), 1, "{anki_links:?}");
+    assert_eq!(anki_links[0].1, created);
+}
+
+#[sqlx::test]
+async fn test_anki_push_with_stale_base_is_rejected(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids[..1]).await;
+    refresh(&pool, &anki).await;
+    let before = anki_ref(&repo());
+    let clone = clone();
+    checkout_anki(&clone);
+    commit_edit(&clone, ids[0], |s| {
+        s.replace("Cloze here", "From the clone")
+    });
+    edit_in_anki(&anki, anki_id(0), |front| format!("{front} from Anki"));
+    let pushed = push_anki(&pool, &anki, &clone).await;
+    assert!(!pushed.receive.ok);
+    assert!(
+        pushed.receive.message.contains("Anki has newer notes"),
+        "{}",
+        pushed.receive.message
+    );
+    assert_eq!(anki.take_calls(), []);
+    // What Anki holds is committed, ready to fetch and merge.
+    assert_ne!(anki_ref(&repo()), before);
+    assert!(git(&repo(), &["show", &format!("anki:markdown/{}.md", ids[0])]).contains("from Anki"));
+}
+
+#[sqlx::test]
+async fn test_anki_push_failing_partway_records_what_anki_holds(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    refresh(&pool, &anki).await;
+    let before = anki_ref(&repo());
+    let clone = clone();
+    checkout_anki(&clone);
+    let first = note_path(&clone, ids[0]);
+    std::fs::write(&first, read(&first).replace("First", "First, sent")).unwrap();
+    let second = note_path(&clone, ids[1]);
+    std::fs::write(&second, read(&second).replace("Second", "Second, sent")).unwrap();
+    git(&clone, &["commit", "-qam", "send two"]);
+    anki.fail_after(1);
+    let pushed = push_anki(&pool, &anki, &clone).await;
+    assert!(!pushed.receive.ok);
+    assert!(
+        pushed.receive.message.contains("failed partway"),
+        "{}",
+        pushed.receive.message
+    );
+    assert_eq!(anki.notes().len(), 1);
+    // `anki` now shows the note Anki got.
+    let tip = anki_ref(&repo());
+    assert_ne!(tip, before);
+    assert_eq!(
+        git(
+            &repo(),
+            &["rev-list", "--count", &format!("{before}..{tip}")]
+        ),
+        "1"
+    );
+    let changed = git(&repo(), &["diff", "--name-only", &before, &tip]);
+    assert_eq!(changed.lines().count(), 1, "{changed}");
+}
+
+#[sqlx::test]
+async fn test_anki_push_adds_back_a_note_deleted_in_anki(pool: SqlitePool) {
+    let _guard = setup().await;
+    let ids = init(&pool).await;
+    let anki = Arc::new(FakeAnki::new());
+    link_to_anki(&pool, &anki, &ids[..1]).await;
+    anki.remove(anki_id(0));
+    refresh(&pool, &anki).await;
+    let path = format!("markdown/{}.md", ids[0]);
+    assert!(!files_at(&repo(), "refs/heads/anki").contains(&path));
+    // Restoring spares' version on `anki` sends it to Anki again, under a new id.
+    let clone = clone();
+    checkout_anki(&clone);
+    git(&clone, &["checkout", "origin/main", "--", &path]);
+    git(&clone, &["commit", "-qm", "send it again"]);
+    let pushed = push_anki(&pool, &anki, &clone).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let calls = anki.take_calls();
+    let [
+        FakeAnkiCall::Add {
+            anki_id: new_id, ..
+        },
+    ] = calls[..]
+    else {
+        panic!("{calls:?}");
+    };
+    assert_ne!(new_id, anki_id(0));
+    let custom_data = get_note(&pool, ids[0]).await.unwrap().custom_data;
+    assert_eq!(
+        custom_data.get("anki-note-id"),
+        Some(&json!(new_id.to_string()))
+    );
+    assert!(!refresh(&pool, &anki).await.changed);
 }

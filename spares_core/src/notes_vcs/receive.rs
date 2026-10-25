@@ -52,6 +52,7 @@ use super::reconcile::write_db_note_files;
 use crate::Error;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+use crate::api::note::get_note;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::update_notes;
@@ -109,6 +110,10 @@ pub struct FinishResponse {
     /// Whether spares committed normalized notes on top of the push, so there is something to
     /// fetch
     pub normalized: bool,
+    /// `(Anki id, spares id)` of notes the push created from Anki notes (`new-anki-*` files), to
+    /// set their `SparesId` in Anki with (see [`super::anki::link_spares_ids`])
+    #[serde(default)]
+    pub anki_links: Vec<(i64, NoteId)>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -285,6 +290,7 @@ pub async fn finish(db: SqlitePool, request: FinishRequest) -> Result<FinishResp
             message: "spares has already settled this push".to_string(),
             imported: Vec::new(),
             normalized: false,
+            anki_links: Vec::new(),
         });
     };
     let handle = tokio::spawn(async move { settle(&db, session).await });
@@ -340,10 +346,15 @@ async fn settle(db: &SqlitePool, session: Session) -> Result<FinishResponse, Err
         } else {
             "spares stored the notes exactly as pushed".to_string()
         };
+        let anki_links = anki_links(db, &journal.created).await.unwrap_or_else(|e| {
+            log::warn!("Failed to read the Anki ids of created notes: {e}");
+            Vec::new()
+        });
         return Ok(FinishResponse {
             message,
             imported: imported_ids(&journal),
             normalized,
+            anki_links,
         });
     }
 
@@ -367,7 +378,23 @@ async fn settle(db: &SqlitePool, session: Session) -> Result<FinishResponse, Err
         message,
         imported: Vec::new(),
         normalized: false,
+        anki_links: Vec::new(),
     })
+}
+
+/// The Anki ids of `created` notes that have one
+async fn anki_links(db: &SqlitePool, created: &[NoteId]) -> Result<Vec<(i64, NoteId)>, Error> {
+    let mut links = Vec::new();
+    for id in created {
+        let custom_data = get_note(db, *id).await?.custom_data;
+        if let Some(anki_id) = custom_data
+            .get(super::anki::ANKI_NOTE_ID_KEY)
+            .and_then(|value| value.as_str()?.trim().parse().ok())
+        {
+            links.push((anki_id, *id));
+        }
+    }
+    Ok(links)
 }
 
 /// `git add` of the paths that exist or are tracked, since a path that is neither fails it.
@@ -477,6 +504,26 @@ fn remove_created_files(journal: &Journal) {
     }
 }
 
+/// Why a hook running in `hook_repo` cannot push to this server, if it cannot
+pub(crate) fn wrong_repo(hook_repo: &Path) -> Option<String> {
+    if !enabled() {
+        return Some(
+            "this spares server does not keep notes in a git repository (run `spares note init-vcs`)"
+                .to_string(),
+        );
+    }
+    let repo = server_repo_dir();
+    let ours = repo.canonicalize().unwrap_or_else(|_| repo.clone());
+    let theirs = hook_repo
+        .canonicalize()
+        .unwrap_or_else(|_| hook_repo.to_path_buf());
+    (ours != theirs).then(|| format!(
+        "this repository ({}) belongs to a different spares instance than the server reached, which writes to {}. Run `spares note init-vcs --repair-hooks` with that instance's settings",
+        theirs.display(),
+        ours.display()
+    ))
+}
+
 struct PushedNote {
     rel: PathBuf,
     parser: Box<dyn Parseable>,
@@ -514,25 +561,10 @@ impl PushedNote {
 #[expect(clippy::too_many_lines)]
 async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Outcome, Error> {
     // 1. The hook's repository must be the one this server writes to.
-    if !enabled() {
-        return Ok(Outcome::Rejected(
-            "this spares server does not keep notes in a git repository (run `spares note init-vcs`)"
-                .to_string(),
-        ));
+    if let Some(reason) = wrong_repo(&request.repo) {
+        return Ok(Outcome::Rejected(reason));
     }
     let repo = server_repo_dir();
-    let ours = repo.canonicalize().unwrap_or_else(|_| repo.clone());
-    let theirs = request
-        .repo
-        .canonicalize()
-        .unwrap_or_else(|_| request.repo.clone());
-    if ours != theirs {
-        return Ok(Outcome::Rejected(format!(
-            "this repository ({}) belongs to a different spares instance than the server reached, which writes to {}. Run `spares note init-vcs --repair-hooks` with that instance's settings",
-            theirs.display(),
-            ours.display()
-        )));
-    }
 
     // 2. Anything left uncommitted (a killed server, a failed commit) is brought in line first.
     if let Err(e) = reconcile(db, ReconcileScope::Dirty, None).await {
@@ -1132,12 +1164,12 @@ fn is_conflict_marker(line: &str) -> bool {
     false
 }
 
-fn short(sha: &str) -> &str {
+pub(crate) fn short(sha: &str) -> &str {
     &sha[..sha.len().min(12)]
 }
 
 /// `note 3` or `notes 3, 5`
-fn describe_ids(ids: &[NoteId]) -> String {
+pub(crate) fn describe_ids(ids: &[NoteId]) -> String {
     format!(
         "note{} {}",
         if ids.len() == 1 { "" } else { "s" },

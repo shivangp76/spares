@@ -2,6 +2,7 @@
 //! work while holding the notes lock; see `spares_core::notes_vcs`.
 
 use std::io::BufRead;
+use std::path::Path;
 use std::path::PathBuf;
 
 use reqwest::Client;
@@ -12,6 +13,12 @@ use spares_core::notes_vcs::FinishResponse;
 use spares_core::notes_vcs::ReceiveRequest;
 use spares_core::notes_vcs::ReceiveResponse;
 use spares_core::notes_vcs::StatusResponse;
+use spares_core::notes_vcs::anki::AnkiFinishRequest;
+use spares_core::notes_vcs::anki::AnkiFinishResponse;
+use spares_core::notes_vcs::anki::AnkiReceiveRequest;
+use spares_core::notes_vcs::anki::AnkiReceiveResponse;
+use spares_core::notes_vcs::anki::LinkSparesIdsRequest;
+use spares_core::notes_vcs::anki::LinkSparesIdsResponse;
 use spares_core::schema::note::NotesSelector;
 use spares_core::schema::note::RenderNotesRequest;
 
@@ -19,6 +26,7 @@ use crate::args::VcsHookPhase;
 
 const ZERO_SHA_CHARS: char = '0';
 const MAIN: &str = "refs/heads/main";
+const ANKI: &str = spares_core::notes_vcs::anki::ANKI_REF;
 
 /// Runs a hook phase. Returns whether git should go on; messages are printed to stderr, which git
 /// shows the pusher.
@@ -30,6 +38,7 @@ pub(crate) async fn run_hook(
 ) -> bool {
     let result = match phase {
         VcsHookPhase::PreReceive => pre_receive(),
+        VcsHookPhase::Update => update(base_url, client, args).await,
         VcsHookPhase::PushToCheckout => push_to_checkout(base_url, client, args).await,
         VcsHookPhase::PostReceive => post_receive(base_url, client).await,
     };
@@ -65,18 +74,15 @@ fn is_zero(sha: &str) -> bool {
     sha.chars().all(|c| c == ZERO_SHA_CHARS)
 }
 
-/// Only `main` may be pushed: it is the only ref that is imported.
+/// Only `main`, which is imported into spares, and `anki`, which is written to Anki, may be pushed,
+/// and not both at once: Anki is written before git moves the refs, so a push to both could change
+/// Anki and then have `main` rejected. Objects are not readable here yet, so the work happens in
+/// the `update` and `push-to-checkout` hooks.
 fn pre_receive() -> Result<bool, String> {
-    let mut problems = Vec::new();
-    for (_, new, name) in read_ref_updates()? {
-        if name != MAIN {
-            problems.push(format!(
-                "{name}: only `main` can be pushed, since it is what spares imports. Move `main` to your commit and push it (`jj spares-push`, or `git push origin HEAD:main`)."
-            ));
-        } else if is_zero(&new) {
-            problems.push("`main` cannot be deleted".to_string());
-        }
-    }
+    let updates = read_ref_updates()?;
+    let has_update_hook =
+        hook_repo().is_ok_and(|repo| repo.join(".git").join("hooks").join("update").exists());
+    let problems = ref_update_problems(&updates, has_update_hook);
     if problems.is_empty() {
         Ok(true)
     } else {
@@ -86,6 +92,82 @@ fn pre_receive() -> Result<bool, String> {
         ));
         Ok(false)
     }
+}
+
+/// Why `pre-receive` rejects pushing `updates` (`old new ref`)
+fn ref_update_problems(updates: &[(String, String, String)], has_update_hook: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (_, new, name) in updates {
+        if name != MAIN && name != ANKI {
+            problems.push(format!(
+                "{name}: only `main` (imported into spares) and `anki` (written to Anki) can be pushed. Move `main` to your commit and push it (`jj spares-push`, or `git push origin HEAD:main`)."
+            ));
+        } else if is_zero(new) {
+            problems.push(format!("`{}` cannot be deleted", short_ref(name)));
+        }
+    }
+    let names: Vec<&str> = updates.iter().map(|(_, _, name)| name.as_str()).collect();
+    if names.contains(&MAIN) && names.contains(&ANKI) {
+        problems.push(
+            "`main` and `anki` cannot be pushed together; push them one at a time".to_string(),
+        );
+    }
+    if names.contains(&ANKI) && !has_update_hook {
+        problems.push(
+            "this repository's hooks are older than pushing to `anki`; run `spares note init-vcs --repair-hooks`".to_string(),
+        );
+    }
+    problems
+}
+
+fn short_ref(name: &str) -> &str {
+    name.strip_prefix("refs/heads/").unwrap_or(name)
+}
+
+/// For `anki`, writes the push into Anki. Other refs are handled elsewhere.
+async fn update(base_url: &str, client: &Client, args: &[String]) -> Result<bool, String> {
+    let [name, old, new] = args else {
+        return Err("the update hook was called without `<ref> <old> <new>`".to_string());
+    };
+    if name != ANKI {
+        return Ok(true);
+    }
+    let repo = hook_repo()?;
+    check_server_repo(base_url, client, &repo).await?;
+    say("writing the push to Anki…");
+    let response: AnkiReceiveResponse = post_json(
+        client,
+        format!("{base_url}/api/notes/vcs/anki/receive"),
+        &AnkiReceiveRequest {
+            repo,
+            old: old.clone(),
+            new: new.clone(),
+        },
+    )
+    .await?;
+    say(&response.message);
+    Ok(response.ok)
+}
+
+/// Errors if `repo` is not the repository of the server at `base_url`, and reports an earlier
+/// push's incident.
+async fn check_server_repo(base_url: &str, client: &Client, repo: &Path) -> Result<(), String> {
+    let status: StatusResponse =
+        get_json(client, format!("{base_url}/api/notes/vcs/status")).await?;
+    if status.notes_dir.as_deref() != Some(repo) {
+        return Err(format!(
+            "this repository ({}) does not belong to the spares server at {base_url}, which uses {}. Run `spares note init-vcs --repair-hooks` with the settings of this repository's spares instance.",
+            repo.display(),
+            status.notes_dir.map_or_else(
+                || "no notes repository".to_string(),
+                |d| d.display().to_string()
+            )
+        ));
+    }
+    if let Some(incident) = status.last_incident {
+        say(&format!("note about an earlier push: {incident}"));
+    }
+    Ok(())
 }
 
 /// The repository the hook runs in. git runs hooks with `GIT_DIR` set; its parent is the worktree.
@@ -157,21 +239,7 @@ async fn push_to_checkout(
         .ok_or("push-to-checkout was called without the pushed commit")?
         .clone();
     let repo = hook_repo()?;
-    let status: StatusResponse =
-        get_json(client, format!("{base_url}/api/notes/vcs/status")).await?;
-    if status.notes_dir.as_ref() != Some(&repo) {
-        return Err(format!(
-            "this repository ({}) does not belong to the spares server at {base_url}, which uses {}. Run `spares note init-vcs --repair-hooks` with the settings of this repository's spares instance.",
-            repo.display(),
-            status.notes_dir.map_or_else(
-                || "no notes repository".to_string(),
-                |d| d.display().to_string()
-            )
-        ));
-    }
-    if let Some(incident) = status.last_incident {
-        say(&format!("note about an earlier push: {incident}"));
-    }
+    check_server_repo(base_url, client, &repo).await?;
     say("importing the push…");
     let response: ReceiveResponse = post_json(
         client,
@@ -185,10 +253,13 @@ async fn push_to_checkout(
 
 async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
     let updates = read_ref_updates()?;
+    let repo = hook_repo()?;
+    if updates.iter().any(|(_, _, name)| name == ANKI) {
+        finish_anki(base_url, client, &repo).await?;
+    }
     let Some((_, new, _)) = updates.into_iter().find(|(_, _, name)| name == MAIN) else {
         return Ok(true);
     };
-    let repo = hook_repo()?;
     let session_file = repo.join(".git").join("spares-session");
     let Ok(session) = std::fs::read_to_string(&session_file) else {
         say("spares has no record of this push; run `spares note vcs-check`");
@@ -207,6 +278,9 @@ async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
     if !finish.imported.is_empty() {
         render(base_url, client, finish.imported).await;
     }
+    if !finish.anki_links.is_empty() {
+        link_anki_notes(base_url, client, finish.anki_links).await;
+    }
     // spares' own commits on top of the push (normalization, render) are what there is to fetch.
     let head = std::process::Command::new("git")
         .env_remove("GIT_DIR")
@@ -224,6 +298,45 @@ async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
         say("fetch (`jj spares-pull` / `git pull --rebase`) to get the notes as spares wrote them");
     }
     Ok(true)
+}
+
+/// Settles a push to `anki`, which the `update` hook wrote to Anki.
+async fn finish_anki(base_url: &str, client: &Client, repo: &Path) -> Result<(), String> {
+    let session_file = repo.join(".git").join("spares-anki-session");
+    let Ok(session) = std::fs::read_to_string(&session_file) else {
+        say("spares has no record of this push to `anki`; run `spares note anki-refresh`");
+        return Ok(());
+    };
+    let finish: AnkiFinishResponse = post_json(
+        client,
+        format!("{base_url}/api/notes/vcs/anki/finish"),
+        &AnkiFinishRequest {
+            session: session.trim().to_string(),
+        },
+    )
+    .await?;
+    say(&finish.message);
+    Ok(())
+}
+
+/// Sets the `SparesId` of the Anki notes the push created notes from. Best effort: refreshing
+/// `anki` also finds them by their Anki id.
+async fn link_anki_notes(base_url: &str, client: &Client, ids: Vec<(i64, NoteId)>) {
+    let response: Result<LinkSparesIdsResponse, String> = post_json(
+        client,
+        format!("{base_url}/api/notes/vcs/anki/link"),
+        &LinkSparesIdsRequest { ids },
+    )
+    .await;
+    match response {
+        Ok(LinkSparesIdsResponse { linked: true }) => {
+            say("set the SparesId of the new notes in Anki");
+        }
+        Ok(LinkSparesIdsResponse { linked: false }) => {}
+        Err(e) => say(&format!(
+            "setting the SparesId of the new notes in Anki failed: {e}"
+        )),
+    }
 }
 
 /// Renders the imported notes, and notes whose linked notes changed because of them. The push has
@@ -257,5 +370,41 @@ async fn render(base_url: &str, client: &Client, imported: Vec<NoteId>) {
             ));
         }
         Err(e) => say(&format!("rendering failed: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ANKI;
+    use super::MAIN;
+    use super::ref_update_problems;
+
+    fn update(name: &str, new: &str) -> (String, String, String) {
+        ("a".repeat(40), new.to_string(), name.to_string())
+    }
+
+    #[test]
+    fn test_ref_update_problems() {
+        let sha = "b".repeat(40);
+        let zero = "0".repeat(40);
+        assert_eq!(ref_update_problems(&[update(MAIN, &sha)], false), [""; 0]);
+        assert_eq!(ref_update_problems(&[update(ANKI, &sha)], true), [""; 0]);
+        let both = ref_update_problems(&[update(MAIN, &sha), update(ANKI, &sha)], true);
+        assert!(
+            both.iter().any(|p| p.contains("cannot be pushed together")),
+            "{both:?}"
+        );
+        let old_hooks = ref_update_problems(&[update(ANKI, &sha)], false);
+        assert!(
+            old_hooks.iter().any(|p| p.contains("--repair-hooks")),
+            "{old_hooks:?}"
+        );
+        let deleted = ref_update_problems(&[update(ANKI, &zero)], true);
+        assert!(
+            deleted.iter().any(|p| p.contains("cannot be deleted")),
+            "{deleted:?}"
+        );
+        let other = ref_update_problems(&[update("refs/heads/feature", &sha)], true);
+        assert_eq!(other.len(), 1, "{other:?}");
     }
 }

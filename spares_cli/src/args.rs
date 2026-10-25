@@ -325,6 +325,8 @@ pub(crate) enum NoteCommands {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum VcsHookPhase {
     PreReceive,
+    /// Per pushed ref, after git received the objects and before it moves the ref
+    Update,
     PushToCheckout,
     PostReceive,
 }

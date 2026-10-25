@@ -84,36 +84,6 @@ impl AnkiAdapter {
         }
     }
 
-    /// Correlates each executed Add request that carried a `SparesId` with its result, the
-    /// newly assigned Anki note id.
-    fn added_anki_ids(
-        requests: &[ApiRequest],
-        anki_results: &[Value],
-        added_notes: Vec<(Option<NoteId>, CustomData)>,
-    ) -> Vec<(NoteId, i64, CustomData)> {
-        requests
-            .iter()
-            .zip(anki_results.iter())
-            .filter(|(request, _)| matches!(request.action, ApiAction::AddNote))
-            .filter(|(request, _)| match &request.params {
-                ApiRequestParams::AddNote(AddNoteApiRequestData { note }) => {
-                    note.fields.spares_id.is_some()
-                }
-                _ => unreachable!(),
-            })
-            .map(|(_request, result)| serde_json::from_value::<i64>(result.clone()))
-            .zip(added_notes)
-            .filter_map(|(anki_note_id, (spares_id, custom_data))| {
-                match (anki_note_id, spares_id) {
-                    (Ok(anki_note_id), Some(spares_id)) => {
-                        Some((spares_id, anki_note_id, custom_data))
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
-    }
-
     /// Records in the spares notes the Anki note ids they were just added as, through the server.
     async fn update_spares_with_anki_ids(
         &self,
@@ -346,7 +316,27 @@ impl SrsAdapter for AnkiAdapter {
         _at: DateTime<Utc>,
         _live_update_note_ids: Vec<NoteId>,
     ) -> Result<(), Error> {
-        let added = self.apply_notes(notes, parser, dry_run, quiet).await?;
+        let added_with_spares_id: Vec<Option<(NoteId, CustomData)>> = notes
+            .iter()
+            .map(|(settings, _)| {
+                let spares_id = settings
+                    .custom_data
+                    .get(NOTE_ID_KEY)?
+                    .as_str()?
+                    .parse()
+                    .ok()?;
+                Some((spares_id, settings.custom_data.clone()))
+            })
+            .collect();
+        let added = self
+            .apply_notes(notes, parser, dry_run, quiet)
+            .await?
+            .into_iter()
+            .filter_map(|(i, anki_id)| {
+                let (spares_id, custom_data) = added_with_spares_id.get(i)?.clone()?;
+                Some((spares_id, anki_id, custom_data))
+            })
+            .collect();
         // Update Spares with Anki note id if it was:
         // 1. Already added to Spares
         // 2. Just added to Anki
@@ -356,8 +346,7 @@ impl SrsAdapter for AnkiAdapter {
 
 impl AnkiAdapter {
     /// Adds, updates and deletes Anki notes. Entries without note data are skipped. Returns the
-    /// spares id, new Anki note id and custom data of each note added with a spares id, which the
-    /// caller records in spares.
+    /// position in `notes` and the new Anki note id of each added note.
     #[expect(clippy::too_many_lines)]
     pub async fn apply_notes(
         &mut self,
@@ -365,16 +354,17 @@ impl AnkiAdapter {
         parser: &dyn Parseable,
         dry_run: bool,
         quiet: bool,
-    ) -> Result<Vec<(NoteId, i64, CustomData)>, Error> {
+    ) -> Result<Vec<(usize, i64)>, Error> {
         if !dry_run {
             self.verify_anki_is_open()?;
         }
         let mut requests: Vec<ApiRequest> = Vec::new();
         let client = Client::new();
-        let mut added_notes = Vec::new();
+        // The position in `requests` and in `notes` of each Add request
+        let mut add_requests: Vec<(usize, usize)> = Vec::new();
         // Suspended notes are added right away, to suspend their cards
-        let mut added_right_away = Vec::new();
-        for (local_settings, note_data_res) in notes {
+        let mut added = Vec::new();
+        for (i, (local_settings, note_data_res)) in notes.into_iter().enumerate() {
             let Some(note_data) = note_data_res else {
                 continue;
             };
@@ -397,9 +387,6 @@ impl AnkiAdapter {
             // See <https://git.foosoft.net/alex/anki-connect>
             match local_settings.action {
                 NoteImportAction::Add => {
-                    let spares_id_parsed = spares_id
-                        .as_ref()
-                        .and_then(|spares_id| spares_id.parse::<NoteId>().ok());
                     let params = ApiRequestParams::AddNote(AddNoteApiRequestData {
                         note: AddNoteApiRequestNoteData {
                             deck_name: "Default".to_owned(),
@@ -408,7 +395,7 @@ impl AnkiAdapter {
                                 front: Some(front),
                                 back: Some(back),
                                 keywords,
-                                spares_id: spares_id.clone(),
+                                spares_id,
                                 spares_parser_name,
                             },
                             tags,
@@ -434,17 +421,9 @@ impl AnkiAdapter {
                                 },
                             )))?;
                         final_note_id = Some(created_note_id);
-                        if let Some(spares_id) = spares_id_parsed {
-                            added_right_away.push((
-                                spares_id,
-                                created_note_id,
-                                local_settings.custom_data.clone(),
-                            ));
-                        }
+                        added.push((i, created_note_id));
                     } else {
-                        if spares_id.is_some() {
-                            added_notes.push((spares_id_parsed, local_settings.custom_data));
-                        }
+                        add_requests.push((requests.len(), i));
                         requests.push(api_request);
                     }
                 }
@@ -534,8 +513,12 @@ impl AnkiAdapter {
         }
 
         let anki_results = execute_requests(&requests, dry_run, quiet, &client).await?;
-        let mut added = AnkiAdapter::added_anki_ids(&requests, &anki_results, added_notes);
-        added.extend(added_right_away);
+        added.extend(
+            add_requests
+                .into_iter()
+                .filter_map(|(request, i)| Some((i, anki_results.get(request)?.as_i64()?))),
+        );
+        added.sort_unstable();
         Ok(added)
     }
 }

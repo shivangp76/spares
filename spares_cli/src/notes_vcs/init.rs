@@ -328,6 +328,7 @@ fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
     std::fs::create_dir_all(&hooks_dir).map_err(|e| miette!("{}", e))?;
     for (hook, phase) in [
         ("pre-receive", "pre-receive"),
+        ("update", "update"),
         ("push-to-checkout", "push-to-checkout"),
         ("post-receive", "post-receive"),
     ] {
