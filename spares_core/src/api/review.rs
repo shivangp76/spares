@@ -24,9 +24,10 @@ use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::browser_render::add_browser_render_sources;
 use crate::api::browser_render::load_review_card;
+use crate::api::card::build_update_card_payload;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
-use crate::api::card::unbury_cards;
+use crate::api::card::unbury_cards_logged_as;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
@@ -1011,7 +1012,7 @@ pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<()
     };
     if now_local_date > last_unburied_local_date {
         // Unbury
-        unbury_cards(db, None, now, false).await?;
+        unbury_cards_logged_as(db, None, now, Some(EventType::DailyUnbury)).await?;
 
         // Update config
         config.last_unburied = now;
@@ -1977,6 +1978,9 @@ pub async fn submit_study_action(
 
 /// Recomputes every card's memory state from its review log and gives it a new due date, with
 /// the steps of each card's [preset](crate::config::QueuePreset).
+///
+/// Logs the cards it changed as an [`EventType::RescheduleCards`] event. Undoing it restores
+/// those cards, not the scheduler settings that called for the reschedule.
 pub(crate) async fn reschedule_all_cards(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
@@ -2008,6 +2012,7 @@ pub(crate) async fn reschedule_all_cards(
         .filter_map(|rl| rl.card_id.map(|card_id| (card_id, rl)))
         .into_group_map();
     let configs = CardConfigs::load(db, config, None).await?;
+    let before = cards.clone();
     let cards_with_review_logs = cards
         .into_iter()
         .map(|card| {
@@ -2020,7 +2025,32 @@ pub(crate) async fn reschedule_all_cards(
         .collect::<Vec<_>>();
     scheduler
         .reschedule(db, &configs, cards_with_review_logs, at)
+        .await?;
+
+    let after: HashMap<CardId, Card> = sqlx::query_as::<_, Card>(r"SELECT * FROM card")
+        .fetch_all(db)
         .await
+        .map_err(|e| Error::Sqlx { source: e })?
+        .into_iter()
+        .map(|card| (card.id, card))
+        .collect();
+    let changes: Vec<UpdateCardPayload> = before
+        .iter()
+        .filter_map(|old| {
+            let new = after.get(&old.id)?;
+            Some(build_update_card_payload(old.id, old, new)).filter(UpdateCardPayload::has_changes)
+        })
+        .collect();
+    if !changes.is_empty() {
+        insert_events(
+            db,
+            &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
+            at,
+            None,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

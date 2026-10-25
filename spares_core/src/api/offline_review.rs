@@ -32,18 +32,17 @@
 //!   else is left by then), not right after the other cards are done. The limit is the one the
 //!   server had when the cards were downloaded.
 //! - A rating sent after a later review of the same card, e.g. from another device that synced
-//!   first, is placed at its time in the card's history, which is then replayed. Such a rating
-//!   cannot be undone from the review page.
+//!   first, is placed at its time in the card's history, which is then replayed. Undoing it
+//!   removes it from the history and puts the card back as it was.
 //! - A lapse placed in the history still triggers the
 //!   [leech action](crate::config::LeechConfig::action) when it brings the card's lapses to the
 //!   threshold, as a lapse rated online does. For example, reviewing on a laptop online and on a
 //!   phone offline with `lapses_threshold = 8` and `action = "suspend"`: a card with 7 lapses is
 //!   rated Again on the phone, then Good on the laptop. When the phone syncs, its Again is placed
-//!   before the Good, the card now has 8 lapses, and it is tagged `leech` and suspended. Since
-//!   the rating cannot be undone, the leech action is its own undo event:
-//!   `spares undo --undo-group` right after the sync unsuspends the card and removes the tag.
+//!   before the Good, the card now has 8 lapses, and it is tagged `leech` and suspended. As
+//!   online, the leech action is in the rating's undo group.
 //! - A rating from an earlier day does not bury the card's siblings, since they would stay buried
-//!   a day too long.
+//!   a day too long. A bury from an earlier day is rejected, since it would already be over.
 //! - Undo takes back a rating or bury that has not been sent yet. Logging out keeps unsent
 //!   actions, which are sent the next time you log in to the same server.
 
@@ -54,6 +53,8 @@ use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
+use crate::LibraryError;
+use crate::api::card::build_update_card_payload;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::preset::CardConfigs;
 use crate::api::queue::OrderedQueue;
@@ -68,16 +69,12 @@ use crate::api::review::review_card_response;
 use crate::api::review::tag_leech;
 use crate::api::review::unbury_cards_and_update_config;
 use crate::api::undo::insert_events;
-use crate::api::undo::payloads::Transition;
-use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::RateCardPayload;
 use crate::config::LeechAction;
-use crate::config::LeechConfig;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::Card;
-use crate::model::CardId;
 use crate::model::EventType;
-use crate::model::NoteId;
 use crate::model::ReviewLog;
 use crate::model::SpecialState;
 use crate::parsers::Parseable;
@@ -253,7 +250,9 @@ async fn apply_offline_action(
             if performed_at.with_timezone(&Local).date_naive()
                 < now.with_timezone(&Local).date_naive()
             {
-                Ok(None)
+                Err(Error::Library(LibraryError::InvalidConfig(
+                    "its bury ended with the day it was performed on".to_string(),
+                )))
             } else {
                 bury_card(db, scheduler, *card_id, performed_at, true).await
             }
@@ -292,10 +291,7 @@ fn rejection_message(error: Error) -> Result<String, Error> {
     }
 }
 
-/// Rates a card as of `performed_at`.
-///
-/// Returns the event to undo it with, unless it was inserted into the card's history rather
-/// than appended to it.
+/// Rates a card as of `performed_at`. Returns the event to undo it with.
 async fn rate_offline(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
@@ -364,21 +360,29 @@ async fn rate_offline(
         performed_at,
         now,
     )
-    .await?;
-    Ok(None)
+    .await
+    .map(Some)
 }
 
 /// Adds a review at `performed_at` to a card whose log may continue past it, and replays the
-/// card's log to give it the memory state and due date the whole history implies.
+/// card's log to give it the memory state and due date the whole history implies. Returns the
+/// event to undo it with, a [`EventType::RateCard`] at `performed_at` as
+/// [`rate_card`](crate::api::review::rate_card) records: undoing it deletes the review and puts
+/// the card back as it was before.
 ///
-/// The card keeps its special state. Unlike [`rate_card`](crate::api::review::rate_card), no undo
-/// event is recorded for the review, and a filtered tag's scheduling data is not updated: the
-/// review only records the tag it was done under.
+/// The card keeps its special state. Unlike [`rate_card`](crate::api::review::rate_card), a
+/// filtered tag's scheduling data is not updated: the review only records the tag it was done
+/// under.
 ///
-/// A lapse that brings the card's lapses to where [`LeechConfig::acts_on`] says to act still gets
-/// [`LeechConfig::action`], as a lapse rated online would (see [`act_on_leech`]). Lapses are
-/// counted from each review's recorded previous state, so inserting a lapse adds exactly one,
-/// whatever came after it.
+/// A lapse that brings the card's lapses to where
+/// [`LeechConfig::acts_on`](crate::config::LeechConfig::acts_on) says to act still gets
+/// [`LeechConfig::action`](crate::config::LeechConfig::action), as a lapse rated online would, in
+/// the rating's undo group: the suspension is part of the rating, and the tag's events join its
+/// group, so `spares undo --undo-group` unsuspends the card and untags its note too. A card that
+/// is already suspended (e.g. suspended by hand since the offline device fetched it) is only
+/// tagged. A buried card is suspended, and undoing that buries it again. Lapses are counted from
+/// each review's recorded previous state, so inserting a lapse adds exactly one, whatever came
+/// after it.
 #[allow(
     clippy::too_many_arguments,
     reason = "the card and its log, the review, and when it is applied"
@@ -392,7 +396,7 @@ async fn insert_review_into_history(
     submission: &RatingSubmission,
     performed_at: DateTime<Utc>,
     now: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<i64, Error> {
     // With the steps of the card's preset
     let configs = CardConfigs::load(db, config, Some(&[card.id])).await?;
     let card_config = configs.get(card.id);
@@ -427,92 +431,56 @@ async fn insert_review_into_history(
         submission.rate_duration,
     )?;
     let lapses_before = scheduler.lapses(db, card.id).await?;
-    insert_review(db, &review_log, submission.tag_id).await?;
+    let review_log_id = insert_review(db, &review_log, submission.tag_id).await?;
     let lapses = scheduler.lapses(db, card.id).await?;
+    let leech = lapses > lapses_before && config.leech.acts_on(lapses);
 
     let (card_id, note_id) = (card.id, card.note_id);
     let review_logs = fetch_review_logs_for_replay(db, card.id).await?;
     scheduler
-        .reschedule(db, &configs, vec![(card, review_logs)], now)
+        .reschedule(db, &configs, vec![(card.clone(), review_logs)], now)
         .await?;
     // After the replay, which leaves the special state alone, so a suspension is not undone by it
-    if lapses > lapses_before && config.leech.acts_on(lapses) {
-        act_on_leech(db, &config.leech, card_id, note_id, now).await?;
-    }
-    Ok(())
-}
-
-/// Applies [`LeechConfig::action`] to a card that a review inserted into its history made a
-/// leech, at `at`, when the review was received.
-///
-/// [`rate_card`](crate::api::review::rate_card) puts the leech action in the rating's undo group,
-/// but an inserted review has no undo event, so the action is its own: the suspension is an
-/// [`EventType::UpdateCards`] event, which the tag's events join, so `spares undo --undo-group`
-/// unsuspends the card and untags its note. A card that is already suspended (e.g. suspended by
-/// hand since the offline device fetched it) is only tagged. A buried card is suspended, and
-/// undoing that buries it again.
-async fn act_on_leech(
-    db: &SqlitePool,
-    leech: &LeechConfig,
-    card_id: CardId,
-    note_id: NoteId,
-    at: DateTime<Utc>,
-) -> Result<(), Error> {
-    let suspension = match leech.action {
-        LeechAction::Suspend => suspend_leech(db, card_id, at).await?,
-        LeechAction::Tag | LeechAction::None => None,
-    };
-    // Boxed, since updating a note makes a large future for every caller to carry
-    Box::pin(tag_leech(db, leech, note_id, at, true, suspension)).await
-}
-
-/// Suspends `card_id`, returning the event to undo it with, or `None` if it was already
-/// suspended.
-async fn suspend_leech(
-    db: &SqlitePool,
-    card_id: CardId,
-    at: DateTime<Utc>,
-) -> Result<Option<i64>, Error> {
-    let before: Option<SpecialState> =
-        sqlx::query_scalar(r"SELECT special_state FROM card WHERE id = ?")
+    if leech && config.leech.action == LeechAction::Suspend {
+        sqlx::query(r"UPDATE card SET special_state = ?, updated_at = ? WHERE id = ?")
+            .bind(SpecialState::Suspended)
+            .bind(now.timestamp())
             .bind(card_id)
-            .fetch_one(db)
+            .execute(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-    if before == Some(SpecialState::Suspended) {
-        return Ok(None);
     }
-    sqlx::query(r"UPDATE card SET special_state = ?, updated_at = ? WHERE id = ?")
-        .bind(SpecialState::Suspended)
-        .bind(at.timestamp())
+
+    let after: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
-        .execute(db)
+        .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    let payload = UpdateCardPayload {
-        card_id,
-        order: None,
-        back_type: None,
-        due: None,
-        stability: None,
-        difficulty: None,
-        desired_retention: None,
-        special_state: Some(Transition {
-            before,
-            after: Some(SpecialState::Suspended),
-        }),
-        state: None,
-        custom_data: None,
+    let payload = RateCardPayload {
+        review_log_id: Some(review_log_id),
+        card: build_update_card_payload(card_id, &card, &after),
+        left_tag: None,
+        buried_siblings: Vec::new(),
     };
     let event_ids = insert_events(
         db,
-        &[(
-            EventType::UpdateCards,
-            serde_json::to_value(vec![payload]).unwrap(),
-        )],
-        at,
+        &[(EventType::RateCard, serde_json::to_value(&payload).unwrap())],
+        performed_at,
         None,
     )
     .await?;
-    Ok(event_ids.first().copied())
+    let event_id = *event_ids.first().unwrap();
+    if leech {
+        // Boxed, since updating a note makes a large future for every caller to carry
+        Box::pin(tag_leech(
+            db,
+            &config.leech,
+            note_id,
+            now,
+            true,
+            Some(event_id),
+        ))
+        .await?;
+    }
+    Ok(event_id)
 }

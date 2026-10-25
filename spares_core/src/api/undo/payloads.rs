@@ -346,6 +346,18 @@ pub struct UpdateCardPayload {
 }
 
 impl UpdateCardPayload {
+    pub fn has_changes(&self) -> bool {
+        self.order.is_some()
+            || self.back_type.is_some()
+            || self.due.is_some()
+            || self.stability.is_some()
+            || self.difficulty.is_some()
+            || self.desired_retention.is_some()
+            || self.special_state.is_some()
+            || self.state.is_some()
+            || self.custom_data.is_some()
+    }
+
     /// Swaps before and after on every field, giving the payload that reverses this one.
     pub fn swap(self) -> Self {
         Self {

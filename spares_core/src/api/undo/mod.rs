@@ -85,6 +85,15 @@ pub async fn get_latest_note_event_id(db: &SqlitePool) -> Result<i64, Error> {
 /// SQL condition that event `e` has not been reverted, i.e. undone (or, for an undo, redone).
 const NOT_REVERTED: &str = "NOT EXISTS (SELECT 1 FROM event r WHERE r.reverts_event_id = e.id)";
 
+/// [`EventType::AUTOMATIC`] as a list for `IN (…)`
+fn automatic_kinds_sql() -> String {
+    EventType::AUTOMATIC
+        .iter()
+        .map(|kind| (*kind as u8).to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 async fn fetch_event(db: &SqlitePool, id: i64) -> Result<Option<Event>, Error> {
     sqlx::query_as(r"SELECT * FROM event WHERE id = ?")
         .bind(id)
@@ -212,7 +221,8 @@ async fn summarize_all(db: &SqlitePool, events: &[Event]) -> Result<Vec<EventSum
     Ok(summaries)
 }
 
-/// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone.
+/// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone, other
+/// than an [automatic](EventType::is_automatic) one.
 pub async fn undo_event(
     db: &SqlitePool,
     body: UndoEventRequest,
@@ -226,7 +236,9 @@ pub async fn undo_event(
     } else {
         let event_opt: Option<Event> = sqlx::query_as(&format!(
             "SELECT e.* FROM event e JOIN event_action a ON a.id = e.id
-             WHERE a.action != ? AND {NOT_REVERTED} ORDER BY e.id DESC LIMIT 1"
+             WHERE a.action != ? AND e.kind NOT IN ({}) AND {NOT_REVERTED}
+             ORDER BY e.id DESC LIMIT 1",
+            automatic_kinds_sql()
         ))
         .bind(EventAction::Undo)
         .fetch_optional(db)
@@ -256,7 +268,8 @@ pub async fn undo_event(
 /// Redoes the undo `body.event_id`, or if `None`, the latest undo that has not been redone.
 ///
 /// Like an editor, a new action clears what can be redone: with no id, an undo older than the
-/// latest action is never picked, even if that action has since been undone too.
+/// latest action is never picked, even if that action has since been undone too. An
+/// [automatic](EventType::is_automatic) change, like the daily unbury, is not an action here.
 pub async fn redo_event(
     db: &SqlitePool,
     body: RedoEventRequest,
@@ -271,8 +284,12 @@ pub async fn redo_event(
         let event_opt: Option<Event> = sqlx::query_as(&format!(
             "SELECT e.* FROM event e JOIN event_action a ON a.id = e.id
              WHERE a.action = ? AND {NOT_REVERTED}
-               AND NOT EXISTS (SELECT 1 FROM event_action d WHERE d.action = ? AND d.id > e.id)
-             ORDER BY e.id DESC LIMIT 1"
+               AND NOT EXISTS (
+                 SELECT 1 FROM event_action d JOIN event de ON de.id = d.id
+                 WHERE d.action = ? AND d.id > e.id AND de.kind NOT IN ({})
+               )
+             ORDER BY e.id DESC LIMIT 1",
+            automatic_kinds_sql()
         ))
         .bind(EventAction::Undo)
         .bind(EventAction::Do)
@@ -512,7 +529,9 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
         | EventType::AdvanceCards
         | EventType::PostponeCards
         | EventType::BuryCards
-        | EventType::UnburyCards => {
+        | EventType::UnburyCards
+        | EventType::DailyUnbury
+        | EventType::RescheduleCards => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             update_card_event(db, payloads, false).await?;

@@ -24,6 +24,7 @@ use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::EventType;
 use crate::model::NEW_CARD_STATE;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
@@ -220,6 +221,57 @@ async fn reschedule_respects_a_changed_desired_retention(pool: SqlitePool) {
     reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
 
     assert_due_near_optimal(&fetch_card(&pool, card_id).await, now - Duration::days(5));
+}
+
+#[sqlx::test]
+async fn reschedule_is_logged_with_the_cards_it_changed(pool: SqlitePool) {
+    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f"]).await;
+    let (changed, unreviewed) = (cards[0][0], cards[1][0]);
+    let now = Utc::now();
+    graduate(&pool, changed, now, &[10, 9, 5]).await;
+    set_desired_retention(&pool, changed, 0.97).await;
+    let before = fetch_card(&pool, changed).await;
+
+    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
+    let rescheduled = fetch_card(&pool, changed).await;
+    assert_ne!(rescheduled.due, before.due);
+
+    let (event_id, payload): (i64, serde_json::Value) =
+        sqlx::query_as("SELECT id, payload FROM event WHERE kind = ?")
+            .bind(EventType::RescheduleCards)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let card_ids: Vec<i64> = payload
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|card| card["card_id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(card_ids, [changed], "{unreviewed} did not change");
+
+    // A plain undo skips it, as an automatic change, but it can be undone by id
+    let latest = undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!latest.undone_events.iter().any(|e| e.id == event_id));
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(event_id),
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fetch_card(&pool, changed).await.due, before.due);
 }
 
 #[sqlx::test]
@@ -536,8 +588,8 @@ async fn offline_reviews_schedule_like_online_reviews(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn offline_review_synced_after_a_later_review_is_replayed_in_order(pool: SqlitePool) {
-    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f"]).await;
-    let (in_order, out_of_order) = (cards[0][0], cards[1][0]);
+    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f", "g {{ h }} i"]).await;
+    let (in_order, out_of_order, rated_good_once) = (cards[0][0], cards[1][0], cards[2][0]);
     let now = whole_seconds(Utc::now());
     let (earlier, later) = (now - Duration::days(5), now - Duration::days(1));
 
@@ -553,17 +605,35 @@ async fn offline_review_synced_after_a_later_review_is_replayed_in_order(pool: S
     )
     .await;
 
-    assert!(
-        matches!(
-            outcomes[..],
-            [OfflineActionOutcome::Applied { event_id: None }]
-        ),
-        "a review inserted into the history has no undo event: {outcomes:?}"
-    );
+    let [
+        OfflineActionOutcome::Applied {
+            event_id: Some(event_id),
+        },
+    ] = outcomes[..]
+    else {
+        panic!("a review inserted into the history has an undo event: {outcomes:?}");
+    };
     assert_eq!(review_times(&pool, out_of_order).await, [earlier, later]);
     assert_same_memory_state(
         &fetch_card(&pool, out_of_order).await,
         &fetch_card(&pool, in_order).await,
+    );
+
+    // Undoing it takes the review out of the history and puts the card back as it was
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(event_id),
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(review_times(&pool, out_of_order).await, [later]);
+    rate(&pool, rated_good_once, GOOD, later).await;
+    assert_same_memory_state(
+        &fetch_card(&pool, out_of_order).await,
+        &fetch_card(&pool, rated_good_once).await,
     );
 }
 
@@ -620,9 +690,9 @@ async fn offline_lapse_inserted_into_the_history_triggers_the_leech_action(pool:
     assert!(
         matches!(
             outcomes[0].outcome,
-            OfflineActionOutcome::Applied { event_id: None }
+            OfflineActionOutcome::Applied { event_id: Some(_) }
         ),
-        "the inserted rating still has no undo event: {outcomes:?}"
+        "the inserted rating has an undo event: {outcomes:?}"
     );
     assert_eq!(
         fetch_card(&pool, card_id).await.special_state,
@@ -630,7 +700,7 @@ async fn offline_lapse_inserted_into_the_history_triggers_the_leech_action(pool:
     );
     assert_eq!(note_tags(&pool, card_id).await, ["leech"]);
 
-    // The leech action is the latest event, and undoing its group takes all of it back
+    // The leech action is in the rating's group, and undoing the group takes all of it back
     undo_event(
         &pool,
         UndoEventRequest {
@@ -644,8 +714,8 @@ async fn offline_lapse_inserted_into_the_history_triggers_the_leech_action(pool:
     assert_eq!(note_tags(&pool, card_id).await, Vec::<String>::new());
     assert_eq!(
         review_times(&pool, card_id).await.len(),
-        7,
-        "the inserted rating is kept"
+        6,
+        "the inserted rating is undone with it"
     );
 }
 
@@ -712,7 +782,11 @@ async fn offline_bury_from_an_earlier_day_is_over(pool: SqlitePool) {
         action: OfflineStudyActionKind::Bury { card_id },
     };
 
-    sync(&pool, vec![bury("yesterday", now - Duration::days(1))], now).await;
+    let outcomes = sync(&pool, vec![bury("yesterday", now - Duration::days(1))], now).await;
+    assert!(
+        matches!(&outcomes[..], [OfflineActionOutcome::Rejected { message }] if message.contains("ended")),
+        "{outcomes:?}"
+    );
     assert_eq!(fetch_card(&pool, card_id).await.special_state, None);
 
     sync(&pool, vec![bury("today", now)], now).await;

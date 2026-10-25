@@ -137,7 +137,7 @@ pub async fn list_cards(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Card
         .collect::<Vec<_>>())
 }
 
-fn build_update_card_payload(
+pub(crate) fn build_update_card_payload(
     card_id: CardId,
     existing_card: &Card,
     final_card: &Card,
@@ -494,6 +494,16 @@ pub async fn unbury_cards(
     now: DateTime<Utc>,
     log: bool,
 ) -> Result<(), Error> {
+    unbury_cards_logged_as(db, query, now, log.then_some(EventType::UnburyCards)).await
+}
+
+/// [`unbury_cards`], logged as an event of `kind`, if any
+pub(crate) async fn unbury_cards_logged_as(
+    db: &SqlitePool,
+    query: Option<&str>,
+    now: DateTime<Utc>,
+    kind: Option<EventType>,
+) -> Result<(), Error> {
     let card_id_filter = if let Some(q) = query {
         let evaluator = Evaluator::new(q);
         let card_ids = evaluator.get_card_ids(db).await?;
@@ -509,7 +519,7 @@ pub async fn unbury_cards(
     } else {
         String::new()
     };
-    if log {
+    if let Some(kind) = kind {
         let select_query = format!(
             "SELECT * FROM card WHERE special_state IN (?, ?, ?){}",
             card_id_filter
@@ -552,13 +562,7 @@ pub async fn unbury_cards(
                     custom_data: None,
                 })
                 .collect();
-            insert_events(
-                db,
-                &[(EventType::UnburyCards, to_value(&payloads).unwrap())],
-                now,
-                None,
-            )
-            .await?;
+            insert_events(db, &[(kind, to_value(&payloads).unwrap())], now, None).await?;
         }
     } else {
         let update_query = format!(

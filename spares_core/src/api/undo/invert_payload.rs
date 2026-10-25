@@ -54,9 +54,11 @@ pub async fn create_undo_event(
         EventType::UnadvanceCards => EventType::AdvanceCards,
         EventType::PostponeCards => EventType::UnpostponeCards,
         EventType::UnpostponeCards => EventType::PostponeCards,
-        EventType::UpdateCards | EventType::BuryCards | EventType::UnburyCards => {
-            EventType::UpdateCards
-        }
+        EventType::UpdateCards
+        | EventType::BuryCards
+        | EventType::UnburyCards
+        | EventType::DailyUnbury
+        | EventType::RescheduleCards => EventType::UpdateCards,
     };
 
     let undo_payload = create_undo_payload(db, event).await?;
@@ -400,7 +402,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 .collect();
             Ok(serde_json::to_value(redo_payloads).unwrap())
         }
-        EventType::UpdateCards | EventType::BuryCards | EventType::UnburyCards => {
+        EventType::UpdateCards
+        | EventType::BuryCards
+        | EventType::UnburyCards
+        | EventType::DailyUnbury
+        | EventType::RescheduleCards => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             let undo_payloads: Vec<UpdateCardPayload> =

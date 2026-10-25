@@ -13,6 +13,7 @@ use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::EventType;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -952,4 +953,107 @@ async fn e2e_undo_rate_card_restores_auto_deleted_filtered_tag(
     .unwrap();
     assert!(tag_exists(&pool, tag_id).await);
     assert_eq!(card_tag_ids(&pool, card_id).await, vec![tag_id]);
+}
+
+#[sqlx::test]
+async fn e2e_daily_unbury_is_skipped_by_plain_undo_and_redo(pool: SqlitePool) {
+    use crate::api::review::unbury_cards_and_update_config;
+
+    let card_id = create_card_helper(&pool).await;
+    let rate_good = async || {
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id,
+                    rating: 3,
+                    recall_duration: chrono::Duration::seconds(5),
+                    rate_duration: chrono::Duration::seconds(2),
+                    tag_id: None,
+                }),
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+    };
+    let special_state = async || -> Option<SpecialState> {
+        sqlx::query_scalar("SELECT special_state FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let review_count = async || -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    rate_good().await;
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(review_count().await, 0);
+
+    // The day changes while the card is buried
+    sqlx::query("UPDATE card SET special_state = ? WHERE id = ?")
+        .bind(SpecialState::UserBuried)
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    unbury_cards_and_update_config(&pool).await.unwrap();
+    assert_eq!(special_state().await, None);
+    let unbury_id: i64 = sqlx::query_scalar("SELECT id FROM event WHERE kind = ?")
+        .bind(EventType::DailyUnbury)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // The unbury does not clear what can be redone
+    redo_event(
+        &pool,
+        RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .unwrap()
+    .expect("the rating's undo can still be redone");
+    assert_eq!(review_count().await, 1);
+
+    // A plain undo takes back the redone rating, not the unbury
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(review_count().await, 0);
+    assert_eq!(special_state().await, None);
+
+    // Undoing the unbury by id buries the card again
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(unbury_id),
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(special_state().await, Some(SpecialState::UserBuried));
 }

@@ -67,6 +67,7 @@ async fn fetch_reverted(db: &SqlitePool, event: &Event) -> Result<Event, Error> 
 
 /// Describes `event`, which is an action or a redo, so its payload is in the action's direction.
 /// `review_log` is the row of a rating whose row has since been deleted.
+#[expect(clippy::too_many_lines)]
 async fn describe(
     db: &SqlitePool,
     event: &Event,
@@ -159,7 +160,9 @@ async fn describe(
         | EventType::AdvanceCards
         | EventType::PostponeCards
         | EventType::BuryCards
-        | EventType::UnburyCards => {
+        | EventType::UnburyCards
+        | EventType::DailyUnbury
+        | EventType::RescheduleCards => {
             let p: Vec<UpdateCardPayload> = serde_json::from_value(payload).unwrap();
             let ids: Vec<i64> = p.iter().map(|c| c.card_id).collect();
             let verb = match kind {
@@ -167,6 +170,8 @@ async fn describe(
                 EventType::PostponeCards => "Postpone",
                 EventType::BuryCards => "Bury",
                 EventType::UnburyCards => "Unbury",
+                EventType::DailyUnbury => "Daily unbury of",
+                EventType::RescheduleCards => "Reschedule",
                 _ => "Update",
             };
             format!("{verb} {}", count_ids("card", &ids))

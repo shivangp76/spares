@@ -422,6 +422,24 @@ pub enum EventType {
     UnadvanceCards,
     /// The undo of a `PostponeCards`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
     UnpostponeCards,
+    /// The unburying of every buried card when the day changes. Shares payload schema with
+    /// `UpdateCards`. Like every [automatic](Self::is_automatic) kind, a plain undo skips it.
+    DailyUnbury,
+    /// The cards a full reschedule (after changing scheduler settings) changed. Shares payload
+    /// schema with `UpdateCards`. Undoing it restores the cards, not the settings. Like every
+    /// [automatic](Self::is_automatic) kind, a plain undo skips it.
+    RescheduleCards,
+}
+
+impl EventType {
+    /// Kinds that record what spares did by itself rather than an action of the user's. Undo
+    /// without an id skips them, and they do not clear what redo without an id can reach, but
+    /// they can be undone by id.
+    pub const AUTOMATIC: [Self; 2] = [Self::DailyUnbury, Self::RescheduleCards];
+
+    pub fn is_automatic(self) -> bool {
+        Self::AUTOMATIC.contains(&self)
+    }
 }
 
 /// Whether an event is an action, or the undo or redo of one. Derived from the
