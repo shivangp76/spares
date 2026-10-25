@@ -1,95 +1,103 @@
-//! Note ids: short lowercase letter strings (`gir`, `giza`) that are unique across replicas without
+//! Note ids: short lowercase letter strings (`gir`, `girh`) that are unique across replicas without
 //! coordination, sort in creation order, and keep notes created together next to each other.
 //!
 //! # Requirements
 //!
-//! 1. **Unique without coordination**, so an offline laptop can still create notes.
-//! 2. **Short.** Laptop-created notes get 3 letters for roughly the next 6,000 notes (4–7 years at
-//!    the current rate), then 4 letters for decades. Notes created on the web get one more letter.
-//!    No id is longer than 8 letters. No scheme can keep 3 letters much longer: there are only
-//!    17,576 of them, and the 4,117 notes that existed at the migration take a quarter.
+//! 1. **Unique without coordination**, so an offline laptop or phone can still create notes.
+//! 2. **Short.** Most notes are created on the laptop, so its ids are 3 letters for the next 8,000
+//!    or so (5–8 years at 1,000–1,500 a year), then 4 for decades. Notes from the web or a phone
+//!    are one letter longer than the laptop's, for their first 5 or 6 after each laptop note. No
+//!    id is longer than 8 letters.
 //! 3. **Letters only.** macOS Finder sorts runs of digits as numbers, so mixed letters and digits
 //!    would sort wrongly, and the phone needs no number keyboard.
 //! 4. **Lowercase only**, which is safe on case-insensitive file systems. Input is accepted in any
 //!    case, because phone keyboards capitalize the first letter.
-//! 5. **Notes imported together sort next to each other**, even when the other replica creates
-//!    notes at the same time, so related notes can be browsed with the arrow keys.
+//! 5. **Notes created together sort next to each other**, even when another replica creates notes
+//!    at the same time, so related notes can be browsed with the arrow keys.
 //! 6. **Ids follow creation order across devices.** A note created after a sync sorts after
 //!    everything either side created before that sync. Notes created on both sides while out of
-//!    sync are ordered by position rather than time.
+//!    sync are ordered by position rather than time. The one exception: notes that two replicas
+//!    other than the laptop create after the same laptop note are in replica order.
 //! 7. **Never reused**, even after a delete or an undo.
 //! 8. **Derived from the data, not the clock**, so clock changes and full syncs can't break it.
 //!
 //! # Format
 //!
 //! ```text
-//! laptop:  <block><slot>          e.g. block "gi" + slot "r"        → "gir"
-//! server:  <block>z<tail>         e.g. block "gi" + "z" + tail "a"  → "giza"
+//! laptop:  aaa, aab, …, aaz, aba, …, szz, taaa, …
+//! others:  <the laptop note it follows><a letter of its lane>   e.g. after "giq": "giqa", "giqh"
 //! ```
 //!
-//! - **Blocks** are consecutive letter runs: `aa`, `ab`, …, `az`, `ba`, …. Each block has 25 laptop
-//!   slots, `a`–`y`. **`z` is reserved for the server**, so the server's notes in a block sort after
-//!   the laptop's.
-//! - **The first letter decides the block's length** ([`block_len`]), so blocks grow instead of
-//!   running out:
+//! - **The laptop's ids are one sequence**, in which every string of the right length is used in
+//!   turn. **The first letter decides the length** ([`laptop_len`]), so ids grow instead of running
+//!   out:
 //!
-//!   | First letter | Block | Laptop id | Server id | Laptop slots |
-//!   |---|---|---|---|---|
-//!   | `a`–`s` | 2 letters | 3 | 4 | 12,350 |
-//!   | `t`–`x` | 3 letters | 4 | 5 | 84,500 |
-//!   | `y` | 4 letters | 5 | 6 | 439,400 |
-//!   | `z` | 5 letters | 6 | 7 | 11.4 million |
+//!   | First letter | Laptop id | Laptop ids | Others' ids |
+//!   |---|---|---|---|
+//!   | `a`–`s` | 3 letters | 12,844 | 4 |
+//!   | `t`–`x` | 4 | 87,880 | 5 |
+//!   | `y` | 5 | 456,976 | 6 |
+//!   | `z` | 6 | 11.9 million | 7 |
 //!
-//! - **The tail** (server only) is 1 letter (`a`–`y`) for the server's first 25 notes in a block,
-//!   then `z` + 2 letters for the next 650.
-//! - **No id is the start of another.** No block is the start of another block, and after its block
-//!   a laptop id has `a`–`y` where a server id has `z`. So sorting the strings sorts by block, then
-//!   slot, then tail, in both byte order and Finder's order (`localizedStandardCompare`, checked on
-//!   names like `giy.typ`, `giza.typ`, `gizzaa.typ`, `gja.typ`, `taaa.typ`).
+//!   A laptop id is never the start of another laptop id, since all those starting with one letter
+//!   have one length.
+//! - **Every other replica follows the laptop's newest note** that it has seen, its *anchor*, with
+//!   letters of its own, its *lane* ([`lane`]):
+//!
+//!   | Replica | Lane | 1 letter after the anchor | Then |
+//!   |---|---|---|---|
+//!   | `1`, the server | `a`–`g` | `a`–`f` | `g` + a tail |
+//!   | `2`, a device | `h`–`n` | `h`–`m` | `n` + a tail |
+//!   | `3`, a device | `o`–`t` | `o`–`s` | `t` + a tail |
+//!   | `4`, a device | `u`–`z` | `u`–`y` | `z` + a tail |
+//!
+//!   The lane's last letter is followed by a tail ([`next_tail`]): `a`–`y` (25 ids one letter
+//!   longer), then `zaa`–`zyz` (650 more, three letters longer). So the server's notes after `giq`
+//!   are `giqa`, …, `giqf`, `giqga`, …, `giqgy`, `giqgzaa`, ….
+//! - **So the only id that starts another is the laptop note an id follows**, and a laptop note
+//!   sorts before the notes that follow it. Byte order and Finder's order
+//!   (`localizedStandardCompare`) agree, also on file names such as `giq.typ`, `giq-1-front.pdf`,
+//!   `giqa.typ`, `giqgzaa.typ`, `giqh.typ`, `gir.typ`.
 //! - Creation time stays in `created_at`.
 //!
 //! # Allocation
 //!
 //! Each replica keeps a cursor, the last note id it handed out (see [the high-water
 //! mark](#the-high-water-mark)). **M** is the larger of the cursor and the largest note id in the
-//! table: the newest note this replica has created or seen.
+//! table: the newest note this replica has created or seen. Its anchor is the laptop note M is or
+//! follows ([`anchor_of`]).
 //!
-//! - **The laptop takes the next free slots after M:** `gir`, `gis`, …, `giy`, `gja`, ….
-//!   - If M is a server note (`giza`), the next slot is the start of the next block (`gja`).
-//!   - **A call that doesn't fit in what's left of the current block starts at the next block**,
-//!     then fills as many blocks as it needs. An import of 60 notes takes `gja`–`gjy`,
-//!     `gka`–`gky`, `gla`–`glj`, all 3 letters.
-//! - **The server takes the next tail ids after M.** Its first note goes after the newest note it
-//!   has seen (`giq` → `giza`), later ones follow (`gizb`, …) until it sees a newer laptop note.
-//!   The server never writes into a block it hasn't seen a note in.
+//! - **The laptop takes the next laptop ids after M's anchor:** after `giq` or `giqh`, `gir`,
+//!   `gis`, …, `giz`, `gja`, …. A call takes as many as it needs, in order, whatever it crosses.
+//! - **Another replica takes the next ids of its lane after M's anchor**: after its own newest note
+//!   there if it has one (its cursor, or a note of its lane in the table), else from the start of
+//!   its lane. After `giq`, the server takes `giqa`, `giqb`, …, and replica 2 `giqh`, `giqi`, …,
+//!   until they see a newer laptop note.
 //!
 //! Why this meets the requirements:
-//! - **Unique:** each side writes only its own form, and its cursor never goes back.
-//! - **Imports stay together:** the only foreign ids that can sort inside a laptop import are
-//!   server tails of the blocks it fills. The server writes only into the tail of the newest block
-//!   it has seen. An import that crosses a block boundary starts in a fresh block, so the server
-//!   sees none of its blocks until it has all of them, and then writes after the last one. A server
-//!   call is one run of tail ids.
-//! - **Creation order:** both sides always allocate above M, and after a sync M covers everything
-//!   the other side created before it.
+//! - **Unique:** the laptop writes laptop ids. Anything else is longer than a laptop id starting
+//!   with its letter, and its letter after the anchor says whose it is. No replica's cursor goes
+//!   back.
+//! - **Created together, sorted together:** a laptop call takes consecutive laptop ids. Another
+//!   replica follows only laptop notes it has seen, and it sees a call whole, so its notes sort
+//!   before the call (following an earlier note) or after it (following its last). Another
+//!   replica's call is one run of its lane after one anchor, and lanes don't overlap.
+//! - **Creation order:** the laptop allocates above M. Another replica allocates above M's anchor,
+//!   above everything its own lane had there, and above every lane before its own. Notes of a lane
+//!   after its own, after the same anchor, are the exception in requirement 6.
 //!
-//! **Cost.** Skipped slots are lost for good: the rest of a block when a call doesn't fit (about
-//! 15% of slots on the real history), and the rest of the laptop's block each time it resumes
-//! after seeing a web-created note (about 12 slots each). Replaying the 2025–2026 creation history
-//! at 1,000–1,500 notes a year with up to 25 web-created notes a year, laptop ids stay 3 letters
-//! for 4–7 more years, then 4 letters for about 45–75 years. At 100 web-created notes a year, 3
-//! letters last 2.5–3.5 years.
+//! **Cost.** None for the laptop: it never skips an id. Another replica's notes are a letter longer
+//! than the laptop's for its first 5 or 6 after each laptop note it sees, 2 letters longer for the
+//! next 25 and 4 for the next 650. Allocation returns an error rather than produce a 9th letter,
+//! which a replica reaches after about 680 notes on one laptop note while the laptop's ids are 3
+//! or 4 letters, and after about 30 once they are 5 or 6 (some 100,000 laptop notes from now).
 //!
 //! [`allocate_note_ids`] gets all of a call's notes at once, so an import gets one run of ids. Undo
-//! and redo replay the ids stored in the event and don't allocate. Allocation returns an error
-//! rather than produce a 9th letter, which only a server creating hundreds of notes in one block
-//! without seeing a newer laptop note could reach.
+//! and redo replay the ids stored in the event and don't allocate.
 //!
-//! Only replicas `0` and `1` have note id rules; allocation refuses any other. A third replica,
-//! such as a second laptop (`SPARES_REPLICA=2`, `SPARES_SYNC_ROLE=client`), would take `y` as its
-//! slot in blocks opened after it joins, leaving the laptop `a`–`x`. Add it while all replicas are
-//! synced. Nothing already allocated changes, because [the packing](#storage) doesn't depend on
-//! these rules.
+//! **Three devices at most** (replicas `2`–`4`): each lane takes letters from the others, so more
+//! devices would mean fewer 4-letter ids for each. Replicas `5`–`7` create no notes. A second
+//! laptop would be enrolled as a device, and its notes would be a letter longer than the first's.
 //!
 //! # The high-water mark
 //!
@@ -118,8 +126,8 @@
 //!
 //! - Comparing the integers compares the strings, whatever their lengths, and the database schema
 //!   and JSON wire format keep integers.
-//! - The packing doesn't depend on blocks or tails, so the allocation rules can change without
-//!   touching stored ids, and decoding (frontend, nvim) needs no knowledge of them.
+//! - The packing doesn't depend on the allocation rules, so they can change without touching
+//!   stored ids, and decoding (frontend, nvim) needs no knowledge of them.
 //! - The largest value, `zzzzzzzz` ([`MAX_PACKED`]), is 27⁸ − 1 (39 bits), exact as a JS or Lua
 //!   number. The frontend must decode with division and `Math.floor`, since JS `>>` works on 32
 //!   bits.
@@ -145,17 +153,23 @@
 //!
 //! # Alternatives considered
 //!
-//! - **Batches of 26** (the scheme this replaced): every existing note and every new single note
-//!   was 4 letters, imports over 26 notes (half of the notes created since 2025) were 5, every call
-//!   took a whole batch even for one note, and parity reserved half the batches for a server that
-//!   rarely creates notes.
-//! - **Keeping the laptop in its block after it sees a web note** (`giq`, then phone `giza`, then
-//!   laptop `gir` rather than `gja`). It would remove the ~12 slots lost per web note (a year more
-//!   of 3-letter ids at 25 web notes a year), but the web note would sort after laptop notes
-//!   created later, breaking requirement 6.
+//! - **Batches of 26** (the scheme before letter blocks): every existing note and every new single
+//!   note was 4 letters, imports over 26 notes (half of the notes created since 2025) were 5,
+//!   every call took a whole batch even for one note, and parity reserved half the batches for a
+//!   server that rarely creates notes.
+//! - **Blocks with a `z` tail** (the scheme this replaced): laptop ids were a 2-letter block and a
+//!   slot `a`–`y`, and other replicas' ids `<block>z<tail>`, after every slot of the block. Each
+//!   web note cost the laptop the rest of its block (about 12 ids), a call that didn't fit in a
+//!   block skipped to the next (about 15% of ids), and every other replica shared the 25 one-letter
+//!   tails of a block: split by last letter, they interleaved; split into ranges, two replicas
+//!   taking turns ran out within a few turns.
+//! - **Keeping strict creation order between other replicas** after one anchor: a replica that
+//!   sees a newer note of a later lane would have to take a longer id after it, and two replicas
+//!   taking turns would soon reach the 8-letter limit. Their notes after one laptop note are few,
+//!   so replica order is kept instead.
 //! - **No vowels (base 21)**, so ids never spell words, including rude ones. It makes ids longer.
-//!   If some ids turn out annoying, the allocator can skip a denylist of slots at any time; a
-//!   skipped slot costs capacity, never correctness.
+//!   If some ids turn out annoying, the allocator can skip a denylist of ids at any time; a
+//!   skipped id costs capacity, never correctness.
 
 pub mod migrate;
 
@@ -181,8 +195,7 @@ const RADIX: i64 = 27;
 pub const MIN_PACKED: i64 = RADIX.pow(MAX_LETTERS as u32 - 1);
 /// The packed value of `zzzzzzzz`.
 pub const MAX_PACKED: i64 = RADIX.pow(MAX_LETTERS as u32) - 1;
-/// Letters a laptop slot or the first letter of a server tail can take: `a`–`y`. `z` marks the
-/// server's part of a block.
+/// Letters the first letter of a [tail](next_tail) can take: `a`–`y`. `z` starts the next level.
 const SLOTS: u8 = 25;
 const Z: u8 = 25;
 
@@ -320,89 +333,76 @@ fn unpack(packed: i64) -> Option<Vec<u8>> {
     Some(places[..len].iter().map(|&p| p - 1).collect())
 }
 
-/// Length of a block whose first letter is `first`: 2 for `a`–`s`, 3 for `t`–`x`, 4 for `y` and 5
-/// for `z`. Blocks grow instead of running out.
-fn block_len(first: u8) -> usize {
+/// Length of a laptop id whose first letter is `first`: 3 for `a`–`s`, 4 for `t`–`x`, 5 for `y`
+/// and 6 for `z`. Laptop ids grow instead of running out.
+fn laptop_len(first: u8) -> usize {
     match first {
-        0..=18 => 2,
-        19..=23 => 3,
-        24 => 4,
-        _ => 5,
+        0..=18 => 3,
+        19..=23 => 4,
+        24 => 5,
+        _ => 6,
     }
 }
 
-fn first_block() -> Vec<u8> {
-    vec![0, 0]
-}
-
-/// The block after `block`, moving to the next tier's length when the first letter changes tier.
-fn next_block(block: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut next = block.to_vec();
+/// The laptop id after `id`, moving to the next tier's length when the first letter changes tier.
+fn next_laptop_id(id: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut next = id.to_vec();
     for i in (0..next.len()).rev() {
         if next[i] < Z {
             next[i] += 1;
             if i == 0 {
-                next.resize(block_len(next[0]), 0);
+                next.resize(laptop_len(next[0]), 0);
             }
             return Ok(next);
         }
         next[i] = 0;
     }
     Err(note_error(
-        "Ran out of note ids: every block has been used".to_string(),
+        "Ran out of note ids: every laptop id has been used".to_string(),
     ))
 }
 
-/// Splits an id into its block and the rest. A shorter id is padded with `a`, which gives the
-/// smallest block that sorts after it.
-fn split_block(id: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    let len = block_len(id[0]);
-    if id.len() < len {
-        let mut block = id.to_vec();
-        block.resize(len, 0);
-        return (block, Vec::new());
-    }
-    (id[..len].to_vec(), id[len..].to_vec())
+/// The laptop id `id` starts with: `id` itself for a laptop id, the note it follows for another
+/// replica's. A shorter id is padded with `a`, which gives the smallest laptop id after it.
+fn anchor_of(id: &[u8]) -> Vec<u8> {
+    let mut anchor = id[..id.len().min(laptop_len(id[0]))].to_vec();
+    anchor.resize(laptop_len(id[0]), 0);
+    anchor
 }
 
 /// `n` laptop ids after `newest`, the newest note this replica has created or seen.
 fn laptop_ids_after(newest: Option<&[u8]>, n: usize) -> Result<Vec<Vec<u8>>, Error> {
-    let (mut block, mut slot) = match newest {
-        None => (first_block(), 0),
+    let mut next = match newest {
+        None => vec![0; laptop_len(0)],
         Some(id) => {
-            let (block, rest) = split_block(id);
-            match rest.first() {
-                // A block on its own (or a shorter id padded into one) sorts before its slots.
-                None => (block, 0),
-                Some(&slot) if slot + 1 < SLOTS => (block, slot + 1),
-                // The block is full, or the newest note is the server's.
-                Some(_) => (next_block(&block)?, 0),
+            let anchor = anchor_of(id);
+            if anchor.as_slice() > id {
+                anchor
+            } else {
+                next_laptop_id(&anchor)?
             }
         }
     };
-    // A call that does not fit in what is left of the block starts at the next one, so no server
-    // note can sort inside it.
-    if slot > 0 && n > usize::from(SLOTS - slot) {
-        block = next_block(&block)?;
-        slot = 0;
-    }
     let mut ids = Vec::with_capacity(n);
     for _ in 0..n {
-        if slot == SLOTS {
-            block = next_block(&block)?;
-            slot = 0;
-        }
-        let mut id = block.clone();
-        id.push(slot);
-        ids.push(id);
-        slot += 1;
+        ids.push(next.clone());
+        next = next_laptop_id(&next)?;
     }
     Ok(ids)
 }
 
-/// The first server tail: `a`.
-fn first_tail() -> Vec<u8> {
-    vec![0]
+/// The letters a replica other than the laptop appends to the laptop note it follows, or `None`
+/// for one that creates no notes: the laptop's ids are its own, and replicas `5`–`7` have no
+/// lane. The last letter is the lane's "more" letter: it is followed by a [tail](next_tail) rather
+/// than being an id itself.
+fn lane(replica: u8) -> Option<std::ops::RangeInclusive<u8>> {
+    match replica {
+        1 => Some(0..=6),   // a–g: the server
+        2 => Some(7..=13),  // h–n
+        3 => Some(14..=19), // o–t
+        4 => Some(20..=25), // u–z
+        _ => None,
+    }
 }
 
 /// The smallest tail after `tail`. Tails of level `k` are `k` letters `z`, a letter `a`–`y`, then
@@ -439,50 +439,103 @@ fn next_tail(tail: &[u8]) -> Vec<u8> {
     next
 }
 
-/// `n` server ids after `newest`, in the server's part of the newest block it has seen.
-fn server_ids_after(newest: Option<&[u8]>, n: usize) -> Vec<Vec<u8>> {
-    let (block, mut tail) = match newest {
-        None => (first_block(), None),
-        Some(id) => {
-            let (block, rest) = split_block(id);
-            match rest.split_first() {
-                Some((&Z, tail)) => (block, Some(tail.to_vec())),
-                _ => (block, None),
-            }
+/// The suffix of `lane` after `suffix`, or its first one. The lane's letters but the last come
+/// first, then the last followed by the [tails](next_tail): `a`, …, `f`, `ga`, …, `gy`, `gzaa`, ….
+fn next_suffix(lane: &std::ops::RangeInclusive<u8>, suffix: Option<&[u8]>) -> Vec<u8> {
+    let (start, more) = (*lane.start(), *lane.end());
+    match suffix {
+        None | Some([]) => vec![start],
+        Some([letter]) if *letter + 1 < more => vec![letter + 1],
+        Some([_]) => vec![more, 0],
+        Some([_, tail @ ..]) => {
+            let mut next = vec![more];
+            next.extend(next_tail(tail));
+            next
         }
-    };
+    }
+}
+
+/// `n` ids of `replica` (with lane `lane`) after the laptop note `newest` starts with, after
+/// `own`, its newest note there, if it has one.
+fn lane_ids_after(
+    lane: &std::ops::RangeInclusive<u8>,
+    newest: Option<&[u8]>,
+    own: Option<&[u8]>,
+    n: usize,
+) -> Vec<Vec<u8>> {
+    let anchor = newest.map_or_else(|| vec![0; laptop_len(0)], anchor_of);
+    let mut suffix = own
+        .filter(|own| own.len() > anchor.len() && own.starts_with(&anchor))
+        .filter(|own| lane.contains(&own[anchor.len()]))
+        .map(|own| own[anchor.len()..].to_vec());
     let mut ids = Vec::with_capacity(n);
     for _ in 0..n {
-        let next = tail.as_deref().map_or_else(first_tail, next_tail);
-        let mut id = block.clone();
-        id.push(Z);
+        let next = next_suffix(lane, suffix.as_deref());
+        let mut id = anchor.clone();
         id.extend_from_slice(&next);
         ids.push(id);
-        tail = Some(next);
+        suffix = Some(next);
     }
     ids
 }
 
-/// `n` ids `replica` would hand out after `newest`. Pure, so it can be tested without a database.
-fn ids_after(replica: Replica, newest: Option<NoteId>, n: usize) -> Result<Vec<NoteId>, Error> {
-    let newest = newest
-        .map(|id| {
-            id.letter_indices().ok_or_else(|| {
-                note_error(format!(
-                    "Cannot allocate note ids after {}, which is not a letter id. Run `spares \
-                     migrate ids` first.",
-                    id.packed()
-                ))
-            })
+/// The smallest and largest ids of `replica`'s lane after the laptop note `newest` starts with, as
+/// packed values, to find its newest note there.
+fn lane_bounds(replica: Replica, newest: Option<NoteId>) -> Option<(i64, i64)> {
+    let lane = lane(replica.number())?;
+    let anchor = newest
+        .and_then(NoteId::letter_indices)
+        .map_or_else(|| vec![0; laptop_len(0)], |id| anchor_of(&id));
+    let mut lo = anchor.clone();
+    lo.push(*lane.start());
+    let mut hi = anchor;
+    hi.push(*lane.end());
+    hi.resize(MAX_LETTERS.max(hi.len()), Z);
+    Some((pack(&lo)?, pack(&hi)?))
+}
+
+/// `n` ids `replica` would hand out after `newest`, the newest note it has created or seen. `own`
+/// is its newest note after the laptop note `newest` starts with, for a replica other than the
+/// laptop (see [`lane_bounds`]). Pure, so it can be tested without a database.
+fn ids_after(
+    replica: Replica,
+    newest: Option<NoteId>,
+    own: Option<NoteId>,
+    n: usize,
+) -> Result<Vec<NoteId>, Error> {
+    let letters = |id: NoteId| {
+        id.letter_indices().ok_or_else(|| {
+            note_error(format!(
+                "Cannot allocate note ids after {}, which is not a letter id. Run `spares \
+                 migrate ids` first.",
+                id.packed()
+            ))
         })
-        .transpose()?;
-    let ids = match replica.number() {
-        0 => laptop_ids_after(newest.as_deref(), n)?,
-        1 => server_ids_after(newest.as_deref(), n),
-        number => {
+    };
+    let newest = newest.map(letters).transpose()?;
+    let own = own.map(letters).transpose()?;
+    let ids = match (replica.number(), lane(replica.number())) {
+        (0, _) => laptop_ids_after(newest.as_deref(), n)?,
+        (_, Some(lane)) => {
+            let ids = lane_ids_after(&lane, newest.as_deref(), own.as_deref(), n);
+            if ids.last().is_some_and(|id| id.len() > MAX_LETTERS) {
+                let anchor = newest
+                    .as_deref()
+                    .map_or_else(|| vec![0; laptop_len(0)], anchor_of);
+                return Err(note_error(format!(
+                    "Ran out of note ids after the laptop's note `{}`: this replica has created as \
+                     many notes after it as {MAX_LETTERS} letters allow. Sync a newer note from \
+                     the laptop, or create fewer at once.",
+                    NoteId::from_letter_indices(&anchor)?.letters()
+                )));
+            }
+            ids
+        }
+        (number, None) => {
             return Err(note_error(format!(
-                "Replica {number} cannot create notes yet: only replicas 0 (laptop) and 1 (server) \
-                 have note id rules. See \"Allocation\" in the `spares_core::ids` docs."
+                "Replica {number} cannot create notes: only the laptop (0), the server (1) and \
+                 devices 2 to 4 have note id rules. See \"Allocation\" in the `spares_core::ids` \
+                 docs."
             )));
         }
     };
@@ -526,17 +579,36 @@ pub(crate) async fn allocate_note_ids_on(
     .execute(&mut *conn)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let newest: Option<i64> = sqlx::query_scalar(
-        r"SELECT MAX(m) FROM (
-            SELECT last AS m FROM id_counter WHERE replica = ? AND tbl = 'note' AND last > 0
-            UNION ALL SELECT MAX(id) FROM note
-          )",
+    let counter: Option<i64> = sqlx::query_scalar(
+        "SELECT last FROM id_counter WHERE replica = ? AND tbl = 'note' AND last > 0",
     )
     .bind(replica_number)
-    .fetch_one(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let ids = ids_after(replica, newest.map(NoteId::from_packed), n)?;
+    let table_max: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM note")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let newest = counter.max(table_max).map(NoteId::from_packed);
+    // A replica other than the laptop continues after its own newest note on that laptop note: its
+    // counter, or a note of its lane in the table (one it made before a full download, say).
+    let own = match lane_bounds(replica, newest) {
+        None => None,
+        Some((lo, hi)) => {
+            let in_table: Option<i64> =
+                sqlx::query_scalar("SELECT MAX(id) FROM note WHERE id BETWEEN ? AND ?")
+                    .bind(lo)
+                    .bind(hi)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            in_table
+                .max(counter.filter(|c| (lo..=hi).contains(c)))
+                .map(NoteId::from_packed)
+        }
+    };
+    let ids = ids_after(replica, newest, own, n)?;
     let last = ids.last().expect("n > 0").packed();
     sqlx::query(r"UPDATE id_counter SET last = ? WHERE replica = ? AND tbl = 'note'")
         .bind(last)
@@ -719,6 +791,9 @@ mod tests {
 
     const LAPTOP: Replica = Replica::new_unchecked(0);
     const SERVER: Replica = Replica::new_unchecked(1);
+    /// Browsers that keep a copy of the collection
+    const DEVICE: Replica = Replica::new_unchecked(2);
+    const DEVICE_4: Replica = Replica::new_unchecked(4);
 
     fn id(s: &str) -> NoteId {
         s.parse().unwrap()
@@ -799,102 +874,91 @@ mod tests {
 
     #[test]
     fn test_laptop_allocation() {
-        assert_eq!(
-            letters(&ids_after(LAPTOP, None, 3).unwrap()),
-            ["aaa", "aab", "aac"]
-        );
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("giq")), 3).unwrap()),
-            ["gir", "gis", "git"]
-        );
-        // After a server note, the laptop starts the next block.
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("giza")), 1).unwrap()),
-            ["gja"]
-        );
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("giy")), 1).unwrap()),
-            ["gja"]
-        );
-        // Fits exactly in what is left of the block
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("giq")), 8).unwrap())
-                .last()
-                .unwrap(),
-            "giy"
-        );
-        // Does not fit, so it starts at the next block and fills as many as it needs.
-        let import = letters(&ids_after(LAPTOP, Some(id("giq")), 60).unwrap());
-        assert_eq!(import.first().unwrap(), "gja");
-        assert_eq!(import[24], "gjy");
-        assert_eq!(import[25], "gka");
-        assert_eq!(import.last().unwrap(), "glj");
+        let after =
+            |newest: Option<&str>, n| letters(&ids_after(LAPTOP, newest.map(id), None, n).unwrap());
+        assert_eq!(after(None, 3), ["aaa", "aab", "aac"]);
+        assert_eq!(after(Some("giq"), 3), ["gir", "gis", "git"]);
+        // After another replica's notes on `giq`, the next laptop id: nothing is skipped.
+        assert_eq!(after(Some("giqa"), 1), ["gir"]);
+        assert_eq!(after(Some("giqhzaa"), 1), ["gir"]);
+        // Every letter, then the next run of 26; an import just continues.
+        assert_eq!(after(Some("giy"), 3), ["giz", "gja", "gjb"]);
+        let import = after(Some("giq"), 60);
+        assert_eq!((import[0].as_str(), import[59].as_str()), ("gir", "gky"));
         assert!(import.iter().all(|s| s.len() == 3));
         // Tier boundaries
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("szy")), 1).unwrap()),
-            ["taaa"]
-        );
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("xzzy")), 1).unwrap()),
-            ["yaaaa"]
-        );
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("yzzzy")), 1).unwrap()),
-            ["zaaaaa"]
-        );
-        assert!(ids_after(LAPTOP, Some(id("zzzzzy")), 1).is_err());
-        // Blocks may contain `z` after their first letter.
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("ayy")), 1).unwrap()),
-            ["aza"]
-        );
-        assert_eq!(
-            letters(&ids_after(LAPTOP, Some(id("azy")), 1).unwrap()),
-            ["baa"]
-        );
+        assert_eq!(after(Some("szz"), 1), ["taaa"]);
+        assert_eq!(after(Some("szzh"), 1), ["taaa"]);
+        assert_eq!(after(Some("xzzz"), 1), ["yaaaa"]);
+        assert_eq!(after(Some("yzzzz"), 1), ["zaaaaa"]);
+        assert!(ids_after(LAPTOP, Some(id("zzzzzz")), None, 1).is_err());
         // Odd ids still give a later one.
-        for odd in ["g", "gi", "giz", "gira", "gizzzz", "t", "ta"] {
-            let next = ids_after(LAPTOP, Some(id(odd)), 1).unwrap()[0];
+        for odd in ["g", "gi", "t", "ta", "taa", "taaaa"] {
+            let next = ids_after(LAPTOP, Some(id(odd)), None, 1).unwrap()[0];
             assert!(next > id(odd), "{odd} -> {}", next.letters());
         }
     }
 
     #[test]
-    fn test_server_allocation() {
+    fn test_lane_allocation() {
+        let after = |replica, newest: Option<&str>, own: Option<&str>, n| {
+            letters(&ids_after(replica, newest.map(id), own.map(id), n).unwrap())
+        };
+        // After the laptop's `giq`, each replica's lane, then its "more" letter and the tails.
         assert_eq!(
-            letters(&ids_after(SERVER, Some(id("giq")), 2).unwrap()),
-            ["giza", "gizb"]
+            after(SERVER, Some("giq"), None, 8),
+            [
+                "giqa", "giqb", "giqc", "giqd", "giqe", "giqf", "giqga", "giqgb"
+            ]
         );
+        assert_eq!(after(DEVICE, Some("giq"), None, 2), ["giqh", "giqi"]);
         assert_eq!(
-            letters(&ids_after(SERVER, Some(id("gizy")), 1).unwrap()),
-            ["gizzaa"]
+            after(DEVICE_4, Some("giq"), None, 6),
+            ["giqu", "giqv", "giqw", "giqx", "giqy", "giqza"]
         );
-        assert_eq!(
-            letters(&ids_after(SERVER, Some(id("gizzaz")), 1).unwrap()),
-            ["gizzba"]
+        // Continuing after its own newest note on that laptop note, whoever's note is newest
+        assert_eq!(after(DEVICE, Some("giqb"), Some("giqi"), 1), ["giqj"]);
+        assert_eq!(after(DEVICE, Some("giqu"), Some("giqm"), 1), ["giqna"]);
+        assert_eq!(after(SERVER, Some("giqh"), None, 1), ["giqa"]);
+        assert_eq!(after(SERVER, Some("giqgy"), Some("giqgy"), 1), ["giqgzaa"]);
+        // A newer laptop note starts again at the lane's first letter, whatever came before.
+        assert_eq!(after(DEVICE, Some("gis"), Some("giqk"), 1), ["gish"]);
+        assert_eq!(after(SERVER, None, None, 1), ["aaaa"]);
+        // A longer laptop id gets a longer tail.
+        assert_eq!(after(DEVICE, Some("taaa"), None, 1), ["taaah"]);
+        // Too long: an error, not a 9th letter
+        let err = ids_after(SERVER, Some(id("giq")), Some(id("giqgzyzz")), 1).unwrap_err();
+        assert!(
+            err.to_string().contains("after the laptop's note `giq`"),
+            "{err}"
         );
-        assert_eq!(
-            letters(&ids_after(SERVER, Some(id("gizzyz")), 1).unwrap()),
-            ["gizzzaaa"]
-        );
-        // Allocation errors instead of producing a 9th letter.
-        assert!(ids_after(SERVER, Some(id("gizzzaaa")), 1).is_ok());
-        assert!(ids_after(SERVER, Some(id("gizzzyzz")), 1).is_err());
-        assert_eq!(
-            letters(&ids_after(SERVER, Some(id("taazy")), 1).unwrap()),
-            ["taazzaa"]
-        );
-        assert!(ids_after(SERVER, Some(id("taazzyz")), 1).is_err());
-        for odd in ["g", "giz", "gizz", "gizza", "gizzzab"] {
-            let next = ids_after(SERVER, Some(id(odd)), 1).unwrap()[0];
+        // The other replicas have no lane.
+        assert!(ids_after(Replica::new_unchecked(5), Some(id("giq")), None, 1).is_err());
+        // Odd ids still give a later one.
+        for odd in ["g", "gi", "giqg", "giqgz"] {
+            let next = ids_after(SERVER, Some(id(odd)), Some(id(odd)), 1).unwrap()[0];
             assert!(next > id(odd), "{odd} -> {}", next.letters());
         }
     }
 
+    /// Lanes don't overlap, and every letter is in one, so no id of one replica is another's.
     #[test]
-    fn test_other_replicas_cannot_allocate() {
-        assert!(ids_after(Replica::new_unchecked(2), None, 1).is_err());
+    fn test_lanes_partition_the_letters() {
+        let mut owners = vec![0; 26];
+        for replica in 0..=Replica::MAX {
+            for letter in lane(replica).into_iter().flatten() {
+                owners[usize::from(letter)] += 1;
+            }
+        }
+        assert_eq!(owners, vec![1; 26]);
+        assert!(lane(0).is_none());
+    }
+
+    #[test]
+    fn test_lane_bounds() {
+        let (lo, hi) = lane_bounds(DEVICE, Some(id("giqa"))).unwrap();
+        assert_eq!((lo, hi), (id("giqh").packed(), id("giqnzzzz").packed()));
+        assert!(lane_bounds(LAPTOP, Some(id("giq"))).is_none());
     }
 
     /// A replica's view of the notes: what it has created or seen, and its counter.
@@ -907,7 +971,16 @@ mod tests {
     impl Side {
         fn create(&mut self, replica: Replica, n: usize) -> Vec<NoteId> {
             let newest = self.seen.last().copied().max(self.counter);
-            let ids = ids_after(replica, newest, n).unwrap();
+            let own = lane_bounds(replica, newest).and_then(|(lo, hi)| {
+                let in_lane = |id: &NoteId| (lo..=hi).contains(&id.packed());
+                self.seen
+                    .iter()
+                    .copied()
+                    .filter(in_lane)
+                    .max()
+                    .max(self.counter.filter(in_lane))
+            });
+            let ids = ids_after(replica, newest, own, n).unwrap();
             self.counter = ids.last().copied();
             self.seen.extend(ids.iter().copied());
             ids
@@ -918,59 +991,76 @@ mod tests {
         b.letters().starts_with(&a.letters())
     }
 
-    /// Two replicas creating notes in random interleavings, with random syncs.
+    /// The laptop note `id` starts with, and the replica whose id it is.
+    fn place(id: NoteId) -> (Vec<u8>, u8) {
+        let letters = id.letter_indices().unwrap();
+        let anchor = anchor_of(&letters);
+        if letters.len() == anchor.len() {
+            return (anchor, 0);
+        }
+        let letter = letters[anchor.len()];
+        let owner = (1..=Replica::MAX).find(|r| lane(*r).is_some_and(|l| l.contains(&letter)));
+        (anchor, owner.unwrap())
+    }
+
+    /// The laptop, the server and two devices creating notes in random interleavings. Each client
+    /// syncs with the server at random.
     #[test]
-    fn test_two_replicas_random() {
+    fn test_replicas_random() {
         let mut rng = rand::rng();
-        for _ in 0..200 {
-            // Both start from the same notes, as after the first full upload.
-            let mut laptop = Side::default();
-            let seed = laptop.create(LAPTOP, rng.random_range(1..30));
-            let mut server = Side {
-                seen: laptop.seen.clone(),
-                counter: None,
-            };
-            // Every note, the calls that created it, and the notes created before each sync
+        let replicas = [LAPTOP, SERVER, DEVICE, DEVICE_4];
+        for _ in 0..300 {
+            // Everyone starts from the same notes, as after full downloads.
+            let mut sides: Vec<Side> = (0..replicas.len()).map(|_| Side::default()).collect();
+            let seed = sides[0].create(LAPTOP, rng.random_range(1..30));
+            for side in &mut sides[1..] {
+                side.seen = seed.iter().copied().collect();
+            }
+            // Every note, and the calls that created it
             let mut all: Vec<NoteId> = seed.clone();
-            let mut calls: Vec<(usize, Vec<NoteId>)> = vec![(0, seed.clone())];
-            let mut synced_before: Vec<NoteId> = seed;
-            for _ in 0..rng.random_range(1..60) {
-                match rng.random_range(0..10) {
-                    0..=4 => {
-                        let n = if rng.random_bool(0.2) {
-                            rng.random_range(1..80)
-                        } else {
-                            rng.random_range(1..4)
-                        };
-                        let ids = laptop.create(LAPTOP, n);
-                        assert!(ids.iter().all(|id| synced_before.iter().all(|s| s < id)));
-                        all.extend(&ids);
-                        calls.push((0, ids));
-                    }
-                    5..=7 => {
-                        let ids = server.create(SERVER, rng.random_range(1..4));
-                        assert!(ids.iter().all(|id| synced_before.iter().all(|s| s < id)));
-                        all.extend(&ids);
-                        calls.push((1, ids));
-                    }
-                    _ => {
+            let mut calls: Vec<(usize, Vec<NoteId>)> = vec![(0, seed)];
+            for _ in 0..rng.random_range(1..80) {
+                let who = rng.random_range(0..replicas.len());
+                if rng.random_bool(0.25) {
+                    if who != 1 {
                         let union: BTreeSet<NoteId> =
-                            laptop.seen.union(&server.seen).copied().collect();
-                        laptop.seen.clone_from(&union);
-                        server.seen = union;
-                        synced_before.clone_from(&all);
+                            sides[who].seen.union(&sides[1].seen).copied().collect();
+                        sides[who].seen.clone_from(&union);
+                        sides[1].seen = union;
                     }
+                    continue;
                 }
+                let n = if who == 0 && rng.random_bool(0.2) {
+                    rng.random_range(1..80)
+                } else {
+                    rng.random_range(1..8)
+                };
+                let before = sides[who].seen.clone();
+                let ids = sides[who].create(replicas[who], n);
+                // Creation order: after everything this replica has seen, except other replicas'
+                // notes on the same laptop note in a lane after its own
+                let (anchor, me) = place(ids[0]);
+                for s in &before {
+                    let (s_anchor, owner) = place(*s);
+                    let higher_lane = me != 0 && owner > me && s_anchor == anchor;
+                    assert!(*s < ids[0] || higher_lane, "{s} is not before {}", ids[0]);
+                }
+                all.extend(&ids);
+                calls.push((who, ids));
             }
             let unique: BTreeSet<NoteId> = all.iter().copied().collect();
             assert_eq!(unique.len(), all.len(), "an id repeated");
+            // An id starts another only as the laptop note the other follows.
             let sorted: Vec<NoteId> = unique.into_iter().collect();
             for (i, a) in sorted.iter().enumerate() {
                 for b in &sorted[i + 1..] {
-                    assert!(!is_prefix(*a, *b), "{a} is the start of {b}");
+                    if is_prefix(*a, *b) {
+                        assert_eq!(place(*a).1, 0, "{a} is the start of {b}");
+                        assert_eq!(place(*b).0, a.letter_indices().unwrap());
+                    }
                 }
             }
-            // No other replica's note sorts inside a call.
+            // No other replica's note sorts inside any call.
             for (replica, ids) in &calls {
                 let (lo, hi) = (ids[0], *ids.last().unwrap());
                 for (other, other_ids) in &calls {

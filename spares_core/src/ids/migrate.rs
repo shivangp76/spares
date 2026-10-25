@@ -2,8 +2,8 @@
 //! before a second replica exists (see [`super`] for the id scheme).
 //!
 //! Notes keep their order: the oldest gets `aaa`, the next `aab`, and so on through consecutive
-//! laptop slots, so slot `z` stays free in every block for the server. The existing notes took
-//! `aaa` to `giq`.
+//! laptop ids. The existing notes took `aaa` to `giq`, with ids ending in `z` left out, which the
+//! scheme then kept free for the server.
 //!
 //! It rewrites every reference (cards, tags, keywords, links, `inh:` references, tag queries),
 //! empties the undo history, regenerates note and card files (with `git mv` in the notes
@@ -181,7 +181,7 @@ async fn plan_on(conn: &mut SqliteConnection) -> Result<MigrationPlan, Error> {
             "The database has a note with an id of 0 or less.".to_string(),
         ));
     }
-    let new_ids = ids_after(Replica::new_unchecked(0), None, notes.len())?;
+    let new_ids = ids_after(Replica::new_unchecked(0), None, None, notes.len())?;
     let mapping: Vec<IdMapping> = notes
         .into_iter()
         .zip(new_ids)
