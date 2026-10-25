@@ -55,7 +55,8 @@ fn sqlx_error(e: sqlx::Error) -> Error {
 }
 
 /// The server, as the client sees it.
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 pub trait SyncRemote: Send + Sync {
     async fn meta(&self, replica: u8) -> Result<MetaResponse, Error>;
     async fn pull(&self, request: PullRequest) -> Result<PullResponse, Error>;

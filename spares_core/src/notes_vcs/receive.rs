@@ -53,6 +53,7 @@ use super::reconcile::write_db_note_files;
 use crate::Error;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+#[cfg(not(target_family = "wasm"))]
 use crate::api::note::get_note;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
@@ -387,7 +388,16 @@ async fn settle(db: &SqlitePool, session: Session) -> Result<FinishResponse, Err
     })
 }
 
+/// The Anki ids of `created` notes that have one. A browser has no notes repository, and so no
+/// pushes, nor Anki.
+#[cfg(target_family = "wasm")]
+#[allow(clippy::unused_async)] // The native one awaits.
+async fn anki_links(_db: &SqlitePool, _created: &[NoteId]) -> Result<Vec<(i64, NoteId)>, Error> {
+    Ok(Vec::new())
+}
+
 /// The Anki ids of `created` notes that have one
+#[cfg(not(target_family = "wasm"))]
 async fn anki_links(db: &SqlitePool, created: &[NoteId]) -> Result<Vec<(i64, NoteId)>, Error> {
     let mut links = Vec::new();
     for id in created {

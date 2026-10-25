@@ -31,6 +31,7 @@ pub enum Error {
     },
     #[error(transparent)]
     ApiRequest(#[from] reqwest::Error),
+    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     Trash(#[from] trash::Error),
     #[error(transparent)]
