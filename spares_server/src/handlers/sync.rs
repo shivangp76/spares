@@ -24,7 +24,9 @@ use spares_core::config::get_cache_dir;
 use spares_core::config::get_replica;
 use spares_core::config::get_sync_role;
 use spares_core::config::read_external_config;
+#[cfg(not(target_family = "wasm"))]
 use spares_core::notes_vcs::WRITER_WAIT;
+#[cfg(not(target_family = "wasm"))]
 use spares_core::notes_vcs::exclusive_guard;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::parsers::get_all_parsers;
@@ -140,6 +142,8 @@ pub(crate) async fn sync_full_download_handler(
     Ok(([(CONTENT_TYPE, "application/vnd.sqlite3")], bytes))
 }
 
+// Spawns on Tokio
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_full_upload_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Query(ReplicaQuery { replica }): Query<ReplicaQuery>,
@@ -204,6 +208,7 @@ fn normal() -> SyncMode {
 }
 
 /// Syncs this (client) server with its `sync.url`.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_run_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(SyncRunRequest { mode }): Json<SyncRunRequest>,

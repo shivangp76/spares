@@ -4075,6 +4075,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "env_logger",
+ "http-body-util",
  "log",
  "serde",
  "serde_json",

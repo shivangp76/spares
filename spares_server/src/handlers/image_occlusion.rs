@@ -102,6 +102,7 @@ pub(crate) struct ImageOcclusionFileQuery {
     path: String,
 }
 
+#[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn get_image_occlusion_file_handler(
     Query(ImageOcclusionFileQuery { path }): Query<ImageOcclusionFileQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

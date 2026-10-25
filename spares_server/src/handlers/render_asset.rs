@@ -21,6 +21,7 @@ pub(crate) struct RenderAssetQuery {
     path: String,
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn get_render_asset_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Query(RenderAssetQuery { path }): Query<RenderAssetQuery>,
