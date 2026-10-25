@@ -111,6 +111,12 @@ const showReviewTimer = booleanPreference('spares_show_review_timer', () => true
 export const setShowReviewTimer = showReviewTimer.set;
 export const useShowReviewTimer = showReviewTimer.use;
 
+/** Whether the review page reads cards' text aloud (see `spares_core/src/parsers/tts.rs`). Audio
+    clips are played either way. On unless turned off. */
+const readAloud = booleanPreference('spares_read_aloud', () => true);
+export const setReadAloud = readAloud.set;
+export const useReadAloud = readAloud.use;
+
 /** Whether a note's local graph, of the notes it links to and that link to it, is shown open. */
 const localGraphOpen = booleanPreference('spares_local_graph_open', () => false);
 export const setLocalGraphOpen = localGraphOpen.set;

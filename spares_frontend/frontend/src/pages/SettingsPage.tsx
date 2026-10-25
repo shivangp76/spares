@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
   CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
-  setShowReviewTimer, setVimKeybindings, useCardZoom, usePageWidth, usePagesPerRow, useShowReviewTimer, useVimKeybindings,
+  setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom, usePageWidth, usePagesPerRow, useReadAloud,
+  useShowReviewTimer, useVimKeybindings,
   type CardZoom,
 } from '../preferences';
 import {
@@ -25,6 +26,19 @@ const TYPST_THEMES: { value: TypstThemePreference; label: string }[] = [
   { value: 'interface', label: 'Same as Interface' },
 ];
 
+/** The voices this browser reads text aloud with, which some browsers list only after a while. */
+function useSpeechVoices(): SpeechSynthesisVoice[] {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    if (typeof speechSynthesis === 'undefined') return;
+    const update = () => setVoices(speechSynthesis.getVoices());
+    update();
+    speechSynthesis.addEventListener('voiceschanged', update);
+    return () => speechSynthesis.removeEventListener('voiceschanged', update);
+  }, []);
+  return voices;
+}
+
 /** Settings kept in this browser. */
 export default function SettingsPage() {
   const { credentials, logout } = useAuth();
@@ -32,6 +46,8 @@ export default function SettingsPage() {
   const theme = useThemePreference();
   const typstTheme = useTypstThemePreference();
   const showReviewTimer = useShowReviewTimer();
+  const readAloud = useReadAloud();
+  const voices = useSpeechVoices();
   const vimKeybindings = useVimKeybindings();
   const pageWidth = usePageWidth();
   const cardZoom = useCardZoom();
@@ -147,6 +163,36 @@ export default function SettingsPage() {
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Both durations are still recorded, and shown after each card is rated.
         </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={readAloud}
+            onChange={e => setReadAloud(e.target.checked)}
+          />
+          Read card text aloud
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          For text marked with <code>tts</code>, read by this browser's voices. Audio clips play either way.
+        </p>
+        <details style={{ fontSize: 13, marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer' }}>Voices in this browser ({voices.length})</summary>
+          {voices.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', margin: '4px 0 0' }}>This browser lists no voices.</p>
+          ) : (
+            <>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0' }}>
+                Name one in a note, e.g. <code>tts:fr_FR,1,Thomas</code>, to read with it where it is available.
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 240, overflowY: 'auto' }}>
+                {voices.map(voice => (
+                  <li key={voice.voiceURI}>
+                    {voice.name} <span style={{ color: 'var(--text-muted)' }}>({voice.lang}){voice.default ? ', default' : ''}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </details>
       </fieldset>
 
       <fieldset style={{ border: 'none', padding: 0, margin: '24px 0 0' }}>

@@ -28,7 +28,7 @@ export interface GetReviewCardResponse {
   browser_sources?: BrowserRenderSources;
   // Present iff the card asks for its answers to be typed (the cloze key `t`)
   typed_answer?: TypedAnswerInfo;
-  // Present iff the card has audio clips
+  // Present iff the card has audio clips or text to read aloud
   audio?: CardAudio;
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
@@ -56,12 +56,26 @@ export interface TypedAnswerInfo {
   blanks: TypedBlank[];
 }
 
-// Absolute paths of audio clips, fetched from the render assets
+// Text read aloud by the device's voices (see `spares_core/src/parsers/tts.rs`)
+export interface SpeechItem {
+  text: string;
+  // Such as `fr_FR` or `fr-FR`
+  lang?: string;
+  // A multiplier of the voice's rate
+  speed?: number;
+  // The name of a voice
+  voice?: string;
+}
+
+// An audio clip's absolute path, fetched from the render assets, or text to read aloud
+export type AudioItem = string | SpeechItem;
+
+// In the order they appear in the note
 export interface CardAudio {
   // Played when the card is shown
-  front: string[];
+  front: AudioItem[];
   // Played when it is flipped. Clips on the front are not repeated.
-  back: string[];
+  back: AudioItem[];
 }
 
 export interface BrowserRenderSources {

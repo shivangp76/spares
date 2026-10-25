@@ -171,3 +171,12 @@ A link to an audio file is an audio clip. The card shows the link's text, and cl
 How is "bonjour" pronounced? {{ [listen](/Users/me/media/bonjour.mp3) }}
 ```
 Which clips play on each side, and the other rules, are on `spares_core::parsers::audio`. To record a clip in the web app, click **Record audio** above a note's editor (see `spares_core::api::audio`).
+
+## Text to speech
+
+The cloze key `tts` reads a cloze aloud with the device's voices, as Anki's `{{tts}}` does. The note setting `tts` reads the rest of the note too:
+```md
+<!--- # tts: en_US --->
+Good morning in French: {{[tts:fr_FR] bonjour}}
+```
+The value is a language, then optionally a speed and a voice, such as `fr_FR,0.8,Thomas`, or `off`. The web app reads text aloud with the browser's voices, which **Settings** lists and can turn off. `spares card review` uses the `tts_command` of `config.toml`. The rules are on `spares_core::parsers::tts`.

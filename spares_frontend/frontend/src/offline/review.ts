@@ -17,6 +17,7 @@ import {
   pruneOfflineFiles,
   syncOfflineActions,
 } from '../api/client';
+import { clipPaths } from '../audio';
 import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter, ReviewQueueCard } from '../types/spares';
 import { lastReviewWidth, widthInputs } from '../typst/width';
 import { backPath, backWebPath } from '../utils';
@@ -231,7 +232,7 @@ async function downloadCardContent(card: GetReviewCardResponse): Promise<void> {
     // Kept by `fetchFile` for offline use
     await Promise.all(cardFiles(card).map(fetchFile));
     // Kept by `fetchRenderAsset`
-    if (card.audio) await Promise.all([...card.audio.front, ...card.audio.back].map(fetchRenderAsset));
+    if (card.audio) await Promise.all(clipPaths([...card.audio.front, ...card.audio.back]).map(fetchRenderAsset));
     if (card.browser_sources) {
       // Compiling fetches, and keeps, the compiler and the files the sources read
       const { compileTypstInBackground } = await import('../typst/compiler');

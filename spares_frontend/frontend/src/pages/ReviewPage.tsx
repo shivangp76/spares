@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ApiError,
@@ -38,6 +38,7 @@ import {
   syncPendingActions,
   type ActionResult,
 } from '../offline/review';
+import { withoutSpeech } from '../audio';
 import CardInfo from '../components/CardInfo';
 import CardRenderer from '../components/CardRenderer';
 import CodeText from '../components/CodeText';
@@ -58,7 +59,7 @@ import { useRecentSearches } from '../hooks/useRecentSearches';
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from '../help/shortcuts';
 import {
   CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
-  useCardZoom, usePageWidth, usePagesPerRow, useShowReviewTimer, useVimKeybindings,
+  useCardZoom, usePageWidth, usePagesPerRow, useReadAloud, useShowReviewTimer, useVimKeybindings,
 } from '../preferences';
 import { rememberReviewWidth } from '../typst/width';
 import {
@@ -212,6 +213,9 @@ export default function ReviewPage() {
   // What was typed into each blank of the card's typed answer
   const [typedAnswers, setTypedAnswers] = useState<string[]>([]);
   const audioPlayer = useAudioPlayer();
+  // What the card plays, without its text to read aloud if that is turned off
+  const readAloud = useReadAloud();
+  const cardAudio = useMemo(() => (readAloud ? card?.audio : withoutSpeech(card?.audio)), [card, readAloud]);
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [config, setConfig] = useState<ReviewConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -378,18 +382,19 @@ export default function ReviewPage() {
     }
   }, [syncStopwatch]);
 
-  // Autoplays the clips each side shows, as the card is shown and flipped. Replay plays both.
+  // Autoplays the clips and text each side shows, as the card is shown and flipped. Replay plays
+  // both.
   const { play: playAudio, stop: stopAudio } = audioPlayer;
   useEffect(() => {
     if (!card || (phase !== 'front' && phase !== 'back')) { stopAudio(); return; }
-    const clips = phase === 'front' ? card.audio?.front : card.audio?.back;
-    if (clips?.length) playAudio(clips);
+    const items = phase === 'front' ? cardAudio?.front : cardAudio?.back;
+    if (items?.length) playAudio(items);
     else stopAudio();
-  }, [card, phase, playAudio, stopAudio]);
+  }, [card, cardAudio, phase, playAudio, stopAudio]);
   const replayAudio = useCallback(() => {
-    if (!card?.audio) return;
-    playAudio(phase === 'back' ? [...card.audio.front, ...card.audio.back] : card.audio.front);
-  }, [card, phase, playAudio]);
+    if (!cardAudio) return;
+    playAudio(phase === 'back' ? [...cardAudio.front, ...cardAudio.back] : cardAudio.front);
+  }, [cardAudio, phase, playAudio]);
   const playAudioClip = useCallback((path: string) => playAudio([path]), [playAudio]);
 
   const refreshStatistics = useCallback(() => {
@@ -957,7 +962,7 @@ export default function ReviewPage() {
   // Keyboard shortcuts, as listed by the help popup, which ? opens
   const [showKeybindings, setShowKeybindings] = useState(false);
   const cardShown = reviewing && card !== null;
-  const hasAudio = !!card?.audio && (card.audio.front.length > 0 || (phase === 'back' && card.audio.back.length > 0));
+  const hasAudio = !!cardAudio && (cardAudio.front.length > 0 || (phase === 'back' && cardAudio.back.length > 0));
   const pageWidth = usePageWidth();
   function cyclePageWidth() {
     setPageWidth(PAGE_WIDTHS[(PAGE_WIDTHS.indexOf(pageWidth) + 1) % PAGE_WIDTHS.length]);
@@ -1289,7 +1294,7 @@ export default function ReviewPage() {
               </div>
             ) : (
               <>
-                {phase === 'front' && card.audio && <AudioBar audio={card.audio} flipped={false} player={audioPlayer} />}
+                {phase === 'front' && cardAudio && <AudioBar audio={cardAudio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
                   <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} webPath={card.card_front_web_path} version={cardVersion} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
                 </div>
@@ -1299,7 +1304,7 @@ export default function ReviewPage() {
 
           {(phase === 'back' || (frontRendered && !card.cli)) && (
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
-              {phase === 'back' && card.audio && <AudioBar audio={card.audio} flipped player={audioPlayer} />}
+              {phase === 'back' && cardAudio && <AudioBar audio={cardAudio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
                 <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} webPath={backWebPath(card)} version={cardVersion} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
