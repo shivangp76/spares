@@ -108,6 +108,7 @@ use crate::handlers::tag::get_tag_by_name_handler;
 use crate::handlers::tag::get_tag_handler;
 use crate::handlers::tag::list_tags_handler;
 use crate::handlers::tag::rebuild_tag_handler;
+use crate::handlers::tag::rename_tags_handler;
 use crate::handlers::tag::update_tag_handler;
 use crate::handlers::undo::get_latest_note_event_id_handler;
 use crate::handlers::undo::group_events_handler;
@@ -251,6 +252,7 @@ pub(crate) fn create_router(
         .route("/api/tags/{id}", get(get_tag_handler))
         .route("/api/tags/name/{id}", get(get_tag_by_name_handler))
         .route("/api/tags", patch(update_tag_handler))
+        .route("/api/tags/rename", post(rename_tags_handler))
         .route("/api/tags/{id}", delete(delete_tag_handler))
         .route("/api/tags", get(list_tags_handler))
         .route("/api/tags/{id}/rebuild", get(rebuild_tag_handler))

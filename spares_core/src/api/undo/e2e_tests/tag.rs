@@ -7,8 +7,10 @@ use crate::api::note::update_notes;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::tag::create_tag;
 use crate::api::tag::delete_tag;
+use crate::api::tag::rename_tags;
 use crate::api::tag::tests::create_tag_helper;
 use crate::api::tag::update_tag;
+use crate::api::undo::redo_event;
 use crate::api::undo::undo_event;
 use crate::parsers::get_all_parsers;
 use crate::schema::note::CreateNoteRequest;
@@ -18,6 +20,7 @@ use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateTags;
 use crate::schema::tag::TagSelector;
 use crate::schema::tag::UpdateTagRequest;
+use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::UndoEventRequest;
 
 #[sqlx::test]
@@ -115,6 +118,87 @@ async fn e2e_undo_update_tag_restores_previous_name(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(name, "original_tag");
+}
+
+async fn tag_names(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar("SELECT name FROM tag ORDER BY name")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test]
+async fn e2e_undo_rename_tag_subtree_restores_every_name_at_once(pool: SqlitePool) {
+    create_tag_helper(&pool, "math", "").await;
+    create_tag_helper(&pool, "math:calculus", "").await;
+    create_tag_helper(&pool, "math:calculus:limits", "").await;
+    update_tag(
+        &pool,
+        UpdateTagRequest {
+            tag_to_modify: TagSelector::Name("math".to_string()),
+            name: Some("maths".to_string()),
+            description: None,
+            query: None,
+            auto_delete: None,
+            reschedule: None,
+        },
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        tag_names(&pool).await,
+        ["maths", "maths:calculus", "maths:calculus:limits"]
+    );
+
+    let undo = UndoEventRequest {
+        event_id: None,
+        undo_group: true,
+    };
+    let res = undo_event(&pool, undo).await.unwrap().unwrap();
+    assert_eq!(res.undone_events.len(), 3);
+    assert_eq!(
+        tag_names(&pool).await,
+        ["math", "math:calculus", "math:calculus:limits"]
+    );
+
+    let redo = RedoEventRequest {
+        event_id: None,
+        redo_group: true,
+    };
+    redo_event(&pool, redo).await.unwrap().unwrap();
+    assert_eq!(
+        tag_names(&pool).await,
+        ["maths", "maths:calculus", "maths:calculus:limits"]
+    );
+}
+
+#[sqlx::test]
+async fn e2e_undo_tag_move_that_merged_a_subtag(pool: SqlitePool) {
+    create_tag_helper(&pool, "math:calculus", "").await;
+    create_tag_helper(&pool, "math:calculus:limits", "").await;
+    create_tag_helper(&pool, "analysis:calculus:limits", "").await;
+    rename_tags(&pool, "math:calculus", "analysis:calculus", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        tag_names(&pool).await,
+        ["analysis:calculus", "analysis:calculus:limits"]
+    );
+
+    let undo = UndoEventRequest {
+        event_id: None,
+        undo_group: true,
+    };
+    undo_event(&pool, undo).await.unwrap().unwrap();
+    assert_eq!(
+        tag_names(&pool).await,
+        [
+            "analysis:calculus:limits",
+            "math:calculus",
+            "math:calculus:limits"
+        ]
+    );
 }
 
 #[sqlx::test]

@@ -888,6 +888,11 @@ export async function updateTag(req: UpdateTagRequest): Promise<TagResponse> {
   return apiFetch('Update tag', '/api/tags', { method: 'PATCH', body: JSON.stringify(req) });
 }
 
+/** Renames `from` and the tags under it, as one action; moving a tag under another is renaming it. */
+export async function renameTags(from: string, to: string): Promise<TagResponse[]> {
+  return apiFetch('Rename tags', '/api/tags/rename', { method: 'POST', body: JSON.stringify({ from, to }) });
+}
+
 export async function deleteTag(id: number): Promise<void> {
   await apiSend('Delete tag', `/api/tags/${id}`, { method: 'DELETE' });
 }

@@ -97,6 +97,17 @@ pub mod tag {
         pub reschedule: Option<bool>,
     }
 
+    /// Renames a tag and the tags under it. See [`crate::api::tag::rename_tags`].
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RenameTagsRequest {
+        /// The name to rename, which needs no tag of its own when tags are under it, like `math`
+        /// for `math:calculus`.
+        pub from: String,
+        /// The new name, like `maths`, or `analysis:calculus` to move `math:calculus` under
+        /// `analysis`.
+        pub to: String,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct TagResponse {
         pub id: TagId,

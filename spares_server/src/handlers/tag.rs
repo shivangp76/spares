@@ -11,10 +11,12 @@ use spares_core::api::tag::get_tag;
 use spares_core::api::tag::get_tag_by_name;
 use spares_core::api::tag::list_tags;
 use spares_core::api::tag::rebuild_tag;
+use spares_core::api::tag::rename_tags;
 use spares_core::api::tag::update_tag;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::tag::CreateTagRequest;
+use spares_core::schema::tag::RenameTagsRequest;
 use spares_core::schema::tag::UpdateTagRequest;
 
 use crate::AppState;
@@ -57,6 +59,17 @@ pub(crate) async fn update_tag_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_tag_res))
+}
+
+pub(crate) async fn rename_tags_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<RenameTagsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = data.db.clone();
+    let renamed = run_exclusive(async move { rename_tags(&db, &body.from, &body.to, true).await })
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(renamed))
 }
 
 pub(crate) async fn delete_tag_handler(

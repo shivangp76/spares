@@ -8,6 +8,7 @@ use crate::TagErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::undo::insert_events;
+use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::DeletedTag;
@@ -291,16 +292,18 @@ pub async fn update_tag_event(
         auto_delete: payload.auto_delete.map(|t| t.after),
         reschedule: payload.reschedule.map(|t| t.after),
     };
-    update_tag(db, body, log).await
+    // Each tag a subtree rename changed has its own event, so replaying one changes only its tag.
+    update_single_tag(db, body, id, log).await
 }
 
+/// Merges `source_tag` into `target_id`, returning the target and the id of the event logged.
 async fn merge_tag_into(
     db: &SqlitePool,
     source_id: TagId,
     source_tag: &Tag,
     target_id: TagId,
     log: bool,
-) -> Result<TagResponse, Error> {
+) -> Result<(TagResponse, Option<i64>), Error> {
     // Create new note tag associations using previous note tag associations
     sqlx::query(
         r"INSERT OR IGNORE INTO note_tag (note_id, tag_id) SELECT note_id, ? FROM note_tag WHERE tag_id = ?",
@@ -346,9 +349,9 @@ async fn merge_tag_into(
         card_ids,
         review_log_ids: review_ids_with_tag(db, source_id).await?,
     };
-    delete_tag_event(db, delete_payload, log).await?;
+    let event_id = delete_tag_logged(db, delete_payload, log).await?;
 
-    get_tag(db, target_id).await
+    Ok((get_tag(db, target_id).await?, event_id))
 }
 
 /// Notes with tag `id`, whose files list the tag.
@@ -360,12 +363,37 @@ async fn notes_with_tag(db: &SqlitePool, id: TagId) -> Result<Vec<NoteId>, Error
         .map_err(|e| Error::Sqlx { source: e })
 }
 
+/// Updates a tag. Renaming it renames the tags under it too, as [`rename_tags`] does, so renaming
+/// `math` to `maths` also renames `math:calculus` to `maths:calculus`.
 pub async fn update_tag(
     db: &SqlitePool,
     body: UpdateTagRequest,
     log: bool,
 ) -> Result<TagResponse, Error> {
     let id = tag_selector_to_id(db, body.tag_to_modify.clone()).await?;
+    if let Some(ref name) = body.name {
+        let existing_name: String = sqlx::query_scalar(r"SELECT name FROM tag WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        if *name != existing_name {
+            let to = name.clone();
+            let renamed = rename_tags_with(db, &existing_name, &to, Some(body), log).await?;
+            // The tag itself is the shortest name, so it is renamed first.
+            return Ok(renamed.into_iter().next().unwrap());
+        }
+    }
+    update_single_tag(db, body, id, log).await
+}
+
+/// Updates only tag `id`, leaving the tags under it as they are.
+async fn update_single_tag(
+    db: &SqlitePool,
+    body: UpdateTagRequest,
+    id: TagId,
+    log: bool,
+) -> Result<TagResponse, Error> {
     // Renaming, merging or making a tag filtered changes the files of its notes, which list it.
     let affected = if body.name.is_some() || body.query.is_some() {
         notes_with_tag(db, id).await?
@@ -374,15 +402,118 @@ pub async fn update_tag(
     };
     let result = update_tag_inner(db, body, id, log).await;
     notes_vcs::reconcile_after(db, affected, "retag").await;
+    result.map(|(tag, _event_id)| tag)
+}
+
+/// Renames the tag `from` and the tags under it, like `from:calculus`, to `to` and
+/// `to:calculus`. A tag whose new name is taken is merged into the tag with that name. `from`
+/// needs no tag of its own, so `math` can be renamed while only `math:calculus` exists, and
+/// moving a tag to another parent is renaming it, like `math:calculus` to `analysis:calculus`.
+///
+/// Undo reverts the whole rename at once. Returns the tags after the rename, shortest name first.
+pub async fn rename_tags(
+    db: &SqlitePool,
+    from: &str,
+    to: &str,
+    log: bool,
+) -> Result<Vec<TagResponse>, Error> {
+    rename_tags_with(db, from, to, None, log).await
+}
+
+/// [`rename_tags`], applying `root_changes`, the other changes of an [`UpdateTagRequest`], to the
+/// tag named `from`.
+async fn rename_tags_with(
+    db: &SqlitePool,
+    from: &str,
+    to: &str,
+    mut root_changes: Option<UpdateTagRequest>,
+    log: bool,
+) -> Result<Vec<TagResponse>, Error> {
+    let invalid =
+        |message: String| Error::Library(LibraryError::Tag(TagErrorKind::InvalidInput(message)));
+    if to.trim().is_empty() || to.starts_with(':') || to.ends_with(':') {
+        return Err(invalid(format!("`{to}` is not a valid tag name.")));
+    }
+    if to.starts_with(&format!("{from}:")) {
+        return Err(invalid(format!(
+            "Cannot move `{from}` into `{to}`, which is under it."
+        )));
+    }
+    // `;` follows `:`, so these are the names that start with `from:`.
+    let tags: Vec<Tag> = sqlx::query_as(
+        r"SELECT * FROM tag WHERE name = ?1 OR (name > ?1 || ':' AND name < ?1 || ';')
+        ORDER BY length(name), id",
+    )
+    .bind(from)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    if tags.is_empty() {
+        return Err(invalid(format!(
+            "No tag is named `{from}` or starts with `{from}:`."
+        )));
+    }
+    if to == from {
+        return Ok(tags.iter().map(TagResponse::new).collect());
+    }
+
+    let mut affected = Vec::new();
+    for tag in &tags {
+        affected.extend(notes_with_tag(db, tag.id).await?);
+    }
+    let result = rename_tags_inner(db, from, to, &tags, &mut root_changes, log).await;
+    notes_vcs::reconcile_after(db, affected, "retag").await;
     result
 }
 
+async fn rename_tags_inner(
+    db: &SqlitePool,
+    from: &str,
+    to: &str,
+    tags: &[Tag],
+    root_changes: &mut Option<UpdateTagRequest>,
+    log: bool,
+) -> Result<Vec<TagResponse>, Error> {
+    let mut renamed = Vec::with_capacity(tags.len());
+    let mut event_ids = Vec::new();
+    for tag in tags {
+        let name = format!("{to}{}", &tag.name[from.len()..]);
+        let body = match root_changes.take_if(|_| tag.name == from) {
+            Some(changes) => UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(tag.id),
+                name: Some(name),
+                ..changes
+            },
+            None => UpdateTagRequest {
+                tag_to_modify: TagSelector::Id(tag.id),
+                name: Some(name),
+                description: None,
+                query: None,
+                auto_delete: None,
+                reschedule: None,
+            },
+        };
+        let (response, event_id) = update_tag_inner(db, body, tag.id, log).await?;
+        renamed.push(response);
+        event_ids.extend(event_id);
+    }
+    if let Some((&leader, others)) = event_ids.split_first()
+        && !others.is_empty()
+    {
+        for &other in others {
+            join_event_group(db, leader, other).await?;
+        }
+    }
+    Ok(renamed)
+}
+
+/// Updates tag `id`, returning it and the id of the event logged.
 async fn update_tag_inner(
     db: &SqlitePool,
     body: UpdateTagRequest,
     id: TagId,
     log: bool,
-) -> Result<TagResponse, Error> {
+) -> Result<(TagResponse, Option<i64>), Error> {
     let existing_tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -469,16 +600,17 @@ async fn update_tag_inner(
                 after: updated_tag.reschedule,
             }),
         };
-        let _event_id = insert_events(
+        let event_ids = insert_events(
             db,
             &[(EventType::UpdateTag, to_value(&payload).unwrap())],
             Utc::now(),
             None,
         )
         .await?;
+        return Ok((tag_response, event_ids.first().copied()));
     }
 
-    Ok(tag_response)
+    Ok((tag_response, None))
 }
 
 pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
@@ -529,6 +661,17 @@ pub async fn delete_tag_event(
     payload: DeleteTagPayload,
     log: bool,
 ) -> Result<(), Error> {
+    delete_tag_logged(db, payload, log)
+        .await
+        .map(|_event_id| ())
+}
+
+/// [`delete_tag_event`], returning the id of the event logged.
+async fn delete_tag_logged(
+    db: &SqlitePool,
+    payload: DeleteTagPayload,
+    log: bool,
+) -> Result<Option<i64>, Error> {
     let id = payload.id.ok_or_else(|| {
         Error::Library(LibraryError::InvalidConfig(
             "DeleteTagPayload missing id".to_string(),
@@ -540,17 +683,17 @@ pub async fn delete_tag_event(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    if log {
-        let _event_id = insert_events(
-            db,
-            &[(EventType::DeleteTag, to_value(&payload).unwrap())],
-            Utc::now(),
-            None,
-        )
-        .await?;
+    if !log {
+        return Ok(None);
     }
-
-    Ok(())
+    let event_ids = insert_events(
+        db,
+        &[(EventType::DeleteTag, to_value(&payload).unwrap())],
+        Utc::now(),
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
 }
 
 pub async fn list_tags(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<TagResponse>, Error> {
@@ -704,6 +847,93 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert!(source_gone.is_none());
+    }
+
+    async fn tag_names(pool: &SqlitePool) -> Vec<String> {
+        sqlx::query_scalar(r"SELECT name FROM tag ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn renaming_a_tag_renames_the_tags_under_it(pool: SqlitePool) {
+        let math = create_tag_helper(&pool, "math", "numbers").await;
+        create_tag_helper(&pool, "math:calculus", "limits").await;
+        create_tag_helper(&pool, "mathematics", "").await;
+        create_tag_helper(&pool, "math-history", "").await;
+        let request = UpdateTagRequest {
+            tag_to_modify: TagSelector::Id(math.id),
+            name: Some("maths".to_string()),
+            description: Some("still numbers".to_string()),
+            query: None,
+            auto_delete: None,
+            reschedule: None,
+        };
+        let renamed = update_tag(&pool, request, true).await.unwrap();
+        assert_eq!(renamed.id, math.id);
+        assert_eq!(renamed.name, "maths");
+        assert_eq!(renamed.description, "still numbers");
+        assert_eq!(
+            tag_names(&pool).await,
+            ["math-history", "mathematics", "maths", "maths:calculus"]
+        );
+        // The other changes are only for the tag itself.
+        let calculus = get_tag_by_name(&pool, "maths:calculus").await.unwrap();
+        assert_eq!(calculus.description, "limits");
+        // One action, in one group led by the tag's own rename.
+        let groups: Vec<Option<i64>> =
+            sqlx::query_scalar(r"SELECT group_id FROM event ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups[0].is_some() && groups.iter().all(|g| *g == groups[0]));
+    }
+
+    #[sqlx::test]
+    async fn rename_tags_renames_an_ancestor_with_no_tag_of_its_own(pool: SqlitePool) {
+        create_tag_helper(&pool, "math:calculus", "").await;
+        create_tag_helper(&pool, "math:algebra", "").await;
+        let renamed = rename_tags(&pool, "math", "maths", false).await.unwrap();
+        assert_eq!(renamed.len(), 2);
+        assert_eq!(tag_names(&pool).await, ["maths:algebra", "maths:calculus"]);
+
+        // Moving to the top level drops the parent.
+        rename_tags(&pool, "maths:algebra", "algebra", false)
+            .await
+            .unwrap();
+        assert_eq!(tag_names(&pool).await, ["algebra", "maths:calculus"]);
+    }
+
+    #[sqlx::test]
+    async fn rename_tags_refuses_bad_names(pool: SqlitePool) {
+        create_tag_helper(&pool, "math", "").await;
+        create_tag_helper(&pool, "math:calculus", "").await;
+        assert!(
+            rename_tags(&pool, "math", "math:calculus:math", false)
+                .await
+                .is_err()
+        );
+        assert!(rename_tags(&pool, "math", "", false).await.is_err());
+        assert!(rename_tags(&pool, "math", "maths:", false).await.is_err());
+        assert!(rename_tags(&pool, "physics", "maths", false).await.is_err());
+        assert_eq!(tag_names(&pool).await, ["math", "math:calculus"]);
+    }
+
+    #[sqlx::test]
+    async fn rename_tags_merges_a_subtag_whose_name_is_taken(pool: SqlitePool) {
+        create_tag_helper(&pool, "math:calculus", "").await;
+        let taken = create_tag_helper(&pool, "analysis:calculus", "").await;
+        create_tag_helper(&pool, "math:calculus:limits", "").await;
+        let renamed = rename_tags(&pool, "math:calculus", "analysis:calculus", false)
+            .await
+            .unwrap();
+        assert_eq!(renamed[0].id, taken.id);
+        assert_eq!(
+            tag_names(&pool).await,
+            ["analysis:calculus", "analysis:calculus:limits"]
+        );
     }
 
     #[sqlx::test]

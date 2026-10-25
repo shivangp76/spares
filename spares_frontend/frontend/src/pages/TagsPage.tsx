@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ApiError, createTag, deleteTag, listTags, rebuildTag, updateTag } from '../api/client';
+import { ApiError, createTag, deleteTag, listTags, rebuildTag, renameTags, updateTag } from '../api/client';
 import Navbar from '../components/Navbar';
 import Pagination from '../components/Pagination';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
@@ -58,6 +58,34 @@ const treeToggle: React.CSSProperties = {
   color: 'var(--text-muted)', font: 'inherit', fontSize: 11, cursor: 'pointer',
 };
 
+/** How many tags are under `name`, like `math:calculus` under `math` */
+function subtagCount(names: string[], name: string): number {
+  return names.filter(n => n.startsWith(`${name}:`)).length;
+}
+
+/** The last part of a tag's name, which moving it to another parent keeps */
+function leafName(name: string): string {
+  return name.slice(name.lastIndexOf(':') + 1);
+}
+
+/** Where dropping `dragged` on `target` (or on the top level, for `null`) moves it, if anywhere */
+function moveTarget(dragged: string, target: string | null): string | null {
+  if (target === dragged || target?.startsWith(`${dragged}:`)) return null;
+  const to = target === null ? leafName(dragged) : `${target}:${leafName(dragged)}`;
+  return to === dragged ? null : to;
+}
+
+interface TreeActions {
+  /** Full name of the node being renamed */
+  renaming: string | null;
+  setRenaming: (fullName: string | null) => void;
+  /** Full name of the node being dragged */
+  dragging: string | null;
+  setDragging: (fullName: string | null) => void;
+  /** Renames `from` and the tags under it */
+  rename: (from: string, to: string) => Promise<void>;
+}
+
 interface TagTreeProps {
   node: TreeNode;
   path: string;
@@ -65,9 +93,29 @@ interface TagTreeProps {
   /** Full names of the nodes whose children are hidden */
   collapsed: Set<string>;
   onToggle: (fullName: string) => void;
+  actions: TreeActions;
 }
 
-function TagTree({ node, path, tagsByName, collapsed, onToggle }: TagTreeProps) {
+function RenameInput({ fullName, actions }: { fullName: string; actions: TreeActions }) {
+  const [value, setValue] = useState(fullName);
+  return (
+    <input
+      autoFocus
+      value={value}
+      aria-label={`New name for ${fullName}`}
+      onChange={e => setValue(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') void actions.rename(fullName, value.trim());
+        if (e.key === 'Escape') actions.setRenaming(null);
+      }}
+      onBlur={() => actions.setRenaming(null)}
+      style={{ ...input, padding: '1px 6px', minWidth: 240 }}
+    />
+  );
+}
+
+function TagTree({ node, path, tagsByName, collapsed, onToggle, actions }: TagTreeProps) {
+  const [dropOn, setDropOn] = useState<string | null>(null);
   const keys = [...node.children.keys()].sort();
   return (
     <ul style={{ listStyle: 'none', paddingLeft: path ? 20 : 0, margin: 0 }}>
@@ -77,29 +125,70 @@ function TagTree({ node, path, tagsByName, collapsed, onToggle }: TagTreeProps) 
         const child = node.children.get(key)!;
         const hasChildren = child.children.size > 0;
         const isCollapsed = collapsed.has(fullName);
+        const canDrop = actions.dragging !== null && moveTarget(actions.dragging, fullName) !== null;
         return (
           <li key={key} style={{ fontSize: 14, lineHeight: 1.8 }}>
-            {hasChildren ? (
-              <button
-                onClick={() => onToggle(fullName)}
-                aria-expanded={!isCollapsed}
-                aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${fullName}`}
-                className="tap-area"
-                style={treeToggle}
-              >
-                {isCollapsed ? '▶' : '▼'}
-              </button>
-            ) : (
-              <span style={{ display: 'inline-block', width: 18, marginRight: 2 }} />
-            )}
-            <span style={{ color: tag ? undefined : 'var(--text-faint)' }}>{key || '(empty)'}</span>
-            {tag && (
+            <div
+              draggable={actions.renaming !== fullName}
+              onDragStart={e => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', fullName);
+                actions.setDragging(fullName);
+              }}
+              onDragEnd={() => { actions.setDragging(null); setDropOn(null); }}
+              onDragOver={e => {
+                if (!canDrop) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                setDropOn(fullName);
+              }}
+              onDragLeave={() => setDropOn(prev => (prev === fullName ? null : prev))}
+              onDrop={e => {
+                e.preventDefault();
+                setDropOn(null);
+                const dragged = actions.dragging;
+                const to = dragged && moveTarget(dragged, fullName);
+                actions.setDragging(null);
+                if (dragged && to) void actions.rename(dragged, to);
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', borderRadius: 4,
+                cursor: actions.renaming === fullName ? undefined : 'grab',
+                outline: dropOn === fullName ? '2px dashed var(--accent)' : undefined,
+              }}
+            >
+              {hasChildren ? (
+                <button
+                  onClick={() => onToggle(fullName)}
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${fullName}`}
+                  className="tap-area"
+                  style={treeToggle}
+                >
+                  {isCollapsed ? '▶' : '▼'}
+                </button>
+              ) : (
+                <span style={{ display: 'inline-block', width: 18, marginRight: 2 }} />
+              )}
+              {actions.renaming === fullName ? (
+                <RenameInput fullName={fullName} actions={actions} />
+              ) : (
+                <span style={{ color: tag ? undefined : 'var(--text-faint)' }}>{key || '(empty)'}</span>
+              )}
               <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
-                #{tag.id}{tag.query !== null && ' · filtered'} · <Link to={reviewLink(tag)}>Review</Link>
+                {tag && <>#{tag.id}{tag.query !== null && ' · filtered'} · <Link to={reviewLink(tag)}>Review</Link> · </>}
+                <button
+                  onClick={() => actions.setRenaming(fullName)}
+                  title={hasChildren ? 'Rename, with the tags under it' : 'Rename'}
+                  style={{ ...smallButton, padding: 0, border: 'none', background: 'none', color: 'var(--link)', textDecoration: 'underline', cursor: 'pointer' }}
+                >
+                  Rename
+                </button>
               </span>
-            )}
+            </div>
             {hasChildren && !isCollapsed && (
-              <TagTree node={child} path={fullName} tagsByName={tagsByName} collapsed={collapsed} onToggle={onToggle} />
+              <TagTree node={child} path={fullName} tagsByName={tagsByName} collapsed={collapsed} onToggle={onToggle} actions={actions} />
             )}
           </li>
         );
@@ -108,8 +197,39 @@ function TagTree({ node, path, tagsByName, collapsed, onToggle }: TagTreeProps) 
   );
 }
 
+/** Where a dragged tag is dropped to move it to the top level. Always shown, so that starting a
+    drag doesn't move the tree out from under the pointer. */
+function TopLevelDropZone({ actions }: { actions: TreeActions }) {
+  const [over, setOver] = useState(false);
+  const to = actions.dragging && moveTarget(actions.dragging, null);
+  return (
+    <div
+      onDragOver={e => {
+        if (!to) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => {
+        e.preventDefault();
+        setOver(false);
+        const dragged = actions.dragging;
+        actions.setDragging(null);
+        if (dragged && to) void actions.rename(dragged, to);
+      }}
+      style={{
+        border: `2px dashed ${over ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius: 6, padding: 8, marginBottom: 8, fontSize: 13, color: to ? 'var(--text-secondary)' : 'var(--text-faint)', textAlign: 'center',
+      }}
+    >
+      {to ? <>Drop here to move to the top level, as <code>{to}</code></> : 'Drag a tag here to move it to the top level'}
+    </div>
+  );
+}
+
 /** Creates a tag, or edits one, sending only the fields that changed (as `tag edit` does). */
-function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved: (tag: TagResponse) => void; onCancel: () => void }) {
+function TagForm({ tag, subtags, onSaved, onCancel }: { tag: TagResponse | null; subtags: number; onSaved: (tag: TagResponse) => void; onCancel: () => void }) {
   const [name, setName] = useState(tag?.name ?? '');
   const [description, setDescription] = useState(tag?.description ?? '');
   const [query, setQuery] = useState(tag?.query ?? '');
@@ -158,6 +278,14 @@ function TagForm({ tag, onSaved, onCancel }: { tag: TagResponse | null; onSaved:
       <div className="label-grid" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center', fontSize: 14 }}>
         <label htmlFor="tag-name">Name</label>
         <input id="tag-name" autoFocus value={name} onChange={e => setName(e.target.value)} onKeyDown={handleKeyDown} placeholder="e.g. math:algebra" style={input} />
+        {tag && name !== tag.name && subtags > 0 && (
+          <>
+            <span />
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Also renames the {subtags === 1 ? 'tag' : `${subtags} tags`} under it, like <code>{name}:…</code>
+            </span>
+          </>
+        )}
         <label htmlFor="tag-description">Description</label>
         <input id="tag-description" value={description} onChange={e => setDescription(e.target.value)} onKeyDown={handleKeyDown} style={input} />
         <label htmlFor="tag-query">Query</label>
@@ -236,7 +364,29 @@ export default function TagsPage() {
     }
   }
 
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+
+  async function rename(from: string, to: string) {
+    setRenaming(null);
+    if (!to || to === from) return;
+    try {
+      await renameTags(from, to);
+      setStatus(`Renamed \`${from}\` to \`${to}\`.`);
+    } catch (e) {
+      setStatus(errorMessage(e));
+    }
+    load();
+  }
+
   function onSaved(saved: TagResponse) {
+    // A rename also renames the tags under it, and a merge deletes the tag, so read them again.
+    if (editing?.tag && (saved.id !== editing.tag.id || saved.name !== editing.tag.name)) {
+      load();
+      setStatus(`Tag \`${saved.name}\` saved.`);
+      setEditing(null);
+      return;
+    }
     setTags(prev => {
       if (!prev) return prev;
       return prev.some(t => t.id === saved.id) ? prev.map(t => (t.id === saved.id ? saved : t)) : [...prev, saved];
@@ -252,6 +402,8 @@ export default function TagsPage() {
       return next;
     });
   }
+
+  const treeActions: TreeActions = { renaming, setRenaming, dragging, setDragging, rename };
 
   const needle = filter.trim().toLowerCase();
   const found = (tags ?? []).filter(t => !needle || t.name.toLowerCase().includes(needle));
@@ -290,19 +442,34 @@ export default function TagsPage() {
         <button onClick={() => setEditing({ tag: null })} className="touch-target-small" style={{ marginLeft: 'auto' }}>New tag</button>
       </div>
 
-      {editing && <TagForm key={editing.tag?.id ?? 'new'} tag={editing.tag} onSaved={onSaved} onCancel={() => setEditing(null)} />}
+      {editing && (
+        <TagForm
+          key={editing.tag?.id ?? 'new'}
+          tag={editing.tag}
+          subtags={editing.tag ? subtagCount((tags ?? []).map(t => t.name), editing.tag.name) : 0}
+          onSaved={onSaved}
+          onCancel={() => setEditing(null)}
+        />
+      )}
       {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
       {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
       {!tags && !error && <div>Loading…</div>}
 
       {tags && view === 'tree' && (
-        <TagTree
-          node={buildTree(found.map(t => t.name))}
-          path=""
-          tagsByName={new Map(tags.map(t => [t.name, t]))}
-          collapsed={collapsed}
-          onToggle={toggleCollapsed}
-        />
+        <>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0 }}>
+            Drag a tag onto another to move it there. Renaming or moving a tag takes the tags under it along.
+          </p>
+          <TopLevelDropZone actions={treeActions} />
+          <TagTree
+            node={buildTree(found.map(t => t.name))}
+            path=""
+            tagsByName={new Map(tags.map(t => [t.name, t]))}
+            collapsed={collapsed}
+            onToggle={toggleCollapsed}
+            actions={treeActions}
+          />
+        </>
       )}
 
       {tags && view === 'table' && (

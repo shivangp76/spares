@@ -166,6 +166,8 @@ pub(crate) enum TagCommands {
         /// Name of the tag to modify
         #[arg(long, required_unless_present = "id", conflicts_with = "id")]
         tag_name: Option<String>,
+        /// New name. The tags under the tag are renamed too, so renaming `math` to `maths` also
+        /// renames `math:calculus` to `maths:calculus`.
         #[arg(short, long)]
         name: Option<String>,
         #[arg(short, long)]

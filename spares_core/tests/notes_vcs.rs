@@ -16,6 +16,7 @@ use spares_core::api::note::get_note;
 use spares_core::api::note::update_notes;
 use spares_core::api::parser::create_parser;
 use spares_core::api::tag::create_tag;
+use spares_core::api::tag::rename_tags;
 use spares_core::api::tag::update_tag;
 use spares_core::api::undo::undo_event;
 use spares_core::model::NoteId;
@@ -871,6 +872,14 @@ async fn test_undo_and_tag_rename_commit(pool: SqlitePool) {
         format!("spares: retag notes {}, {}", ids[0], ids[1])
     );
     assert!(read(&note_path(&repo(), ids[0])).contains("tags: renamed"));
+    assert_eq!(status(&repo()), "");
+
+    // Renaming an ancestor rewrites the notes of the tags under it.
+    rename_tags(&pool, "renamed", "group:renamed", true)
+        .await
+        .unwrap();
+    rename_tags(&pool, "group", "set", true).await.unwrap();
+    assert!(read(&note_path(&repo(), ids[0])).contains("tags: set:renamed"));
     assert_eq!(status(&repo()), "");
 }
 
