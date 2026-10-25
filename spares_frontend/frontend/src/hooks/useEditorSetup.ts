@@ -3,15 +3,17 @@ import { vim } from '@replit/codemirror-vim';
 import { EditorView, type Extension } from '@uiw/react-codemirror';
 import { imageUpload } from '../imageUpload';
 import { clozeHighlighting, loadLanguage, type NoteSyntax, noteSyntax } from '../editorLanguages';
-import { useEditorFont, useEditorFontSize, useVimKeybindings } from '../preferences';
+import {
+  useEditorFont, useEditorFontSize, useEditorLineNumbers, useLineWrapping, useVimKeybindings,
+} from '../preferences';
 import { useMediaQuery } from './useMediaQuery';
 
 /** What the note editors do beyond typing, for their Syntax popup. */
 export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded and inserted at that spot.'];
 
 /** CodeMirror extensions and line numbers for the note editors, following the editor settings. On
-    phones, lines wrap instead of scrolling sideways, and line numbers are left out to give the
-    text the width. `dataExtensions`, for the note's data, also highlight the syntax of the note's
+    phones, line numbers are left out to give the text the width, and lines wrap unless turned
+    off. `dataExtensions`, for the note's data, also highlight the syntax of the note's
     parser and its clozes. The parser's language is loaded on demand, so its highlighting appears
     once loaded. With `imageParserId`, images pasted or dropped into the data are uploaded and
     inserted in that parser's syntax. */
@@ -19,6 +21,8 @@ export function useEditorSetup(parserName?: string | null, imageParserId?: numbe
   const vimEnabled = useVimKeybindings();
   const fontSize = useEditorFontSize();
   const font = useEditorFont();
+  const wrapping = useLineWrapping();
+  const lineNumbers = useEditorLineNumbers();
   const isNarrow = useMediaQuery('(max-width: 640px)');
   const syntax = noteSyntax(parserName);
   const [language, setLanguage] = useState<{ syntax: NoteSyntax; extension: Extension } | null>(null);
@@ -36,13 +40,13 @@ export function useEditorSetup(parserName?: string | null, imageParserId?: numbe
 
   const extensions = useMemo(() => [
     ...(vimEnabled ? [vim()] : []),
-    ...(isNarrow ? [EditorView.lineWrapping] : []),
+    ...(wrapping === 'always' || (wrapping === 'phones' && isNarrow) ? [EditorView.lineWrapping] : []),
     EditorView.theme({
       '&': { fontSize: `${fontSize}px` },
       // CodeMirror's own theme sets a monospace font here
       ...(font === 'interface' ? { '.cm-scroller': { fontFamily: 'inherit' } } : {}),
     }),
-  ], [vimEnabled, isNarrow, fontSize, font]);
+  ], [vimEnabled, isNarrow, fontSize, font, wrapping]);
   const dataExtensions = useMemo(() => {
     const images = imageParserId == null ? [] : [imageUpload(imageParserId)];
     if (syntax === null) return [...extensions, ...images];
@@ -50,5 +54,5 @@ export function useEditorSetup(parserName?: string | null, imageParserId?: numbe
     const extension = language?.syntax === syntax ? [language.extension] : [];
     return [...extensions, ...extension, clozeHighlighting(syntax), ...images];
   }, [extensions, syntax, language, imageParserId]);
-  return { extensions, dataExtensions, lineNumbers: !isNarrow };
+  return { extensions, dataExtensions, lineNumbers: lineNumbers && !isNarrow };
 }

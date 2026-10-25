@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
-  CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
-  setEditorFont, setEditorFontSize, setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom, useEditorFont,
-  useEditorFontSize, usePageWidth, usePagesPerRow, useReadAloud, useShowReviewTimer, useVimKeybindings,
+  CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, LINE_WRAPPING_LABELS, LINE_WRAPPINGS, PAGE_WIDTH_LABELS,
+  PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setEditorFont, setEditorFontSize, setEditorLineNumbers,
+  setLineWrapping, setPageWidth, setPagesPerRow, setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom,
+  useEditorFont, useEditorFontSize, useEditorLineNumbers, useLineWrapping, usePageWidth, usePagesPerRow, useReadAloud,
+  useShowReviewTimer, useVimKeybindings,
   type CardZoom, type EditorFontSize,
 } from '../preferences';
 import {
@@ -51,6 +53,8 @@ export default function SettingsPage() {
   const vimKeybindings = useVimKeybindings();
   const editorFontSize = useEditorFontSize();
   const editorFont = useEditorFont();
+  const lineWrapping = useLineWrapping();
+  const editorLineNumbers = useEditorLineNumbers();
   const pageWidth = usePageWidth();
   const cardZoom = useCardZoom();
   const pagesPerRow = usePagesPerRow();
@@ -233,6 +237,35 @@ export default function SettingsPage() {
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           For the note editor&apos;s text, tags and keywords. The typed answer box while reviewing is unchanged.
+        </p>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
+          <span>Wrap long lines:</span>
+          {LINE_WRAPPINGS.map(wrapping => (
+            <label key={wrapping} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="line-wrapping"
+                value={wrapping}
+                checked={lineWrapping === wrapping}
+                onChange={() => setLineWrapping(wrapping)}
+              />
+              {LINE_WRAPPING_LABELS[wrapping]}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Lines that aren&apos;t wrapped scroll sideways.
+        </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={editorLineNumbers}
+            onChange={e => setEditorLineNumbers(e.target.checked)}
+          />
+          Line numbers beside the note&apos;s text
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Never on phones, to give the text the width.
         </p>
       </fieldset>
     </div>

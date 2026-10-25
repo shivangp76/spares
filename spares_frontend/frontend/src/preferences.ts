@@ -143,6 +143,20 @@ const editorFont = choicePreference<EditorFont>('spares_editor_font', EDITOR_FON
 export const setEditorFont = editorFont.set;
 export const useEditorFont = editorFont.use;
 
+export const LINE_WRAPPINGS = ['phones', 'always', 'never'] as const;
+export type LineWrapping = typeof LINE_WRAPPINGS[number];
+export const LINE_WRAPPING_LABELS: Record<LineWrapping, string> = { phones: 'On Phones', always: 'Always', never: 'Never' };
+/** When the note editors wrap long lines rather than scrolling sideways. */
+const lineWrapping = choicePreference<LineWrapping>('spares_editor_line_wrapping', LINE_WRAPPINGS, 'phones');
+export const setLineWrapping = lineWrapping.set;
+export const useLineWrapping = lineWrapping.use;
+
+/** Whether the note editor shows line numbers beside the note's text. Never on phones, which need
+    the width for the text. */
+const editorLineNumbers = booleanPreference('spares_editor_line_numbers', () => true);
+export const setEditorLineNumbers = editorLineNumbers.set;
+export const useEditorLineNumbers = editorLineNumbers.use;
+
 export const PAGE_WIDTHS = ['normal', 'wide', 'full'] as const;
 export type PageWidth = typeof PAGE_WIDTHS[number];
 export const PAGE_WIDTH_LABELS: Record<PageWidth, string> = { normal: 'Normal', wide: 'Wide', full: 'Full Screen' };
