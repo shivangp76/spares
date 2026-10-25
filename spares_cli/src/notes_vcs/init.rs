@@ -27,8 +27,13 @@ const LOCAL_EDITS_MESSAGE: &str =
 /// jj 0.30 is the first version that pushes by running `git`, so the server's hooks run.
 const MIN_JJ_VERSION: (u32, u32) = (0, 30);
 
-/// Aliases added to the clone's jj config. See the workflow docs.
-const JJ_ALIASES: &str = r#"
+/// Delimit the aliases in the clone's jj config, so `--repair-hooks` can replace them.
+const JJ_ALIASES_BEGIN: &str =
+    "# BEGIN spares aliases (rewritten by `spares note init-vcs --repair-hooks`)";
+const JJ_ALIASES_END: &str = "# END spares aliases";
+
+/// The aliases as versions before [`JJ_ALIASES_BEGIN`] wrote them, to replace
+const OLD_JJ_ALIASES: &str = r#"
 [aliases]
 # Fetch spares' changes and rebase your work (the current branch, or the given revision's) onto them
 spares-pull = ["util", "exec", "--", "sh", "-c", '''
@@ -52,6 +57,106 @@ spares-push = ["util", "exec", "--", "sh", "-c", '''
   jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
 ''', "spares-push"]
 "#;
+
+/// Aliases added to the clone's jj config, running `spares` as `spares_command`. See the workflow
+/// docs.
+fn jj_aliases(spares_command: &str) -> String {
+    let aliases = r#"[aliases]
+# Fetch spares' changes and rebase your work (the current branch, or the given revision's) onto them
+spares-pull = ["util", "exec", "--", "sh", "-c", '''
+  jj git fetch && jj rebase -b "${1:-@}" -d main@origin
+''', "spares-pull"]
+# Push a revision (default: @, or @- when @ is empty and not a merge) to spares
+spares-push = ["util", "exec", "--", "sh", "-c", '''
+  set -e
+  rev="${1:-@}"
+  # An empty merge, as `jj new main@origin anki@origin` makes, is pushed itself
+  if [ "$rev" = @ ] && [ -n "$(jj log --no-graph -r '@ & empty() & ~merges()' -T '"x"')" ]; then rev=@-; fi
+  jj git fetch
+  if [ -z "$(jj log --no-graph -r "main@origin & ::($rev)" -T '"x"')" ]; then
+    echo "spares has newer notes; run 'jj spares-pull' first" >&2; exit 1
+  fi
+  if [ -n "$(jj log --no-graph -r "conflicts() & (main@origin..($rev))" -T '"x"')" ]; then
+    echo "resolve the conflicts first (jj log -r 'conflicts()')" >&2; exit 1
+  fi
+  # Checked above to be on top of spares' `main`, so moving the local bookmark anywhere is safe
+  jj bookmark set main --allow-backwards -r "$rev"
+  # A rejected push must not leave the local `main` on the rejected commit
+  jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
+''', "spares-push"]
+# Update `anki` with Anki's notes and fetch it
+spares-anki-pull = ["util", "exec", "--", "sh", "-c", '''
+  set -e
+  @SPARES@ note anki-refresh
+  jj git fetch
+  jj bookmark track anki@origin >/dev/null 2>&1 || true
+''', "spares-anki-pull"]
+# Write a revision (default: @, or @- when @ is empty and not a merge) to Anki by pushing it to `anki`
+spares-anki-push = ["util", "exec", "--", "sh", "-c", '''
+  set -e
+  rev="${1:-@}"
+  # An empty merge, as `jj new main@origin anki@origin` makes, is pushed itself
+  if [ "$rev" = @ ] && [ -n "$(jj log --no-graph -r '@ & empty() & ~merges()' -T '"x"')" ]; then rev=@-; fi
+  @SPARES@ note anki-refresh
+  jj git fetch
+  jj bookmark track anki@origin >/dev/null 2>&1 || true
+  if [ -z "$(jj log --no-graph -r "anki@origin & ::($rev)" -T '"x"')" ]; then
+    echo "the revision is not on top of anki@origin, or Anki has newer notes; merge anki@origin into it first" >&2; exit 1
+  fi
+  if [ -n "$(jj log --no-graph -r "conflicts() & (anki@origin..($rev))" -T '"x"')" ]; then
+    echo "resolve the conflicts first (jj log -r 'conflicts()')" >&2; exit 1
+  fi
+  jj bookmark set anki --allow-backwards -r "$rev"
+  jj git push -b anki || { jj bookmark set anki --allow-backwards -r anki@origin >/dev/null 2>&1; exit 1; }
+''', "spares-anki-push"]
+"#;
+    format!(
+        "{JJ_ALIASES_BEGIN}\n{}{JJ_ALIASES_END}\n",
+        aliases.replace("@SPARES@", spares_command)
+    )
+}
+
+/// `config` with the spares aliases replaced by `aliases`, or added. `None` if it has aliases
+/// spares did not write, which are left alone.
+fn with_jj_aliases(config: &str, aliases: &str) -> Option<String> {
+    if let (Some(start), Some(end)) = (config.find(JJ_ALIASES_BEGIN), config.find(JJ_ALIASES_END))
+        && start < end
+    {
+        let end = end + JJ_ALIASES_END.len();
+        let end = if config[end..].starts_with('\n') {
+            end + 1
+        } else {
+            end
+        };
+        let mut config = config.to_string();
+        config.replace_range(start..end, aliases);
+        return Some(config);
+    }
+    if config.contains(OLD_JJ_ALIASES) {
+        return Some(config.replacen(OLD_JJ_ALIASES, &format!("\n{aliases}"), 1));
+    }
+    if config.contains("spares-push") {
+        return None;
+    }
+    Some(format!("{config}\n{aliases}"))
+}
+
+/// `--repair-hooks`: rewrites the hooks, and the jj aliases of a jj clone.
+fn repair(dirs: &Dirs, base_url: &str) -> Result<(), Error> {
+    if !dirs.repo.join(".git").exists() {
+        return Err(miette!(
+            "{} does not exist; run `spares note init-vcs` first",
+            dirs.repo.display()
+        ));
+    }
+    install_hooks(&dirs.repo, base_url)?;
+    println!("Rewrote the hooks in {}", dirs.repo.display());
+    if dirs.notes.join(".jj").exists() {
+        setup_jj(&dirs.notes, &spares_command(base_url)?)?;
+        println!("Rewrote the jj aliases of {}", dirs.notes.display());
+    }
+    Ok(())
+}
 
 struct Dirs {
     data: PathBuf,
@@ -98,15 +203,7 @@ pub(crate) async fn init_vcs(
     }
 
     if repair_hooks {
-        if !dirs.repo.join(".git").exists() {
-            return Err(miette!(
-                "{} does not exist; run `spares note init-vcs` first",
-                dirs.repo.display()
-            ));
-        }
-        install_hooks(&dirs.repo, base_url)?;
-        println!("Rewrote the hooks in {}", dirs.repo.display());
-        return Ok(());
+        return repair(&dirs, base_url);
     }
 
     if let Some(origin) = clone_origin(&dirs.notes) {
@@ -158,7 +255,7 @@ pub(crate) async fn init_vcs(
             .args(["git", "clone", "--colocate"])
             .arg(&dirs.repo)
             .arg(&dirs.clone_tmp))?;
-        setup_jj(&dirs.clone_tmp)?;
+        setup_jj(&dirs.clone_tmp, &spares_command(base_url)?)?;
     } else {
         run(git_command()
             .args(["clone", "-q"])
@@ -315,15 +412,27 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Writes the hooks and the repository settings that make a push an import. The hooks carry this
-/// instance's address and data directory, so a push from a shell with other settings cannot reach
-/// another spares instance.
-fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
+/// This spares binary, run against this instance: its address and data directory are fixed, so a
+/// shell with other settings cannot reach another spares instance.
+fn spares_command(base_url: &str) -> Result<String, Error> {
     let exe = std::env::current_exe().map_err(|e| miette!("{}", e))?;
     let exe = exe.canonicalize().unwrap_or(exe);
     let socket_address = base_url.trim_start_matches("http://");
     let data_dir = get_data_dir();
     let data_dir = data_dir.canonicalize().unwrap_or(data_dir);
+    Ok(format!(
+        "env SPARES_SOCKET_ADDRESS={} SPARES_DATA_DIR={} {}",
+        shell_quote(socket_address),
+        shell_quote(&data_dir.to_string_lossy()),
+        shell_quote(&exe.to_string_lossy()),
+    ))
+}
+
+/// Writes the hooks and the repository settings that make a push an import. The hooks carry this
+/// instance's address and data directory, so a push from a shell with other settings cannot reach
+/// another spares instance.
+fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
+    let spares = spares_command(base_url)?;
     let hooks_dir = repo.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).map_err(|e| miette!("{}", e))?;
     for (hook, phase) in [
@@ -335,10 +444,7 @@ fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
         let script = format!(
             "#!/bin/sh\n\
              # Written by `spares note init-vcs`. Rewrite with `spares note init-vcs --repair-hooks`.\n\
-             SPARES_SOCKET_ADDRESS={} SPARES_DATA_DIR={} \\\n  exec {} note vcs-hook {phase} \"$@\"\n",
-            shell_quote(socket_address),
-            shell_quote(&data_dir.to_string_lossy()),
-            shell_quote(&exe.to_string_lossy()),
+             exec {spares} note vcs-hook {phase} \"$@\"\n",
         );
         let path = hooks_dir.join(hook);
         std::fs::write(&path, script).map_err(|e| miette!("{}", e))?;
@@ -380,7 +486,7 @@ fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
 
 /// Repository settings for a jj clone. jj keeps them outside the repository, keyed by an id stored
 /// in it, so they survive moving the clone into place.
-fn setup_jj(clone: &Path) -> Result<(), Error> {
+fn setup_jj(clone: &Path, spares_command: &str) -> Result<(), Error> {
     // Only files spares wrote can be pushed, so new files are not tracked automatically. Otherwise
     // the next jj command would commit an editor's backup file, and the push would be rejected.
     run(Command::new("jj").current_dir(clone).args([
@@ -393,10 +499,17 @@ fn setup_jj(clone: &Path) -> Result<(), Error> {
     let config_path = PathBuf::from(run(Command::new("jj")
         .current_dir(clone)
         .args(["config", "path", "--repo"]))?);
-    let mut config = std::fs::read_to_string(&config_path).unwrap_or_default();
-    if !config.contains("spares-push") {
-        config.push_str(JJ_ALIASES);
-        std::fs::write(&config_path, config).map_err(|e| miette!("{}", e))?;
+    let config = std::fs::read_to_string(&config_path).unwrap_or_default();
+    match with_jj_aliases(&config, &jj_aliases(spares_command)) {
+        Some(new_config) => {
+            if new_config != config {
+                std::fs::write(&config_path, new_config).map_err(|e| miette!("{}", e))?;
+            }
+        }
+        None => println!(
+            "{} has spares aliases (`spares-push`) without the markers spares writes, so they were left alone. Delete them and run `spares note init-vcs --repair-hooks` to get the current ones.",
+            config_path.display()
+        ),
     }
     Ok(())
 }
@@ -578,7 +691,7 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
         );
     }
     println!(
-        "\nOnly existing notes can be changed by pushing; create notes with `spares note add` / `spares import` and delete them with `spares note delete`. Never edit {} by hand.",
+        "\nCreate notes by pushing `<parser>/new-<name>.<ext>` files, and delete them by deleting their files. Never edit {} by hand.",
         dirs.repo.display()
     );
     if let Some(backup) = backup {
@@ -594,5 +707,40 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
             gitignore.display(),
             notes_vcs::SERVER_REPO_DIR_NAME
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JJ_ALIASES_BEGIN;
+    use super::OLD_JJ_ALIASES;
+    use super::jj_aliases;
+    use super::with_jj_aliases;
+
+    #[test]
+    fn test_with_jj_aliases() {
+        let aliases = jj_aliases("spares");
+        assert!(aliases.contains("spares-anki-push"));
+        assert!(aliases.contains("  spares note anki-refresh\n"));
+        let user = "[user]\nname = \"x\"\n";
+
+        // Added once, then replaced in place.
+        let added = with_jj_aliases(user, &aliases).unwrap();
+        assert!(added.starts_with(user));
+        let newer = jj_aliases("/new/spares");
+        let replaced = with_jj_aliases(&added, &newer).unwrap();
+        assert_eq!(replaced, format!("{user}\n{newer}"));
+        assert_eq!(with_jj_aliases(&replaced, &newer).unwrap(), replaced);
+
+        // The unmarked aliases of earlier versions are replaced.
+        let old = format!("{user}{OLD_JJ_ALIASES}");
+        let migrated = with_jj_aliases(&old, &aliases).unwrap();
+        assert_eq!(migrated, format!("{user}\n{aliases}"));
+        assert_eq!(migrated.matches("spares-push =").count(), 1);
+
+        // Aliases someone edited are left alone.
+        let edited = format!("{user}[aliases]\nspares-push = [\"x\"]\n");
+        assert_eq!(with_jj_aliases(&edited, &aliases), None);
+        assert!(!edited.contains(JJ_ALIASES_BEGIN));
     }
 }
