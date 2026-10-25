@@ -1,0 +1,38 @@
+[package]
+name = "spares_wasm"
+version = "0.0.1-alpha.1"
+description = "spares in a browser: a copy of the collection that works offline and syncs"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Everything is for wasm32-unknown-unknown. Natively the crate is empty, so the workspace still
+# builds and tests as before.
+[target.'cfg(target_family = "wasm")'.dependencies]
+async-trait = "0.1.92"
+axum = { version = "0.8.9", default-features = false }
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3.106"
+rsqlite-vfs = "0.2.0"
+serde = "1.0"
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+spares_core = { path = "../spares_core" }
+spares_server = { path = "../spares_server" }
+sqlite-wasm-rs = { version = "0.6.2", features = ["wasm-bindgen"] }
+sqlite-wasm-vfs = { version = "0.3.0", features = ["sahpool"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "chrono", "json", "migrate", "regexp", "macros"] }
+tower = { version = "0.5.3", features = ["util"] }
+# The version of `wasm-bindgen-cli-support` (in xtask) that generates the JS bindings
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4.79"
+
+[lints]
+workspace = true
