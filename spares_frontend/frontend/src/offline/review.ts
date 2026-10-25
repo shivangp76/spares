@@ -6,7 +6,7 @@
 //
 // Ratings and buries are sent through the same outbox when online, too. Each carries an id the
 // server records, so one whose response was lost is resent without being applied twice.
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from "react";
 import {
   fetchFile,
   fetchRenderAsset,
@@ -16,11 +16,17 @@ import {
   onServerReachability,
   pruneOfflineFiles,
   syncOfflineActions,
-} from '../api/client';
-import { clipPaths } from '../audio';
-import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter, ReviewQueueCard } from '../types/spares';
-import { lastReviewWidth, widthInputs } from '../typst/width';
-import { backPath, backWebPath } from '../utils';
+} from "../api/client";
+import { clipPaths } from "../audio";
+import { usesLocalCopy } from "../local/transport";
+import type {
+  GetReviewCardResponse,
+  OfflineStudyActionKind,
+  ReviewFilter,
+  ReviewQueueCard,
+} from "../types/spares";
+import { lastReviewWidth, widthInputs } from "../typst/width";
+import { backPath, backWebPath } from "../utils";
 import {
   addPendingAction,
   deletePendingActions,
@@ -31,7 +37,7 @@ import {
   removeFromQueues,
   type OfflineQueue,
   type PendingAction,
-} from './db';
+} from "./db";
 
 /** The most cards downloaded per filter */
 const QUEUE_SIZE = 200;
@@ -51,7 +57,11 @@ export interface OfflineStatus {
   downloading: { done: number; total: number } | null;
 }
 
-let status: OfflineStatus = { online: navigator.onLine, pending: 0, downloading: null };
+let status: OfflineStatus = {
+  online: navigator.onLine,
+  pending: 0,
+  downloading: null,
+};
 const listeners = new Set<() => void>();
 
 function setStatus(update: Partial<OfflineStatus>): void {
@@ -79,7 +89,9 @@ function currentServerUrl(): string | null {
 async function refreshPendingCount(): Promise<void> {
   const serverUrl = currentServerUrl();
   const actions = await listPendingActions();
-  setStatus({ pending: actions.filter(action => action.serverUrl === serverUrl).length });
+  setStatus({
+    pending: actions.filter((action) => action.serverUrl === serverUrl).length,
+  });
 }
 
 // Sending actions
@@ -112,21 +124,32 @@ async function sendPendingActions(): Promise<SyncResult> {
   const result: SyncResult = { applied: new Map(), rejected: new Map() };
   const serverUrl = currentServerUrl();
   // Actions recorded while logged in to another server wait until it is logged in to again
-  const actions = (await listPendingActions()).filter(action => action.serverUrl === serverUrl);
+  const actions = (await listPendingActions()).filter(
+    (action) => action.serverUrl === serverUrl,
+  );
   const bySchedulerName = new Map<string, PendingAction[]>();
-  for (const action of actions) bySchedulerName.set(action.schedulerName, [...bySchedulerName.get(action.schedulerName) ?? [], action]);
+  for (const action of actions)
+    bySchedulerName.set(action.schedulerName, [
+      ...(bySchedulerName.get(action.schedulerName) ?? []),
+      action,
+    ]);
   try {
     for (const [schedulerName, batch] of bySchedulerName) {
       const res = await syncOfflineActions({
         scheduler_name: schedulerName,
-        actions: batch.map(({ client_id, performed_at, action }) => ({ client_id, performed_at, action })),
+        actions: batch.map(({ client_id, performed_at, action }) => ({
+          client_id,
+          performed_at,
+          action,
+        })),
       });
       for (const { client_id, outcome } of res.results) {
-        if (outcome === 'Duplicate') result.applied.set(client_id, null);
-        else if ('Applied' in outcome) result.applied.set(client_id, outcome.Applied.event_id);
+        if (outcome === "Duplicate") result.applied.set(client_id, null);
+        else if ("Applied" in outcome)
+          result.applied.set(client_id, outcome.Applied.event_id);
         else result.rejected.set(client_id, outcome.Rejected.message);
       }
-      await deletePendingActions(res.results.map(r => r.client_id));
+      await deletePendingActions(res.results.map((r) => r.client_id));
     }
   } finally {
     await refreshPendingCount();
@@ -137,14 +160,20 @@ async function sendPendingActions(): Promise<SyncResult> {
 /** Sends waiting actions now and whenever the connection or the app comes back. */
 export function startBackgroundSync(): void {
   // Whether the server can be reached, which `navigator.onLine` cannot tell
-  onServerReachability(online => { if (online !== status.online) setStatus({ online }); });
+  onServerReachability((online) => {
+    if (online !== status.online) setStatus({ online });
+  });
   const sync = () => {
     if (currentServerUrl() === null) return;
-    syncPendingActions().catch(e => { if (!isNetworkError(e)) console.error(e); });
+    syncPendingActions().catch((e) => {
+      if (!isNetworkError(e)) console.error(e);
+    });
   };
-  window.addEventListener('online', sync);
-  window.addEventListener('offline', () => setStatus({ online: false }));
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
+  window.addEventListener("online", sync);
+  window.addEventListener("offline", () => setStatus({ online: false }));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") sync();
+  });
   sync();
 }
 
@@ -152,7 +181,10 @@ export function startBackgroundSync(): void {
 
 function newClientId(): string {
   // `randomUUID` is only available on secure origins
-  return crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return (
+    crypto.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  );
 }
 
 export interface ActionResult {
@@ -167,7 +199,10 @@ export interface ActionResult {
  * Performs a rating or bury: keeps it to send, then tries to send it. Throws if the server
  * rejected it, and otherwise succeeds whether or not the server could be reached.
  */
-export async function performStudyAction(schedulerName: string, action: OfflineStudyActionKind): Promise<ActionResult> {
+export async function performStudyAction(
+  schedulerName: string,
+  action: OfflineStudyActionKind,
+): Promise<ActionResult> {
   const { serverUrl } = getCredentials();
   const pending: PendingAction = {
     client_id: newClientId(),
@@ -178,7 +213,7 @@ export async function performStudyAction(schedulerName: string, action: OfflineS
     addedAt: Date.now(),
   };
   await addPendingAction(pending);
-  const cardId = 'Rate' in action ? action.Rate.card_id : action.Bury.card_id;
+  const cardId = "Rate" in action ? action.Rate.card_id : action.Bury.card_id;
   // Reviewed, so not to be shown again from a downloaded queue
   await removeFromQueues(cardId);
   await refreshPendingCount();
@@ -187,12 +222,18 @@ export async function performStudyAction(schedulerName: string, action: OfflineS
   try {
     let result = await syncPendingActions();
     // A sync that was already running when this was added did not include it
-    const included = (r: SyncResult) => r.applied.has(pending.client_id) || r.rejected.has(pending.client_id);
+    const included = (r: SyncResult) =>
+      r.applied.has(pending.client_id) || r.rejected.has(pending.client_id);
     if (!included(result)) result = await syncPendingActions();
     if (!included(result)) return notSent;
     const rejected = result.rejected.get(pending.client_id);
-    if (rejected !== undefined) throw new Error(`The server rejected it: ${rejected}`);
-    return { clientId: pending.client_id, sent: true, eventId: result.applied.get(pending.client_id) ?? null };
+    if (rejected !== undefined)
+      throw new Error(`The server rejected it: ${rejected}`);
+    return {
+      clientId: pending.client_id,
+      sent: true,
+      eventId: result.applied.get(pending.client_id) ?? null,
+    };
   } catch (e) {
     if (isNetworkError(e)) return notSent;
     throw e;
@@ -201,7 +242,9 @@ export async function performStudyAction(schedulerName: string, action: OfflineS
 
 /** Takes back an action that has not been sent yet. Returns whether it was still waiting. */
 export async function cancelPendingAction(clientId: string): Promise<boolean> {
-  const waiting = (await listPendingActions()).some(action => action.client_id === clientId);
+  const waiting = (await listPendingActions()).some(
+    (action) => action.client_id === clientId,
+  );
   if (waiting) await deletePendingActions([clientId]);
   await refreshPendingCount();
   return waiting;
@@ -219,7 +262,9 @@ function cardFiles(card: GetReviewCardResponse): string[] {
   if (card.browser_sources) return [];
   if (card.card_front_web_path !== undefined) {
     const back = backWebPath(card);
-    return back === undefined ? [card.card_front_web_path] : [card.card_front_web_path, back];
+    return back === undefined
+      ? [card.card_front_web_path]
+      : [card.card_front_web_path, back];
   }
   return [card.card_front_rendered_path, backPath(card)];
 }
@@ -232,14 +277,19 @@ async function downloadCardContent(card: GetReviewCardResponse): Promise<void> {
     // Kept by `fetchFile` for offline use
     await Promise.all(cardFiles(card).map(fetchFile));
     // Kept by `fetchRenderAsset`
-    if (card.audio) await Promise.all(clipPaths([...card.audio.front, ...card.audio.back]).map(fetchRenderAsset));
+    if (card.audio)
+      await Promise.all(
+        clipPaths([...card.audio.front, ...card.audio.back]).map(
+          fetchRenderAsset,
+        ),
+      );
     if (card.browser_sources) {
       // Compiling fetches, and keeps, the compiler and the files the sources read
-      const { compileTypstInBackground } = await import('../typst/compiler');
+      const { compileTypstInBackground } = await import("../typst/compiler");
       await compileTypstInBackground(card.browser_sources.card_front);
       await compileTypstInBackground(card.browser_sources.card_back);
       // Leave the page responsive between compiles
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   } catch (e) {
     if (isNetworkError(e)) throw e;
@@ -272,7 +322,11 @@ const downloads = new Map<string, Promise<OfflineQueue>>();
  * Downloads the cards a review with `filter` would show next, and what they display, replacing
  * any queue downloaded for `key` before. One download per key runs at a time.
  */
-export function downloadQueue(key: string, filter: ReviewFilter | null, sessionInfo: string | null): Promise<OfflineQueue> {
+export function downloadQueue(
+  key: string,
+  filter: ReviewFilter | null,
+  sessionInfo: string | null,
+): Promise<OfflineQueue> {
   let download = downloads.get(key);
   if (!download) {
     download = (async () => {
@@ -280,8 +334,14 @@ export function downloadQueue(key: string, filter: ReviewFilter | null, sessionI
         // So the server does not return cards that were already reviewed offline
         await syncPendingActions();
         const { serverUrl } = getCredentials();
-        const res = await fetchReviewQueue({ filter, limit: QUEUE_SIZE, days_ahead: DAYS_AHEAD });
-        const todayCount = Object.values(res.cards[0]?.cards_left_by_state ?? {}).reduce((a, b) => a + b, 0);
+        const res = await fetchReviewQueue({
+          filter,
+          limit: QUEUE_SIZE,
+          days_ahead: DAYS_AHEAD,
+        });
+        const todayCount = Object.values(
+          res.cards[0]?.cards_left_by_state ?? {},
+        ).reduce((a, b) => a + b, 0);
         const queue: OfflineQueue = {
           key,
           serverUrl,
@@ -289,13 +349,18 @@ export function downloadQueue(key: string, filter: ReviewFilter | null, sessionI
           sessionInfo,
           fetchedAt: Date.now(),
           cards: res.cards,
-          secondsPerCard: todayCount > 0 ? res.cards[0].time_estimate / todayCount : DEFAULT_SECONDS_PER_CARD,
+          secondsPerCard:
+            todayCount > 0
+              ? res.cards[0].time_estimate / todayCount
+              : DEFAULT_SECONDS_PER_CARD,
         };
         await putQueue(queue);
         // Ask the browser not to evict what is downloaded when storage runs low
         navigator.storage?.persist?.().catch(console.error);
         await downloadContent(queue.cards);
-        const kept = (await listQueues()).flatMap(q => q.cards.flatMap(cardFiles));
+        const kept = (await listQueues()).flatMap((q) =>
+          q.cards.flatMap(cardFiles),
+        );
         await pruneOfflineFiles(kept);
         return queue;
       } finally {
@@ -307,20 +372,37 @@ export function downloadQueue(key: string, filter: ReviewFilter | null, sessionI
   return download;
 }
 
-/** Downloads the queue for `key` unless it was downloaded recently. Errors are logged. */
-export function refreshQueue(key: string, filter: ReviewFilter | null, sessionInfo: string | null): void {
+/**
+ * Downloads the queue for `key` unless it was downloaded recently. Errors are logged. Not on a
+ * device that keeps a copy of the collection, which has every card (see src/local).
+ */
+export function refreshQueue(
+  key: string,
+  filter: ReviewFilter | null,
+  sessionInfo: string | null,
+): void {
   (async () => {
-    const queue = await getQueue(key);
     const serverUrl = currentServerUrl();
-    if (queue && queue.serverUrl === serverUrl && Date.now() - queue.fetchedAt < STALE_AFTER_MS) return;
+    if (serverUrl === null || usesLocalCopy(serverUrl)) return;
+    const queue = await getQueue(key);
+    if (
+      queue &&
+      queue.serverUrl === serverUrl &&
+      Date.now() - queue.fetchedAt < STALE_AFTER_MS
+    )
+      return;
     await downloadQueue(key, filter, sessionInfo);
-  })().catch(e => { if (!isNetworkError(e)) console.error(e); });
+  })().catch((e) => {
+    if (!isNetworkError(e)) console.error(e);
+  });
 }
 
 // Reviewing offline
 
 /** The downloaded queue for `key`, if there is one for the server logged in to. */
-export async function getOfflineQueue(key: string): Promise<OfflineQueue | null> {
+export async function getOfflineQueue(
+  key: string,
+): Promise<OfflineQueue | null> {
   const queue = await getQueue(key);
   return queue && queue.serverUrl === currentServerUrl() ? queue : null;
 }
@@ -334,7 +416,7 @@ function endOfToday(now: Date): Date {
 /** The cards of `cards` due today, which is what is left to review. */
 function dueToday(cards: ReviewQueueCard[], now: Date): ReviewQueueCard[] {
   const limit = endOfToday(now).getTime();
-  return cards.filter(card => new Date(card.due).getTime() < limit);
+  return cards.filter((card) => new Date(card.due).getTime() < limit);
 }
 
 /**
@@ -345,7 +427,9 @@ function dueToday(cards: ReviewQueueCard[], now: Date): ReviewQueueCard[] {
  * `shown_from` 12:40. Before then it is skipped, even once it is the only card left.
  */
 function isShownAt(card: ReviewQueueCard, now: Date): boolean {
-  return card.shown_from == null || Date.parse(card.shown_from) <= now.getTime();
+  return (
+    card.shown_from == null || Date.parse(card.shown_from) <= now.getTime()
+  );
 }
 
 /**
@@ -355,15 +439,20 @@ function isShownAt(card: ReviewQueueCard, now: Date): boolean {
  * Learning cards come after the others in the queue, so one within the learn ahead limit is only
  * shown once nothing else is left.
  */
-export async function nextOfflineCard(key: string, now: Date = new Date()): Promise<GetReviewCardResponse | null> {
+export async function nextOfflineCard(
+  key: string,
+  now: Date = new Date(),
+): Promise<GetReviewCardResponse | null> {
   const queue = await getOfflineQueue(key);
   if (!queue) return null;
   const due = dueToday(queue.cards, now);
-  const next = due.find(card => isShownAt(card, now));
+  const next = due.find((card) => isShownAt(card, now));
   if (!next) return null;
   // Held back cards count, as in an online review's counts
   const cardsLeftByState: Record<string, number> = {};
-  for (const card of due) cardsLeftByState[card.card_state] = (cardsLeftByState[card.card_state] ?? 0) + 1;
+  for (const card of due)
+    cardsLeftByState[card.card_state] =
+      (cardsLeftByState[card.card_state] ?? 0) + 1;
   return {
     ...next,
     cards_left_by_state: cardsLeftByState,
@@ -377,12 +466,15 @@ export async function nextOfflineCard(key: string, now: Date = new Date()): Prom
  * no such card is due later today, so the review is done for the day. Like the server's
  * `nextReviewAvailableAt`, for the review page to wait with.
  */
-export async function nextOfflineCardAvailableAt(key: string, now: Date = new Date()): Promise<Date | null> {
+export async function nextOfflineCardAvailableAt(
+  key: string,
+  now: Date = new Date(),
+): Promise<Date | null> {
   const queue = await getOfflineQueue(key);
   if (!queue) return null;
   const times = dueToday(queue.cards, now)
-    .filter(card => !isShownAt(card, now))
-    .map(card => Date.parse(card.shown_from!));
+    .filter((card) => !isShownAt(card, now))
+    .map((card) => Date.parse(card.shown_from!));
   return times.length === 0 ? null : new Date(Math.min(...times));
 }
 
@@ -391,22 +483,41 @@ export async function nextOfflineCardAvailableAt(key: string, now: Date = new Da
  * width review cards were last shown at, so that the card shows at once if the server gives it
  * next. `shownCardId` is the card being reviewed, which stays in the queue until it is rated.
  */
-export async function precompileNextCard(key: string, shownCardId?: number): Promise<void> {
+export async function precompileNextCard(
+  key: string,
+  shownCardId?: number,
+): Promise<void> {
   const width = lastReviewWidth();
   if (width === null) return;
   const now = new Date();
   const queue = await getOfflineQueue(key);
-  const card = queue && dueToday(queue.cards, now).find(c => c.card_id !== shownCardId && isShownAt(c, now));
+  const card =
+    queue &&
+    dueToday(queue.cards, now).find(
+      (c) => c.card_id !== shownCardId && isShownAt(c, now),
+    );
   if (!card?.browser_sources) return;
-  const { precompileTypst } = await import('../typst/compiler');
+  const { precompileTypst } = await import("../typst/compiler");
   const inputs = widthInputs(width);
-  await Promise.all([precompileTypst(card.browser_sources.card_front, inputs), precompileTypst(card.browser_sources.card_back, inputs)]);
+  await Promise.all([
+    precompileTypst(card.browser_sources.card_front, inputs),
+    precompileTypst(card.browser_sources.card_back, inputs),
+  ]);
 }
 
 /** Puts a card back at the front of the queue for `key`, e.g. after its rating was undone. */
-export async function returnToQueue(key: string, card: GetReviewCardResponse): Promise<void> {
+export async function returnToQueue(
+  key: string,
+  card: GetReviewCardResponse,
+): Promise<void> {
   const queue = await getQueue(key);
-  if (!queue || queue.cards.some(c => c.card_id === card.card_id)) return;
+  if (!queue || queue.cards.some((c) => c.card_id === card.card_id)) return;
   // Shown next, whatever its step, since it was being shown when the rating was undone
-  await putQueue({ ...queue, cards: [{ ...card, due: new Date(0).toISOString(), shown_from: null }, ...queue.cards] });
+  await putQueue({
+    ...queue,
+    cards: [
+      { ...card, due: new Date(0).toISOString(), shown_from: null },
+      ...queue.cards,
+    ],
+  });
 }

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.tsx";
 import "./index.css";
+import { startLocalCopy } from "./local/copy";
 import { startBackgroundSync } from "./offline/review";
 import { startVersionChecks } from "./version";
 
@@ -14,6 +15,8 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 startVersionChecks();
 // Sends ratings made offline once the server can be reached
 startBackgroundSync();
+// Opens this device's copy of the collection, if it keeps one, and syncs it
+startLocalCopy().catch(console.error);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

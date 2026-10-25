@@ -131,6 +131,16 @@ impl Bundle {
                 ));
             }
         }
+        // The frontend's build compiles spares_wasm too, whose SQLite needs a clang that targets
+        // wasm. Apple's doesn't, so `cargo xtask build-wasm` uses Homebrew's LLVM.
+        if cfg!(target_os = "macos")
+            && std::env::var_os("CC_wasm32_unknown_unknown").is_none()
+            && !Path::new("/opt/homebrew/opt/llvm/bin/clang").is_file()
+        {
+            return Err(miette!(
+                "Homebrew's LLVM is needed to build spares for the server: brew install llvm"
+            ));
+        }
         let frontend = repo.join("spares_frontend/frontend");
         let last = Target::last(server);
         let Server {

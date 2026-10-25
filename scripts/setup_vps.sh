@@ -47,7 +47,10 @@ NO_LATEX=false
 TIMEZONE=""
 BUNDLE=""
 SPARES_USER="${SUDO_USER:-}"
-[[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
+[[ $EUID -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
 if [[ -f "$SETUP_CONF" ]]; then
   # shellcheck source=/dev/null
   source "$SETUP_CONF"
@@ -55,23 +58,69 @@ if [[ -f "$SETUP_CONF" ]]; then
 fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data-dir) DATA_DIR="$2"; shift 2 ;;
-    --local-home) LOCAL_HOME="${2%/}"; shift 2 ;;
-    --domain) DOMAIN="$2"; shift 2 ;;
-    --tailscale) TAILSCALE=true; shift ;;
-    --user) SPARES_USER="$2"; shift 2 ;;
-    --bundle) BUNDLE="$2"; PREBUILT=true; shift 2 ;;
-    --no-latex) NO_LATEX=true; shift ;;
-    --timezone) TIMEZONE="$2"; shift 2 ;;
-    *) echo "Unknown argument: $1" >&2; exit 1 ;;
+  --data-dir)
+    DATA_DIR="$2"
+    shift 2
+    ;;
+  --local-home)
+    LOCAL_HOME="${2%/}"
+    shift 2
+    ;;
+  --domain)
+    DOMAIN="$2"
+    shift 2
+    ;;
+  --tailscale)
+    TAILSCALE=true
+    shift
+    ;;
+  --user)
+    SPARES_USER="$2"
+    shift 2
+    ;;
+  --bundle)
+    BUNDLE="$2"
+    PREBUILT=true
+    shift 2
+    ;;
+  --no-latex)
+    NO_LATEX=true
+    shift
+    ;;
+  --timezone)
+    TIMEZONE="$2"
+    shift 2
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    exit 1
+    ;;
   esac
 done
-[[ -n "$SPARES_USER" && "$SPARES_USER" != root ]] || { echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2; exit 1; }
-[[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
-[[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
-[[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
-[[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || { echo "Unknown time zone: $TIMEZONE" >&2; exit 1; }
-[[ "$PREBUILT" == false || -f "$BUNDLE/spares_server" ]] || { echo "This server runs spares built elsewhere. Update it with \`spares deploy update\` on your laptop, or pass --bundle." >&2; exit 1; }
+[[ -n "$SPARES_USER" && "$SPARES_USER" != root ]] || {
+  echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2
+  exit 1
+}
+[[ "$DATA_DIR" == /* ]] || {
+  echo "--data-dir must be an absolute path." >&2
+  exit 1
+}
+[[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || {
+  echo "--local-home must be an absolute path." >&2
+  exit 1
+}
+[[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || {
+  echo "Use --domain or --tailscale, not both." >&2
+  exit 1
+}
+[[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || {
+  echo "Unknown time zone: $TIMEZONE" >&2
+  exit 1
+}
+[[ "$PREBUILT" == false || -f "$BUNDLE/spares_server" ]] || {
+  echo "This server runs spares built elsewhere. Update it with \`spares deploy update\` on your laptop, or pass --bundle." >&2
+  exit 1
+}
 
 if ! id "$SPARES_USER" >/dev/null 2>&1; then
   echo "==> Creating the user $SPARES_USER"
@@ -87,7 +136,7 @@ fi
 SUDOERS=/etc/sudoers.d/spares
 if [[ "$(cat "$SUDOERS" 2>/dev/null)" != "$SPARES_USER ALL=(ALL) NOPASSWD: ALL" ]]; then
   echo "==> Letting $SPARES_USER use sudo without a password"
-  echo "$SPARES_USER ALL=(ALL) NOPASSWD: ALL" > "$SUDOERS.new"
+  echo "$SPARES_USER ALL=(ALL) NOPASSWD: ALL" >"$SUDOERS.new"
   chmod 440 "$SUDOERS.new"
   visudo -cqf "$SUDOERS.new" && mv "$SUDOERS.new" "$SUDOERS"
 fi
@@ -102,15 +151,19 @@ mkdir -p /etc/spares
   printf 'PREBUILT=%q\n' "$PREBUILT"
   printf 'NO_LATEX=%q\n' "$NO_LATEX"
   printf 'TIMEZONE=%q\n' "$TIMEZONE"
-} > "$SETUP_CONF"
+} >"$SETUP_CONF"
 
 USER_HOME="$(getent passwd "$SPARES_USER" | cut -d: -f6)"
 # Checked before installing anything, and created before the data directory, which may be inside it
 if [[ -n "$LOCAL_HOME" && "$LOCAL_HOME" != "$USER_HOME" ]]; then
   if [[ -L "$LOCAL_HOME" ]]; then
-    [[ "$(readlink "$LOCAL_HOME")" == "$USER_HOME" ]] || { echo "$LOCAL_HOME already links to $(readlink "$LOCAL_HOME")." >&2; exit 1; }
+    [[ "$(readlink "$LOCAL_HOME")" == "$USER_HOME" ]] || {
+      echo "$LOCAL_HOME already links to $(readlink "$LOCAL_HOME")." >&2
+      exit 1
+    }
   elif [[ -e "$LOCAL_HOME" ]]; then
-    echo "$LOCAL_HOME exists. Move its contents into $USER_HOME, remove it and re-run." >&2; exit 1
+    echo "$LOCAL_HOME exists. Move its contents into $USER_HOME, remove it and re-run." >&2
+    exit 1
   else
     mkdir -p "$(dirname "$LOCAL_HOME")" && ln -s "$USER_HOME" "$LOCAL_HOME"
   fi
@@ -131,10 +184,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates)
-[[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm)
+# clang and llvm build SQLite's C for the copy of the collection browsers keep (spares_wasm)
+[[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm clang llvm)
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
-[[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra \
+[[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra
   texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape)
 # Only the missing ones, so updates skip apt. Installed ones get upgraded with the rest of the
 # system, e.g. by unattended-upgrades.
@@ -172,7 +226,7 @@ SWAP_GB=2
 if [[ $(free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}') -lt $((SWAP_GB * 1024 + 450)) && ! -f /swapfile ]]; then
   echo "==> Adding $SWAP_GB GB of swap"
   fallocate -l "${SWAP_GB}G" /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo '/swapfile none swap sw 0 0' >>/etc/fstab
 fi
 
 if [[ "$PREBUILT" == true ]]; then
@@ -230,7 +284,7 @@ fi
 API_KEY="$(grep -s '^SPARES_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
 [[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
 install -m 600 /dev/null "$ENV_FILE"
-cat > "$ENV_FILE" <<EOF
+cat >"$ENV_FILE" <<EOF
 SPARES_API_KEY=$API_KEY
 SPARES_SOCKET_ADDRESS=127.0.0.1:8080
 SPARES_DATA_DIR=$DATA_DIR
@@ -245,7 +299,7 @@ SPARES_REPLICA=1
 SPARES_SYNC_ROLE=server
 EOF
 
-cat > /etc/systemd/system/spares.service <<EOF
+cat >/etc/systemd/system/spares.service <<EOF
 [Unit]
 Description=Spares server
 After=network.target
@@ -266,7 +320,7 @@ EOF
 
 # Renders every note on the server. `spares sync cloud` copies the rendered files, so this is only
 # for recovery, e.g. if they were deleted.
-cat > /usr/local/bin/spares-render <<'EOF'
+cat >/usr/local/bin/spares-render <<'EOF'
 #!/usr/bin/env bash
 # Usage: sudo spares-render [--force]
 set -euo pipefail
@@ -289,7 +343,7 @@ if [[ -n "$DOMAIN" ]]; then
     apt-get update -q
     apt-get install -y -q debian-keyring debian-archive-keyring apt-transport-https gnupg
     curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
+    curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' >/etc/apt/sources.list.d/caddy-stable.list
     apt-get update -q && apt-get install -y -q caddy
   fi
   CADDYFILE=/etc/caddy/Caddyfile
@@ -297,7 +351,7 @@ if [[ -n "$DOMAIN" ]]; then
     cp "$CADDYFILE" "$CADDYFILE.bak"
     echo "Moved the existing Caddyfile to $CADDYFILE.bak"
   fi
-  cat > "$CADDYFILE" <<EOF
+  cat >"$CADDYFILE" <<EOF
 # Managed by spares setup_vps.sh
 $DOMAIN {
 	encode zstd gzip
@@ -325,9 +379,12 @@ else
 fi
 
 sleep 1
-systemctl is-active --quiet spares || { journalctl -u spares -n 30 --no-pager; exit 1; }
+systemctl is-active --quiet spares || {
+  journalctl -u spares -n 30 --no-pager
+  exit 1
+}
 # For `spares deploy`, which reads where the server is from here
-echo "$URL" > /etc/spares/url
+echo "$URL" >/etc/spares/url
 HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
 [[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"
 cat <<EOF

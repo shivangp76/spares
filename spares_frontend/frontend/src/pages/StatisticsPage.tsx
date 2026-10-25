@@ -28,6 +28,7 @@ import ReviewHeatmap from "../components/ReviewHeatmap";
 import { useAuth } from "../hooks/useAuth";
 import { useCardStates } from "../hooks/useCardStates";
 import { useRecentSearches } from "../hooks/useRecentSearches";
+import { useLocalStatus } from "../local/copy";
 import { useOfflineStatus } from "../offline/review";
 import {
   cachedViews,
@@ -1008,6 +1009,7 @@ export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
   const { online, pending } = useOfflineStatus();
+  const local = useLocalStatus();
   const {
     recent,
     save: saveRecent,
@@ -1169,7 +1171,8 @@ export default function StatisticsPage() {
       : isToday
         ? "Today"
         : `Studied on ${date}`;
-  const serverReachable = online && !offlineEntry;
+  // A device's copy schedules cards itself, offline too
+  const canSchedule = local.active || (online && !offlineEntry);
 
   return (
     <div className="page">
@@ -1423,7 +1426,7 @@ export default function StatisticsPage() {
                     key={`a${statistics.advance_safe_count}`}
                     kind="Advance"
                     safeCount={statistics.advance_safe_count}
-                    disabled={!serverReachable}
+                    disabled={!canSchedule}
                     onDone={(o) => {
                       showOutcome(o);
                       reload();
@@ -1433,13 +1436,13 @@ export default function StatisticsPage() {
                     key={`p${statistics.postpone_safe_count}`}
                     kind="Postpone"
                     safeCount={statistics.postpone_safe_count}
-                    disabled={!serverReachable}
+                    disabled={!canSchedule}
                     onDone={(o) => {
                       showOutcome(o);
                       reload();
                     }}
                   />
-                  {!serverReachable && <p style={note}>{OFFLINE_HINT}</p>}
+                  {!canSchedule && <p style={note}>{OFFLINE_HINT}</p>}
                   {scheduleOutcome && (
                     <ActionResult
                       key={scheduleOutcome.seq}

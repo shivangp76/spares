@@ -20,8 +20,10 @@
 //! sync, and are read-only here.
 //!
 //! Errors are JS `Error`s with a `message`, and `full_sync_required` (then the user has to choose
-//! between downloading the server's copy and uploading this one) or `not_enrolled` (the device has
-//! to set up its copy again) when those apply.
+//! between downloading the server's copy and uploading this one), `not_enrolled` (the device has
+//! to set up its copy again), `unreachable` (the server couldn't be reached) or `busy` (the server
+//! is busy with another change, such as a full upload's files, so the sync can be tried again
+//! shortly) when those apply.
 #![cfg(target_family = "wasm")]
 
 mod remote;
@@ -47,12 +49,15 @@ fn js_error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
 }
 
-/// `e` as a JS `Error`, with `full_sync_required` or `not_enrolled` set when they apply.
+/// `e` as a JS `Error`, with `full_sync_required`, `not_enrolled`, `unreachable` or `busy` set
+/// when they apply.
 fn core_error(e: &Error) -> JsValue {
     let error = js_sys::Error::new(&e.to_string());
     let flag = match e {
         Error::FullSyncRequired(_) => Some("full_sync_required"),
         Error::NotEnrolled(_) => Some("not_enrolled"),
+        Error::SyncUnreachable(_) => Some("unreachable"),
+        Error::NotesVcsBusy => Some("busy"),
         _ => None,
     };
     if let Some(flag) = flag {

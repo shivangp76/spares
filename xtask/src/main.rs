@@ -2,7 +2,7 @@
 //!
 //! - `build-wasm [out-dir]` builds `spares_wasm` for browsers into a package the web app imports:
 //!   the wasm module and its JS bindings, in `spares_frontend/frontend/src/local/pkg` by default.
-//!   See CONTRIBUTING.md.
+//!   `bun run build` runs it first. See CONTRIBUTING.md.
 //!
 //! The JS bindings come from `wasm-bindgen-cli-support`, the library the `wasm-bindgen` CLI is
 //! made of. Its version is pinned to `spares_wasm`'s `wasm-bindgen`, so they always match without
@@ -18,7 +18,7 @@ use anyhow::Result;
 use anyhow::bail;
 use wasm_bindgen_cli_support::Bindgen;
 
-/// Homebrew's LLVM, whose clang targets wasm
+/// Homebrew's LLVM, whose clang targets wasm. `spares deploy` checks for it too.
 const MACOS_LLVM: &str = "/opt/homebrew/opt/llvm/bin";
 
 fn main() -> Result<()> {
@@ -45,10 +45,18 @@ fn build_wasm(out: Option<PathBuf>) -> Result<()> {
     // SQLite's C needs a clang that targets wasm. Apple's doesn't, so on macOS use Homebrew's LLVM.
     if cfg!(target_os = "macos") && env::var_os("CC_wasm32_unknown_unknown").is_none() {
         let llvm = Path::new(MACOS_LLVM);
+        if !llvm.join("clang").is_file() {
+            bail!("Building spares_wasm needs Homebrew's LLVM: brew install llvm");
+        }
         cargo
             .env("CC_wasm32_unknown_unknown", llvm.join("clang"))
             .env("AR_wasm32_unknown_unknown", llvm.join("llvm-ar"));
     }
+    // Ignoring failure: without rustup, the target is installed some other way, or cargo says
+    // it's missing
+    let _ = Command::new("rustup")
+        .args(["target", "add", "wasm32-unknown-unknown"])
+        .output();
     if !cargo.status()?.success() {
         bail!("Building spares_wasm failed");
     }

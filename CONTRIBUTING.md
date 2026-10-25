@@ -38,13 +38,21 @@ cargo clippy -p spares_wasm --target wasm32-unknown-unknown  # spares_core and s
 
 There, sqlx is the patched copy in `vendor/` (see `vendor/README.md`).
 
-The web app runs `spares_wasm` (spares in a browser, see its crate docs) in a worker. Build it with:
+The web app runs `spares_wasm` (spares in a browser, see its crate docs) in a worker, for a device that keeps a copy of the collection (`src/local`). `bun run build` builds it first, with the command below. On macOS, it needs Homebrew's LLVM (`brew install llvm`).
 
 ```sh
 cargo xtask build-wasm
 ```
 
 It writes the wasm module and its JS bindings to `spares_frontend/frontend/src/local/pkg`. The `wasm` profile builds it small (LTO, `opt-level = "z"`): about 7.6 MB, 1.75 MB with brotli. Its JS bindings come from `wasm-bindgen-cli-support`, at the version of the `wasm-bindgen` crate, so there is no `wasm-bindgen` CLI to install. When upgrading `wasm-bindgen`, upgrade both (in `spares_wasm/Cargo.toml` and `xtask/Cargo.toml`).
+
+An end-to-end test runs a device's copy in headless Chromium, WebKit and Firefox, against a server of its own on an empty collection: setting it up, using it offline, syncing, resolving a conflict, and removing it (see `e2e/local_copy.ts`):
+
+```sh
+cd spares_frontend/frontend
+bunx playwright-core install chromium-headless-shell webkit firefox  # once
+bun run build && bun run e2e
+```
 
 ## Documentation
 
