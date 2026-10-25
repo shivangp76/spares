@@ -1,6 +1,6 @@
 //! The client's half of a normal sync: merging the server's changes into the local database.
 //!
-//! [`merge_pulled`] runs inside the transaction that also pushes and stamps (see
+//! [`merge_pulled`] runs inside the transaction that also marks what to push (see
 //! [`super::run`]), with the triggers off. It writes every row it takes from the server with the
 //! pull's usn, and every row the server has to receive (local changes, merge results) with
 //! `usn = -1`, so the push is simply everything dirty afterwards.
@@ -645,9 +645,12 @@ impl Merger<'_> {
         let mut text = match &tokens {
             Some((b, l, r)) => match merge_text(b, l, r) {
                 // The sides name different cards in the same place (each replaced a card), but
-                // their texts may still merge, matching cards by position.
+                // their texts may still merge, matching cards by position. Also when both made
+                // the same edit, as when each added the same cloze without its order and gave it
+                // a card of its own.
                 TextMerge::Conflict => match merge_text(&base.data, &local.data, &remote.data) {
                     TextMerge::Merged(merged) => TextMerge::Merged(merged),
+                    _ if local.data == remote.data => TextMerge::Merged(local.data.clone()),
                     _ => TextMerge::Conflict,
                 },
                 text => text,

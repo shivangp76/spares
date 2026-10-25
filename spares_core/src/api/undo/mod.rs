@@ -139,9 +139,22 @@ async fn expand_group(
     .map_err(|e| Error::Sqlx { source: e })
 }
 
+/// What [`check_not_synced`] checks `events` for, which its error names.
+#[derive(Clone, Copy)]
+enum Reverting {
+    Undo,
+    Redo,
+    Group,
+}
+
 /// Errors if any of `events` happened before the last sync: what it did has reached the other
-/// replica, which may have changed the same rows since.
-async fn check_not_synced(db: &SqlitePool, events: &[Event]) -> Result<(), Error> {
+/// replica, which may have changed the same rows since. The error names the change, as undo
+/// describes it, not the event.
+async fn check_not_synced(
+    db: &SqlitePool,
+    events: &[Event],
+    reverting: Reverting,
+) -> Result<(), Error> {
     let guard: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
         .bind(crate::sync::LAST_SYNC_EVENT_ID_KEY)
         .fetch_optional(db)
@@ -149,10 +162,21 @@ async fn check_not_synced(db: &SqlitePool, events: &[Event]) -> Result<(), Error
         .map_err(|e| Error::Sqlx { source: e })?;
     let guard: i64 = guard.and_then(|g| g.parse().ok()).unwrap_or(0);
     if let Some(event) = events.iter().find(|event| event.id <= guard) {
-        return Err(Error::Library(LibraryError::InvalidConfig(format!(
-            "Event {} happened before the last sync, so it can no longer be reverted",
-            event.id
-        ))));
+        // An undo is described as the action it undid
+        let change = describe::summarize(db, event).await?.description;
+        let message = match reverting {
+            Reverting::Undo => {
+                format!("\"{change}\" was before the last sync, so it can no longer be undone")
+            }
+            Reverting::Redo => format!(
+                "The undo of \"{change}\" was before the last sync, so it can no longer be redone"
+            ),
+            Reverting::Group => format!(
+                "\"{change}\" was before the last sync, so it can no longer be grouped with \
+                 other changes"
+            ),
+        };
+        return Err(Error::Library(LibraryError::InvalidConfig(message)));
     }
     Ok(())
 }
@@ -256,7 +280,7 @@ pub async fn group_events(db: &SqlitePool, body: GroupEventsRequest) -> Result<(
         }
         events.push(event);
     }
-    check_not_synced(db, &events).await?;
+    check_not_synced(db, &events, Reverting::Group).await?;
     for &other in others {
         join_event_group(db, leader, other).await?;
     }
@@ -293,7 +317,7 @@ pub async fn undo_event(
     };
 
     let events = expand_group(db, event, body.undo_group).await?;
-    check_not_synced(db, &events).await?;
+    check_not_synced(db, &events, Reverting::Undo).await?;
     let undone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
@@ -345,7 +369,7 @@ pub async fn redo_event(
     };
 
     let events = expand_group(db, event, body.redo_group).await?;
-    check_not_synced(db, &events).await?;
+    check_not_synced(db, &events, Reverting::Redo).await?;
     let redone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;

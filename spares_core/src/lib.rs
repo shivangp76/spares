@@ -51,6 +51,9 @@ pub enum Error {
     /// Sync failed. Nothing was committed on this side.
     #[error("Sync failed: {0}")]
     Sync(String),
+    /// The sync server could not be reached, e.g. offline. Nothing was committed on this side.
+    #[error("Sync failed: {0}")]
+    SyncUnreachable(String),
     /// The other replica changed while syncing, so the sync has to start over. Nothing was
     /// committed on the side that returns it.
     #[error("The other replica changed during the sync; retry")]

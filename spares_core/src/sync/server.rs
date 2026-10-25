@@ -33,6 +33,7 @@ use super::read_counts;
 use super::records::Selection;
 use super::records::read_cards_of_notes;
 use super::records::read_changes;
+use super::run::read_render_assets;
 use super::schema_version;
 use super::set_applying;
 use super::set_state;
@@ -128,10 +129,21 @@ pub async fn pull(db: &SqlitePool, request: PullRequest) -> Result<PullResponse,
             .into_iter()
             .filter(|card| !known.contains(&card.id)),
     );
+    let render_assets = match &request.render_assets_digest {
+        Some(digest) => {
+            let render_assets = read_render_assets(&mut tx).await?;
+            (render_assets.digest() != *digest).then_some(render_assets)
+        }
+        None => None,
+    };
     guard_undo(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
-    Ok(PullResponse { usn, changes })
+    Ok(PullResponse {
+        usn,
+        changes,
+        render_assets,
+    })
 }
 
 /// Applies a client's push. Returns what it changed, for regenerating files.
@@ -154,11 +166,14 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
         .await
         .map_err(sqlx_error)?;
     let applied = apply_changes(&mut tx, &request.changes, new_usn).await?;
+    // Not over a newer file's: a client's rows may be older than another's, as a device's were
+    // before it stopped sending them
     for asset in &request.render_assets {
         sqlx::query(
             "INSERT INTO render_asset (path, hash, mtime, size) VALUES (?, ?, ?, ?)
              ON CONFLICT (path) DO UPDATE SET hash = excluded.hash, mtime = excluded.mtime,
-                 size = excluded.size",
+                 size = excluded.size
+             WHERE excluded.mtime >= render_asset.mtime",
         )
         .bind(&asset.path)
         .bind(&asset.hash)

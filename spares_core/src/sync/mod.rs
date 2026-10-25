@@ -53,7 +53,8 @@
 //!
 //! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and (since
 //!   `20261017140000_saved_search_sync`) `saved_search`, defaulting to `-1` (changed and not yet
-//!   synced), so new rows are dirty without a trigger.
+//!   synced), so new rows are dirty without a trigger. A client marks the rows it is pushing `-2`
+//!   (see [`run`]); they count as dirty too.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
@@ -80,7 +81,9 @@
 //! `note_link` and embedded keywords are derived from the text, so they aren't tracked or sent;
 //! they are rebuilt wherever a note is applied. `event`, `offline_action` and `app_state` aren't
 //! synced. `render_asset` and `render_package` rows are sent in full on every push, since assets
-//! are only added on the laptop.
+//! are only added on the laptop, and the server keeps a row's newer file. A device sends none, and
+//! gets the server's in a pull whenever they differ from its own (`render_assets_digest`), so it
+//! has the laptop's latest templates, and never puts its older rows back on the server.
 //!
 //! # More replicas
 //!
@@ -325,7 +328,7 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
     let query = USN_TABLES
         .iter()
         .chain(&["grave"])
-        .map(|table| format!("SELECT 1 FROM {table} WHERE usn = -1"))
+        .map(|table| format!("SELECT 1 FROM {table} WHERE usn < 0"))
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
     let found: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!("SELECT EXISTS ({query})")))
@@ -335,13 +338,14 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
     Ok(found == Some(1))
 }
 
-/// How many rows changed here since the last sync. Automatic sync watches it to tell when changes
-/// stop coming; changing a row that is already dirty leaves it the same.
+/// How many rows changed here since the last sync, those being pushed included. Automatic sync
+/// watches it to tell when changes stop coming; changing a row that is already dirty leaves it the
+/// same.
 pub async fn dirty_count(db: &SqlitePool) -> Result<i64, Error> {
     let query = USN_TABLES
         .iter()
         .chain(&["grave"])
-        .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn = -1)"))
+        .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn < 0)"))
         .collect::<Vec<_>>()
         .join(" + ");
     sqlx::query_scalar(AssertSqlSafe(format!("SELECT {query}")))

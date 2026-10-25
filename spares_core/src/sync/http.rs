@@ -1,7 +1,6 @@
 //! The server over HTTP: `/api/sync/*` on `sync.url` (see `spares_server`'s sync handlers).
 
 use std::path::Path;
-#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -9,6 +8,11 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use super::devices::Device;
+use super::devices::DeviceConfig;
+use super::devices::EnrollRequest;
+use super::devices::EnrollResponse;
+use super::devices::UnenrollRequest;
 use super::protocol::FullUploadResponse;
 use super::protocol::MetaResponse;
 use super::protocol::PullRequest;
@@ -21,6 +25,15 @@ use crate::Error;
 /// The environment variable with the server's API key (its `SPARES_API_KEY`).
 pub const SYNC_API_KEY_ENV: &str = "SPARES_SYNC_API_KEY";
 
+/// How long a request may take, set per request, which reqwest also does in a browser (through an
+/// `AbortController`), so a hung request never leaves a device syncing forever. A push that times
+/// out after the server applied it is finished by the next sync (see [`super::run`]).
+const QUICK_TIMEOUT: Duration = Duration::from_secs(30);
+/// A pull or a push. The server's push can wait for the notes lock, then renders the changed
+/// notes before it answers.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(300);
+const FULL_SYNC_TIMEOUT: Duration = Duration::from_secs(600);
+
 pub struct HttpRemote {
     base_url: String,
     api_key: Option<String>,
@@ -32,11 +45,9 @@ impl HttpRemote {
     /// `api_key` its `SPARES_API_KEY` (a client's `SPARES_SYNC_API_KEY`).
     pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, Error> {
         let client = reqwest::Client::builder();
-        // The browser's `fetch` has no timeouts to set.
+        // A browser's `fetch` has no connect timeout.
         #[cfg(not(target_family = "wasm"))]
-        let client = client
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(600));
+        let client = client.connect_timeout(Duration::from_secs(10));
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
@@ -44,10 +55,47 @@ impl HttpRemote {
         })
     }
 
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    /// The server's database, for a full download. A browser keeps it in its own storage rather
+    /// than in a file, so [`SyncRemote::download`] is built on this.
+    pub async fn download_bytes(&self) -> Result<Vec<u8>, Error> {
+        Ok(self
+            .send(self.request(reqwest::Method::GET, "/api/sync/full", FULL_SYNC_TIMEOUT))
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
+    }
+
+    /// Replaces the server's database with `bytes`, for a full upload.
+    pub async fn upload_bytes(
+        &self,
+        bytes: Vec<u8>,
+        replica: u8,
+    ) -> Result<FullUploadResponse, Error> {
+        Ok(self
+            .send(
+                self.request(
+                    reqwest::Method::PUT,
+                    &format!("/api/sync/full?replica={replica}"),
+                    FULL_SYNC_TIMEOUT,
+                )
+                .body(bytes),
+            )
+            .await?
+            .json()
+            .await?)
+    }
+
+    fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        timeout: Duration,
+    ) -> reqwest::RequestBuilder {
         let request = self
             .client
-            .request(method, format!("{}{path}", self.base_url));
+            .request(method, format!("{}{path}", self.base_url))
+            .timeout(timeout);
         match &self.api_key {
             Some(key) => request.bearer_auth(key),
             None => request,
@@ -56,7 +104,7 @@ impl HttpRemote {
 
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
         let response = request.send().await.map_err(|e| {
-            Error::Sync(format!(
+            Error::SyncUnreachable(format!(
                 "cannot reach the sync server {}: {e}",
                 self.base_url
             ))
@@ -66,17 +114,34 @@ impl HttpRemote {
             return Ok(response);
         }
         let body = response.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| {
-                v.get("message")
-                    .and_then(|m| m.as_str())
-                    .map(str::to_string)
-            })
+        let json = serde_json::from_str::<serde_json::Value>(&body).ok();
+        let not_enrolled = json.as_ref().and_then(|v| {
+            v.get("not_enrolled")?.as_bool()?.then_some(())?;
+            u8::try_from(v.get("replica")?.as_u64()?).ok()
+        });
+        let message = json
+            .as_ref()
+            .and_then(|v| v.get("message")?.as_str().map(str::to_string))
             .unwrap_or(body);
+        if status == StatusCode::FORBIDDEN
+            && let Some(replica) = not_enrolled
+        {
+            return Err(Error::NotEnrolled(replica));
+        }
         Err(match status {
             StatusCode::CONFLICT => Error::SyncRetry,
             StatusCode::PRECONDITION_FAILED => Error::FullSyncRequired(message),
+            // The server's own answer, while another change holds the notes, e.g. a full upload's
+            // files. Not a proxy's, which has no JSON.
+            StatusCode::SERVICE_UNAVAILABLE if json.is_some() => Error::NotesVcsBusy,
+            // What the request asked for can't be done, which the server's message says, e.g.
+            // "Sync failed: every device number (2–4) is taken …", once
+            StatusCode::BAD_REQUEST => Error::Sync(
+                message
+                    .strip_prefix("Sync failed: ")
+                    .unwrap_or(&message)
+                    .to_string(),
+            ),
             StatusCode::UNAUTHORIZED => Error::Sync(format!(
                 "the sync server refused the API key. Set {SYNC_API_KEY_ENV} to its \
                  SPARES_API_KEY."
@@ -85,13 +150,59 @@ impl HttpRemote {
         })
     }
 
+    /// Asks the server for a replica number for this browser (see [`super::devices`]).
+    pub async fn enroll(&self, name: &str) -> Result<EnrollResponse, Error> {
+        self.post(
+            "/api/sync/enroll",
+            &EnrollRequest {
+                name: name.to_string(),
+            },
+            QUICK_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Frees a device's replica number: this browser's, or that of one that lost its copy.
+    pub async fn unenroll(&self, replica: u8) -> Result<(), Error> {
+        let _: serde_json::Value = self
+            .post(
+                "/api/sync/unenroll",
+                &UnenrollRequest { replica },
+                QUICK_TIMEOUT,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The enrolled devices.
+    pub async fn devices(&self) -> Result<Vec<Device>, Error> {
+        Ok(self
+            .send(self.request(reqwest::Method::GET, "/api/sync/devices", QUICK_TIMEOUT))
+            .await?
+            .json()
+            .await?)
+    }
+
+    /// The server's config and parser templates, for a browser's copy.
+    pub async fn device_config(&self) -> Result<DeviceConfig, Error> {
+        Ok(self
+            .send(self.request(reqwest::Method::GET, "/api/sync/config", QUICK_TIMEOUT))
+            .await?
+            .json()
+            .await?)
+    }
+
     async fn post<B: Serialize + Sync, R: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
+        timeout: Duration,
     ) -> Result<R, Error> {
         Ok(self
-            .send(self.request(reqwest::Method::POST, path).json(body))
+            .send(
+                self.request(reqwest::Method::POST, path, timeout)
+                    .json(body),
+            )
             .await?
             .json()
             .await?)
@@ -106,6 +217,7 @@ impl SyncRemote for HttpRemote {
             .send(self.request(
                 reqwest::Method::GET,
                 &format!("/api/sync/meta?replica={replica}"),
+                QUICK_TIMEOUT,
             ))
             .await?
             .json()
@@ -113,19 +225,17 @@ impl SyncRemote for HttpRemote {
     }
 
     async fn pull(&self, request: PullRequest) -> Result<PullResponse, Error> {
-        self.post("/api/sync/pull", &request).await
+        self.post("/api/sync/pull", &request, EXCHANGE_TIMEOUT)
+            .await
     }
 
     async fn push(&self, request: PushRequest) -> Result<PushResponse, Error> {
-        self.post("/api/sync/push", &request).await
+        self.post("/api/sync/push", &request, EXCHANGE_TIMEOUT)
+            .await
     }
 
     async fn download(&self, path: &Path) -> Result<(), Error> {
-        let bytes = self
-            .send(self.request(reqwest::Method::GET, "/api/sync/full"))
-            .await?
-            .bytes()
-            .await?;
+        let bytes = self.download_bytes().await?;
         std::fs::write(path, &bytes).map_err(|e| Error::Io {
             description: format!("Failed to write {}", path.display()),
             source: e,
@@ -137,16 +247,6 @@ impl SyncRemote for HttpRemote {
             description: format!("Failed to read {}", path.display()),
             source: e,
         })?;
-        Ok(self
-            .send(
-                self.request(
-                    reqwest::Method::PUT,
-                    &format!("/api/sync/full?replica={replica}"),
-                )
-                .body(bytes),
-            )
-            .await?
-            .json()
-            .await?)
+        self.upload_bytes(bytes, replica).await
     }
 }
