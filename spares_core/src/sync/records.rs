@@ -152,18 +152,18 @@ impl Changes {
     }
 }
 
-/// Which rows to read: those changed locally and not synced yet (`usn = -1`), or those stamped
-/// after a given usn (the server answering a pull).
+/// Which rows to read: those a client is pushing (`usn = -2`, see [`super::run`]), or those
+/// stamped after a given usn (the server answering a pull).
 #[derive(Clone, Copy, Debug)]
 pub enum Selection {
-    Dirty,
+    Pushing,
     After(i64),
 }
 
 impl Selection {
     fn condition(self) -> String {
         match self {
-            Self::Dirty => "usn = -1".to_string(),
+            Self::Pushing => "usn = -2".to_string(),
             Self::After(usn) => format!("usn > {usn}"),
         }
     }

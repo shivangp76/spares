@@ -5,10 +5,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use chrono::Duration;
 use chrono::Utc;
+use futures::future::BoxFuture;
 use serde_json::Map;
 use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
@@ -106,6 +109,9 @@ impl Replicas {
             remote: InProcess {
                 pool: server.clone(),
                 after_pull: Mutex::new(None),
+                during_push: Mutex::new(None),
+                lose_push_answer: AtomicBool::new(false),
+                fail_push: AtomicBool::new(false),
             },
             dir,
             laptop,
@@ -198,7 +204,15 @@ struct InProcess {
     pool: SqlitePool,
     /// Runs on the server right after the next pull, as a phone edit during a sync would.
     after_pull: Mutex<Option<String>>,
+    /// Runs on the client during the next push, before the server applies it.
+    during_push: Mutex<Option<DuringPush>>,
+    /// Loses the answer to the next push, after the server applied it.
+    lose_push_answer: AtomicBool,
+    /// Fails the next push before the server sees it.
+    fail_push: AtomicBool,
 }
+
+type DuringPush = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 
 #[async_trait]
 impl SyncRemote for InProcess {
@@ -219,9 +233,21 @@ impl SyncRemote for InProcess {
     }
 
     async fn push(&self, request: PushRequest) -> Result<PushResponse, Error> {
-        on_server(server::push(&self.pool, request))
+        let during = self.during_push.lock().unwrap().take();
+        if let Some(during) = during {
+            during().await;
+        }
+        if self.fail_push.swap(false, Ordering::SeqCst) {
+            return Err(Error::Sync("cannot reach the server".to_string()));
+        }
+        let response = on_server(server::push(&self.pool, request))
             .await
-            .map(|(response, _)| response)
+            .map(|(response, _)| response);
+        if self.lose_push_answer.swap(false, Ordering::SeqCst) {
+            response?;
+            return Err(Error::Sync("the connection dropped".to_string()));
+        }
+        response
     }
 
     async fn download(&self, path: &Path) -> Result<(), Error> {
@@ -242,7 +268,7 @@ async fn contents(
     Vec<TagRecord>,
 ) {
     let mut conn = pool.acquire().await.unwrap();
-    let all = Selection::After(-2);
+    let all = Selection::After(i64::MIN);
     (
         read_notes(&mut conn, all).await.unwrap(),
         read_cards(&mut conn, all).await.unwrap(),
@@ -877,6 +903,31 @@ async fn clozes_added_on_both_sides_keep_their_cards() {
 }
 
 #[tokio::test]
+async fn the_same_edit_on_both_sides_merges_with_one_card_per_cloze() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    let before = cards_of(&replicas.laptop, ids[0]).await;
+    let synced = data(&replicas.laptop, ids[0]).await.unwrap();
+    // A cloze without its order, which each side gives a card of its own
+    let text = synced.replace("Line three", "Line three {{ new }}");
+    edit(&replicas.laptop, ids[0], &text).await;
+    on_server(edit(&replicas.server, ids[0], &text)).await;
+    let report = replicas.sync().await;
+    assert!(report.conflicts.is_empty(), "{report:?}");
+    replicas.assert_converged().await;
+    assert_eq!(
+        tags_of(&replicas.laptop, ids[0]).await,
+        Vec::<String>::new()
+    );
+    let after = cards_of(&replicas.laptop, ids[0]).await;
+    assert_eq!(after.len(), 2, "{after:?}");
+    assert_eq!(after[0], before[0]);
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await,
+        data(&replicas.server, ids[0]).await
+    );
+}
+
+#[tokio::test]
 async fn a_server_change_during_the_sync_restarts_it() {
     let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
     edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
@@ -927,15 +978,15 @@ async fn row_count_mismatch_needs_a_full_sync() {
     edit(&replicas.laptop, ids[0], "A {{ one }} edited").await;
     let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
     assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
-    // It is remembered, and nothing was committed on the laptop.
+    // It is remembered. The push reached the server, so the note is stamped.
     let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
     assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
-    let dirty: i64 = sqlx::query_scalar("SELECT usn FROM note WHERE id = ?")
+    let usn: i64 = sqlx::query_scalar("SELECT usn FROM note WHERE id = ?")
         .bind(ids[0])
         .fetch_one(&replicas.laptop)
         .await
         .unwrap();
-    assert_eq!(dirty, -1);
+    assert!(usn > 0, "{usn}");
     replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
     replicas.sync().await;
 }
@@ -969,7 +1020,13 @@ async fn undo_stops_at_the_last_sync() {
         )
     };
     let err = undo().await.unwrap_err();
-    assert!(err.to_string().contains("before the last sync"), "{err}");
+    assert!(
+        err.to_string().contains(&format!(
+            "\"Edit note {}\" was before the last sync, so it can no longer be undone",
+            ids[0].letters()
+        )),
+        "{err}"
+    );
     // A change made after the sync can be undone.
     edit(&replicas.laptop, ids[0], "A {{ one }} after").await;
     undo().await.unwrap().unwrap();
@@ -1108,6 +1165,90 @@ impl Replicas {
     async fn sync_device(&self, device: &SqlitePool, mode: SyncMode) -> Result<SyncReport, Error> {
         on_device(sync(device, &self.remote, mode, &self.dir)).await
     }
+}
+
+/// Each `render_asset` row as `(path, hash)`, and each `render_package` spec.
+async fn render_assets(pool: &SqlitePool) -> (Vec<(String, String)>, Vec<String>) {
+    let assets = sqlx::query_as("SELECT path, hash FROM render_asset ORDER BY path")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    let packages = sqlx::query_scalar("SELECT spec FROM render_package ORDER BY spec")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    (assets, packages)
+}
+
+/// A device gets the laptop's render assets from the server at each sync where they changed, and
+/// never sends its own, which could be older than the laptop's.
+#[tokio::test]
+async fn a_device_follows_the_render_assets_and_never_sends_them() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    exec(
+        &replicas.laptop,
+        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/template.typ', 'h1', 1, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/a:0.1.0')",
+    )
+    .await;
+    replicas.sync().await;
+    let device = replicas.device().await;
+    let first = (
+        vec![("/t/template.typ".to_string(), "h1".to_string())],
+        vec!["@preview/a:0.1.0".to_string()],
+    );
+    assert_eq!(render_assets(&device).await, first);
+
+    // The template changed on the laptop, and moved
+    exec(
+        &replicas.laptop,
+        "UPDATE render_asset SET hash = 'h2', mtime = 2 WHERE path = '/t/template.typ';
+         INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/u/template.typ', 'h3', 2, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/b:0.2.0')",
+    )
+    .await;
+    replicas.sync().await;
+    on_device(edit(&device, ids[0], "A {{ one }} phone")).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    let second = (
+        vec![
+            ("/t/template.typ".to_string(), "h2".to_string()),
+            ("/u/template.typ".to_string(), "h3".to_string()),
+        ],
+        vec![
+            "@preview/a:0.1.0".to_string(),
+            "@preview/b:0.2.0".to_string(),
+        ],
+    );
+    assert_eq!(render_assets(&device).await, second);
+    assert_eq!(render_assets(&replicas.server).await, second);
+
+    // Rows a device has, however old, stay there: the server keeps the laptop's
+    exec(
+        &device,
+        "UPDATE render_asset SET hash = 'h1', mtime = 1 WHERE path = '/t/template.typ'",
+    )
+    .await;
+    on_device(edit(&device, ids[0], "A {{ one }} phone again")).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    assert_eq!(render_assets(&replicas.server).await, second);
+    // And the pull brought the server's back
+    assert_eq!(render_assets(&device).await, second);
+
+    // A client's older row doesn't replace a newer one either
+    exec(
+        &replicas.laptop,
+        "UPDATE render_asset SET hash = 'h0', mtime = 0 WHERE path = '/t/template.typ'",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await, second);
 }
 
 #[tokio::test]
@@ -1390,4 +1531,157 @@ async fn a_full_download_works_on_a_single_connection() {
     .await
     .unwrap();
     assert_eq!(report.notes_changed.len(), 1);
+}
+
+/// A single connection, as a browser's copy has, that has done its first sync
+async fn single_connection(replicas: &Replicas) -> SqlitePool {
+    let path = replicas.dir.join("one-connection.sqlite");
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+        .unwrap()
+        .create_if_missing(true)
+        .with_regexp();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sync(
+        &pool,
+        &replicas.remote,
+        SyncMode::FullDownload,
+        &replicas.dir,
+    )
+    .await
+    .unwrap();
+    pool
+}
+
+/// How many rows are dirty or being pushed
+async fn unsynced(pool: &SqlitePool) -> i64 {
+    super::dirty_count(pool).await.unwrap()
+}
+
+/// The note's base, as `sync_base` keeps it
+async fn base_data(pool: &SqlitePool, id: NoteId) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT json_extract(snapshot, '$.data') FROM sync_base WHERE kind = 'note' AND oid = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// The push holds no transaction, so the copy keeps answering while the server takes its time.
+#[tokio::test]
+async fn a_single_connection_answers_during_the_push() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let pool = single_connection(&replicas).await;
+    edit(&pool, ids[0], "A {{ one }} device").await;
+    let during = pool.clone();
+    *replicas.remote.during_push.lock().unwrap() = Some(Box::new(move || {
+        Box::pin(async move {
+            let notes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+                .fetch_one(&during)
+                .await
+                .unwrap();
+            assert_eq!(notes, 1);
+        })
+    }));
+    let report = sync(&pool, &replicas.remote, SyncMode::Normal, &replicas.dir)
+        .await
+        .unwrap();
+    assert!(report.pushed > 0, "{report:?}");
+    assert_eq!(unsynced(&pool).await, 0);
+    assert!(
+        on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("device")
+    );
+}
+
+/// A note edited while its earlier edit is pushed stays dirty, with the pushed text as its base,
+/// so a server edit to another line afterwards merges without a conflict.
+#[tokio::test]
+async fn a_write_during_the_push_syncs_the_next_time() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    edit(
+        &replicas.laptop,
+        ids[0],
+        &LINES.replacen("Line three", "Line three laptop", 1),
+    )
+    .await;
+    // With the card's order, which the edit put in
+    let pushed = data(&replicas.laptop, ids[0]).await.unwrap();
+    let during = replicas.laptop.clone();
+    let id = ids[0];
+    let later = pushed.replacen("Line four", "Line four laptop", 1);
+    let written = later.clone();
+    *replicas.remote.during_push.lock().unwrap() = Some(Box::new(move || {
+        Box::pin(async move { edit(&during, id, &written).await })
+    }));
+    replicas.sync().await;
+    assert_eq!(
+        on_server(data(&replicas.server, ids[0])).await.unwrap(),
+        pushed
+    );
+    assert_eq!(base_data(&replicas.laptop, ids[0]).await.unwrap(), pushed);
+    assert!(unsynced(&replicas.laptop).await > 0);
+
+    let phone = pushed.replacen("Line one", "Line one phone", 1);
+    on_server(edit(&replicas.server, ids[0], &phone)).await;
+    let report = replicas.sync().await;
+    assert!(report.conflicts.is_empty(), "{report:?}");
+    replicas.assert_converged().await;
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        later.replacen("Line one", "Line one phone", 1)
+    );
+}
+
+/// A push the server applied but whose answer never came is finished by the next sync, which
+/// would otherwise take the server for one restored from a backup.
+#[tokio::test]
+async fn a_lost_push_answer_is_finished_by_the_next_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    replicas
+        .remote
+        .lose_push_answer
+        .store(true, Ordering::SeqCst);
+    let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
+    assert!(matches!(err, Error::Sync(_)), "{err}");
+    assert!(
+        on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("laptop")
+    );
+    // Changed again before the next sync
+    edit(&replicas.laptop, ids[1], "B {{ two }} laptop").await;
+
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(unsynced(&replicas.laptop).await, 0);
+}
+
+/// A push the server refused, or never received, is sent again by the next sync.
+#[tokio::test]
+async fn a_push_that_never_arrived_is_sent_again() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    replicas.remote.fail_push.store(true, Ordering::SeqCst);
+    replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
+    assert!(
+        !on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("laptop")
+    );
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(unsynced(&replicas.laptop).await, 0);
 }

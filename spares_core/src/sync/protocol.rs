@@ -63,6 +63,10 @@ pub struct PullRequest {
     /// The server's usn at the client's last sync.
     pub since: i64,
     pub replica: u8,
+    /// A device's: the [digest](RenderAssets::digest) of its render assets, so the pull brings the
+    /// server's if they differ. Other clients have their own, and send none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_assets_digest: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -71,16 +75,35 @@ pub struct PullResponse {
     pub usn: i64,
     /// Rows changed since `since`, with every card of each changed note.
     pub changes: Changes,
+    /// The server's render assets, for a device whose differ, which it replaces its own with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_assets: Option<RenderAssets>,
 }
 
-/// A `render_asset` row: the client sends all of them on every push, since assets are only
-/// added on the laptop and their files are copied separately.
+/// A `render_asset` row. Assets are found on the laptop, which sends all of them on every push,
+/// and their files are copied separately. A device gets them from the server (see
+/// [`PullResponse::render_assets`]), and sends none, so its copies never replace newer ones.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
 pub struct RenderAssetRecord {
     pub path: String,
     pub hash: String,
     pub mtime: i64,
     pub size: i64,
+}
+
+/// Every `render_asset` row, by path, and every `render_package` spec, sorted.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct RenderAssets {
+    pub assets: Vec<RenderAssetRecord>,
+    pub packages: Vec<String>,
+}
+
+impl RenderAssets {
+    /// A hash of all of it, the same on both sides for the same rows.
+    pub fn digest(&self) -> String {
+        let json = serde_json::to_vec(self).expect("render assets serialize");
+        blake3::hash(&json).to_hex().to_string()
+    }
 }
 
 /// An `id_counter` row of the pushing replica: the largest id it ever handed out for `tbl`. The

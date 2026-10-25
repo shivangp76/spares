@@ -61,10 +61,10 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
             );
         }
         // The device has to enroll again (`spares_core::sync::devices`).
-        Error::NotEnrolled(_) => {
+        Error::NotEnrolled(replica) => {
             return (
                 StatusCode::FORBIDDEN,
-                Json(json!({ "message": e.to_string(), "not_enrolled": true })),
+                Json(json!({ "message": e.to_string(), "not_enrolled": true, "replica": replica })),
             );
         }
         // A search error's message marks the problem in the query, `span` says where it is, and
@@ -79,9 +79,13 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": message, "span": span, "query_field": query_field })),
             );
         }
-        Error::Sync(_) | Error::Library(LibraryError::Tag(TagErrorKind::InvalidInput(_))) => {
-            Some(StatusCode::BAD_REQUEST)
-        }
+        // E.g. undoing what has been synced already
+        Error::Sync(_)
+        | Error::Library(
+            LibraryError::Tag(TagErrorKind::InvalidInput(_)) | LibraryError::InvalidConfig(_),
+        ) => Some(StatusCode::BAD_REQUEST),
+        // The laptop's server syncing with the sync server
+        Error::SyncUnreachable(_) => Some(StatusCode::BAD_GATEWAY),
         Error::Library(LibraryError::Note(NoteErrorKind::NotFound { .. })) => {
             Some(StatusCode::NOT_FOUND)
         }
@@ -90,11 +94,11 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
     if let Some(status) = status {
         return (status, Json(json!({ "message": e.to_string() })));
     }
+    // The message is for the user, as everywhere else, and the details for the log
+    log::error!("{e:?}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "message": format!("{:?}", e)
-        })),
+        Json(json!({ "message": e.to_string() })),
     )
 }
 

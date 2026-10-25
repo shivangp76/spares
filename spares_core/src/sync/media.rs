@@ -5,7 +5,7 @@
 //!   `GET /api/sync/files` ([`rendered_files`]) and downloads the ones that changed into the
 //!   browser's Cache Storage, where the web app already keeps the files of its offline queue.
 //!   Typst cards compile in the browser instead, from render assets the device fetches by the
-//!   hashes in its own `render_asset` table.
+//!   hashes in its own `render_asset` table, which follows the server's at each sync.
 //! - **Images and audio** added on a device are named as the server names them, `<stem>-<hash>.<ext>`
 //!   in its image or audio directory (see [`super::devices::DeviceConfig`]). The device uploads each
 //!   with `PUT /api/sync/media/{kind}/{name}` ([`store_media`]) before the push whose notes name it.
