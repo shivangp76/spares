@@ -131,7 +131,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates)
-[[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm)
+# clang and llvm build SQLite's C for the copy of the collection browsers keep (spares_wasm)
+[[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm clang llvm)
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
 [[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra \

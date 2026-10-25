@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFile } from '../api/client';
 import { audioLinkPath } from '../audio';
 import { scrollClozesIntoView } from '../clozeScroll';
@@ -7,6 +7,8 @@ import { errorMessage, parseNoteId } from '../utils';
 
 interface Props {
   path: string;
+  /** The HTML itself, shown instead of fetching `path`. */
+  html?: string;
   version?: number;
   /** Opens a linked note in the app. Without it, note links do nothing. */
   onOpenNote?: (noteId: number) => void;
@@ -19,6 +21,8 @@ interface Props {
   zoom?: number;
 }
 
+type Loaded = { key: string; html?: string; error?: string };
+
 // Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
 const NOTE_LINK = /(?:^|\/)([a-z]{1,8})\.md$/;
 const STYLE_ID = 'spares-theme';
@@ -28,9 +32,9 @@ const STYLE_ID = 'spares-theme';
  * can run. `allow-same-origin` lets the app size and theme it, and must never be combined with
  * `allow-scripts`, which would remove the sandbox.
  */
-export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayAudio, scrollToCloze, zoom = 1 }: Props) {
-  const key = `${path}?v=${version}`;
-  const [loaded, setLoaded] = useState<{ key: string; html?: string; error?: string } | null>(null);
+export default function HtmlViewer({ path, html, version, onOpenNote, onReady, onPlayAudio, scrollToCloze, zoom = 1 }: Props) {
+  const key = html === undefined ? `${path}?v=${version}` : `html:${html}`;
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(0);
   // The key of the document the iframe has loaded, and of the last one scrolled to while shown
@@ -49,15 +53,17 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
   }, [theme, zoom, onOpenNote, onPlayAudio]);
 
   useEffect(() => {
+    if (html !== undefined) return;
     let cancelled = false;
     fetchFile(path)
       .then(blob => blob.text())
       .then(html => { if (!cancelled) setLoaded({ key, html }); })
       .catch(e => { if (!cancelled) setLoaded({ key, error: errorMessage(e) }); });
     return () => { cancelled = true; };
-  }, [key, path]);
+  }, [key, path, html]);
 
-  const current = loaded?.key === key ? loaded : null;
+  const given = useMemo<Loaded | null>(() => (html === undefined ? null : { key, html }), [key, html]);
+  const current = given ?? (loaded?.key === key ? loaded : null);
 
   useEffect(() => {
     if (current?.error !== undefined) onReady?.();

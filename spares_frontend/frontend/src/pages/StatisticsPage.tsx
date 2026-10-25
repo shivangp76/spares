@@ -11,6 +11,7 @@ import ReviewHeatmap from '../components/ReviewHeatmap';
 import { useAuth } from '../hooks/useAuth';
 import { useCardStates } from '../hooks/useCardStates';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { useLocalStatus } from '../local/copy';
 import { useOfflineStatus } from '../offline/review';
 import {
   cachedViews,
@@ -545,6 +546,7 @@ export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
   const { online, pending } = useOfflineStatus();
+  const local = useLocalStatus();
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_statistics_recent_searches');
 
   const [date, setDate] = useState(() => toDateInputValue(new Date()));
@@ -649,7 +651,8 @@ export default function StatisticsPage() {
   const todayTitle = offlineEntry && new Date(offlineEntry.fetchedAt).toDateString() !== new Date().toDateString()
     ? `Studied on ${new Date(offlineEntry.fetchedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}`
     : isToday ? 'Today' : `Studied on ${date}`;
-  const serverReachable = online && !offlineEntry;
+  // A device's copy schedules cards itself, offline too
+  const canSchedule = local.active || (online && !offlineEntry);
 
   return (
     <div className="page">
@@ -773,9 +776,9 @@ export default function StatisticsPage() {
               {isToday ? (
                 <>
                   {/* Keyed on the safe count so the prefilled count follows the latest statistics */}
-                  <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} disabled={!serverReachable} onDone={o => { showOutcome(o); reload(); }} />
-                  <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} disabled={!serverReachable} onDone={o => { showOutcome(o); reload(); }} />
-                  {!serverReachable && <p style={note}>{OFFLINE_HINT}</p>}
+                  <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} disabled={!canSchedule} onDone={o => { showOutcome(o); reload(); }} />
+                  <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} disabled={!canSchedule} onDone={o => { showOutcome(o); reload(); }} />
+                  {!canSchedule && <p style={note}>{OFFLINE_HINT}</p>}
                   {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onReverted={reload} />}
                 </>
               ) : (

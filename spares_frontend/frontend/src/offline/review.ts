@@ -18,6 +18,7 @@ import {
   syncOfflineActions,
 } from '../api/client';
 import { clipPaths } from '../audio';
+import { usesLocalCopy } from '../local/transport';
 import type { GetReviewCardResponse, OfflineStudyActionKind, ReviewFilter, ReviewQueueCard } from '../types/spares';
 import { lastReviewWidth, widthInputs } from '../typst/width';
 import { backPath, backWebPath } from '../utils';
@@ -307,11 +308,15 @@ export function downloadQueue(key: string, filter: ReviewFilter | null, sessionI
   return download;
 }
 
-/** Downloads the queue for `key` unless it was downloaded recently. Errors are logged. */
+/**
+ * Downloads the queue for `key` unless it was downloaded recently. Errors are logged. Not on a
+ * device that keeps a copy of the collection, which has every card (see src/local).
+ */
 export function refreshQueue(key: string, filter: ReviewFilter | null, sessionInfo: string | null): void {
   (async () => {
-    const queue = await getQueue(key);
     const serverUrl = currentServerUrl();
+    if (serverUrl === null || usesLocalCopy(serverUrl)) return;
+    const queue = await getQueue(key);
     if (queue && queue.serverUrl === serverUrl && Date.now() - queue.fetchedAt < STALE_AFTER_MS) return;
     await downloadQueue(key, filter, sessionInfo);
   })().catch(e => { if (!isNetworkError(e)) console.error(e); });

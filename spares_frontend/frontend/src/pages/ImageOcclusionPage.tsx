@@ -4,6 +4,7 @@ import { listParsers } from '../api/client';
 import ImageOcclusionEditor from '../components/ImageOcclusionEditor';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { OCCLUSIONS_NEED_SERVER, useLocalStatus } from '../local/copy';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, sectionLabel } from '../utils';
 
@@ -16,6 +17,7 @@ export default function ImageOcclusionPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
   const isNarrow = useMediaQuery('(max-width: 640px)');
+  const local = useLocalStatus();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +54,9 @@ export default function ImageOcclusionPage() {
         When editing a note here, use <em>Insert image occlusion</em> by its data instead.
       </p>
 
-      {isNarrow ? (
+      {local.active ? (
+        <p style={{ fontSize: 14 }}>{OCCLUSIONS_NEED_SERVER}</p>
+      ) : isNarrow ? (
         <p style={{ fontSize: 14 }}>The image occlusion editor needs a larger screen.</p>
       ) : (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>

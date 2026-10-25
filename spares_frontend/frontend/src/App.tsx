@@ -5,6 +5,7 @@ import { useAuth } from './hooks/useAuth'
 
 // Pages are loaded on demand so a page doesn't wait for the others' code, e.g. the note editor
 const CardsPage = lazy(() => import('./pages/CardsPage'))
+const ConflictsPage = lazy(() => import('./pages/ConflictsPage'))
 const GraphPage = lazy(() => import('./pages/GraphPage'))
 const ImageOcclusionPage = lazy(() => import('./pages/ImageOcclusionPage'))
 const KeywordsPage = lazy(() => import('./pages/KeywordsPage'))
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/statistics" element={<StatisticsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/conflicts" element={<ConflictsPage />} />
           <Route path="/manual/:page?" element={<ManualPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/review" replace />} />

@@ -10,6 +10,10 @@ const PRECACHE = __PRECACHE__;
 // Files of this build cached when first loaded, e.g. the Typst compiler, which are kept across
 // builds that have them since their names are hashed
 const KEEP = __KEEP__;
+// A device that keeps a copy of the collection needs those too, such as spares_wasm, to work
+// offline after an update, so it caches them with the page. The app marks such a device with
+// this cache (see src/local/copy.ts).
+const LOCAL_COPY_MARKER = 'spares-local-copy';
 
 // Build files have hashed names, so they never change and are kept across builds until the build
 // that drops them takes over. The page itself is replaced on every build.
@@ -32,7 +36,8 @@ self.addEventListener('install', event => {
     await page.add(new Request(PAGE_URL, { cache: 'reload' }));
     const assets = await caches.open(ASSETS_CACHE);
     const cached = new Set((await assets.keys()).map(request => request.url));
-    await assets.addAll(precacheUrls.filter(url => url !== PAGE_URL && !cached.has(url)));
+    const urls = await caches.has(LOCAL_COPY_MARKER) ? [...precacheUrls, ...keepUrls] : precacheUrls;
+    await assets.addAll(urls.filter(url => url !== PAGE_URL && !cached.has(url)));
   })());
 });
 
@@ -56,6 +61,14 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') self.skipWaiting();
+  // From a page that set up a copy of the collection
+  if (event.data === 'cacheLocalCopy') {
+    event.waitUntil((async () => {
+      const assets = await caches.open(ASSETS_CACHE);
+      const cached = new Set((await assets.keys()).map(request => request.url));
+      await assets.addAll(keepUrls.filter(url => !cached.has(url)));
+    })());
+  }
 });
 
 self.addEventListener('fetch', event => {

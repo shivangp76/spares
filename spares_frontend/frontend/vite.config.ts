@@ -89,7 +89,8 @@ function listFiles(dir: string): string[] {
 /** Writes `dist/sw.js` from service-worker.js, with the files to cache for offline use. These are
     the page and everything it may load except the image occlusion editor and WebAssembly modules,
     which are large and only cached once used. The modules, having hashed names, are kept across
-    builds that still have them. */
+    builds that still have them. Devices that keep a copy of the collection cache the modules with
+    the page, since they can't do without spares_wasm and the Typst compiler (see src/local). */
 function serviceWorker(): Plugin {
   return {
     name: 'service-worker',
@@ -171,6 +172,10 @@ export default defineConfig({
         svgedit: fileURLToPath(new URL('./svgedit/src/editor/index.html', import.meta.url)),
       },
     },
+  },
+  // This device's copy of the collection runs in a module worker (src/local/worker.ts)
+  worker: {
+    format: 'es',
   },
   server: {
     open: process.env.SPARES_OPEN ?? '/',

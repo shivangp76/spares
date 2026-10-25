@@ -53,6 +53,7 @@ import type {
   UpdateTagRequest,
 } from '../types/spares';
 import { clearOfflineQueues, clearStatisticsEntries } from '../offline/db';
+import { COPY_FILES_CACHE, COPY_RENDER_ASSETS_CACHE, localFetch, needsServer, usesLocalCopy } from '../local/transport';
 
 const STORAGE_KEY = 'spares_credentials';
 
@@ -77,14 +78,26 @@ export async function getSchedulerNames({ serverUrl, apiKey }: Omit<Credentials,
 
 export function saveCredentials(creds: Credentials): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
-  clearCaches();
-  clearOfflineCopies().catch(console.error);
+  credentialsChanged();
 }
 
 export function clearCredentials(): void {
   localStorage.removeItem(STORAGE_KEY);
+  credentialsChanged();
+}
+
+const credentialsListeners = new Set<() => void>();
+
+/** Calls `listener` after the credentials are saved or cleared, e.g. on logging in or out. */
+export function onCredentialsChange(listener: () => void): () => void {
+  credentialsListeners.add(listener);
+  return () => credentialsListeners.delete(listener);
+}
+
+function credentialsChanged(): void {
   clearCaches();
   clearOfflineCopies().catch(console.error);
+  for (const listener of credentialsListeners) listener();
 }
 
 // Responses kept in memory until a reload or a credentials change, so revisiting a page doesn't wait
@@ -98,7 +111,8 @@ const todayStatistics = new Map<string, StatisticsResponse>();
 // Likewise the review history for the review page's heatmap
 let reviewHistory: ReviewHistoryResponse | undefined;
 
-function clearCaches(): void {
+/** Forgets the responses kept in memory, e.g. after a sync changed what they show. */
+export function clearCaches(): void {
   memoized.clear();
   listPages.clear();
   todayStatistics.clear();
@@ -152,8 +166,8 @@ function authHeaders(): HeadersInit {
 
 /** The server could not be reached, e.g. because the device is offline. */
 export class NetworkError extends Error {
-  constructor(label: string) {
-    super(`${label} failed: the server could not be reached`);
+  constructor(label: string, message = 'failed: the server could not be reached') {
+    super(`${label} ${message}`);
     this.name = 'NetworkError';
   }
 }
@@ -167,6 +181,11 @@ let reachabilityListener: ((reachable: boolean) => void) | null = null;
 /** Called with whether the server could be reached, after every request to it. */
 export function onServerReachability(listener: (reachable: boolean) => void): void {
   reachabilityListener = listener;
+}
+
+/** Tells the listener whether the server could be reached by a request that didn't go through `send`, such as a sync of this device's copy. */
+export function reportServerReachable(reachable: boolean): void {
+  reachabilityListener?.(reachable);
 }
 
 /** `fetch`, throwing a `NetworkError` if the server cannot be reached. */
@@ -186,9 +205,23 @@ async function send(label: string, url: string, init: RequestInit = {}): Promise
 
 // Copies of server responses kept for offline use, by URL without the API key. Rendered files are
 // kept while a downloaded review queue uses them (see src/offline), and the files Typst sources
-// read until logout.
+// read until logout. A device that keeps a copy of the collection downloads all of both into
+// caches of its own instead, which are read first (see src/local/copy.ts).
 const FILES_CACHE = 'spares-offline-files';
 const RENDER_ASSETS_CACHE = 'spares-offline-render-assets';
+
+/**
+ * What this device's copy downloaded for `url`, if it uses the copy for the server logged in to.
+ * The copy's files match its notes, which the server's newest renders may not until the next sync.
+ */
+async function copyFile(url: string, cacheName: string): Promise<Response | null> {
+  if (typeof caches === 'undefined' || !usesLocalCopy(getCredentials().serverUrl)) return null;
+  try {
+    return await (await caches.open(cacheName)).match(url, { ignoreVary: true }) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Fetches `url` from the server, keeping a copy in `cacheName`, and falls back to the copy if the
@@ -213,14 +246,14 @@ async function sendKeepingCopy(label: string, url: string, cacheName: string): P
 /** Drops copies of rendered files that are not in `keep` (paths relative to the files directory). */
 export async function pruneOfflineFiles(keep: Iterable<string>): Promise<void> {
   if (typeof caches === 'undefined') return;
-  const keepUrls = new Set([...keep].map(fileUrl));
+  const keepUrls = new Set([...keep].map(path => fileUrl(path)));
   const cache = await caches.open(FILES_CACHE);
   for (const request of await cache.keys()) {
     if (!keepUrls.has(request.url)) await cache.delete(request);
   }
 }
 
-/** Drops everything downloaded for offline use, except actions that are yet to be synced. */
+/** Drops everything downloaded for offline use, except actions that are yet to be synced and this device's copy of the collection and its files. */
 async function clearOfflineCopies(): Promise<void> {
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith(OFFLINE_COPY_PREFIX)) localStorage.removeItem(key);
@@ -278,11 +311,28 @@ async function apiFetch<T>(label: string, path: string, init: RequestInit = {}):
   return res.json() as Promise<T>;
 }
 
-/** Like `apiFetch`, for endpoints whose response body is empty. */
+/**
+ * Like `apiFetch`, for endpoints whose response body is empty. On a device that keeps a copy of
+ * the collection, the copy answers, and only what it can't (e.g. rendering, uploads) goes to the
+ * server.
+ */
 async function apiSend(label: string, path: string, init: RequestInit = {}): Promise<Response> {
   const { serverUrl } = getCredentials();
   if ((init.method ?? 'GET') !== 'GET') listPages.clear();
-  const res = await send(label, `${serverUrl}${path}`, { ...init, headers: authHeaders() });
+  const request = { ...init, headers: authHeaders() };
+  let res: Response | null = null;
+  if (usesLocalCopy(serverUrl)) {
+    res = await localFetch(path, request);
+    if (await needsServer(res)) {
+      try {
+        res = await send(label, `${serverUrl}${path}`, request);
+      } catch (e) {
+        if (isNetworkError(e)) throw new NetworkError(label, 'needs the server, which could not be reached');
+        throw e;
+      }
+    }
+  }
+  res ??= await send(label, `${serverUrl}${path}`, request);
   await throwIfNotOk(res, label);
   return res;
 }
@@ -291,14 +341,19 @@ function pageQuery(page: number, limit: number): string {
   return `page=${page}&limit=${limit}`;
 }
 
-export function fileUrl(relativePath: string): string {
-  const { serverUrl } = getCredentials();
+/** A rendered file's URL on `serverUrl`, by default the server logged in to. */
+export function fileUrl(relativePath: string, serverUrl = getCredentials().serverUrl): string {
   return `${serverUrl.replace(/\/$/, '')}/files/${relativePath}`;
 }
 
-/** Downloads a rendered file, which needs the API key like every other request. Offline, the copy kept from the last download is returned. */
+/**
+ * Downloads a rendered file, which needs the API key like every other request. Offline, the copy
+ * kept from the last download is returned. A device that keeps a copy of the collection asks the
+ * server only for a file the copy hasn't downloaded.
+ */
 export async function fetchFile(relativePath: string): Promise<Blob> {
-  const res = await sendKeepingCopy('Loading file', fileUrl(relativePath), FILES_CACHE);
+  const url = fileUrl(relativePath);
+  const res = await copyFile(url, COPY_FILES_CACHE) ?? await sendKeepingCopy('Loading file', url, FILES_CACHE);
   await throwIfNotOk(res, 'Loading file');
   return res.blob();
 }
@@ -306,6 +361,7 @@ export async function fetchFile(relativePath: string): Promise<Blob> {
 /** Package specs (`namespace/name/version`) that browser-rendered sources import. */
 export async function listRenderPackages(): Promise<string[]> {
   const { serverUrl } = getCredentials();
+  if (usesLocalCopy(serverUrl)) return apiFetch('Render packages fetch', '/api/render-assets/packages');
   const url = `${serverUrl}/api/render-assets/packages`;
   const res = await sendKeepingCopy('Render packages fetch', url, RENDER_ASSETS_CACHE);
   if (!res.ok) throw new Error(`Render packages fetch failed: ${res.status}`);
@@ -315,17 +371,22 @@ export async function listRenderPackages(): Promise<string[]> {
 /** Typst files that browser-rendered sources read, e.g. preambles, by the absolute paths the sources use. */
 export async function listRenderSources(): Promise<string[]> {
   const { serverUrl } = getCredentials();
+  if (usesLocalCopy(serverUrl)) return apiFetch('Render sources fetch', '/api/render-assets/sources');
   const url = `${serverUrl}/api/render-assets/sources`;
   const res = await sendKeepingCopy('Render sources fetch', url, RENDER_ASSETS_CACHE);
   if (!res.ok) throw new Error(`Render sources fetch failed: ${res.status}`);
   return res.json();
 }
 
+/** A render asset's URL on `serverUrl`, by default the server logged in to. */
+export function renderAssetUrl(path: string, serverUrl = getCredentials().serverUrl): string {
+  return `${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`;
+}
+
 /** A file a browser-rendered source reads, by the absolute path the source uses. `null` if the server does not have it. */
 export async function fetchRenderAsset(path: string): Promise<Uint8Array | null> {
-  const { serverUrl } = getCredentials();
-  const url = `${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`;
-  const res = await sendKeepingCopy('Render asset fetch', url, RENDER_ASSETS_CACHE);
+  const url = renderAssetUrl(path);
+  const res = await copyFile(url, COPY_RENDER_ASSETS_CACHE) ?? await sendKeepingCopy('Render asset fetch', url, RENDER_ASSETS_CACHE);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Render asset fetch failed for ${path}: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
@@ -507,8 +568,13 @@ export async function modifyNoteTags(
   return { notes: body.notes, eventId: body.event_id };
 }
 
-/** Regenerates a note's rendered files (and its cards' and linked notes'), as the CLI does after syncing a note. */
+/**
+ * Regenerates a note's rendered files (and its cards' and linked notes'), as the CLI does after
+ * syncing a note. Not on a device that keeps a copy, whose changes the server renders once a sync
+ * brings them.
+ */
 export async function renderNote(noteId: number): Promise<void> {
+  if (usesLocalCopy(getCredentials().serverUrl)) return;
   await apiSend('Render note', '/api/notes/generate_files', {
     method: 'POST',
     body: JSON.stringify({
@@ -583,12 +649,62 @@ export async function getSyncStatus(): Promise<SyncStatus> {
   return apiFetch('Sync status', '/api/sync/status');
 }
 
-/** Syncs this (laptop) server with its `sync_url`. A full sync is left to `spares sync cloud`. */
+/** Syncs this (laptop) server with its `sync_url`. A full sync is left to `spares sync cloud`. A device that keeps a copy syncs it with `syncLocalCopy` instead. */
 export async function runSync(): Promise<SyncReport> {
   return apiFetch('Sync', '/api/sync/run', {
     method: 'POST',
     body: JSON.stringify({ mode: 'normal' }),
   });
+}
+
+/** A device enrolled with the sync server under a replica number of its own (`GET /api/sync/devices`). */
+export interface SyncDevice {
+  replica: number;
+  name: string;
+  enrolled_at: number;
+  /** Its last push, which a full upload keeps */
+  last_sync_at: number | null;
+}
+
+/** The devices enrolled with the sync server. Only the sync server has the list. */
+export async function listSyncDevices(): Promise<SyncDevice[]> {
+  return apiFetch('Devices fetch', '/api/sync/devices');
+}
+
+/** Frees a device's replica number on the sync server, e.g. one whose browser deleted its copy. It can no longer sync. */
+export async function removeSyncDevice(replica: number): Promise<void> {
+  await apiSend('Remove device', '/api/sync/unenroll', { method: 'POST', body: JSON.stringify({ replica }) });
+}
+
+/** A note a sync could not merge on its own (`spares_core::sync::conflicts`). Texts have card ids
+    in place of card orders (`o:c40` is card 40), so the same card reads the same on both sides. */
+export interface SyncConflict {
+  id: number;
+  note_id: number;
+  /** `text`: both sides changed the same lines, and this side's text was kept. `deleted_there`:
+      the other side deleted the note, which was kept. `deleted_here`: deleted here, so the note
+      came back with the other side's text. */
+  kind: 'text' | 'deleted_there' | 'deleted_here';
+  created_at: number;
+  /** The text at the last sync, if known */
+  base: string | null;
+  /** The text now, `null` if the note has been deleted since */
+  local: string | null;
+  /** The other side's text, `null` if it deleted the note */
+  remote: string | null;
+}
+
+/** Keep the note as it is, delete it, or set its text. */
+export type ConflictResolution = 'keep' | 'delete' | { text: string };
+
+/** The conflicts of this client (a device's copy, or the laptop's server). */
+export async function listSyncConflicts(): Promise<SyncConflict[]> {
+  return apiFetch('Conflicts fetch', '/api/sync/conflicts');
+}
+
+/** Resolves a conflict, as a change the next sync sends. */
+export async function resolveSyncConflict(id: number, resolution: ConflictResolution): Promise<void> {
+  await apiSend('Resolve conflict', `/api/sync/conflicts/${id}`, { method: 'POST', body: JSON.stringify(resolution) });
 }
 
 /** What an undo or redo reversed, e.g. `Undone: Rate card 3 (Good)`. */

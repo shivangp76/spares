@@ -170,9 +170,18 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     title: 'Settings',
     about: [
       "These settings are kept in this browser. Scheduling, the daily limits and the presets are set in the server's `config.toml`.",
+      'This Device can keep a copy of the whole collection in this browser, so every page works offline. It syncs with the server like the laptop does.',
     ],
     shortcuts: [],
     docs: [SCHEDULING, { label: 'Deploying a sync server', file: 'deploying.md' }],
+  },
+  '/conflicts': {
+    title: 'Conflicts',
+    about: [
+      'Notes a sync could not merge on its own: both sides changed the same lines, or one deleted the note while the other edited it. Each can be kept as it is, replaced by the other side, edited, or deleted. The next sync sends the result.',
+    ],
+    shortcuts: [],
+    docs: [],
   },
 };
 
