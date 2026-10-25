@@ -69,6 +69,7 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
@@ -89,6 +90,23 @@ impl LatexParserNote {
 }
 
 impl Parseable for LatexParserNote {
+    fn unspoken_ranges(&self, text: &str) -> Vec<Range<usize>> {
+        // Comments and math
+        regex_ranges(
+            r"(?s)(?<!\\)%[^\n]*|\$\$.*?\$\$|\$[^$]*\$|\\\[.*?\\\]|\\\(.*?\\\)",
+            text,
+        )
+    }
+
+    fn spoken_text(&self, text: &str) -> String {
+        // Commands and their options are not read, but their arguments are
+        let commands_regex =
+            get_or_compile_regex(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?|\\\\|[~&]").unwrap();
+        commands_regex
+            .replace_all(text, " ")
+            .replace(['{', '}'], "")
+    }
+
     fn get_parser_name(&self) -> &'static str {
         "latex-note"
     }

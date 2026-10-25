@@ -702,7 +702,7 @@ pub(crate) async fn review_cards(
     let mut typed_answers_asked = false;
     // The card rated last, for Previous Card Info
     let mut previous_card_id: Option<CardId> = None;
-    let mut audio_player = AudioPlayer::new(&config.audio_player);
+    let mut audio_player = AudioPlayer::new(&config.audio_player, config.tts_command.as_deref());
     // The card and side whose audio clips were played last, so each is autoplayed once when shown
     let mut audio_played_for: Option<(CardId, bool)> = None;
 

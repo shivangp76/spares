@@ -89,6 +89,7 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::has_web_render_file;
+use crate::parsers::tts::TtsSetting;
 use crate::parsers::typed_answer::typed_answer_info;
 use crate::parsers::web_render_filepath;
 use crate::schedulers::SrsScheduler;
@@ -1163,7 +1164,7 @@ pub(crate) async fn review_card_response(
 }
 
 /// Fills in the parts of `response` that come from parsing its card's note: the sources to compile
-/// in the browser, the answers to type and the audio clips to play.
+/// in the browser, the answers to type and the audio clips and text to play.
 async fn add_card_extras(
     db: &SqlitePool,
     response: &mut GetReviewCardResponse,
@@ -1186,7 +1187,8 @@ async fn add_card_extras(
     };
     add_browser_render_sources(parser.as_ref(), response, &request, &card)?;
     response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
-    response.audio = card_audio(parser.as_ref(), &card);
+    let note_tts = TtsSetting::of_note(&request.custom_data);
+    response.audio = card_audio(parser.as_ref(), &card, note_tts.as_ref());
     Ok(())
 }
 
@@ -2158,10 +2160,22 @@ mod tests {
     async fn test_review_card_audio(pool: SqlitePool) -> () {
         use crate::api::note::create_notes;
         use crate::api::parser::tests::create_parser_helper;
+        use crate::parsers::audio::AudioItem;
         use crate::parsers::audio::CardAudio;
+        use crate::parsers::audio::Speech;
+        use crate::parsers::tts::TtsVoice;
         use crate::schema::note::CreateNoteRequest;
         use crate::schema::note::CreateNotesRequest;
 
+        let speech = |text: &str| {
+            AudioItem::Speech(Speech {
+                text: text.to_string(),
+                voice: TtsVoice {
+                    lang: Some("en_US".to_string()),
+                    ..TtsVoice::default()
+                },
+            })
+        };
         let parser = create_parser_helper(&pool, "markdown").await;
         let request = CreateNotesRequest {
             parser_id: parser.id,
@@ -2170,7 +2184,11 @@ mod tests {
                 keywords: Vec::new(),
                 tags: Vec::new(),
                 is_suspended: false,
-                custom_data: serde_json::Map::new(),
+                // The note setting `tts`, as importing stores it
+                custom_data: serde_json::json!({"tts": "en_US"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
             }],
         };
         let now = Utc::now();
@@ -2188,8 +2206,14 @@ mod tests {
         assert_eq!(
             review_card.audio,
             Some(CardAudio {
-                front: vec!["/m/q.mp3".to_string()],
-                back: vec!["/m/a.mp3".to_string()],
+                front: vec![
+                    AudioItem::Clip("/m/q.mp3".to_string()),
+                    speech("Translate:"),
+                ],
+                back: vec![
+                    AudioItem::Clip("/m/a.mp3".to_string()),
+                    speech("good morning"),
+                ],
             })
         );
     }

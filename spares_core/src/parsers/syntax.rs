@@ -192,6 +192,21 @@ pub fn syntax_examples(
             ),
         ),
         (
+            "Text to speech",
+            format!(
+                "`{tts}{d}fr_FR` reads the cloze aloud with the device's voice for French when the \
+                 card is flipped. `{tts}{d}fr_FR,0.8,Thomas` also sets the speed and the voice, \
+                 and `{tts}{d}off` keeps a cloze silent. The note setting `{tts}{d} en_US` reads \
+                 the rest of the note too, and sets the language of a bare `{tts}`.",
+                tts = keys.tts,
+                d = note_keys.settings_key_value_delim,
+            ),
+            format!(
+                "Good morning in French: {}",
+                cloze("bonjour", &[(keys.tts, "fr_FR")])
+            ),
+        ),
+        (
             "Overlapping clozes",
             format!(
                 "Clozes marked `{}` are a sequence, like the lines of a poem. Each card asks for \
@@ -410,6 +425,17 @@ mod tests {
                     ignore_case: true,
                     ignore_combining: false
                 })
+            );
+            let speech = parsed("Text to speech")
+                .iter()
+                .map(|card| crate::parsers::audio::card_audio(parser.as_ref(), card, None))
+                .collect::<Vec<_>>();
+            assert!(
+                matches!(
+                    &speech[..],
+                    [Some(audio)] if audio.front.is_empty() && audio.back.len() == 1
+                ),
+                "{name}: {speech:?}"
             );
             assert_eq!(parsed("Suspended")[0].is_suspended, Some(true));
             assert_eq!(

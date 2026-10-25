@@ -18,6 +18,7 @@ use crate::model::NOTE_ID_KEY;
 use crate::model::NoteId;
 use crate::parsers::DEFAULT_BACK_EMPHASIS;
 use crate::parsers::Parseable;
+use crate::parsers::tts::TtsSetting;
 
 /// The action named in a note's settings, before its note id is known.
 #[derive(Clone, Copy)]
@@ -128,6 +129,9 @@ pub struct NoteSettingsKeys {
     /// matched to the database by their position in the file, so a file can be edited and imported
     /// again. See "Live notes" in the docs of `spares_cli::import`.
     pub live_sync_name: ReadWriteValue,
+    /// Speaks the note's text. It is stored in the note's custom data, under
+    /// [`TtsSetting::KEY`]. See [`crate::parsers::tts`].
+    pub tts: ReadWriteValue,
     pub settings_delim: &'static str,
     pub settings_key_value_delim: &'static str,
     pub global_settings_prefix: ReadWriteValue,
@@ -158,6 +162,7 @@ impl Default for NoteSettingsKeys {
             type_answer: ReadWriteValue::Same("type-answer"),
             custom_data: ReadWriteValue::Same("custom-data"),
             live_sync_name: ReadWriteValue::Same("live-sync-name"),
+            tts: ReadWriteValue::Same(TtsSetting::KEY),
             settings_delim: ";",
             settings_key_value_delim: ":",
             global_settings_prefix: ReadWriteValue::Same("g-"),
@@ -201,6 +206,7 @@ pub fn parse_note_settings(
         type_answer: type_answer_key,
         custom_data: custom_data_key,
         live_sync_name: live_sync_name_key,
+        tts: tts_key,
         global_settings_prefix: global_prefix,
         settings_delim,
         settings_key_value_delim,
@@ -367,6 +373,24 @@ pub fn parse_note_settings(
                         settings.errors_and_warnings.push(LibraryError::Note(
                             NoteErrorKind::InvalidSettings {
                                 description: format!("Failed to parse custom data: {}", e),
+                                advice: None,
+                                src: data.to_string(),
+                                at: settings_indices.clone().into(),
+                            },
+                        ));
+                    }
+                }
+            } else if tts_key.matches_read(key) {
+                match TtsSetting::from_str(value) {
+                    Ok(tts) => {
+                        settings
+                            .custom_data
+                            .insert(TtsSetting::KEY.to_string(), Value::String(tts.to_string()));
+                    }
+                    Err(e) => {
+                        settings.errors_and_warnings.push(LibraryError::Note(
+                            NoteErrorKind::InvalidSettings {
+                                description: format!("Failed to parse text to speech: {}", e),
                                 advice: None,
                                 src: data.to_string(),
                                 at: settings_indices.clone().into(),
@@ -625,6 +649,43 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("lecture_notes-501"),
         );
+    }
+
+    #[test]
+    fn test_tts_stored_in_custom_data() {
+        let parser = crate::parsers::impls::markdown::MarkdownParser::new();
+        let adapter = crate::adapters::impls::spares::SparesAdapter::new(
+            crate::adapters::impls::spares::SparesRequestProcessor::Server,
+        );
+        let parse = |tts: &str| {
+            let data = format!(
+                "<!--- # tts: {tts} --->\n<!--- spares: note start --->\nx\n<!--- spares: note end --->\n"
+            );
+            let settings_ranges = parser.get_settings(&data).unwrap();
+            let mut global_settings = NoteSettings::default();
+            let mut local_settings = NoteSettings::default();
+            parse_note_settings(
+                &parser,
+                &data,
+                &settings_ranges,
+                &mut global_settings,
+                &mut local_settings,
+                &adapter,
+                &(0..data.len()),
+            );
+            local_settings
+        };
+
+        let settings = parse("fr_FR, 0.80");
+        assert_eq!(
+            settings.custom_data.get(TtsSetting::KEY),
+            Some(&Value::String("fr_FR,0.8".to_string()))
+        );
+        assert!(settings.errors_and_warnings.is_empty());
+
+        let settings = parse("fr_FR,fast");
+        assert!(settings.custom_data.get(TtsSetting::KEY).is_none());
+        assert_eq!(settings.errors_and_warnings.len(), 1);
     }
 
     #[test]

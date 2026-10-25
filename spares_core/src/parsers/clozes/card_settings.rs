@@ -19,6 +19,7 @@ use crate::helpers::split_inclusive_following;
 use crate::model::NoteId;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::get_settings_pairs;
+use crate::parsers::tts::TtsSetting;
 
 #[derive(Clone, Debug)]
 pub struct ClozeSettingsKeys {
@@ -38,6 +39,8 @@ pub struct ClozeSettingsKeys {
     pub inherit: &'static str,
     pub overlapper: &'static str,
     pub id: &'static str,
+    /// Speaks the cloze's text. See [`crate::parsers::tts`] for its values.
+    pub tts: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -57,6 +60,7 @@ impl Default for ClozeSettingsKeys {
             inherit: "inh",
             overlapper: "ov",
             id: "id",
+            tts: TtsSetting::KEY,
         }
     }
 }
@@ -86,6 +90,18 @@ pub fn construct_cloze_string(
             "{}{}",
             cloze_settings_keys.overlapper, settings_key_value_delim
         ));
+    }
+    if let Some(ref tts) = global_settings.tts {
+        let value = tts.to_string();
+        // A bare key is read as an empty value (see `parse_card_settings`)
+        parts.push(if value.is_empty() {
+            cloze_settings_keys.tts.to_string()
+        } else {
+            format!(
+                "{}{}{}",
+                cloze_settings_keys.tts, settings_key_value_delim, value
+            )
+        });
     }
     if let Some(ref cloze_uid) = global_settings.cloze_uid {
         parts.push(format!(
@@ -306,6 +322,7 @@ fn parse_card_source(
     Ok(ReadableCardIdentifier { note_id, order })
 }
 
+#[expect(clippy::too_many_lines, reason = "One branch per key")]
 fn parse_grouping_settings(
     grouping_settings: &mut Vec<(&str, &str)>,
     settings: &mut ClozeSettings,
@@ -327,6 +344,7 @@ fn parse_grouping_settings(
         inherit: inherit_key,
         overlapper: overlapper_key,
         id: id_key,
+        tts: tts_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -344,6 +362,17 @@ fn parse_grouping_settings(
             current_grouping_settings.is_suspended = Some(*value != "n");
         } else if key == hint_key {
             settings.hint = Some((**value).to_string());
+        } else if key == tts_key {
+            settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
+                LibraryError::Card(CardErrorKind::InvalidSettings {
+                    description: format!(
+                        "The text to speech setting `{}` is invalid. {}",
+                        value, e
+                    ),
+                    src: data.to_string(),
+                    at: card_settings_indices.clone().into(),
+                })
+            })?);
         } else if key == hidden_no_answer_key {
             current_grouping_settings.hidden_no_answer = true;
         } else if key == front_conceal_key {
@@ -640,5 +669,47 @@ mod tests {
         );
         let expected_result = "h:Test";
         assert_eq!(result, expected_result.to_string());
+    }
+
+    #[test]
+    fn test_tts_round_trip() {
+        let parser = MarkdownParser::new();
+        let note_settings_keys = parser.note_settings_keys();
+        let cloze_settings_keys = parser.cloze_settings_keys();
+        for (input, expected) in [("tts", "tts"), ("tts: fr_FR ,0.80", "tts:fr_FR,0.8")] {
+            let (settings, grouping_settings) = parse_card_settings(
+                input,
+                &(0..input.len()),
+                &mut 0,
+                &note_settings_keys,
+                &cloze_settings_keys,
+                None,
+            )
+            .unwrap();
+            assert!(settings.tts.is_some(), "{input}");
+            let result = construct_cloze_string(
+                &settings,
+                &grouping_settings,
+                &cloze_settings_keys,
+                note_settings_keys.settings_delim,
+                note_settings_keys.settings_key_value_delim,
+                None,
+                note_settings_keys.groupings_all,
+                false,
+            );
+            assert_eq!(result, expected);
+        }
+        let input = "tts:fr,fast";
+        assert!(
+            parse_card_settings(
+                input,
+                &(0..input.len()),
+                &mut 0,
+                &note_settings_keys,
+                &cloze_settings_keys,
+                None,
+            )
+            .is_err()
+        );
     }
 }

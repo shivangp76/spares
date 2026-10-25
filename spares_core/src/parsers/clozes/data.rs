@@ -8,6 +8,7 @@ use serde::Serialize;
 use super::DEFAULT_BACK_EMPHASIS;
 use crate::model::NoteId;
 use crate::parsers::image_occlusion::ImageOcclusionCloze;
+use crate::parsers::tts::TtsSetting;
 
 /// A fixed-size 12-byte UID (always 12 ASCII hex characters).
 /// Avoids the heap allocation of `Option<String>`.
@@ -99,6 +100,8 @@ pub struct ClozeSettings {
     /// A stable, globally-unique 12-hex identifier for this cloze (one per cloze, not
     /// per grouping), used during live-mode reconciliation across imports.
     pub cloze_uid: Option<ClozeUid>,
+    /// `tts`: how the cloze's text is spoken (see [`crate::parsers::tts`]).
+    pub tts: Option<TtsSetting>,
 }
 
 #[derive(Debug)]

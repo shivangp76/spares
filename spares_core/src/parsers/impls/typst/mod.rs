@@ -32,6 +32,7 @@ use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
+use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
@@ -44,6 +45,8 @@ use crate::schema::note::LinkedNote;
 mod data_parser;
 
 /// Separates notes in a note file, and the metadata from the card data in a card file.
+/// Code and comments, where audio links are not found and text is not spoken.
+const COMMENTS_AND_CODE_REGEX: &str = r"(?sm)```.*?```|`[^`\n]*`|/\*.*?\*/|(?:^|[ \t])//[^\n]*";
 const SEPARATOR: &str = "#divider()";
 
 /// See <https://typst.app/>
@@ -119,8 +122,27 @@ impl Parseable for TypstParser {
         find_audio_refs(
             text,
             r#"#?link\(\s*"([^"]*)"\s*\)(?:\[[^\]]*\])?"#,
-            r"(?sm)```.*?```|`[^`\n]*`|/\*.*?\*/|(?:^|[ \t])//[^\n]*",
+            COMMENTS_AND_CODE_REGEX,
         )
+    }
+
+    fn unspoken_ranges(&self, text: &str) -> Vec<Range<usize>> {
+        // Also math, and settings such as `#se[tags: x]`
+        regex_ranges(
+            &format!(r"{COMMENTS_AND_CODE_REGEX}|\$[^$]*\$|#se\[[^\]\n]*\]"),
+            text,
+        )
+    }
+
+    fn spoken_text(&self, text: &str) -> String {
+        // Headings, list markers and other function calls are not read, but the content they hold
+        // (in `[]`) is
+        let markup_regex = get_or_compile_regex(
+            r#"(?m)^[ \t]*(?:=+|[-+/])[ \t]+|#[\w.-]+(?:\((?:[^()"]|"[^"]*")*\))?|[\[\]]"#,
+        )
+        .unwrap();
+        let text = self.typed_answer_text(text);
+        markup_regex.replace_all(&text, " ").into_owned()
     }
 
     fn construct_setting(&self, data: &str) -> String {

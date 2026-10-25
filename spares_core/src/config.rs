@@ -966,6 +966,14 @@ pub struct SparesExternalConfig {
     /// The command `spares card review` plays audio clips with, followed by each clip's path.
     /// Defaults to `afplay` on macOS and `mpv --no-video` elsewhere.
     pub audio_player: String,
+    /// The command `spares card review` reads text aloud with (see [`crate::parsers::tts`]), split
+    /// into arguments at whitespace. In each argument, `{text}` is replaced by the text,
+    /// `{lang}` by its language (as `fr-FR`), `{voice}` by its voice and `{speed}` by its speed.
+    /// An argument with a placeholder that has no value, such as `--voice={voice}` for text without
+    /// a voice, is left out. Without `{text}`, the text is the last argument. Unset by default, so
+    /// text is not read. For example, `say --voice={voice} {text}` on macOS, or
+    /// `espeak-ng -v {lang} {text}`.
+    pub tts_command: Option<String>,
 }
 
 impl Default for SparesExternalConfig {
@@ -998,6 +1006,7 @@ impl Default for SparesExternalConfig {
                 "mpv --no-video"
             }
             .to_string(),
+            tts_command: None,
         }
     }
 }

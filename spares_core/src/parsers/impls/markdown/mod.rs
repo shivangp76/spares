@@ -56,6 +56,7 @@ use crate::parsers::RenderOutputType;
 use crate::parsers::WebRenderMode;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
+use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
@@ -70,6 +71,8 @@ mod cloze_parser;
 /// Between a card's header and body. Explicit raw blocks, since `\hrulefill` cannot be converted
 /// to `MathML`, so as math it would make every card's HTML lose content. HTML drops the LaTeX block
 /// without counting it as lost (see [`is_content_loss`]).
+/// Comments, code and math, where audio links are not found and text is not spoken.
+const UNSPOKEN_REGEX: &str = r"(?s)<!--.*?-->|```.*?```|`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$";
 const CARD_SEPARATOR: &str = "```{=latex}\n\\hrulefill\n```\n\n```{=html}\n<hr>\n```";
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -153,8 +156,19 @@ impl Parseable for MarkdownParser {
         find_audio_refs(
             text,
             r#"(?<!!)\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"]*")?\)"#,
-            r"(?s)<!--.*?-->|```.*?```|`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$",
+            UNSPOKEN_REGEX,
         )
+    }
+
+    fn unspoken_ranges(&self, text: &str) -> Vec<Range<usize>> {
+        regex_ranges(UNSPOKEN_REGEX, text)
+    }
+
+    fn spoken_text(&self, text: &str) -> String {
+        // HTML tags, headings, list markers and quotes are not read
+        let markup_regex =
+            get_or_compile_regex(r"(?m)<[^>\n]+>|^[ \t]*(?:#+|[-*+>]|\d+\.)[ \t]+").unwrap();
+        self.typed_answer_text(&markup_regex.replace_all(text, " "))
     }
 
     fn construct_setting(&self, data: &str) -> String {

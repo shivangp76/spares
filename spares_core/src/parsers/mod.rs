@@ -36,6 +36,7 @@ pub(crate) mod impls;
 mod notes;
 mod settings;
 pub mod syntax;
+pub mod tts;
 pub mod typed_answer;
 
 pub use cards::*;
@@ -146,6 +147,17 @@ pub trait Parseable: Send + Sync {
     /// The links to audio files in `text` (see [`audio`]), in order.
     fn audio_refs(&self, _text: &str) -> Vec<audio::AudioRef> {
         Vec::new()
+    }
+
+    /// The parts of `text` that are never [spoken](tts), such as comments, code and math.
+    fn unspoken_ranges(&self, _text: &str) -> Vec<Range<usize>> {
+        Vec::new()
+    }
+
+    /// `text`, a part of a note to be [spoken](tts), without markup. Whitespace is collapsed
+    /// afterwards.
+    fn spoken_text(&self, text: &str) -> String {
+        self.typed_answer_text(text)
     }
 
     fn construct_setting(&self, data: &str) -> String;

@@ -891,8 +891,8 @@ pub mod review {
         /// Present iff the card asks for its answers to be typed (the cloze key `t`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub typed_answer: Option<TypedAnswerInfo>,
-        /// Present iff the card has audio clips. Their paths are absolute local paths, which web
-        /// clients fetch from the render assets.
+        /// Present iff the card has audio clips or text to speak. Clips are absolute local paths,
+        /// which web clients fetch from the render assets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub audio: Option<CardAudio>,
         /// The number of cards left in each state for the relevant query, as many as today's
