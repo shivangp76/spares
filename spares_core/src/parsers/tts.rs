@@ -43,7 +43,10 @@
 //! The web app speaks with the browser's voices, which differ between devices. Speech can be turned
 //! off in its settings. `spares card review` speaks with
 //! [`tts_command`](crate::config::SparesExternalConfig::tts_command), and skips speech without it.
-//! Anki's `[anki:tts]` tags become the note setting when a note is imported from Anki.
+//! When a note is imported from Anki, its `[anki:tts]` tags are replaced by their text, and the
+//! first tag's language, speed and voice become the note setting. That reads the whole note, so
+//! importing warns when Anki read only part of it. Anki's `{{tts}}` is part of its card templates,
+//! which are not imported.
 
 use std::fmt;
 use std::str::FromStr;

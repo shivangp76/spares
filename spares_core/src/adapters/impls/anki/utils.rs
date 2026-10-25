@@ -15,11 +15,14 @@ use crate::adapters::impls::anki::types::ModelName;
 use crate::adapters::impls::anki::types::NoteFields;
 use crate::adapters::impls::anki::types::UpdateNoteApiRequestData;
 use crate::adapters::impls::anki::types::UpdateNoteApiRequestNoteData;
+use crate::helpers::get_or_compile_regex;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::get_adapter_note_id_key;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
+use crate::parsers::tts::TtsSetting;
+use crate::parsers::tts::TtsVoice;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
 
@@ -173,6 +176,48 @@ pub fn format_side(data: &str) -> String {
     data
 }
 
+/// `data` with Anki's text to speech tags (`[anki:tts lang=fr_FR voices=Apple_Thomas
+/// speed=0.8]bonjour[/anki:tts]`) replaced by their text, the settings of its tags, in order, and
+/// whether text outside them was not spoken. Spares speaks text with the note setting `tts` instead
+/// (see [`crate::parsers::tts`]).
+pub fn take_anki_tts(data: &str) -> (String, Vec<TtsSetting>, bool) {
+    let tag_regex =
+        get_or_compile_regex(r"(?s)\[anki:tts(?:\s+([^\]]*))?\](.*?)\[/anki:tts\]").unwrap();
+    let mut settings = Vec::new();
+    let mut result = String::new();
+    let mut unspoken = false;
+    let mut start = 0;
+    for caps in tag_regex.captures_iter(data).filter_map(Result::ok) {
+        let tag = caps.get(0).unwrap();
+        let mut voice = TtsVoice::default();
+        for attribute in caps.get(1).map_or("", |m| m.as_str()).split_whitespace() {
+            match attribute.split_once('=') {
+                Some(("lang", lang)) => voice.lang = Some(lang.to_string()),
+                Some(("speed", speed)) => voice.speed = speed.parse().ok(),
+                Some(("voices", voices)) => {
+                    // The first voice, without the platform Anki prefixes it with
+                    voice.voice = voices.split(',').next().map(|name| {
+                        ["Apple_", "Microsoft_", "Google_"]
+                            .iter()
+                            .find_map(|prefix| name.strip_prefix(prefix))
+                            .unwrap_or(name)
+                            .to_string()
+                    });
+                }
+                _ => {}
+            }
+        }
+        settings.push(TtsSetting::Speak(voice));
+        unspoken |= !data[start..tag.start()].trim().is_empty();
+        result.push_str(&data[start..tag.start()]);
+        result.push_str(&caps[2]);
+        start = tag.end();
+    }
+    unspoken |= !data[start..].trim().is_empty();
+    result.push_str(&data[start..]);
+    (result, settings, unspoken)
+}
+
 pub fn get_note_id(note_response: &NoteResponse) -> Result<i64, Error> {
     let anki_note_id_str = note_response
         .custom_data
@@ -193,4 +238,42 @@ pub fn get_note_id(note_response: &NoteResponse) -> Result<i64, Error> {
             error: e.to_string(),
         }))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_take_anki_tts() {
+        let (text, settings, unspoken) = take_anki_tts(
+            "Hello: [anki:tts lang=fr_FR voices=Apple_Thomas,Microsoft_Paul speed=0.8]bonjour\
+             [/anki:tts] [anki:tts]hi[/anki:tts]",
+        );
+        assert_eq!(text, "Hello: bonjour hi");
+        assert_eq!(
+            settings,
+            [
+                TtsSetting::Speak(TtsVoice {
+                    lang: Some("fr_FR".to_string()),
+                    speed: Some(0.8),
+                    voice: Some("Thomas".to_string()),
+                }),
+                TtsSetting::Speak(TtsVoice::default()),
+            ]
+        );
+        assert!(unspoken);
+
+        let (text, settings, unspoken) = take_anki_tts(" [anki:tts lang=de]Hund[/anki:tts]\n");
+        assert_eq!(text, " Hund\n");
+        assert_eq!(settings.len(), 1);
+        assert!(!unspoken);
+
+        assert_eq!(
+            take_anki_tts("plain"),
+            ("plain".to_string(), Vec::new(), true)
+        );
+    }
 }

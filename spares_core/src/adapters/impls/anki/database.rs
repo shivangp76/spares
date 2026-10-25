@@ -6,6 +6,7 @@ use chrono::Duration;
 use chrono::Utc;
 use indicatif::ProgressIterator;
 use log::info;
+use log::warn;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Map;
@@ -22,6 +23,7 @@ use crate::adapters::impls::anki::types::DbCardRow;
 use crate::adapters::impls::anki::types::DbNoteRow;
 use crate::adapters::impls::anki::types::DbRevLogRow;
 use crate::adapters::impls::anki::utils::format_side;
+use crate::adapters::impls::anki::utils::take_anki_tts;
 use crate::adapters::migration::MigrationData;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::card::update_cards;
@@ -34,6 +36,7 @@ use crate::model::NOTE_ID_KEY;
 use crate::model::NoteId;
 use crate::model::RatingId;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
+use crate::parsers::tts::TtsSetting;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::UpdateCardsRequest;
 use crate::schema::review::RatingSubmission;
@@ -392,6 +395,12 @@ pub async fn db_row_to_request(
 
     front = format_side(&front);
     back = format_side(&back);
+    // Anki's text to speech tags become the note setting `tts`
+    let (new_front, mut tts_settings, front_unspoken) = take_anki_tts(&front);
+    let (new_back, back_tts_settings, back_unspoken) = take_anki_tts(&back);
+    front = new_front;
+    back = new_back;
+    tts_settings.extend(back_tts_settings);
 
     if let Some(ref migration_func) = migration_func {
         let migration_data = MigrationData {
@@ -409,6 +418,18 @@ pub async fn db_row_to_request(
     let mut custom_data = Map::new();
     let note_id_key = format!("{}-{}", "anki", NOTE_ID_KEY);
     custom_data.insert(note_id_key, Value::String(format!("{}", row.id)));
+    if let Some(tts) = tts_settings.first() {
+        // The note setting reads the whole note with one voice
+        if front_unspoken || back_unspoken || tts_settings.iter().any(|other| other != tts) {
+            warn!(
+                "Anki read only parts of note {} aloud, or with several voices. Spares reads all \
+                 of it with `{tts}`; to read only some clozes, or with other voices, give them \
+                 the cloze key `tts` instead.",
+                row.id
+            );
+        }
+        custom_data.insert(TtsSetting::KEY.to_string(), Value::String(tts.to_string()));
+    }
 
     if spares_id.is_none() {
         info!("Failed to parse spares id.");
