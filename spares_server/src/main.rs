@@ -1,7 +1,4 @@
 mod auto_sync;
-mod handlers;
-mod route;
-mod version;
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -23,20 +20,13 @@ use spares_core::config::get_sync_role;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::kill_running_renders;
+use spares_server::AppState;
+use spares_server::route::create_router;
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::sqlite::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use tokio::net::TcpListener;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
-
-use crate::route::create_router;
-
-#[derive(Debug)]
-struct AppState {
-    pub(crate) db: SqlitePool,
-    pub(crate) api_key: Option<String>,
-}
 
 async fn start_server(args: Args) -> Result<(), String> {
     // Which replica this is decides the ids it hands out, so it is required (see `ids`).

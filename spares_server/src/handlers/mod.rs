@@ -1,3 +1,6 @@
+// Some handlers have routes only on the server (`route::native_routes`), not in a browser.
+#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
+
 use std::sync::Arc;
 
 use axum::Json;
@@ -18,11 +21,14 @@ use spares_core::TagErrorKind;
 
 use crate::AppState;
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod audio;
 pub(crate) mod card;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod image;
 pub(crate) mod image_occlusion;
 pub(crate) mod note;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod notes_vcs;
 pub(crate) mod parser;
 pub(crate) mod render_asset;
@@ -85,6 +91,7 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
     )
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn require_api_key(
     State(state): State<Arc<AppState>>,
     request: Request<Body>,
