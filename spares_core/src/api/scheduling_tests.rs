@@ -618,6 +618,12 @@ async fn offline_review_synced_after_a_later_review_is_replayed_in_order(pool: S
         &fetch_card(&pool, out_of_order).await,
         &fetch_card(&pool, in_order).await,
     );
+    let recorded_event: Option<i64> =
+        sqlx::query_scalar("SELECT event_id FROM offline_action WHERE client_id = 'offline'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded_event, Some(event_id));
 
     // Undoing it takes the review out of the history and puts the card back as it was
     undo_event(

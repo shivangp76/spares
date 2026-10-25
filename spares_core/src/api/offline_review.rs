@@ -258,19 +258,23 @@ async fn apply_offline_action(
             }
         }
     };
-    let outcome = match result {
-        Ok(event_id) => OfflineActionOutcome::Applied { event_id },
-        Err(error) => OfflineActionOutcome::Rejected {
-            message: rejection_message(error)?,
-        },
+    let (outcome, event_id) = match result {
+        Ok(event_id) => (OfflineActionOutcome::Applied { event_id }, event_id),
+        Err(error) => (
+            OfflineActionOutcome::Rejected {
+                message: rejection_message(error)?,
+            },
+            None,
+        ),
     };
 
     sqlx::query(
-        r"INSERT INTO offline_action (client_id, performed_at, received_at) VALUES (?, ?, ?)",
+        r"INSERT INTO offline_action (client_id, performed_at, received_at, event_id) VALUES (?, ?, ?, ?)",
     )
     .bind(client_id)
     .bind(performed_at.timestamp())
     .bind(now.timestamp())
+    .bind(event_id)
     .execute(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
