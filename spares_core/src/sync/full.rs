@@ -15,6 +15,7 @@
 
 use std::path::Path;
 
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::SYNC_EPOCH_KEY;
@@ -141,15 +142,15 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
         .await
         .map_err(sqlx_error)?;
     for table in DATA_TABLES.iter().rev() {
-        sqlx::query(&format!("DELETE FROM main.{table}"))
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM main.{table}")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;
     }
     for table in DATA_TABLES {
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "INSERT INTO main.{table} SELECT * FROM incoming.{table}"
-        ))
+        )))
         .execute(&mut *tx)
         .await
         .map_err(sqlx_error)?;
@@ -163,14 +164,14 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
     .await
     .map_err(sqlx_error)?;
     for table in USN_TABLES {
-        sqlx::query(&format!("UPDATE main.{table} SET usn = 0"))
+        sqlx::query(AssertSqlSafe(format!("UPDATE main.{table} SET usn = 0")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;
     }
     bump_notes_version(&mut tx).await?;
     for table in ["grave", "sync_base", "event"] {
-        sqlx::query(&format!("DELETE FROM main.{table}"))
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM main.{table}")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;

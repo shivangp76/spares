@@ -5,6 +5,7 @@ use chrono::Utc;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::to_value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::ALLOWED_F64_ERROR;
@@ -69,10 +70,10 @@ pub async fn get_card_reviews(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     let review_logs = fetch_review_logs(db, card_id).await?;
-    let lapses: HashSet<i64> = sqlx::query_scalar(&format!(
+    let lapses: HashSet<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT rl.id FROM review_log rl WHERE rl.card_id = ? AND {}",
         lapse_sql("rl")
-    ))
+    )))
     .bind(card_id)
     .fetch_all(db)
     .await
@@ -524,7 +525,7 @@ pub(crate) async fn unbury_cards_logged_as(
             "SELECT * FROM card WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
-        let cards_to_unbury: Vec<Card> = sqlx::query_as(&select_query)
+        let cards_to_unbury: Vec<Card> = sqlx::query_as(AssertSqlSafe(select_query))
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
             .bind(SpecialState::BuriedUntilLaterToday)
@@ -535,7 +536,7 @@ pub(crate) async fn unbury_cards_logged_as(
             "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
-        sqlx::query(&update_query)
+        sqlx::query(AssertSqlSafe(update_query))
             .bind(now.timestamp())
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
@@ -569,7 +570,7 @@ pub(crate) async fn unbury_cards_logged_as(
             "UPDATE card SET special_state = NULL, updated_at = ? WHERE special_state IN (?, ?, ?){}",
             card_id_filter
         );
-        sqlx::query(&update_query)
+        sqlx::query(AssertSqlSafe(update_query))
             .bind(now.timestamp())
             .bind(SpecialState::UserBuried)
             .bind(SpecialState::SchedulerBuried)
@@ -594,7 +595,7 @@ pub async fn create_card_tags(
                 "INSERT INTO card_tag (card_id, tag_id) VALUES {}",
                 placeholders_2d(chunk.len(), 2)
             );
-            let mut query = sqlx::query(query_str.as_str());
+            let mut query = sqlx::query(AssertSqlSafe(query_str));
             for (card_id, tag_id) in chunk {
                 query = query.bind(card_id);
                 query = query.bind(tag_id);
@@ -622,7 +623,7 @@ pub async fn delete_card_tags(
                 "DELETE FROM card_tag WHERE (card_id, tag_id) IN ({})",
                 placeholders_2d(chunk.len(), 2)
             );
-            let mut query = sqlx::query(query_str.as_str());
+            let mut query = sqlx::query(AssertSqlSafe(query_str));
             for (card_id, tag_id) in chunk {
                 query = query.bind(card_id);
                 query = query.bind(tag_id);

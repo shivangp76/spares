@@ -93,6 +93,7 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use sqlx::AssertSqlSafe;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 
@@ -292,7 +293,7 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
         .map(|table| format!("SELECT 1 FROM {table} WHERE usn = -1"))
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
-    let found: Option<i64> = sqlx::query_scalar(&format!("SELECT EXISTS ({query})"))
+    let found: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!("SELECT EXISTS ({query})")))
         .fetch_optional(&mut *conn)
         .await
         .map_err(sqlx_error)?;
@@ -308,7 +309,7 @@ pub async fn dirty_count(db: &SqlitePool) -> Result<i64, Error> {
         .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn = -1)"))
         .collect::<Vec<_>>()
         .join(" + ");
-    sqlx::query_scalar(&format!("SELECT {query}"))
+    sqlx::query_scalar(AssertSqlSafe(format!("SELECT {query}")))
         .fetch_one(db)
         .await
         .map_err(sqlx_error)
@@ -317,11 +318,13 @@ pub async fn dirty_count(db: &SqlitePool) -> Result<i64, Error> {
 /// Stamps every dirty row with `usn`.
 pub(crate) async fn stamp_dirty(conn: &mut SqliteConnection, usn: i64) -> Result<(), Error> {
     for table in USN_TABLES {
-        sqlx::query(&format!("UPDATE {table} SET usn = ? WHERE usn = -1"))
-            .bind(usn)
-            .execute(&mut *conn)
-            .await
-            .map_err(sqlx_error)?;
+        sqlx::query(AssertSqlSafe(format!(
+            "UPDATE {table} SET usn = ? WHERE usn = -1"
+        )))
+        .bind(usn)
+        .execute(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
     }
     Ok(())
 }

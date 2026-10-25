@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
 
@@ -139,7 +140,7 @@ pub async fn get_render_note_data(
                 placeholders(ids.len())
             ))
     );
-    let mut query = sqlx::query_as(&query_str);
+    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
     if let Some(ref note_ids) = requested_note_ids {
         for note_id in note_ids {
             query = query.bind(note_id);
@@ -266,7 +267,7 @@ async fn persist_updated_note_links(
                 "DELETE FROM note_link WHERE (parent_note_id, \"order\") IN ({})",
                 placeholders_2d(chunk.len(), 2)
             );
-            let mut delete_query = sqlx::query(query_str.as_str());
+            let mut delete_query = sqlx::query(AssertSqlSafe(query_str));
             for nl in chunk {
                 delete_query = delete_query.bind(nl.parent_note_id);
                 delete_query = delete_query.bind(nl.order);
@@ -292,7 +293,7 @@ pub async fn get_note_links_map(
         "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
         placeholders(note_ids.len())
     );
-    let mut query = sqlx::query_as(&query_str);
+    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
     for note_id in note_ids {
         query = query.bind(note_id);
     }

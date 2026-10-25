@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use chrono::Duration;
 use chrono::Utc;
 use serde_json::Map;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -180,7 +181,10 @@ async fn save_search(pool: &SqlitePool, name: &str, query: &str) {
 }
 
 async fn exec(pool: &SqlitePool, statement: &str) {
-    sqlx::query(statement).execute(pool).await.unwrap();
+    sqlx::query(AssertSqlSafe(statement))
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 fn pairs(searches: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -206,7 +210,10 @@ impl SyncRemote for InProcess {
         let response = on_server(server::pull(&self.pool, request)).await?;
         let statement = self.after_pull.lock().unwrap().take();
         if let Some(statement) = statement {
-            sqlx::query(&statement).execute(&self.pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(statement))
+                .execute(&self.pool)
+                .await
+                .unwrap();
         }
         Ok(response)
     }

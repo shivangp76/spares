@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use sqlx::AssertSqlSafe;
 use sqlx::SqliteConnection;
 
 use super::SyncKind;
@@ -113,10 +114,10 @@ pub(crate) async fn remove_saved_searches(
     records: &[SavedSearchRecord],
 ) -> Result<(), Error> {
     for chunk in records.chunks(crate::api::MAX_ROWS_IN_QUERY) {
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM saved_search WHERE id IN ({})",
             id_list(chunk.iter().map(|r| r.id))
-        ))
+        )))
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
@@ -200,10 +201,10 @@ pub(crate) async fn upsert_note(
         .await
         .map_err(sqlx_error)?;
     if !record.tags.is_empty() {
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "INSERT INTO note_tag (note_id, tag_id) SELECT ?, id FROM tag WHERE id IN ({})",
             id_list(record.tags.iter().copied())
-        ))
+        )))
         .bind(record.id)
         .execute(&mut *conn)
         .await
@@ -309,10 +310,10 @@ pub(crate) async fn upsert_card(
         .await
         .map_err(sqlx_error)?;
     if !record.tags.is_empty() {
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "INSERT INTO card_tag (card_id, tag_id) SELECT ?, id FROM tag WHERE id IN ({})",
             id_list(record.tags.iter().copied())
-        ))
+        )))
         .bind(record.id)
         .execute(&mut *conn)
         .await
@@ -363,12 +364,14 @@ pub(crate) async fn row_exists(
     kind: SyncKind,
     id: i64,
 ) -> Result<bool, Error> {
-    let found: Option<i64> =
-        sqlx::query_scalar(&format!("SELECT 1 FROM {} WHERE id = ?", kind.name()))
-            .bind(id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(sqlx_error)?;
+    let found: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT 1 FROM {} WHERE id = ?",
+        kind.name()
+    )))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
     Ok(found.is_some())
 }
 
@@ -379,11 +382,14 @@ pub(crate) async fn delete_row(
     kind: SyncKind,
     id: i64,
 ) -> Result<(), Error> {
-    sqlx::query(&format!("DELETE FROM {} WHERE id = ?", kind.name()))
-        .bind(id)
-        .execute(&mut *conn)
-        .await
-        .map_err(sqlx_error)?;
+    sqlx::query(AssertSqlSafe(format!(
+        "DELETE FROM {} WHERE id = ?",
+        kind.name()
+    )))
+    .bind(id)
+    .execute(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
     sqlx::query("DELETE FROM sync_base WHERE kind = ? AND oid = ?")
         .bind(kind.name())
         .bind(id)
@@ -436,21 +442,21 @@ pub(crate) async fn mark_dirty(
             SyncKind::Parser | SyncKind::Tag | SyncKind::SavedSearch => None,
         };
         if let Some(view) = snapshot {
-            sqlx::query(&format!(
+            sqlx::query(AssertSqlSafe(format!(
                 "INSERT OR IGNORE INTO sync_base (kind, oid, snapshot)
                  SELECT ?, s.id, s.snapshot FROM {view} s JOIN {table} t ON t.id = s.id
                  WHERE s.id IN ({ids}) AND t.usn != -1",
                 table = kind.name()
-            ))
+            )))
             .bind(kind.name())
             .execute(&mut *conn)
             .await
             .map_err(sqlx_error)?;
         }
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "UPDATE {} SET usn = -1 WHERE id IN ({ids})",
             kind.name()
-        ))
+        )))
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
@@ -465,11 +471,11 @@ pub(crate) async fn release_live_keys(
     note_ids: &[NoteId],
 ) -> Result<(), Error> {
     for chunk in note_ids.chunks(crate::api::MAX_ROWS_IN_QUERY) {
-        sqlx::query(&format!(
+        sqlx::query(AssertSqlSafe(format!(
             "UPDATE note SET custom_data = json_remove(custom_data, '$.live_block_order')
              WHERE id IN ({}) AND json_extract(custom_data, '$.live_block_order') IS NOT NULL",
             id_list(chunk.iter().map(|id| id.packed()))
-        ))
+        )))
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;

@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -118,10 +119,11 @@ impl StudyPaces {
             SELECT 0, NULL, state, COUNT(*), SUM(reviews), CAST(SUM(seconds) AS REAL) FROM ranked
             WHERE state_rank <= {RECENT_CARD_DAYS} GROUP BY state"
         );
-        let rows: Vec<(bool, Option<i64>, StateId, u32, u32, f64)> = sqlx::query_as(&query)
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let rows: Vec<(bool, Option<i64>, StateId, u32, u32, f64)> =
+            sqlx::query_as(AssertSqlSafe(query))
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
         let mut paces = Self::default();
         for (of_preset, preset, state, days, reviews, seconds) in rows {
             let pace = StudyPace {

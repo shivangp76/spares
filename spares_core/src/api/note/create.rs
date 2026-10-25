@@ -4,6 +4,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use super::BULK_REQUEST_THRESHOLD;
@@ -445,7 +446,7 @@ pub(crate) async fn create_notes_event(
                     "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
                     placeholders_2d(chunk.len(), 12)
                 );
-                let mut query = sqlx::query(&query_str);
+                let mut query = sqlx::query(AssertSqlSafe(query_str));
                 for card in chunk {
                     query = query.bind(card.id);
                     query = query.bind(id);
@@ -507,7 +508,7 @@ async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Er
                 "UPDATE review_log SET card_id = ? WHERE id IN ({}) AND card_id IS NULL",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query(&query_str).bind(links.card_id);
+            let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(links.card_id);
             for id in chunk {
                 query = query.bind(id);
             }
@@ -545,7 +546,7 @@ pub async fn create_note_keywords(
             "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
             placeholders_2d(chunk.len(), 3)
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for (note_id, (keyword, embedded)) in chunk {
             query = query.bind(note_id);
             query = query.bind(keyword);
@@ -577,7 +578,7 @@ pub(crate) async fn create_note_links_on(
             "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
             placeholders_2d(chunk.len(), 6)
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for NoteLink {
             parent_note_id,
             linked_note_id,
@@ -618,7 +619,7 @@ pub async fn create_note_tags(
                 "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
                 placeholders_2d(chunk.len(), 2)
             );
-            let mut query = sqlx::query(query_str.as_str());
+            let mut query = sqlx::query(AssertSqlSafe(query_str));
             for (note_id, tag_id) in chunk {
                 query = query.bind(note_id);
                 query = query.bind(tag_id);
@@ -763,7 +764,7 @@ pub(crate) async fn create_cards_on(
             "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
             placeholders_2d(chunk.len(), 12)
         );
-        let mut query = sqlx::query(query_str.as_str());
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for (card, id) in chunk.iter().zip(id_chunk) {
             query = query.bind(id);
             query = query.bind(card.note_id);

@@ -7,6 +7,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use indoc::formatdoc;
 use log::warn;
+use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
 use sqlx::SqlitePool;
 
@@ -238,9 +239,9 @@ async fn add_note_previews(
         .map(|card| card.card_id.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let notes: Vec<(CardId, String)> = sqlx::query_as(&format!(
+    let notes: Vec<(CardId, String)> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT c.id, n.data FROM card c JOIN note n ON c.note_id = n.id WHERE c.id IN ({ids})"
-    ))
+    )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
@@ -308,12 +309,12 @@ async fn held_back_cards(
         return Ok(Vec::new());
     };
     let cards: Vec<(CardId, NoteId, u32, StateId, DateTime<Utc>)> =
-        sqlx::query_as(&formatdoc! {r#"
+        sqlx::query_as(AssertSqlSafe(formatdoc! {r#"
             SELECT c.id, c.note_id, c."order", c.state, c.due
             FROM card c
             WHERE {clause}
             ORDER BY c.due, c.id"#
-        })
+        }))
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -351,7 +352,7 @@ async fn cards_of_filter(
         .collect::<Vec<_>>()
         .join(", ");
     let waiting = review_filter.waiting_clause.as_deref().unwrap_or("FALSE");
-    sqlx::query_as(&formatdoc! {r#"
+    sqlx::query_as(AssertSqlSafe(formatdoc! {r#"
         SELECT c.id AS card_id, c.note_id, c."order" AS card_order, c.state AS card_state, c.due,
             c.special_state, c.preset, {waiting} AS waiting
         FROM {cards} c
@@ -360,7 +361,7 @@ async fn cards_of_filter(
         ORDER BY n.created_at, n.id, c."order""#,
         cards = review_filter.cards,
         filter_cards = review_filter.filter_cards_clause,
-    })
+    }))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })

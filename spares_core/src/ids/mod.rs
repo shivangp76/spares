@@ -164,6 +164,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 use serde::Serialize;
+use sqlx::AssertSqlSafe;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 
@@ -642,7 +643,7 @@ pub(crate) async fn next_ids_for(
           RETURNING last",
         table = table.name()
     );
-    let last: i64 = sqlx::query_scalar(&query)
+    let last: i64 = sqlx::query_scalar(AssertSqlSafe(query))
         .bind(replica_number)
         .bind(table.name())
         .bind(count)

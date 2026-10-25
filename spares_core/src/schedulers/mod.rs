@@ -10,6 +10,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::rngs::ThreadRng;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
@@ -103,7 +104,7 @@ async fn cards_with_lapses(
     lapse: &str,
     threshold: u32,
 ) -> Result<Vec<Card>, Error> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         r"SELECT * FROM card
           WHERE special_state IS NULL
             AND id IN (
@@ -113,7 +114,7 @@ async fn cards_with_lapses(
               HAVING COUNT(*) >= ?
             )
           ORDER BY due ASC"
-    ))
+    )))
     .bind(threshold)
     .fetch_all(db)
     .await
@@ -122,9 +123,9 @@ async fn cards_with_lapses(
 
 /// How many review log rows of `card_id` `lapse` is true for, with the rows as `rl`.
 async fn count_lapses(db: &SqlitePool, card_id: CardId, lapse: &str) -> Result<u32, Error> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = ? AND {lapse}"
-    ))
+    )))
     .bind(card_id)
     .fetch_one(db)
     .await
@@ -923,7 +924,10 @@ mod tests {
     #[sqlx::test]
     async fn lapses_count_failing_ratings_of_the_scheduler_that_rated(pool: SqlitePool) {
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
         exec("INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)").await;

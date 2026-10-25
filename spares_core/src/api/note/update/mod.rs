@@ -5,6 +5,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use super::delete_note_files;
@@ -219,7 +220,7 @@ pub async fn update_notes(
                 "SELECT * FROM note WHERE id IN ({})",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_as::<_, Note>(&query_str);
+            let mut query = sqlx::query_as::<_, Note>(AssertSqlSafe(query_str));
             for id in chunk {
                 query = query.bind(id);
             }
@@ -250,7 +251,7 @@ pub async fn update_notes(
                          ORDER BY note_id, keyword ASC",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as::<_, (NoteId, String)>(&query_str);
+                let mut query = sqlx::query_as::<_, (NoteId, String)>(AssertSqlSafe(query_str));
                 for id in chunk {
                     query = query.bind(id);
                 }
@@ -280,7 +281,7 @@ pub async fn update_notes(
                          ORDER BY nt.note_id, t.name ASC",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as::<_, (NoteId, String)>(&query_str);
+                let mut query = sqlx::query_as::<_, (NoteId, String)>(AssertSqlSafe(query_str));
                 for id in chunk {
                     query = query.bind(id);
                 }
@@ -308,7 +309,7 @@ pub async fn update_notes(
                     "SELECT * FROM card WHERE note_id IN ({}) ORDER BY note_id, \"order\" ASC",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as::<_, Card>(&query_str);
+                let mut query = sqlx::query_as::<_, Card>(AssertSqlSafe(query_str));
                 for id in chunk {
                     query = query.bind(id);
                 }
@@ -487,7 +488,7 @@ pub async fn update_notes(
             "DELETE FROM note_keyword WHERE note_id IN ({})",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for id in chunk {
             query = query.bind(id);
         }
@@ -512,7 +513,7 @@ pub async fn update_notes(
             "INSERT INTO note_keyword (note_id, keyword, embedded) VALUES {}",
             placeholders_2d(chunk.len(), 3)
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for (note_id, keyword, embedded) in chunk {
             query = query.bind(note_id);
             query = query.bind(keyword);
@@ -534,7 +535,7 @@ pub async fn update_notes(
              ORDER BY nt.note_id, t.name ASC",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_as::<_, (NoteId, String)>(&query_str);
+        let mut query = sqlx::query_as::<_, (NoteId, String)>(AssertSqlSafe(query_str));
         for id in chunk {
             query = query.bind(id);
         }
@@ -559,7 +560,7 @@ pub async fn update_notes(
                 "SELECT * FROM card WHERE note_id IN ({}) ORDER BY note_id, \"order\" ASC",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_as::<_, Card>(&query_str);
+            let mut query = sqlx::query_as::<_, Card>(AssertSqlSafe(query_str));
             for id in chunk {
                 query = query.bind(id);
             }

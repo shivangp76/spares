@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 
 use chrono::DateTime;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use super::enrich_note;
@@ -130,10 +131,10 @@ pub async fn search_page(
                 Err(e) => return Err(query_error(db, &query, &sorted_query, e).await),
             };
             let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
-            let rows: Vec<NoteWithParser> = sqlx::query_as(&format!(
+            let rows: Vec<NoteWithParser> = sqlx::query_as(AssertSqlSafe(format!(
                 "SELECT n.*, p.name FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({})",
                 in_list(&mut page_ids.iter().map(|id| id.packed()))
-            ))
+            )))
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
@@ -193,7 +194,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         lapses: u32,
         last_reviewed: Option<i64>,
     }
-    let rows: Vec<CardWithParser> = sqlx::query_as(&format!(
+    let rows: Vec<CardWithParser> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT c.*, p.name, {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed
         FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id
         WHERE c.id IN ({ids_sql})",
@@ -201,7 +202,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         reps_sql(),
         lapses_sql(),
         last_rated_sql(),
-    ))
+    )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
@@ -521,7 +522,7 @@ async fn links_to(db: &SqlitePool, note_ids: &[NoteId]) -> Result<Vec<NoteLink>,
             "SELECT * FROM note_link WHERE linked_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_as::<_, NoteLink>(&sql);
+        let mut query = sqlx::query_as::<_, NoteLink>(AssertSqlSafe(sql));
         for id in chunk {
             query = query.bind(id);
         }
@@ -559,9 +560,10 @@ async fn graph_nodes(
             "SELECT note_id, state, special_state = {suspended} FROM card WHERE note_id IN ({in_list})",
             suspended = SpecialState::Suspended as u8,
         );
-        let mut keyword_query = sqlx::query_as::<_, (NoteId, String)>(&keyword_sql);
-        let mut tag_query = sqlx::query_as::<_, (NoteId, String)>(&tag_sql);
-        let mut card_query = sqlx::query_as::<_, (NoteId, u32, Option<bool>)>(&card_sql);
+        let mut keyword_query = sqlx::query_as::<_, (NoteId, String)>(AssertSqlSafe(keyword_sql));
+        let mut tag_query = sqlx::query_as::<_, (NoteId, String)>(AssertSqlSafe(tag_sql));
+        let mut card_query =
+            sqlx::query_as::<_, (NoteId, u32, Option<bool>)>(AssertSqlSafe(card_sql));
         for id in chunk {
             keyword_query = keyword_query.bind(id);
             tag_query = tag_query.bind(id);

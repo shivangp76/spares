@@ -425,6 +425,7 @@ impl AnkiBackend for FakeAnki {
 
 #[cfg(test)]
 mod tests {
+    use sqlx::AssertSqlSafe;
     use sqlx::SqlitePool;
 
     use super::AnkiBackend;
@@ -440,7 +441,10 @@ mod tests {
             .await
             .unwrap();
         for statement in schema {
-            sqlx::query(statement).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(*statement))
+                .execute(&pool)
+                .await
+                .unwrap();
         }
         pool.close().await;
         path

@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use itertools::Itertools;
+use sqlx::AssertSqlSafe;
 
 use crate::Error;
 use crate::api::queue::QueueCaps;
@@ -127,10 +128,10 @@ where
     if preset == "NULL" {
         return Ok(HashMap::new());
     }
-    let rows: Vec<(CardId, Option<i64>)> = sqlx::query_as(&format!(
+    let rows: Vec<(CardId, Option<i64>)> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT id, preset FROM (SELECT c.id, {preset} AS preset FROM card c WHERE 1 {card_filter}) \
          WHERE preset IS NOT NULL"
-    ))
+    )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;

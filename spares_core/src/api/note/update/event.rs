@@ -1,4 +1,5 @@
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use super::super::create_note_keywords;
@@ -190,7 +191,7 @@ async fn restore_note_cards(
         "DELETE FROM card WHERE note_id = ? AND id NOT IN ({})",
         placeholders(keep.len())
     );
-    let mut query = sqlx::query(&query_str).bind(note_id);
+    let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(note_id);
     for card_id in &keep {
         query = query.bind(card_id);
     }
@@ -209,7 +210,7 @@ async fn restore_note_cards(
                 state = excluded.state, custom_data = excluded.custom_data",
             placeholders_2d(chunk.len(), 12)
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for card in chunk {
             query = query.bind(card.id);
             query = query.bind(note_id);

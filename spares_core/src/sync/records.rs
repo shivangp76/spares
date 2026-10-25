@@ -11,6 +11,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqliteConnection;
 
 use super::SyncKind;
@@ -182,10 +183,10 @@ pub(crate) async fn read_parsers(
     conn: &mut SqliteConnection,
     selection: Selection,
 ) -> Result<Vec<ParserRecord>, Error> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         "SELECT id, name FROM parser WHERE {} ORDER BY id",
         selection.condition()
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(sqlx_error)
@@ -195,11 +196,11 @@ pub(crate) async fn read_tags(
     conn: &mut SqliteConnection,
     selection: Selection,
 ) -> Result<Vec<TagRecord>, Error> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         "SELECT id, name, description, query, auto_delete, reschedule, created_at, updated_at FROM tag
          WHERE {} ORDER BY id",
         selection.condition()
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(sqlx_error)
@@ -209,7 +210,7 @@ async fn read_snapshots<T: serde::de::DeserializeOwned>(
     conn: &mut SqliteConnection,
     query: &str,
 ) -> Result<Vec<T>, Error> {
-    let snapshots: Vec<String> = sqlx::query_scalar(query)
+    let snapshots: Vec<String> = sqlx::query_scalar(AssertSqlSafe(query))
         .fetch_all(&mut *conn)
         .await
         .map_err(sqlx_error)?;
@@ -279,12 +280,12 @@ pub(crate) async fn read_review_logs(
     conn: &mut SqliteConnection,
     selection: Selection,
 ) -> Result<Vec<ReviewLogRecord>, Error> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         "SELECT id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
                 recall_duration, rate_duration, previous_state, tag_id, custom_data
          FROM review_log WHERE {} ORDER BY id",
         selection.condition()
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(sqlx_error)
@@ -294,10 +295,10 @@ pub(crate) async fn read_saved_searches(
     conn: &mut SqliteConnection,
     selection: Selection,
 ) -> Result<Vec<SavedSearchRecord>, Error> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         "SELECT id, name, query, created_at, updated_at FROM saved_search WHERE {} ORDER BY id",
         selection.condition()
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(sqlx_error)
@@ -307,10 +308,10 @@ pub(crate) async fn read_graves(
     conn: &mut SqliteConnection,
     selection: Selection,
 ) -> Result<Vec<Grave>, Error> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, i64)> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT kind, oid FROM grave WHERE {} ORDER BY kind, oid",
         selection.condition()
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(sqlx_error)?;
@@ -413,11 +414,14 @@ pub(crate) async fn read_usn(
     kind: SyncKind,
     id: i64,
 ) -> Result<Option<i64>, Error> {
-    sqlx::query_scalar(&format!("SELECT usn FROM {} WHERE id = ?", kind.name()))
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(sqlx_error)
+    sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT usn FROM {} WHERE id = ?",
+        kind.name()
+    )))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(sqlx_error)
 }
 
 /// The row's last synced version, if it changed since.

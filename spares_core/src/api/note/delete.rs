@@ -6,6 +6,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -221,7 +222,7 @@ pub async fn delete_notes(
                     r"SELECT id, parser_id, data, created_at, custom_data FROM note WHERE id IN ({})",
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as(&query_str);
+                let mut query = sqlx::query_as(AssertSqlSafe(query_str));
                 for note_id in chunk {
                     query = query.bind(note_id);
                 }
@@ -325,7 +326,7 @@ async fn fetch_card_links(
                 "SELECT card_id, id FROM review_log WHERE card_id IN ({}) ORDER BY id",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_as(&query_str);
+            let mut query = sqlx::query_as(AssertSqlSafe(query_str));
             for card_id in chunk {
                 query = query.bind(card_id);
             }
@@ -342,7 +343,7 @@ async fn fetch_card_links(
                 WHERE ct.card_id IN ({}) AND t.query IS NOT NULL ORDER BY ct.tag_id",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_as(&query_str);
+            let mut query = sqlx::query_as(AssertSqlSafe(query_str));
             for card_id in chunk {
                 query = query.bind(card_id);
             }
@@ -392,7 +393,7 @@ async fn delete_notes_from_db(
                 placeholders(chunk.len()),
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_scalar(&query_str);
+            let mut query = sqlx::query_scalar(AssertSqlSafe(query_str));
             for note_id in chunk {
                 query = query.bind(note_id);
             }
@@ -412,7 +413,7 @@ async fn delete_notes_from_db(
             "DELETE FROM note WHERE id IN ({})",
             placeholders(chunk.len()),
         );
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for note_id in chunk {
             query = query.bind(note_id);
         }
@@ -488,7 +489,7 @@ pub(crate) async fn delete_empty_tags_on(
             "SELECT tag_id, id FROM review_log WHERE tag_id IN ({}) ORDER BY id",
             placeholders(chunk.len()),
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         for tag_id in chunk {
             query = query.bind(tag_id);
         }
@@ -510,7 +511,7 @@ pub(crate) async fn delete_empty_tags_on(
             RETURNING *",
             placeholders(chunk.len()),
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         for tag_id in chunk {
             query = query.bind(tag_id);
         }

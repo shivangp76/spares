@@ -4,6 +4,7 @@
 use chrono::Utc;
 use serde_json::Map;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::set_applying;
@@ -56,14 +57,14 @@ async fn stamp_all(pool: &SqlitePool, usn: i64) {
     let mut tx = pool.begin().await.unwrap();
     set_applying(&mut tx, true).await.unwrap();
     for table in super::USN_TABLES {
-        sqlx::query(&format!("UPDATE {table} SET usn = ?"))
+        sqlx::query(AssertSqlSafe(format!("UPDATE {table} SET usn = ?")))
             .bind(usn)
             .execute(&mut *tx)
             .await
             .unwrap();
     }
     for table in ["grave", "sync_base"] {
-        sqlx::query(&format!("DELETE FROM {table}"))
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM {table}")))
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -73,11 +74,13 @@ async fn stamp_all(pool: &SqlitePool, usn: i64) {
 }
 
 async fn usn(pool: &SqlitePool, table: &str, id: i64) -> i64 {
-    sqlx::query_scalar(&format!("SELECT usn FROM {table} WHERE id = ?"))
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT usn FROM {table} WHERE id = ?"
+    )))
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 async fn base(pool: &SqlitePool, kind: &str, id: i64) -> Option<Value> {

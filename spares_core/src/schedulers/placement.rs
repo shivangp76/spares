@@ -57,6 +57,7 @@ use chrono::Utc;
 use rand::Rng;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
@@ -137,13 +138,13 @@ impl PlacementContext {
         // Only cards in review compete for days: new and learning cards have no review-sized due
         // date. Buried cards still compete: they come back. Suspended cards are not studied at
         // all.
-        let rows: Vec<(CardId, NoteId, i64)> = sqlx::query_as(&format!(
+        let rows: Vec<(CardId, NoteId, i64)> = sqlx::query_as(AssertSqlSafe(format!(
             r"SELECT id, note_id, due FROM card
               WHERE state IN ({})
                 AND (special_state IS NULL OR special_state != ?)
                 AND ((due BETWEEN ? AND ?) OR note_id = ?)",
             state_ids_sql(&[StateRole::Review])
-        ))
+        )))
         .bind(SpecialState::Suspended)
         .bind(from.timestamp())
         .bind(to.timestamp())

@@ -20,6 +20,7 @@
 use std::collections::BTreeSet;
 
 use chrono::Utc;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
@@ -129,9 +130,9 @@ async fn expand_group(
     let Some(group_id) = event.group_id.filter(|_| whole_group) else {
         return Ok(vec![event]);
     };
-    sqlx::query_as(&format!(
+    sqlx::query_as(AssertSqlSafe(format!(
         "SELECT e.* FROM event e WHERE e.group_id = ? AND {NOT_REVERTED} ORDER BY e.id ASC"
-    ))
+    )))
     .bind(group_id)
     .fetch_all(db)
     .await
@@ -275,12 +276,12 @@ pub async fn undo_event(
         check_revertible(db, &event, false).await?;
         event
     } else {
-        let event_opt: Option<Event> = sqlx::query_as(&format!(
+        let event_opt: Option<Event> = sqlx::query_as(AssertSqlSafe(format!(
             "SELECT e.* FROM event e JOIN event_action a ON a.id = e.id
              WHERE a.action != ? AND e.kind NOT IN ({}) AND {NOT_REVERTED}
              ORDER BY e.id DESC LIMIT 1",
             automatic_kinds_sql()
-        ))
+        )))
         .bind(EventAction::Undo)
         .fetch_optional(db)
         .await
@@ -322,7 +323,7 @@ pub async fn redo_event(
         check_revertible(db, &event, true).await?;
         event
     } else {
-        let event_opt: Option<Event> = sqlx::query_as(&format!(
+        let event_opt: Option<Event> = sqlx::query_as(AssertSqlSafe(format!(
             "SELECT e.* FROM event e JOIN event_action a ON a.id = e.id
              WHERE a.action = ? AND {NOT_REVERTED}
                AND NOT EXISTS (
@@ -331,7 +332,7 @@ pub async fn redo_event(
                )
              ORDER BY e.id DESC LIMIT 1",
             automatic_kinds_sql()
-        ))
+        )))
         .bind(EventAction::Undo)
         .bind(EventAction::Do)
         .fetch_optional(db)

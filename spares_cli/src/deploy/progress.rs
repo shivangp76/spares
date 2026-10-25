@@ -732,6 +732,6 @@ mod tests {
         assert_eq!(human(Duration::from_millis(4200)), "4.2s");
         assert_eq!(human(Duration::from_secs(42)), "42s");
         assert_eq!(human(Duration::from_secs(187)), "3m 07s");
-        assert_eq!(human(Duration::from_secs(3720)), "1h 02m");
+        assert_eq!(human(Duration::from_mins(62)), "1h 02m");
     }
 }

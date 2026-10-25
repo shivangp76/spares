@@ -13,6 +13,7 @@ pub use graphs::get_statistics_graphs;
 use local_time::Zone;
 use local_time::date_of_day_number;
 use local_time::day_number;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -51,26 +52,26 @@ pub async fn get_statistics(
     // Only graded reviews count as study, crams apart. `card_id IS NOT NULL` excludes orphaned
     // rows, whose card has been deleted.
     let studied = async {
-        sqlx::query_as::<_, (u32, i64, i64)>(&format!(
+        sqlx::query_as::<_, (u32, i64, i64)>(AssertSqlSafe(format!(
             r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM(recall_duration), 0),
                      COALESCE(SUM(rate_duration), 0)
               FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {review} AND card_id IS NOT NULL",
             review = ReviewLogKind::Review as u8,
-        ))
+        )))
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })
     };
     // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
     let crams = async {
-        sqlx::query_as::<_, (u32, i64)>(&format!(
+        sqlx::query_as::<_, (u32, i64)>(AssertSqlSafe(format!(
             r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {cram} AND card_id IS NOT NULL",
             cram = ReviewLogKind::Cram as u8,
-        ))
+        )))
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })
@@ -95,7 +96,7 @@ pub async fn get_statistics(
         // the user or the scheduler count tomorrow instead, and suspended cards not at all, as
         // review shows neither.
         let due_day = zone.clock(today_start, tomorrow_start).day("c.due");
-        let counts: Vec<(StateId, Option<i64>, u32)> = sqlx::query_as(&format!(
+        let counts: Vec<(StateId, Option<i64>, u32)> = sqlx::query_as(AssertSqlSafe(format!(
             r"SELECT c.state, {preset} AS preset, COUNT(*) FROM card c
               WHERE (c.state IN ({new}) OR {due_day} <= {today_number})
                 AND (c.special_state IS NULL OR c.special_state = {later_today})
@@ -104,7 +105,7 @@ pub async fn get_statistics(
             preset = limited_preset_sql(&config.queue),
             today_number = day_number(today),
             later_today = SpecialState::BuriedUntilLaterToday as u8,
-        ))
+        )))
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -183,14 +184,14 @@ pub async fn get_review_history(
             .map_err(|e| Error::Sqlx { source: e })?;
     let clock = zone.clock(first.unwrap_or_default(), last.unwrap_or_default());
     let rows: Vec<(i64, ReviewLogKind, u32)> = cards
-        .bind(sqlx::query_as(&format!(
+        .bind(sqlx::query_as(AssertSqlSafe(format!(
             r"SELECT {day} AS day, kind, COUNT(*) FROM review_log
               WHERE kind IN ({review}, {cram}){filter} GROUP BY day, kind",
             day = clock.day("reviewed_at"),
             review = ReviewLogKind::Review as u8,
             cram = ReviewLogKind::Cram as u8,
             filter = cards.sql("card_id"),
-        )))
+        ))))
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

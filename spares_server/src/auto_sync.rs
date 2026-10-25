@@ -26,7 +26,7 @@ use tokio::time::MissedTickBehavior;
 /// How often to look for local changes and for having slept.
 const CHECK_EVERY: Duration = Duration::from_secs(15);
 /// The longest local changes wait while they keep coming.
-const MAX_PUSH_WAIT: Duration = Duration::from_secs(2 * 60);
+const MAX_PUSH_WAIT: Duration = Duration::from_mins(2);
 /// How long after a failed attempt to try again.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// How far the wall clock must run ahead of the monotonic clock, which stops while macOS sleeps,

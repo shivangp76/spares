@@ -493,8 +493,10 @@ mod tests {
 
         // Bring the database up to the state a user on the previous release would have.
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
-        conn.apply(base).await.unwrap();
+        conn.ensure_migrations_table(&migrator.table_name)
+            .await
+            .unwrap();
+        conn.apply(&migrator.table_name, base).await.unwrap();
 
         sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
             .execute(&mut *conn)
@@ -577,12 +579,14 @@ mod tests {
         const CRAM_MIGRATION: i64 = 20_261_015_130_000;
         let migrator = Migrator::new(migrator_path()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table(&migrator.table_name)
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.migration_type.is_up_migration() && m.version < CRAM_MIGRATION)
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply(&migrator.table_name, migration).await.unwrap();
         }
         // Orphans, so that no card is needed. The forget was synced (usn 7), the reviews not.
         sqlx::query(
@@ -661,12 +665,14 @@ mod tests {
         const MIGRATION: i64 = 20_261_016_120_000;
         let migrator = Migrator::new(migrator_path()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table(&migrator.table_name)
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.migration_type.is_up_migration() && m.version < MIGRATION)
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply(&migrator.table_name, migration).await.unwrap();
         }
         sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *conn)

@@ -26,6 +26,7 @@ use std::time::Instant;
 
 use fancy_regex::Captures;
 use fancy_regex::Regex;
+use sqlx::AssertSqlSafe;
 use sqlx::Connection;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
@@ -258,7 +259,7 @@ async fn plan_on(conn: &mut SqliteConnection) -> Result<MigrationPlan, Error> {
     }
     let mut orphans = Vec::new();
     for (what, from) in ORPHANS {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {from}"))
+        let count: i64 = sqlx::query_scalar(AssertSqlSafe(format!("SELECT COUNT(*) {from}")))
             .fetch_one(&mut *conn)
             .await
             .map_err(sqlx_error)?;
@@ -439,7 +440,7 @@ async fn rewrite_in_transaction(
         } else {
             format!("DELETE {from}")
         };
-        sqlx::query(&statement)
+        sqlx::query(AssertSqlSafe(statement))
             .execute(&mut *conn)
             .await
             .map_err(sqlx_error)?;
@@ -486,9 +487,9 @@ async fn rewrite_in_transaction(
         } else {
             ("tag", "query")
         };
-        let changed = sqlx::query(&format!(
+        let changed = sqlx::query(AssertSqlSafe(format!(
             "UPDATE {table} SET {column} = ? WHERE {column} = ?"
-        ))
+        )))
         .bind(&rewrite.after)
         .bind(&rewrite.before)
         .execute(&mut *conn)
@@ -566,7 +567,7 @@ async fn rewrite_in_transaction(
 async fn row_counts(conn: &mut SqliteConnection) -> Result<Vec<(&'static str, i64)>, Error> {
     let mut counts = Vec::new();
     for table in COUNTED_TABLES {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let count: i64 = sqlx::query_scalar(AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
             .fetch_one(&mut *conn)
             .await
             .map_err(sqlx_error)?;
@@ -1087,7 +1088,7 @@ mod tests {
     }
 
     async fn exec(pool: &SqlitePool, sql: &str) {
-        sqlx::query(sql).execute(pool).await.unwrap();
+        sqlx::query(AssertSqlSafe(sql)).execute(pool).await.unwrap();
     }
 
     /// A database as it was before the migration: numeric note ids, with gaps from deletes.

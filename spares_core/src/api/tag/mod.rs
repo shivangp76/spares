@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde_json::to_value;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -233,7 +234,7 @@ pub(crate) async fn restore_review_tags(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let mut query = sqlx::query(&query_str).bind(tag_id);
+        let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(tag_id);
         for id in chunk {
             query = query.bind(id);
         }

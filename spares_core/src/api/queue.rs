@@ -9,6 +9,7 @@ use chrono::Local;
 use chrono::Utc;
 use indoc::formatdoc;
 use itertools::Itertools;
+use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
 use sqlx::SqlitePool;
 
@@ -518,7 +519,7 @@ pub(crate) async fn ordered_queue(
         cards = filter.cards,
         where_clause = filter.where_clause,
     };
-    let mut query = sqlx::query_as(&query_str);
+    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
     if !filter.is_filtered_tag {
         query = query.bind(due_limit.timestamp());
     }
@@ -717,7 +718,10 @@ pub(crate) mod tests {
                 query_sort
             )
         );
-        sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
+        sqlx::query_scalar(AssertSqlSafe(query))
+            .fetch_all(pool)
+            .await
+            .unwrap()
     }
 
     #[sqlx::test]
@@ -1619,10 +1623,10 @@ mod linked_note_tests {
         query_card_ids: Option<&str>,
     ) -> Vec<CardId> {
         let (_, card_due_limit) = get_start_end_local_date(&now);
-        sqlx::query_scalar(&format!(
+        sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
             where_clause(config, now, query_card_ids)
-        ))
+        )))
         .bind(card_due_limit.timestamp())
         .fetch_all(pool)
         .await
@@ -1830,10 +1834,10 @@ mod linked_note_tests {
         link(&pool, b, Some(a), 0.0).await;
         link(&pool, c, Some(a), 4.5).await;
         let matching = async |config: &QueueConfig, value: &str| -> Vec<CardId> {
-            sqlx::query_scalar(&format!(
+            sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
                 waiting_on_links_condition(config, value)
-            ))
+            )))
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -2484,12 +2488,12 @@ mod preset_tests {
         assert_eq!((limits.new, limits.presets[0].new), (2, Some(0)));
         // So review leaves out the third language card, but not the others
         let preset = crate::api::preset::limited_preset_sql(&config.queue);
-        let shown: Vec<CardId> = sqlx::query_scalar(&format!(
+        let shown: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT c.id FROM card c WHERE c.state = {NEW} AND c.id NOT IN ({}, {}) {}",
             ids[0],
             ids[1],
             crate::api::review::daily_limits_clause(&limits, &preset)
-        ))
+        )))
         .fetch_all(&pool)
         .await
         .unwrap();
@@ -2564,7 +2568,7 @@ mod preset_tests {
                     &[]
                 )
             );
-            sqlx::query_scalar::<_, CardId>(&query)
+            sqlx::query_scalar::<_, CardId>(AssertSqlSafe(query))
                 .fetch_all(&pool)
                 .await
                 .unwrap()
@@ -2717,7 +2721,10 @@ mod interleave_tests {
             cards_with_preset(&config.queue.presets),
             queue_order_by(&config, now, caps, query_sort)
         );
-        sqlx::query_scalar(&query).fetch_all(pool).await.unwrap()
+        sqlx::query_scalar(AssertSqlSafe(query))
+            .fetch_all(pool)
+            .await
+            .unwrap()
     }
 
     /// The example on [`QueueConfig::interleave_by`].
@@ -2845,11 +2852,12 @@ mod interleave_tests {
         .await;
         let config = parse("[queue]\ninterleave_by = \"top_level_tag\"\n");
         let subject = subject_sql(&config).unwrap();
-        let subjects: Vec<Option<String>> =
-            sqlx::query_scalar(&format!("SELECT {subject} FROM card c ORDER BY c.id"))
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let subjects: Vec<Option<String>> = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT {subject} FROM card c ORDER BY c.id"
+        )))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
         let some = |s: &str| Some(s.to_string());
         assert_eq!(
             subjects,

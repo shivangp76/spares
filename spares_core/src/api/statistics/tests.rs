@@ -8,6 +8,7 @@ use chrono::NaiveDate;
 use chrono::TimeZone;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::graphs::get_statistics_graphs_with;
@@ -822,7 +823,7 @@ async fn the_heatmap_follows_the_query_and_time_zone(pool: SqlitePool) {
 async fn statistics_queries_use_the_indexes(pool: SqlitePool) {
     let plan = async |sql: &str| {
         let rows: Vec<(i64, i64, i64, String)> =
-            sqlx::query_as(&format!("EXPLAIN QUERY PLAN {sql}"))
+            sqlx::query_as(AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
                 .fetch_all(&pool)
                 .await
                 .unwrap();

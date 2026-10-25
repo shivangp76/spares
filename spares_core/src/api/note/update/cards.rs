@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use chrono::DateTime;
 use chrono::Utc;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqliteConnection;
 
 use crate::CardErrorKind;
@@ -152,7 +153,7 @@ pub(super) async fn update_cards(
             "SELECT id FROM card WHERE note_id = ? AND \"order\" IN ({})",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_scalar::<_, CardId>(&query_str);
+        let mut query = sqlx::query_scalar::<_, CardId>(AssertSqlSafe(query_str));
         query = query.bind(note_id);
         for card_index in chunk {
             query = query.bind(*card_index as u32);
@@ -177,7 +178,7 @@ pub(super) async fn update_cards(
             "SELECT * FROM card WHERE note_id = ? AND \"order\" IN ({})",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         query = query.bind(note_id);
         for index in chunk {
             query = query.bind(*index as u32);
@@ -257,7 +258,7 @@ pub(super) async fn update_cards(
             "DELETE FROM card WHERE id IN ({})",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query(query_str.as_str());
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for card_id in chunk {
             query = query.bind(*card_id);
         }
@@ -446,7 +447,7 @@ async fn verify_card_consistency(
                     r#"SELECT id, "order" FROM card WHERE note_id = ? AND "order" IN ({})"#,
                     placeholders(chunk.len())
                 );
-                let mut query = sqlx::query_as::<_, (CardId, u32)>(&query_str);
+                let mut query = sqlx::query_as::<_, (CardId, u32)>(AssertSqlSafe(query_str));
                 query = query.bind(note_id);
                 for order in chunk {
                     query = query.bind(*order);

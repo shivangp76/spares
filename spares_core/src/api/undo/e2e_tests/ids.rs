@@ -3,6 +3,7 @@
 
 use chrono::Utc;
 use serde_json::Map;
+use sqlx::AssertSqlSafe;
 
 use super::create_card_helper;
 use crate::api::card::forget_card;
@@ -138,10 +139,11 @@ async fn e2e_synced_tables_only_get_helper_ids(
     .unwrap();
 
     for table in IdTable::ALL {
-        let ids: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM {}", table.name()))
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+        let ids: Vec<i64> =
+            sqlx::query_scalar(AssertSqlSafe(format!("SELECT id FROM {}", table.name())))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         assert!(!ids.is_empty(), "{} has no rows to check", table.name());
         for id in ids {
             assert_eq!(

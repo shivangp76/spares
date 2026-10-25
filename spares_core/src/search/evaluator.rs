@@ -9,6 +9,7 @@ use log::info;
 use miette::Error;
 use miette::Report;
 use miette::miette;
+use sqlx::AssertSqlSafe;
 use sqlx::QueryBuilder;
 use sqlx::Sqlite;
 use sqlx::SqlitePool;
@@ -159,7 +160,7 @@ impl<'de> Evaluator<'de> {
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
-        let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(&query_str)
+        let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(AssertSqlSafe(query_str))
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
@@ -186,7 +187,7 @@ impl<'de> Evaluator<'de> {
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
-        let note_ids: Vec<NoteId> = sqlx::query_scalar(&query_str)
+        let note_ids: Vec<NoteId> = sqlx::query_scalar(AssertSqlSafe(query_str))
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
@@ -225,7 +226,7 @@ impl<'de> Evaluator<'de> {
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
-        let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
+        let enriched_cards: Vec<EnrichedCard> = sqlx::query_as(AssertSqlSafe(query_str))
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
@@ -319,7 +320,7 @@ impl<'de> Evaluator<'de> {
         )
         .map_err(search_error(query))?;
         info!("{}", query_str);
-        let card_ids: Vec<CardId> = sqlx::query_scalar(&query_str)
+        let card_ids: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(query_str))
             .fetch_all(db)
             .await
             .map_err(|e| crate::Error::Sqlx { source: e })?;
@@ -368,10 +369,11 @@ impl<'de> Evaluator<'de> {
                 )
                 .map_err(search_error(query))?;
                 info!("{}", query_str);
-                let candidates: Vec<EnrichedCardWithNoteData> = sqlx::query_as(&query_str)
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| crate::Error::Sqlx { source: e })?;
+                let candidates: Vec<EnrichedCardWithNoteData> =
+                    sqlx::query_as(AssertSqlSafe(query_str))
+                        .fetch_all(db)
+                        .await
+                        .map_err(|e| crate::Error::Sqlx { source: e })?;
                 let all_parsers = get_all_parsers();
                 for candidate in candidates {
                     if seen_ids.contains(&candidate.card.id) {
@@ -401,7 +403,7 @@ impl<'de> Evaluator<'de> {
                 )
                 .map_err(search_error(query))?;
                 info!("{}", query_str);
-                let cards: Vec<EnrichedCard> = sqlx::query_as(&query_str)
+                let cards: Vec<EnrichedCard> = sqlx::query_as(AssertSqlSafe(query_str))
                     .fetch_all(db)
                     .await
                     .map_err(|e| crate::Error::Sqlx { source: e })?;
@@ -1198,8 +1200,8 @@ pub(crate) enum EvaluatorReturnItemType {
     CardIds,
 }
 
-struct EvaluationContext<'a> {
-    query_builder: QueryBuilder<'a, Sqlite>,
+struct EvaluationContext {
+    query_builder: QueryBuilder<Sqlite>,
     params: Vec<String>,
     field: Option<Field>,
     value_type: Option<FieldType>,
@@ -1216,7 +1218,7 @@ struct EvaluationContext<'a> {
     relevance_match: Option<String>,
 }
 
-impl EvaluationContext<'_> {
+impl EvaluationContext {
     fn new(output_type: EvaluatorReturnItemType, scope_clause: Option<String>) -> Self {
         Self {
             query_builder: QueryBuilder::new(""),
@@ -1367,7 +1369,7 @@ impl EvaluationContext<'_> {
             self.query_builder.push(format!(" LIMIT {}", limit));
         }
 
-        self.query_builder.sql().to_string()
+        self.query_builder.sql().as_str().to_owned()
     }
 
     fn add_where_clause(&mut self, clause: String) {
@@ -2608,9 +2610,9 @@ async fn check_references_exist(
             Anchor::Card(id, _) => ("card", id, id.to_string()),
             Anchor::Today | Anchor::Now => continue,
         };
-        let exists: bool = sqlx::query_scalar(&format!(
+        let exists: bool = sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = ?)"
-        ))
+        )))
         .bind(id)
         .fetch_one(db)
         .await
@@ -3365,7 +3367,10 @@ mod tests {
         // Text searches need `REGEXP`.
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
         let yesterday = chrono::Local::now().date_naive() - chrono::Days::new(1);
@@ -3491,7 +3496,10 @@ mod tests {
     #[allow(clippy::too_many_lines, reason = "test data is long")]
     async fn searches_review_history(pool: SqlitePool) {
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         let now = chrono::Utc::now().timestamp();
         let day = 24 * 60 * 60;
@@ -3801,7 +3809,10 @@ mod tests {
     #[sqlx::test]
     async fn searches_notes_linked_to_a_query(pool: SqlitePool) {
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
@@ -3868,7 +3879,10 @@ mod tests {
     ) {
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
@@ -3988,7 +4002,10 @@ mod tests {
     ) {
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
         let exec = async |sql: &str| {
-            sqlx::query(sql).execute(&pool).await.unwrap();
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
         // (note, text, card, due)

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use itertools::Itertools;
+use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqliteConnection;
 
 use super::super::delete_empty_tags_on;
@@ -52,7 +53,7 @@ pub(super) async fn add_tags_to_note(
             "SELECT id, name FROM tag WHERE name IN ({})",
             placeholders(chunk.len())
         );
-        let mut query = sqlx::query_as(query_str.as_str());
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         for tag_name in chunk {
             query = query.bind(tag_name);
         }
@@ -96,7 +97,7 @@ pub(super) async fn add_tags_to_note(
             "INSERT INTO note_tag (note_id, tag_id) VALUES {}",
             placeholders_2d(chunk.len(), 2)
         );
-        let mut query = sqlx::query(query_str.as_str());
+        let mut query = sqlx::query(AssertSqlSafe(query_str));
         for tag_id in chunk {
             query = query.bind(note_id);
             query = query.bind(tag_id);
@@ -178,7 +179,7 @@ pub(super) async fn update_tags(
                 "SELECT t.id FROM tag t JOIN note_tag nt ON t.id = nt.tag_id WHERE nt.note_id = ? AND t.name in ({}) AND t.auto_delete = 1",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query_scalar::<_, TagId>(&query_str);
+            let mut query = sqlx::query_scalar::<_, TagId>(AssertSqlSafe(query_str));
             query = query.bind(note_id);
             for tag_name in chunk {
                 query = query.bind(tag_name);
@@ -197,7 +198,7 @@ pub(super) async fn update_tags(
                 "DELETE FROM note_tag WHERE note_id = ? AND tag_id IN (SELECT id FROM tag WHERE name IN ({}))",
                 placeholders(chunk.len())
             );
-            let mut query = sqlx::query(query_str.as_str());
+            let mut query = sqlx::query(AssertSqlSafe(query_str));
             query = query.bind(note_id);
             for tag_name in chunk {
                 query = query.bind(tag_name);

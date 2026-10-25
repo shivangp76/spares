@@ -13,6 +13,7 @@ use chrono::Days;
 use chrono::NaiveDate;
 use chrono::Utc;
 use itertools::Itertools;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::local_time::LocalClock;
@@ -105,8 +106,8 @@ impl CardFilter {
     /// Binds the ids for [`Self::sql`].
     pub(crate) fn bind<'q, O>(
         &'q self,
-        query: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>> {
+        query: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments> {
         match self {
             Self::All => query,
             Self::Ids(ids) => query.bind(ids.as_str()),
@@ -172,7 +173,7 @@ impl Context<'_> {
         O: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
     {
         self.cards
-            .bind(sqlx::query_as(sql))
+            .bind(sqlx::query_as(AssertSqlSafe(sql)))
             .fetch_all(self.db)
             .await
             .map_err(|e| Error::Sqlx { source: e })
@@ -263,12 +264,12 @@ async fn earliest_day(
     cards: &CardFilter,
 ) -> Result<Option<NaiveDate>, Error> {
     let (reviewed, created): (Option<i64>, Option<i64>) = cards
-        .bind(sqlx::query_as(&format!(
+        .bind(sqlx::query_as(AssertSqlSafe(format!(
             "SELECT (SELECT MIN(reviewed_at) FROM review_log WHERE kind IN ({REVIEW}, {CRAM}){}),
                     (SELECT MIN(created_at) FROM card WHERE 1{})",
             cards.sql("card_id"),
             cards.sql("id"),
-        )))
+        ))))
         .fetch_one(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -341,7 +342,7 @@ pub(crate) async fn due_by_day(
     let learning = step_states().iter().join(", ");
     let having = horizon.map_or(String::new(), |h| format!(" HAVING day < {h}"));
     let rows: Vec<(i64, u32, u32)> = cards
-        .bind(sqlx::query_as(&format!(
+        .bind(sqlx::query_as(AssertSqlSafe(format!(
             "SELECT MAX({due_day}, {today_number})
                     + (IFNULL(special_state, 0) IN ({user}, {scheduler}) AND {due_day} <= {today_number}) AS day,
                     SUM(state IN ({learning})), SUM(state NOT IN ({learning}))
@@ -354,7 +355,7 @@ pub(crate) async fn due_by_day(
             scheduler = SpecialState::SchedulerBuried as u8,
             suspended = SpecialState::Suspended as u8,
             cards = cards.sql("id"),
-        )))
+        ))))
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

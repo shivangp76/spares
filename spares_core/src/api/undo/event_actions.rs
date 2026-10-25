@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
@@ -22,7 +23,7 @@ pub async fn insert_events(
                 "INSERT INTO event (kind, created_at, group_id, payload) VALUES {} RETURNING id",
                 placeholders_2d(chunk.len(), 4)
             );
-            let mut query = sqlx::query_scalar(&query_str);
+            let mut query = sqlx::query_scalar(AssertSqlSafe(query_str));
             for (kind, payload) in chunk {
                 query = query.bind(kind);
                 query = query.bind(at.timestamp());

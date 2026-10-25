@@ -711,7 +711,7 @@ pub(super) fn parse_cli_score(stdout: &str) -> Result<f64, String> {
 /// from trusted sources (i.e. authored by the same user).
 pub(super) async fn spawn_cli_exec(exec: &str) -> Result<(String, Duration), String> {
     const MAX_STDOUT_BYTES: usize = 1_048_576; // 1 MiB
-    const EXEC_TIMEOUT: Duration = Duration::from_secs(1800); // 30 min
+    const EXEC_TIMEOUT: Duration = Duration::from_mins(30);
 
     let exec_owned = exec.to_string();
     let result = tokio::time::timeout(EXEC_TIMEOUT, async move {

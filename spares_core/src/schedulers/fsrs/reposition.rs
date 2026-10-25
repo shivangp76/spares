@@ -7,6 +7,7 @@ use chrono::Utc;
 use itertools::Itertools;
 use rand::RngExt;
 use serde_json::to_value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::SCHEDULER_NAME;
@@ -65,12 +66,12 @@ pub async fn count_safe_cards(
     requested_date: DateTime<Utc>,
     decay: f32,
 ) -> Result<u32, Error> {
-    let (json,): (String,) = sqlx::query_as(&format!(
+    let (json,): (String,) = sqlx::query_as(AssertSqlSafe(format!(
         r"SELECT json_group_array(json_array(c.stability, c.desired_retention, l.reviewed_at,
                  l.scheduled_time))
           FROM card c LEFT JOIN review_log l ON l.id = ({LAST_REVIEW_ID})
           WHERE {where_clause}"
-    ))
+    )))
     .bind(bound)
     .fetch_one(db)
     .await
@@ -191,11 +192,11 @@ async fn last_reviews(
     cards: &[Card],
 ) -> Result<HashMap<CardId, LastReview>, Error> {
     let ids = format!("[{}]", cards.iter().map(|card| card.id).join(","));
-    let (json,): (String,) = sqlx::query_as(&format!(
+    let (json,): (String,) = sqlx::query_as(AssertSqlSafe(format!(
         r"SELECT json_group_array(json_array(c.id, l.reviewed_at, l.scheduled_time))
           FROM (SELECT value AS id FROM json_each(?)) c
           JOIN review_log l ON l.id = ({LAST_REVIEW_ID})"
-    ))
+    )))
     .bind(ids)
     .fetch_one(db)
     .await

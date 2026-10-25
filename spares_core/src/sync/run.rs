@@ -10,6 +10,7 @@ use chrono::Utc;
 use log::info;
 use serde::Deserialize;
 use serde::Serialize;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::LAST_SYNC_AT_KEY;
@@ -255,7 +256,7 @@ async fn normal_sync(
         };
         stamp_dirty(&mut tx, response.usn).await?;
         for table in ["grave", "sync_base"] {
-            sqlx::query(&format!("DELETE FROM {table}"))
+            sqlx::query(AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&mut *tx)
                 .await
                 .map_err(sqlx_error)?;
@@ -313,13 +314,13 @@ async fn full_upload(
     let mut tx = db.begin().await.map_err(sqlx_error)?;
     set_applying(&mut tx, true).await?;
     for table in USN_TABLES {
-        sqlx::query(&format!("UPDATE {table} SET usn = 0"))
+        sqlx::query(AssertSqlSafe(format!("UPDATE {table} SET usn = 0")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;
     }
     for table in ["grave", "sync_base"] {
-        sqlx::query(&format!("DELETE FROM {table}"))
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM {table}")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;

@@ -14,6 +14,7 @@ use log::info;
 use log::warn;
 use serde_json::Value;
 use serde_json::to_value;
+use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
 use sqlx::sqlite::SqlitePool;
 
@@ -413,14 +414,14 @@ pub(crate) async fn daily_limits_left_with(
     // The preset is only needed for the presets' own limits
     let preset = limited_preset_sql(&config.queue);
     // `LEFT JOIN`, so that the reviews of a deleted card still count, with no preset
-    let studied: Vec<(Option<i64>, StateId, u32)> = sqlx::query_as(&format!(
+    let studied: Vec<(Option<i64>, StateId, u32)> = sqlx::query_as(AssertSqlSafe(format!(
         r"SELECT {preset} AS preset, rl.previous_state, COUNT(DISTINCT rl.card_id)
         FROM review_log rl LEFT JOIN card c ON c.id = rl.card_id
         WHERE rl.reviewed_at >= ? AND rl.reviewed_at <= ? AND rl.kind = ?
         AND rl.previous_state IN ({})
         GROUP BY 1, 2",
         state_ids_sql(&[StateRole::New, StateRole::Review]),
-    ))
+    )))
     .bind(lower_limit.timestamp())
     .bind(upper_limit.timestamp())
     // Forgetting a card must not use up one of today's cards.
@@ -450,12 +451,12 @@ pub(crate) async fn daily_limits_left_with(
         // query: the limits are the same whatever is reviewed, and a review is only held while a
         // card it links to relearns today, so the two rarely differ.
         let held_reviews_str = linked_notes_clause(&config.queue, upper_limit, None);
-        sqlx::query_as(&format!(
+        sqlx::query_as(AssertSqlSafe(format!(
             r"SELECT {preset} AS preset, COUNT(*) FROM card c JOIN note n ON n.id = c.note_id
             WHERE c.state IN ({}) AND c.special_state IS NULL AND c.due <= ?{held_reviews_str}
             GROUP BY 1",
             state_ids_sql(&[StateRole::Review]),
-        ))
+        )))
         .bind(upper_limit.timestamp())
         .fetch_all(db)
         .await
@@ -967,7 +968,7 @@ async fn card_times(
         seconds = capped_review_seconds("rl"),
         review = ReviewLogKind::Review as u8,
     };
-    let mut query = sqlx::query_as(&query_str);
+    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
     if let Some(bind) = bind {
         query = query.bind(bind);
     }
@@ -1072,7 +1073,7 @@ pub async fn get_review_card(
         LIMIT 1"
     };
     info!("{}", query_str);
-    let mut query = sqlx::query_as(&query_str);
+    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
     if !is_filtered_tag {
         query = query.bind(card_due_limit.timestamp());
     }
@@ -1111,9 +1112,9 @@ pub async fn next_review_card_available_at(
     else {
         return Ok(None);
     };
-    let due: Option<i64> = sqlx::query_scalar(&format!(
+    let due: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT MIN(c.due) FROM card c WHERE {held_back_clause}"
-    ))
+    )))
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
@@ -1709,11 +1710,11 @@ async fn bury_siblings(
         return Ok(Vec::new());
     }
     let (_, end_of_day) = get_start_end_local_date(&reviewed_at);
-    let sibling_ids: Vec<CardId> = sqlx::query_scalar(&format!(
+    let sibling_ids: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(format!(
         r"UPDATE card SET special_state = ?, updated_at = ?
         WHERE note_id = ? AND id != ? AND special_state IS NULL AND due <= ? AND state IN ({states})
         RETURNING id"
-    ))
+    )))
     .bind(SpecialState::SchedulerBuried)
     .bind(reviewed_at.timestamp())
     .bind(card.note_id)

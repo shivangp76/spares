@@ -29,6 +29,7 @@ use reposition::move_cards;
 use serde_json::Map;
 use serde_json::Number;
 use serde_json::Value;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 use steps::LearningSteps;
 use steps::next_step;
@@ -424,7 +425,7 @@ impl SrsScheduler for Fsrs {
            ORDER BY card.due ASC",
             card_id_query_str
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         query = query.bind(card_due_limit.timestamp());
         query = query.bind(state_to_number(State::Review));
         let cards: Vec<Card> = query
@@ -469,7 +470,7 @@ impl SrsScheduler for Fsrs {
            ORDER BY card.due ASC",
             card_id_query_str
         );
-        let mut query = sqlx::query_as(&query_str);
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
         query = query.bind(card_due_limit.timestamp());
         query = query.bind(state_to_number(State::Review));
         let cards: Vec<Card> = query

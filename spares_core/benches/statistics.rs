@@ -23,6 +23,7 @@ use spares_core::schema::parser::CreateParserRequest;
 use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::statistics::StatisticsGraphsRequest;
+use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -84,7 +85,7 @@ async fn fill(path: &Path) {
     .await
     .unwrap();
     for (name, _) in &triggers {
-        sqlx::query(&format!("DROP TRIGGER {name}"))
+        sqlx::query(AssertSqlSafe(format!("DROP TRIGGER {name}")))
             .execute(&pool)
             .await
             .unwrap();
@@ -145,10 +146,16 @@ async fn fill(path: &Path) {
         "ANALYZE".to_string(),
     ];
     for statement in statements {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(AssertSqlSafe(statement))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     for (_, sql) in &triggers {
-        sqlx::query(sql).execute(&pool).await.unwrap();
+        sqlx::query(AssertSqlSafe(sql.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 }
