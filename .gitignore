@@ -8,3 +8,6 @@ target/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# The browser build of spares_wasm (cargo xtask build-wasm)
+spares_frontend/frontend/src/local/pkg/
