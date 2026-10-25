@@ -4099,13 +4099,11 @@ dependencies = [
 name = "spares_cli"
 version = "0.0.1-alpha.1"
 dependencies = [
- "blake3",
  "chrono",
  "clap",
  "clap_complete",
  "colored",
  "env_logger",
- "indexmap 2.14.2",
  "indicatif",
  "inquire",
  "itertools 0.15.0",
@@ -4113,7 +4111,6 @@ dependencies = [
  "miette",
  "open",
  "petgraph",
- "rayon",
  "reqwest",
  "serde",
  "serde_json",

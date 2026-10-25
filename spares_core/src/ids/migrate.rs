@@ -7,10 +7,10 @@
 //!
 //! It rewrites every reference (cards, tags, keywords, links, `inh:` references, tag queries),
 //! empties the undo history, regenerates note and card files (with `git mv` in the notes
-//! repository, so `git log --follow` works), rewrites the `spares sync` hash index, clears render
-//! caches and writes [`super::ID_MAP_FILE_NAME`]. The server refuses to start on an unmigrated
-//! database. The Anki collection keeps the old numeric ids, so re-importing from Anki would add
-//! those notes as new ones.
+//! repository, so `git log --follow` works), clears render caches and writes
+//! [`super::ID_MAP_FILE_NAME`]. The server refuses to start on an unmigrated database. The Anki
+//! collection keeps the old numeric ids, so re-importing from Anki would add those notes as new
+//! ones.
 //!
 //! The database is rewritten in one transaction ([`rewrite_database`]). Files are regenerated from
 //! it afterwards ([`regenerate_files`]); `app_state` records that this is still to do, so rerunning
@@ -847,8 +847,8 @@ pub fn estimate_render_time(scratch: &Path, to_render: usize) -> Option<Duration
 ///   `note-id:` line changed), in one commit, so git records renames;
 /// - without it, the raw note files under the data directory;
 /// - raw card files, which embed the cloze tag;
-/// - caches: the hash index of `spares sync` is rekeyed, and rendered files, render hashes and
-///   rendered image occlusions are deleted and rendered again.
+/// - caches: rendered files, render hashes and rendered image occlusions are deleted and rendered
+///   again.
 ///
 /// Everything here can run again after a crash.
 pub async fn regenerate_files(
@@ -900,7 +900,6 @@ pub async fn regenerate_files(
             std::fs::remove_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
         }
     }
-    report.hash_index_keys = rekey_hash_index(mapping)?;
 
     progress("Rendering every note and card (this takes a while)");
     let start = Instant::now();
@@ -934,7 +933,6 @@ pub struct RegenerateReport {
     /// Whether the notes repository got a commit
     pub notes_commit: bool,
     pub deleted: usize,
-    pub hash_index_keys: usize,
     pub render_duration: Duration,
     /// Notes can fail to render after the migration as they could before it. They are rendered
     /// again whenever they change, or with `spares note generate --render`.
@@ -946,45 +944,6 @@ fn id_map_commit_note() -> String {
         "spares: renumber notes to letter ids\n\nThe old numeric ids are listed in {}.",
         id_map_path().display()
     )
-}
-
-/// Rekeys `<cache dir>/sync/hash_index.json`, which `spares sync` keys by file path, so it does not
-/// treat every file as new. Returns how many keys changed.
-fn rekey_hash_index(mapping: &[IdMapping]) -> Result<usize, Error> {
-    let path = get_cache_dir().join("sync").join("hash_index.json");
-    let Ok(contents) = std::fs::read_to_string(&path) else {
-        return Ok(0);
-    };
-    let Ok(serde_json::Value::Object(index)) = serde_json::from_str(&contents) else {
-        return Ok(0);
-    };
-    let by_old: HashMap<i64, NoteId> = mapping.iter().map(|m| (m.old, m.new)).collect();
-    let name_regex = Regex::new(r"^(\d+)(.*)$").expect("valid regex");
-    let mut changed = 0;
-    let rekeyed: serde_json::Map<String, serde_json::Value> = index
-        .into_iter()
-        .map(|(key, value)| {
-            let key_path = PathBuf::from(&key);
-            let renamed = key_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|name| name_regex.captures(name).ok().flatten())
-                .and_then(|caps| {
-                    let new = by_old.get(&caps[1].parse::<i64>().ok()?)?;
-                    Some(key_path.with_file_name(format!("{}{}", new.letters(), &caps[2])))
-                });
-            match renamed {
-                Some(new_path) => {
-                    changed += 1;
-                    (new_path.to_string_lossy().into_owned(), value)
-                }
-                None => (key, value),
-            }
-        })
-        .collect();
-    let json = serde_json::to_string(&rekeyed).map_err(|e| migrate_error(e.to_string()))?;
-    std::fs::write(&path, json).map_err(|e| io_error(&path, e))?;
-    Ok(changed)
 }
 
 fn remove_path(path: &Path) -> Result<(), Error> {

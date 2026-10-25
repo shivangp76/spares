@@ -58,20 +58,11 @@ pub(crate) enum Commands {
     Link(LinkArgs),
     /// Import notes data from file
     Import(ImportArgs),
-    /// Sync data between local note files, database, and adapters.
+    /// Sync with a spares server
     ///
-    /// By default, runs in interactive bulk mode: all changes are shown together and you choose
-    /// to push or pull them as a group. Use `--individual` to review changes one at a time.
-    ///
-    /// Use `--ids` or `--files` to filter to specific notes, e.g.
-    /// `spares sync --from anki --to spares --ids aae aal gir`. Add `--dry-run` to only see the
-    /// changes.
-    ///
-    /// Use `--print-files` for non-interactive output: it prints the cache-rendered paths of
-    /// changed notes, which `--files` accepts, so they can be selected with fzf:
-    ///
-    /// `spares sync --print-files | fzf -m --preview 'bat --color=always {}' | xargs spares sync
-    /// --files @-`
+    /// Notes are synced with Anki through the notes repository's `anki` branch instead (`spares
+    /// vcs refresh anki`).
+    #[command(arg_required_else_help = true)]
     Sync(SyncArgs),
     /// Migrate data from an adapter
     Migrate(MigrateArgs),

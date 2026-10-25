@@ -21,7 +21,6 @@ use spares_core::sync::run::SyncReport;
 
 use super::cloud::push_files;
 use super::cloud::push_to_remote_host;
-use crate::sync::utils::apply_select_settings;
 
 /// Syncs with the server, asking which way to go if only a full sync is possible, then copies the
 /// files the server cannot generate itself to `sync.remote_host`.
@@ -42,7 +41,7 @@ pub(crate) async fn sync_cloud(
         println!(
             "{}",
             "Edits to note files not imported yet are overwritten if the sync changes those \
-             notes. Import them with `spares sync` first."
+             notes. Import them with `spares import` first."
                 .yellow()
         );
     }
@@ -284,4 +283,8 @@ fn edit(path: &PathBuf, contents: &str) -> Result<String, String> {
         }
         println!("{}", "The text still has conflict markers.".yellow());
     }
+}
+
+fn apply_select_settings<T>(select: &mut Select<T>) {
+    select.vim_mode = true;
 }

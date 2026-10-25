@@ -256,7 +256,7 @@ Instead of merging, restore the notes you want from the other branch: `jj new ma
 
 Repositories set up before `anki` existed need `spares vcs init --repair-hooks` once, for the hook that writes to Anki and the jj aliases.
 
-Without a notes repository, `spares sync --from anki --to spares` still walks you through syncing notes interactively; see `spares sync --help`.
+Syncing with Anki needs a notes repository (`spares vcs init`).
 
 ## Latex
 

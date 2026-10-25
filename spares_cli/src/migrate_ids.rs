@@ -279,10 +279,8 @@ async fn finish(db: &SqlitePool, mapping: &[IdMapping]) -> Result<(), Error> {
         println!("Committed the renamed note files.");
     }
     println!(
-        "Deleted {} old card and rendered files; rekeyed {} entries of the sync hash index; \
-         rendered in {}.",
+        "Deleted {} old card and rendered files; rendered in {}.",
         report.deleted,
-        report.hash_index_keys,
         minutes(report.render_duration)
     );
     if let Some(error) = &report.render_error {
