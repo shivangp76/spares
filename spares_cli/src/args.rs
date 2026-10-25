@@ -95,6 +95,9 @@ pub(crate) enum Commands {
     /// and bun.
     #[command(arg_required_else_help = true)]
     Deploy(DeployArgs),
+    /// Keep notes in a git (or jj) repository synced with spares by push and fetch
+    #[command(arg_required_else_help = true)]
+    Vcs(VcsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -279,6 +282,16 @@ pub(crate) enum NoteCommands {
     Export(ExportArgs),
     /// Generate note and card files
     Generate(GenerateArgs),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct VcsArgs {
+    #[command(subcommand)]
+    pub(crate) command: VcsCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum VcsCommands {
     /// Keep notes in a git (or jj) repository you push to, instead of syncing local files
     ///
     /// Spares writes notes to a repository it commits to (`notes-spares` in the data directory),
@@ -294,32 +307,40 @@ pub(crate) enum NoteCommands {
     /// files. Delete the old directory once you are done.
     ///
     /// See "Notes as a git or jj repository" in the manual's Workflows page for using the clone.
-    InitVcs {
+    Init {
         /// Make the notes directory a jj repository colocated with git
         #[arg(long)]
         jj: bool,
-        /// Only rewrite the push hooks, e.g. after reinstalling spares or changing its address
+        /// Only rewrite the push hooks and jj aliases, e.g. after reinstalling spares or changing
+        /// its address
         #[arg(long)]
         repair_hooks: bool,
     },
-    /// Update the notes repository's `anki` branch with Anki's notes, so it can be fetched.
-    ///
-    /// Reads Anki through `AnkiConnect` while Anki is open, and otherwise from `ANKI_DB_PATH`. Only
-    /// notes of Anki's `Basic` note type with a `SparesId` field are on the branch. See "Syncing
-    /// notes with Anki" in the manual's Workflows page.
-    AnkiRefresh,
     /// Compare the notes repository with the database
-    VcsCheck {
+    Check {
         /// Rewrite note files that differ from the database, and commit them
         #[arg(long)]
         fix: bool,
     },
+    /// Update an adapter's branch in the notes repository with its notes, so it can be fetched
+    ///
+    /// The branch is named after the adapter, e.g. `anki`, and pushing to it writes to the
+    /// adapter. For `anki`: reads Anki through `AnkiConnect` while Anki is open, and otherwise from
+    /// `ANKI_DB_PATH`. Only notes of Anki's `Basic` note type with a `SparesId` field are on the
+    /// branch. See "Syncing notes with Anki" in the manual's Workflows page.
+    Refresh { adapter: VcsAdapter },
     /// Run by the notes repository's git hooks
     #[command(hide = true)]
-    VcsHook {
+    Hook {
         phase: VcsHookPhase,
         args: Vec<String>,
     },
+}
+
+/// An adapter with a branch in the notes repository, named after it
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum VcsAdapter {
+    Anki,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -878,6 +899,17 @@ mod tests {
             })
         ));
         assert!(Cli::try_parse_from(["spares", "migrate", "ids"]).is_ok());
+    }
+
+    #[test]
+    fn vcs_parses() {
+        assert!(Cli::try_parse_from(["spares", "vcs", "init", "--jj"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "vcs", "check", "--fix"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "vcs", "refresh", "anki"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "vcs", "refresh"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "vcs", "refresh", "spares"]).is_err());
+        assert!(Cli::try_parse_from(["spares", "vcs", "hook", "update", "a", "b"]).is_ok());
+        assert!(Cli::try_parse_from(["spares", "note", "init-vcs"]).is_err());
     }
 
     #[test]

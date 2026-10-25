@@ -1,4 +1,4 @@
-//! `spares note init-vcs`: turns the notes directory into a clone of the server's notes repository.
+//! `spares vcs init`: turns the notes directory into a clone of the server's notes repository.
 //! Every step checks for the state an interrupted run leaves, so rerunning continues it.
 
 use std::path::Path;
@@ -29,7 +29,7 @@ const MIN_JJ_VERSION: (u32, u32) = (0, 30);
 
 /// Delimit the aliases in the clone's jj config, so `--repair-hooks` can replace them.
 const JJ_ALIASES_BEGIN: &str =
-    "# BEGIN spares aliases (rewritten by `spares note init-vcs --repair-hooks`)";
+    "# BEGIN spares aliases (rewritten by `spares vcs init --repair-hooks`)";
 const JJ_ALIASES_END: &str = "# END spares aliases";
 
 /// The aliases as versions before [`JJ_ALIASES_BEGIN`] wrote them, to replace
@@ -87,7 +87,7 @@ spares-push = ["util", "exec", "--", "sh", "-c", '''
 # Update `anki` with Anki's notes and fetch it
 spares-anki-pull = ["util", "exec", "--", "sh", "-c", '''
   set -e
-  @SPARES@ note anki-refresh
+  @SPARES@ vcs refresh anki
   jj git fetch
   jj bookmark track anki@origin >/dev/null 2>&1 || true
 ''', "spares-anki-pull"]
@@ -97,7 +97,7 @@ spares-anki-push = ["util", "exec", "--", "sh", "-c", '''
   rev="${1:-@}"
   # An empty merge, as `jj new main@origin anki@origin` makes, is pushed itself
   if [ "$rev" = @ ] && [ -n "$(jj log --no-graph -r '@ & empty() & ~merges()' -T '"x"')" ]; then rev=@-; fi
-  @SPARES@ note anki-refresh
+  @SPARES@ vcs refresh anki
   jj git fetch
   jj bookmark track anki@origin >/dev/null 2>&1 || true
   if [ -z "$(jj log --no-graph -r "anki@origin & ::($rev)" -T '"x"')" ]; then
@@ -145,7 +145,7 @@ fn with_jj_aliases(config: &str, aliases: &str) -> Option<String> {
 fn repair(dirs: &Dirs, base_url: &str) -> Result<(), Error> {
     if !dirs.repo.join(".git").exists() {
         return Err(miette!(
-            "{} does not exist; run `spares note init-vcs` first",
+            "{} does not exist; run `spares vcs init` first",
             dirs.repo.display()
         ));
     }
@@ -443,8 +443,8 @@ fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
     ] {
         let script = format!(
             "#!/bin/sh\n\
-             # Written by `spares note init-vcs`. Rewrite with `spares note init-vcs --repair-hooks`.\n\
-             exec {spares} note vcs-hook {phase} \"$@\"\n",
+             # Written by `spares vcs init`. Rewrite with `spares vcs init --repair-hooks`.\n\
+             exec {spares} vcs hook {phase} \"$@\"\n",
         );
         let path = hooks_dir.join(hook);
         std::fs::write(&path, script).map_err(|e| miette!("{}", e))?;
@@ -507,7 +507,7 @@ fn setup_jj(clone: &Path, spares_command: &str) -> Result<(), Error> {
             }
         }
         None => println!(
-            "{} has spares aliases (`spares-push`) without the markers spares writes, so they were left alone. Delete them and run `spares note init-vcs --repair-hooks` to get the current ones.",
+            "{} has spares aliases (`spares-push`) without the markers spares writes, so they were left alone. Delete them and run `spares vcs init --repair-hooks` to get the current ones.",
             config_path.display()
         ),
     }
@@ -721,7 +721,7 @@ mod tests {
     fn test_with_jj_aliases() {
         let aliases = jj_aliases("spares");
         assert!(aliases.contains("spares-anki-push"));
-        assert!(aliases.contains("  spares note anki-refresh\n"));
+        assert!(aliases.contains("  spares vcs refresh anki\n"));
         let user = "[user]\nname = \"x\"\n";
 
         // Added once, then replaced in place.

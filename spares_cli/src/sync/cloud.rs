@@ -58,7 +58,7 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
         "--exclude=*.sqlite*".to_string(),
         "--exclude=/notes/".to_string(),
         "--exclude=/cards/".to_string(),
-        // The notes repository (see `spares note init-vcs`), what setting it up leaves behind, and
+        // The notes repository (see `spares vcs init`), what setting it up leaves behind, and
         // its interrupted setup
         format!(
             "--exclude=/{}/",

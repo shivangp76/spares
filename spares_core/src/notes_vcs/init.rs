@@ -234,16 +234,22 @@ fn check_hooks() {
     match hooks {
         Ok(hooks) if same_path(&hooks, &expected) => {
             for hook in ["pre-receive", "push-to-checkout", "post-receive"] {
-                if !expected.join(hook).exists() {
-                    log::warn!(
-                        "The `{hook}` hook is missing from {}; run `spares note init-vcs --repair-hooks`",
+                match std::fs::read_to_string(expected.join(hook)) {
+                    Err(_) => log::warn!(
+                        "The `{hook}` hook is missing from {}; run `spares vcs init --repair-hooks`",
                         expected.display()
-                    );
+                    ),
+                    // Hooks written before `spares vcs` run `spares note vcs-hook`, which is gone
+                    Ok(script) if !script.contains(" vcs hook ") => log::warn!(
+                        "The `{hook}` hook in {} is from an older spares; run `spares vcs init --repair-hooks`",
+                        expected.display()
+                    ),
+                    Ok(_) => {}
                 }
             }
         }
         Ok(hooks) => log::warn!(
-            "git runs hooks from {} instead of {}; run `spares note init-vcs --repair-hooks`",
+            "git runs hooks from {} instead of {}; run `spares vcs init --repair-hooks`",
             hooks.display(),
             expected.display()
         ),

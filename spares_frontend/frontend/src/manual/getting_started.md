@@ -148,7 +148,7 @@ Rendered files go to `~/.cache/spares` by default. Environment variables such as
 
 Notes can be edited in the web UI, with `spares note edit`, or by editing their files.
 
-To edit the files, keep them in a git or jj repository: run `spares note init-vcs` (or `spares note init-vcs --jj`), edit, commit, and push to import your changes. See [Notes as a git or jj repository](./workflows.md#notes-as-a-git-or-jj-repository).
+To edit the files, keep them in a git or jj repository: run `spares vcs init` (or `spares vcs init --jj`), edit, commit, and push to import your changes. See [Notes as a git or jj repository](./workflows.md#notes-as-a-git-or-jj-repository).
 
 # Reviewing
 

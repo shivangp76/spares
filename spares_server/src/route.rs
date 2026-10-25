@@ -155,7 +155,7 @@ fn image_occlusion_routes() -> Router<Arc<AppState>> {
         )
 }
 
-/// Notes repository (`spares note init-vcs`, its push hooks, and the web UI's notice of saved
+/// Notes repository (`spares vcs init`, its push hooks, and the web UI's notice of saved
 /// copies)
 fn notes_vcs_routes() -> Router<Arc<AppState>> {
     Router::new()

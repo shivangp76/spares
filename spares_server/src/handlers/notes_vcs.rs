@@ -44,7 +44,7 @@ pub(crate) async fn notes_vcs_finish_handler(
     Ok(Json(result))
 }
 
-/// Updates the notes repository's `anki` branch with Anki's notes (`spares note anki-refresh`).
+/// Updates the notes repository's `anki` branch with Anki's notes (`spares vcs refresh anki`).
 pub(crate) async fn notes_vcs_anki_refresh_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -99,7 +99,7 @@ pub(crate) async fn notes_vcs_anki_link_handler(
     Ok(Json(LinkSparesIdsResponse { linked: true }))
 }
 
-/// Creates and activates the server copy of the notes repository (`spares note init-vcs`).
+/// Creates and activates the server copy of the notes repository (`spares vcs init`).
 pub(crate) async fn notes_vcs_init_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -110,7 +110,7 @@ pub(crate) async fn notes_vcs_init_handler(
     Ok(Json(result))
 }
 
-/// Compares the notes repository with the database (`spares note vcs-check`).
+/// Compares the notes repository with the database (`spares vcs check`).
 pub(crate) async fn notes_vcs_check_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<CheckRequest>,

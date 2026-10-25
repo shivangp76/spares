@@ -136,7 +136,7 @@ async fn try_on_copy(
         let more = mismatches.len().saturating_sub(20);
         let message = format!(
             "The note files do not describe the database, so renaming them would lose changes. \
-             Import or discard them first (`spares note vcs-check` with the previous version).\n\
+             Import or discard them first (`spares vcs check` with the previous version).\n\
              {shown}{}",
             if more > 0 {
                 format!("\n  … and {more} more")

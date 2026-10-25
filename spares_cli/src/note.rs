@@ -285,20 +285,6 @@ pub(crate) async fn handle(
             let _ = ensure_ok(response).await?;
             println!("Done");
         }
-        NoteCommands::InitVcs { jj, repair_hooks } => {
-            crate::notes_vcs::init_vcs(base_url, client, jj, repair_hooks).await?;
-        }
-        NoteCommands::AnkiRefresh => {
-            crate::notes_vcs::anki_refresh(base_url, client).await?;
-        }
-        NoteCommands::VcsCheck { fix } => {
-            crate::notes_vcs::check(base_url, client, fix).await?;
-        }
-        NoteCommands::VcsHook { phase, args } => {
-            if !crate::notes_vcs::run_hook(base_url, client, phase, &args).await {
-                std::process::exit(1);
-            }
-        }
     }
     Ok(())
 }

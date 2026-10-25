@@ -109,8 +109,8 @@ Spares can keep your note files in a git repository, so you can branch them, let
 The server must be running.
 
 ```sh
-spares note init-vcs        # git
-spares note init-vcs --jj   # jj, colocated with git (jj 0.30 or newer)
+spares vcs init        # git
+spares vcs init --jj   # jj, colocated with git (jj 0.30 or newer)
 ```
 
 Your old notes directory is kept as `notes.pre-vcs-<time>`. Notes you had edited without syncing are put in their own commit (the `pre-vcs-local-edits` branch, or a jj change), which is printed. A file can also differ because spares changed the note without rewriting it (an undo, a tag rename), and pushing such a file would revert that change, so review them before pushing them. Other files from the old directory are copied into the clone as untracked files. Delete the old directory once you are done.
@@ -119,7 +119,7 @@ If the setup is interrupted, run it again: it continues where it stopped.
 
 ### With jj
 
-`init-vcs --jj` adds aliases to the clone's jj config (`jj spares-anki-pull` and `jj spares-anki-push` are described in [Syncing notes with Anki](workflows.md#syncing-notes-with-anki)):
+`spares vcs init --jj` adds aliases to the clone's jj config (`jj spares-anki-pull` and `jj spares-anki-push` are described in [Syncing notes with Anki](workflows.md#syncing-notes-with-anki)):
 
 ```sh
 jj spares-pull                  # get spares' changes, rebase your work onto them
@@ -134,7 +134,7 @@ jj describe -m "…" && jj spares-push   # like it: imports it into spares
 
 New files are not tracked automatically in the clone (`snapshot.auto-track = "none()"`), so an editor's backup file never ends up in a push; use `jj file track` for a new note's file or a `README.md`.
 
-Use jj commands only in a jj clone, rather than mixing in `git pull` and `git push`. `spares note init-vcs --repair-hooks` rewrites the aliases to their current version; aliases you edited are left alone.
+Use jj commands only in a jj clone, rather than mixing in `git pull` and `git push`. `spares vcs init --repair-hooks` rewrites the aliases to their current version; aliases you edited are left alone.
 
 ### With git
 
@@ -171,11 +171,11 @@ The reason a push was rejected is printed on lines starting with `spares:` (pref
 | adds note …, which does not exist in spares | Name the file `<parser>/new-<name>.<ext>` and remove its `note-id`; spares gives new notes their ids |
 | a new note's file must not have a note id | Remove the `note-id` setting from the `new-*` file (copying a note's file keeps it) |
 | note … is a live note, so only its tags and keywords can be changed here | Undo the edit, make it in the note's source file and run `spares import` there |
-| the spares server is not running; start it to push | Start the spares server (a version with `spares note init-vcs`) and push again |
-| this repository … does not belong to the spares server at … | Run `spares note init-vcs --repair-hooks` with the settings of the instance the repository belongs to |
+| the spares server is not running; start it to push | Start the spares server (a version with `spares vcs init`) and push again |
+| this repository … does not belong to the spares server at … | Run `spares vcs init --repair-hooks` with the settings of the instance the repository belongs to |
 | only `main` (imported into spares) and `anki` (written to Anki) can be pushed | Move `main` to your commit and push it (`jj spares-push`, or `git push origin HEAD:main`) |
 | `main` and `anki` cannot be pushed together | Push them one at a time |
-| this repository's hooks are older than pushing to `anki` | Run `spares note init-vcs --repair-hooks` |
+| this repository's hooks are older than pushing to `anki` | Run `spares vcs init --repair-hooks` |
 | Anki must be open, with AnkiConnect, to push to `anki` | Open Anki and push again |
 | Anki has newer notes than your push is based on | Spares committed them to `anki`: fetch (`jj spares-anki-pull`), merge `anki@origin` into your change, push again |
 | … has the Anki id of … | The file is a copy of a note that is in Anki; remove `anki-note-id` from its custom data |
@@ -187,7 +187,7 @@ Before spares overwrites or removes a file in `notes-spares/` that it did not wr
 
 While a push is being imported, other changes to notes (the web UI, the CLI) wait for it, for at most 30 seconds, and are then refused with a message to retry. Nothing is lost.
 
-`spares note vcs-check` compares every note file with the database, and `spares note vcs-check --fix` rewrites what differs. Spares already does this for files changed outside it whenever it starts and before each push, so the check is only needed if you suspect a note file is out of date though git shows no change, as after a bug in spares. After reinstalling spares or changing its address, run `spares note init-vcs --repair-hooks`.
+`spares vcs check` compares every note file with the database, and `spares vcs check --fix` rewrites what differs. Spares already does this for files changed outside it whenever it starts and before each push, so the check is only needed if you suspect a note file is out of date though git shows no change, as after a bug in spares. After reinstalling spares or changing its address, run `spares vcs init --repair-hooks`.
 
 ## Syncing notes with Anki
 
@@ -198,7 +198,7 @@ With notes in a [git or jj repository](workflows.md#notes-as-a-git-or-jj-reposit
 - **Notes never sent to Anki** stay on `anki` unchanged, so merging `anki` into `main` never deletes them. A note that was in Anki (it has `anki-note-id` in its custom data) and no longer is has been deleted there, and is deleted on `anki`.
 - **Notes added in Anki** appear as `<parser>/new-anki-<Anki id>.<ext>` (the parser named by their `SparesParserName`, or the one most of your notes use), which merging into `main` creates. Spares then sets their `SparesId` in Anki if Anki is open; otherwise it still finds them by their Anki id.
 
-git cannot run anything when you fetch, so `anki` is brought up to date first: `jj spares-anki-pull`, or `spares note anki-refresh && git fetch`. Spares reads Anki through AnkiConnect while Anki is open, which sees Anki's latest changes, and otherwise from the collection at `ANKI_DB_PATH`. Pushing to `anki` needs Anki open, with AnkiConnect.
+git cannot run anything when you fetch, so `anki` is brought up to date first: `jj spares-anki-pull`, or `spares vcs refresh anki && git fetch`. Spares reads Anki through AnkiConnect while Anki is open, which sees Anki's latest changes, and otherwise from the collection at `ANKI_DB_PATH`. Pushing to `anki` needs Anki open, with AnkiConnect.
 
 Only the spares instance on the machine with Anki has an `anki` branch; `spares sync cloud` does not carry it to a server.
 
@@ -223,7 +223,7 @@ jj spares-push                               # import into spares
 ```
 
 ```sh
-spares note anki-refresh && git fetch
+spares vcs refresh anki && git fetch
 git switch main && git pull --rebase
 git merge origin/anki                        # review, resolve conflicts
 git push origin HEAD:main
@@ -240,7 +240,7 @@ jj spares-anki-push                          # write to Anki
 ```
 
 ```sh
-spares note anki-refresh && git fetch
+spares vcs refresh anki && git fetch
 git switch -c to-anki origin/anki
 git merge origin/main
 git push origin HEAD:anki
@@ -254,7 +254,7 @@ After a push, spares records the Anki ids of the notes it added in their custom 
 
 Instead of merging, restore the notes you want from the other branch: `jj new main@origin && jj restore --from anki@origin markdown/gir.md`, or `git checkout origin/anki -- markdown/gir.md`. Notes you leave out are offered again by the next merge.
 
-Repositories set up before `anki` existed need `spares note init-vcs --repair-hooks` once, for the hook that writes to Anki and the jj aliases.
+Repositories set up before `anki` existed need `spares vcs init --repair-hooks` once, for the hook that writes to Anki and the jj aliases.
 
 Without a notes repository, `spares sync --from anki --to spares` still walks you through syncing notes interactively; see `spares sync --help`.
 

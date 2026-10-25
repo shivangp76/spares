@@ -114,7 +114,7 @@ fn ref_update_problems(updates: &[(String, String, String)], has_update_hook: bo
     }
     if names.contains(&ANKI) && !has_update_hook {
         problems.push(
-            "this repository's hooks are older than pushing to `anki`; run `spares note init-vcs --repair-hooks`".to_string(),
+            "this repository's hooks are older than pushing to `anki`; run `spares vcs init --repair-hooks`".to_string(),
         );
     }
     problems
@@ -156,7 +156,7 @@ async fn check_server_repo(base_url: &str, client: &Client, repo: &Path) -> Resu
         get_json(client, format!("{base_url}/api/notes/vcs/status")).await?;
     if status.notes_dir.as_deref() != Some(repo) {
         return Err(format!(
-            "this repository ({}) does not belong to the spares server at {base_url}, which uses {}. Run `spares note init-vcs --repair-hooks` with the settings of this repository's spares instance.",
+            "this repository ({}) does not belong to the spares server at {base_url}, which uses {}. Run `spares vcs init --repair-hooks` with the settings of this repository's spares instance.",
             repo.display(),
             status.notes_dir.map_or_else(
                 || "no notes repository".to_string(),
@@ -262,7 +262,7 @@ async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
     };
     let session_file = repo.join(".git").join("spares-session");
     let Ok(session) = std::fs::read_to_string(&session_file) else {
-        say("spares has no record of this push; run `spares note vcs-check`");
+        say("spares has no record of this push; run `spares vcs check`");
         return Ok(true);
     };
     let finish: FinishResponse = post_json(
@@ -304,7 +304,7 @@ async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
 async fn finish_anki(base_url: &str, client: &Client, repo: &Path) -> Result<(), String> {
     let session_file = repo.join(".git").join("spares-anki-session");
     let Ok(session) = std::fs::read_to_string(&session_file) else {
-        say("spares has no record of this push to `anki`; run `spares note anki-refresh`");
+        say("spares has no record of this push to `anki`; run `spares vcs refresh anki`");
         return Ok(());
     };
     let finish: AnkiFinishResponse = post_json(

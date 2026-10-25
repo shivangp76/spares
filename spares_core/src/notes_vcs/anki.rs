@@ -3,7 +3,7 @@
 //! between `anki` and `main`.
 //!
 //! git cannot run anything on fetch, so the branch is brought up to date explicitly by [`refresh`]
-//! (`spares note anki-refresh`). It is never checked out: it is written with a temporary index, so
+//! (`spares vcs refresh anki`). It is never checked out: it is written with a temporary index, so
 //! the worktree, which holds `main`, is not touched.
 //!
 //! Only Anki notes of the note type spares writes are on the branch (see
@@ -105,7 +105,7 @@ pub const ANKI_NOTE_ID_KEY: &str = "anki-note-id";
 /// to take the most used parser from
 const FALLBACK_PARSER: &str = "markdown";
 
-/// `spares note anki-refresh`
+/// `spares vcs refresh anki`
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RefreshResponse {
     /// `anki` before the refresh, if it existed
@@ -137,7 +137,7 @@ pub(crate) async fn refresh_locked(
 ) -> Result<RefreshResponse, Error> {
     if !enabled() {
         return Err(Error::NotesVcs(
-            "this spares server does not keep notes in a git repository (run `spares note init-vcs`)"
+            "this spares server does not keep notes in a git repository (run `spares vcs init`)"
                 .to_string(),
         ));
     }
@@ -925,7 +925,7 @@ async fn settle(
     let committed = commit_snapshot(db, &repo, &tip, Some(&tip), &notes, &session.hints).await?;
     let message = match (&committed, tip == session.new) {
         (None, true) => "Anki holds what you pushed".to_string(),
-        (Some(_), true) => "spares committed Anki's ids of the added notes (or how Anki stored them) on top of your push; fetch (`jj spares-anki-pull` / `spares note anki-refresh && git fetch`) before merging again".to_string(),
+        (Some(_), true) => "spares committed Anki's ids of the added notes (or how Anki stored them) on top of your push; fetch (`jj spares-anki-pull` / `spares vcs refresh anki && git fetch`) before merging again".to_string(),
         (_, false) => {
             let message = format!(
                 "the push of {} did not reach `anki` after Anki was written; spares committed what Anki holds to `anki`, so fetch to see it",
@@ -976,7 +976,7 @@ async fn receive_locked(
     }
     let Some(tip) = anki_tip(&repo)? else {
         return Ok(AnkiOutcome::Rejected(
-            "`anki` does not exist yet; run `spares note anki-refresh` (or `jj spares-anki-pull`), and push on top of it"
+            "`anki` does not exist yet; run `spares vcs refresh anki` (or `jj spares-anki-pull`), and push on top of it"
                 .to_string(),
         ));
     };
@@ -992,7 +992,7 @@ async fn receive_locked(
     if current != rev_parse(&repo, &format!("{old}^{{tree}}"))? {
         commit_tree(&repo, &current, &old, Some(&old))?;
         return Ok(AnkiOutcome::Rejected(
-            "Anki has newer notes than your push is based on; spares committed them to `anki`. Fetch them (`jj spares-anki-pull`, or `spares note anki-refresh && git fetch`), merge, and push again"
+            "Anki has newer notes than your push is based on; spares committed them to `anki`. Fetch them (`jj spares-anki-pull`, or `spares vcs refresh anki && git fetch`), merge, and push again"
                 .to_string(),
         ));
     }
@@ -1228,7 +1228,7 @@ async fn receive_locked(
                 let notes = backend.read_notes().await?;
                 commit_snapshot(db, &repo, &old, Some(&old), &notes, &HashMap::new()).await?;
                 return Ok(AnkiOutcome::Rejected(format!(
-                    "writing to Anki failed partway ({e}), so some of the push is in Anki; spares committed what Anki now holds to `anki`. Fetch it (`jj spares-anki-pull`, or `spares note anki-refresh && git fetch`), merge, and push again"
+                    "writing to Anki failed partway ({e}), so some of the push is in Anki; spares committed what Anki now holds to `anki`. Fetch it (`jj spares-anki-pull`, or `spares vcs refresh anki && git fetch`), merge, and push again"
                 )));
             }
         }
@@ -1254,7 +1254,7 @@ async fn receive_locked(
             Some(id) => {
                 if let Err(e) = record_anki_id(db, id, anki_id).await {
                     warnings.push(format!(
-                        "note {}: recording its Anki id failed ({e}); `spares note anki-refresh` finds it by its SparesId",
+                        "note {}: recording its Anki id failed ({e}); `spares vcs refresh anki` finds it by its SparesId",
                         id.letters()
                     ));
                 }

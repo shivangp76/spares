@@ -508,7 +508,7 @@ fn remove_created_files(journal: &Journal) {
 pub(crate) fn wrong_repo(hook_repo: &Path) -> Option<String> {
     if !enabled() {
         return Some(
-            "this spares server does not keep notes in a git repository (run `spares note init-vcs`)"
+            "this spares server does not keep notes in a git repository (run `spares vcs init`)"
                 .to_string(),
         );
     }
@@ -518,7 +518,7 @@ pub(crate) fn wrong_repo(hook_repo: &Path) -> Option<String> {
         .canonicalize()
         .unwrap_or_else(|_| hook_repo.to_path_buf());
     (ours != theirs).then(|| format!(
-        "this repository ({}) belongs to a different spares instance than the server reached, which writes to {}. Run `spares note init-vcs --repair-hooks` with that instance's settings",
+        "this repository ({}) belongs to a different spares instance than the server reached, which writes to {}. Run `spares vcs init --repair-hooks` with that instance's settings",
         theirs.display(),
         ours.display()
     ))

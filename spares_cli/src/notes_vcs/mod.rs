@@ -4,8 +4,8 @@
 mod hook;
 mod init;
 
-pub(crate) use hook::run_hook;
-pub(crate) use init::init_vcs;
+use hook::run_hook;
+use init::init_vcs;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
@@ -13,10 +13,31 @@ use spares_core::notes_vcs::CheckRequest;
 use spares_core::notes_vcs::CheckResponse;
 use spares_core::notes_vcs::anki::RefreshResponse;
 
+use crate::args::VcsAdapter;
+use crate::args::VcsArgs;
+use crate::args::VcsCommands;
 use crate::utils::ensure_ok;
 
-/// `spares note vcs-check`
-pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<(), Error> {
+pub(crate) async fn handle(args: VcsArgs, base_url: &str, client: &Client) -> Result<(), Error> {
+    match args.command {
+        VcsCommands::Init { jj, repair_hooks } => {
+            init_vcs(base_url, client, jj, repair_hooks).await?;
+        }
+        VcsCommands::Check { fix } => check(base_url, client, fix).await?,
+        VcsCommands::Refresh {
+            adapter: VcsAdapter::Anki,
+        } => anki_refresh(base_url, client).await?,
+        VcsCommands::Hook { phase, args } => {
+            if !run_hook(base_url, client, phase, &args).await {
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `spares vcs check`
+async fn check(base_url: &str, client: &Client, fix: bool) -> Result<(), Error> {
     let response = client
         .post(format!("{base_url}/api/notes/vcs/check"))
         .json(&CheckRequest { fix })
@@ -30,7 +51,7 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
         .map_err(|e| miette!("{}", e))?;
     let status = &check.status;
     if !status.enabled {
-        println!("Notes are not kept in a git repository (see `spares note init-vcs`).");
+        println!("Notes are not kept in a git repository (see `spares vcs init`).");
         return Ok(());
     }
     if let Some(notes_dir) = &status.notes_dir {
@@ -68,7 +89,7 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
         print_paths("Should not exist", &report.removed);
         print_paths("Modified outside spares", &report.restored);
         if !report.is_empty() {
-            println!("Run `spares note vcs-check --fix` to rewrite them from the database.");
+            println!("Run `spares vcs check --fix` to rewrite them from the database.");
         }
     }
     if report.is_empty() && check.dirty.is_empty() {
@@ -85,8 +106,8 @@ pub(crate) async fn check(base_url: &str, client: &Client, fix: bool) -> Result<
     Ok(())
 }
 
-/// `spares note anki-refresh`
-pub(crate) async fn anki_refresh(base_url: &str, client: &Client) -> Result<(), Error> {
+/// `spares vcs refresh anki`
+async fn anki_refresh(base_url: &str, client: &Client) -> Result<(), Error> {
     let response = client
         .post(format!("{base_url}/api/notes/vcs/anki/refresh"))
         .send()
