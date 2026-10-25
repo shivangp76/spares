@@ -32,6 +32,9 @@ use spares_core::notes_vcs::run_exclusive;
 use spares_core::parsers::get_all_parsers;
 use spares_core::sync::conflicts;
 use spares_core::sync::conflicts::Resolution;
+use spares_core::sync::devices;
+use spares_core::sync::devices::EnrollRequest;
+use spares_core::sync::devices::UnenrollRequest;
 use spares_core::sync::files;
 use spares_core::sync::http::SYNC_API_KEY_ENV;
 use spares_core::sync::protocol::PullRequest;
@@ -195,6 +198,37 @@ pub(crate) async fn sync_full_upload_handler(
         .await
         .map_err(|_| error_to_response(Error::Sync("the full upload stopped".to_string())))?;
     Ok(Json(result.map_err(error_to_response)?))
+}
+
+/// Gives a browser that keeps a copy of the collection a replica number of its own.
+pub(crate) async fn sync_enroll_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<EnrollRequest>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    let response = devices::enroll(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
+}
+
+pub(crate) async fn sync_unenroll_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<UnenrollRequest>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    let removed = devices::unenroll(&data.db, body)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(json!({ "removed": removed })))
+}
+
+pub(crate) async fn sync_devices_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    let devices = devices::list(&data.db).await.map_err(error_to_response)?;
+    Ok(Json(devices))
 }
 
 #[derive(Debug, Deserialize)]
