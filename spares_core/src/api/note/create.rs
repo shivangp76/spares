@@ -296,6 +296,7 @@ pub async fn create_notes(
     }
 
     // Log event
+    let mut event_id = None;
     if log && !note_responses.is_empty() {
         let mut snapshots = Vec::with_capacity(note_responses.len());
         for note_response in &note_responses {
@@ -324,7 +325,10 @@ pub async fn create_notes(
             })?,
         );
         if new_tag_payloads.is_empty() {
-            insert_events(db, &[note_event], at, None).await?;
+            event_id = insert_events(db, &[note_event], at, None)
+                .await?
+                .first()
+                .copied();
         } else {
             let mut events: Vec<(EventType, Value)> = new_tag_payloads
                 .into_iter()
@@ -340,11 +344,14 @@ pub async fn create_notes(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             events.push(note_event);
-            create_event_group(db, events, at).await?;
+            event_id = Some(create_event_group(db, events, at).await?);
         }
     }
 
-    Ok(NotesResponse::new(note_responses))
+    Ok(NotesResponse {
+        notes: note_responses,
+        event_id,
+    })
 }
 
 /// Create notes from snapshots (used when applying the undo of a `DeleteNotes` event).

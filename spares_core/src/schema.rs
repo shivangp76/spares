@@ -423,12 +423,16 @@ pub mod note {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct NotesResponse {
         pub notes: Vec<NoteResponse>,
+        /// The event to undo creating the notes with, if it was logged
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub event_id: Option<i64>,
     }
 
     impl NotesResponse {
         pub fn new(note_responses: Vec<NoteResponse>) -> Self {
             Self {
                 notes: note_responses,
+                event_id: None,
             }
         }
     }
@@ -550,6 +554,9 @@ pub mod note {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct RelocateLiveCardsResponse {
         pub moved_card_count: usize,
+        /// The event to undo the moves with, if any card moved and it was logged
+        #[serde(default)]
+        pub event_id: Option<i64>,
     }
 }
 
@@ -1533,6 +1540,13 @@ pub mod undo {
         pub undone_events: Vec<EventSummary>,
         /// The IDs of the undo events that were appended, oldest first. Pass one to redo.
         pub undo_event_ids: Vec<i64>,
+    }
+
+    /// Events to put in one group, so one undo of the group reverts them all, e.g. those of an
+    /// import made of several requests
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct GroupEventsRequest {
+        pub event_ids: Vec<i64>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

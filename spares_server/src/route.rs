@@ -110,6 +110,7 @@ use crate::handlers::tag::list_tags_handler;
 use crate::handlers::tag::rebuild_tag_handler;
 use crate::handlers::tag::update_tag_handler;
 use crate::handlers::undo::get_latest_note_event_id_handler;
+use crate::handlers::undo::group_events_handler;
 use crate::handlers::undo::redo_event_handler;
 use crate::handlers::undo::undo_event_handler;
 
@@ -332,6 +333,7 @@ pub(crate) fn create_router(
         // Undo
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
+        .route("/api/undo/group", post(group_events_handler))
         .merge(image_occlusion_routes())
         .merge(render_asset_routes())
         .merge(offline_review_routes())

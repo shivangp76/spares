@@ -429,6 +429,9 @@ pub enum EventType {
     /// schema with `UpdateCards`. Undoing it restores the cards, not the settings. Like every
     /// [automatic](Self::is_automatic) kind, a plain undo skips it.
     RescheduleCards,
+    /// Cards moved between the live notes of a sync group when their clozes moved. Carries
+    /// `RelocateCardsPayload`, and is its own undo, like `UpdateNotes`.
+    RelocateCards,
 }
 
 impl EventType {

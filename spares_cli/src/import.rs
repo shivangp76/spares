@@ -855,9 +855,13 @@ mod tests {
     use spares_core::adapters::impls::spares::SparesRequestProcessor;
     use spares_core::api::note::list_notes;
     use spares_core::api::parser::create_parser;
+    use spares_core::api::undo::redo_event;
+    use spares_core::api::undo::undo_event;
     use spares_core::model::Card;
     use spares_core::schema::FilterOptions;
     use spares_core::schema::parser::CreateParserRequest;
+    use spares_core::schema::undo::RedoEventRequest;
+    use spares_core::schema::undo::UndoEventRequest;
     use sqlx::SqlitePool;
 
     use super::*;
@@ -2120,6 +2124,46 @@ mod tests {
                 "card of {uid}"
             );
         }
+
+        // The import is one undo group, which undo reverts to exactly what was there
+        let note_count = async || -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM note")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(note_count().await, 4);
+        let undone = undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: None,
+                undo_group: true,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            undone
+                .undone_events
+                .iter()
+                .any(|e| e.description.starts_with("Move")),
+            "{:?}",
+            undone.undone_events
+        );
+        assert_eq!(note_count().await, 2);
+        assert_eq!(live_cards_by_uid(&pool).await, before);
+        redo_event(
+            &pool,
+            RedoEventRequest {
+                event_id: None,
+                redo_group: true,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(live_cards_by_uid(&pool).await, after);
 
         // Delete N: the clozes after it move up into existing notes, and the last note is left
         // past the end of the group.

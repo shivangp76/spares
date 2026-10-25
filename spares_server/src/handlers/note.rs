@@ -180,9 +180,10 @@ pub(crate) async fn relocate_live_cards_handler(
     Json(body): Json<RelocateLiveCardsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
-    let response = run_shared(async move { relocate_live_cards(&db, body, Utc::now()).await })
-        .await
-        .map_err(error_to_response)?;
+    let response =
+        run_shared(async move { relocate_live_cards(&db, body, Utc::now(), true).await })
+            .await
+            .map_err(error_to_response)?;
     Ok(Json(response))
 }
 

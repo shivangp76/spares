@@ -842,3 +842,93 @@ async fn e2e_undo_update_notes_keeps_the_reviews_of_cards_it_restores(pool: Sqli
     assert_eq!(card_ids().await, with_new_card);
     assert_eq!(reviews_of_card().await, 1);
 }
+
+#[sqlx::test]
+async fn e2e_grouped_events_undo_together_and_only_whole_groups_join(pool: SqlitePool) {
+    use crate::api::undo::group_events;
+    use crate::schema::undo::GroupEventsRequest;
+
+    let (note_id, _) = create_lonely_tagged_note(&pool).await;
+    let set_keywords = async |keywords: &[&str]| {
+        update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                parser_id: None,
+                data: None,
+                keywords: Some(keywords.iter().map(ToString::to_string).collect()),
+                tags: UpdateTags::None,
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap()
+        .event_id
+        .unwrap()
+    };
+    let first = set_keywords(&["one"]).await;
+    let second = set_keywords(&["one", "two"]).await;
+    // A group with a created tag, whose second event cannot be taken out of it
+    let with_new_tag = update_notes(
+        &pool,
+        UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![note_id]),
+            parser_id: None,
+            data: None,
+            keywords: None,
+            tags: UpdateTags::ModifyTags {
+                tags_to_remove: None,
+                tags_to_add: Some(vec!["new".to_string()]),
+            },
+            custom_data: None,
+        },
+        Utc::now(),
+        &get_all_parsers(),
+        true,
+    )
+    .await
+    .unwrap()
+    .event_id
+    .unwrap();
+    let member: i64 = sqlx::query_scalar("SELECT id FROM event WHERE group_id = ? AND id != ?")
+        .bind(with_new_tag)
+        .bind(with_new_tag)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let request = |event_ids: Vec<i64>| GroupEventsRequest { event_ids };
+    assert!(
+        group_events(&pool, request(vec![first, member]))
+            .await
+            .is_err()
+    );
+
+    group_events(&pool, request(vec![second, first, with_new_tag]))
+        .await
+        .unwrap();
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(second),
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+    let keywords: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note_keyword WHERE note_id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(keywords, 0);
+    assert!(tag_named(&pool, "new").await.is_none());
+    // Undone events cannot be grouped again
+    assert!(
+        group_events(&pool, request(vec![first, second]))
+            .await
+            .is_err()
+    );
+}

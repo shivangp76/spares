@@ -252,6 +252,72 @@ pub struct UpdateNotesPayload {
     pub restored_tags: Vec<Tag>,
 }
 
+/// Payload for `RelocateCards`, applied in this order: `deleted_cards` are deleted, `moved` cards
+/// are moved, then `restored_cards` are inserted. Its undo swaps each move and the two lists.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RelocateCardsPayload {
+    pub moved: Vec<MovedCard>,
+    /// Cards deleted to make room for the moved ones: those the import had just created for a
+    /// cloze whose card was moved in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_cards: Vec<NoteCardSnapshot>,
+    /// Cards to insert again: an undo's, swapped from the `deleted_cards` of the event it reverts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_cards: Vec<NoteCardSnapshot>,
+}
+
+impl RelocateCardsPayload {
+    /// The payload that reverses this one
+    pub fn swap(self) -> Self {
+        Self {
+            moved: self.moved.into_iter().map(MovedCard::swap).collect(),
+            deleted_cards: self.restored_cards,
+            restored_cards: self.deleted_cards,
+        }
+    }
+
+    /// The notes cards left or joined
+    pub fn note_ids(&self) -> impl Iterator<Item = NoteId> + '_ {
+        self.moved
+            .iter()
+            .flat_map(|card| [card.note_id.before, card.note_id.after])
+            .chain(
+                self.deleted_cards
+                    .iter()
+                    .chain(&self.restored_cards)
+                    .map(|card| card.note_id),
+            )
+    }
+}
+
+/// A card moved to another note
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MovedCard {
+    pub card_id: CardId,
+    pub note_id: Transition<NoteId>,
+    pub order: Transition<u32>,
+    pub back_type: Transition<BackType>,
+}
+
+impl MovedCard {
+    fn swap(self) -> Self {
+        Self {
+            card_id: self.card_id,
+            note_id: self.note_id.swap(),
+            order: self.order.swap(),
+            back_type: self.back_type.swap(),
+        }
+    }
+}
+
+/// A card with the note it belongs to
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoteCardSnapshot {
+    pub note_id: NoteId,
+    #[serde(flatten)]
+    pub card: CardSnapshot,
+}
+
 /// Payload for a `ForgetCard` event.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ForgetCardPayload {

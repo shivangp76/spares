@@ -4,9 +4,11 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use spares_core::api::undo::get_latest_note_event_id;
+use spares_core::api::undo::group_events;
 use spares_core::api::undo::redo_event;
 use spares_core::api::undo::undo_event;
 use spares_core::notes_vcs::run_exclusive;
+use spares_core::schema::undo::GroupEventsRequest;
 use spares_core::schema::undo::LatestEventResponse;
 use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::RedoEventResponse;
@@ -47,4 +49,15 @@ pub(crate) async fn redo_event_handler(
             .await
             .map_err(error_to_response)?;
     Ok(Json(result))
+}
+
+pub(crate) async fn group_events_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<GroupEventsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = data.db.clone();
+    run_exclusive(async move { group_events(&db, body).await })
+        .await
+        .map_err(error_to_response)?;
+    Ok(StatusCode::OK)
 }

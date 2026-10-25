@@ -12,6 +12,7 @@ use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
@@ -45,6 +46,7 @@ pub async fn create_undo_event(
         EventType::DeleteTag => EventType::CreateTag,
         EventType::CreateNotes => EventType::DeleteNotes,
         EventType::UpdateNotes => EventType::UpdateNotes,
+        EventType::RelocateCards => EventType::RelocateCards,
         EventType::DeleteNotes => EventType::CreateNotes,
         EventType::RateCard => EventType::UnrateCard,
         EventType::UnrateCard => EventType::RateCard,
@@ -307,6 +309,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 restored_tags: payload.deleted_tags,
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
+        }
+        EventType::RelocateCards => {
+            let payload: RelocateCardsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            Ok(serde_json::to_value(payload.swap()).unwrap())
         }
         EventType::DeleteNotes => {
             let payload: DeleteNotesPayload =

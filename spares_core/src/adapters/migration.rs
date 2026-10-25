@@ -134,7 +134,10 @@ pub async fn create_notes(
                     card_count: 1,
                 })
                 .collect::<Vec<_>>();
-            NotesResponse { notes }
+            NotesResponse {
+                notes,
+                event_id: None,
+            }
         } else {
             let response = client
                 .post(url)

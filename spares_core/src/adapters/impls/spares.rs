@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -23,6 +24,7 @@ use crate::api::note::relocate_live_cards;
 use crate::api::note::render_notes;
 use crate::api::note::update_notes;
 use crate::api::parser::list_parsers;
+use crate::api::undo::group_events;
 use crate::config::Environment;
 use crate::config::get_env_config;
 use crate::config::is_test_mode;
@@ -39,6 +41,7 @@ use crate::schema::FilterOptions;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
+use crate::schema::note::DeleteNotesResponse;
 use crate::schema::note::FindLiveNoteRequest;
 use crate::schema::note::FindLiveNoteResponse;
 use crate::schema::note::LiveNoteClozes;
@@ -49,8 +52,10 @@ use crate::schema::note::RelocateLiveCardsRequest;
 use crate::schema::note::RelocateLiveCardsResponse;
 use crate::schema::note::RenderNotesRequest;
 use crate::schema::note::UpdateNotesRequest;
+use crate::schema::note::UpdateNotesResponse;
 use crate::schema::note::UpdateTags;
 use crate::schema::parser::ParserResponse;
+use crate::schema::undo::GroupEventsRequest;
 
 /// A note of an import: one it updates, or the one it creates for that index of its create
 /// requests.
@@ -62,6 +67,9 @@ enum ImportedNote {
 #[derive(Debug)]
 pub struct SparesAdapter {
     request_processor: SparesRequestProcessorInternal,
+    /// The first event this adapter's imports logged, whose group the later ones join, so one
+    /// undo of the group reverts the whole import
+    import_group: Mutex<Option<i64>>,
 }
 
 #[derive(Debug)]
@@ -111,6 +119,45 @@ impl SparesAdapter {
         };
         Self {
             request_processor: internal,
+            import_group: Mutex::new(None),
+        }
+    }
+
+    /// Puts `event_ids`, the events of part of an import, in the group of the import's first
+    /// event. A failure is only logged: the import itself succeeded, and is only harder to undo.
+    async fn group_import_events(&self, event_ids: Vec<i64>) {
+        let leader = *self.import_group.lock().unwrap();
+        let mut event_ids: Vec<i64> = leader.into_iter().chain(event_ids).collect();
+        event_ids.sort_unstable();
+        event_ids.dedup();
+        let Some(&first) = event_ids.first() else {
+            return;
+        };
+        *self.import_group.lock().unwrap() = Some(first);
+        if event_ids.len() < 2 {
+            return;
+        }
+        let request = GroupEventsRequest { event_ids };
+        let result = match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/undo/group", base_url);
+                match authed(client.post(url), api_key.as_deref())
+                    .json(&request)
+                    .send()
+                    .await
+                {
+                    Ok(response) => self.handle_response(response).await.map(|_| ()),
+                    Err(e) => Err(Error::ApiRequest(e)),
+                }
+            }
+            SparesRequestProcessorInternal::Database { pool } => group_events(pool, request).await,
+        };
+        if let Err(e) = result {
+            warn!("Could not group the import's undo events, so it is undone in parts: {e}");
         }
     }
 
@@ -130,12 +177,13 @@ impl SparesAdapter {
         Ok(response)
     }
 
+    /// Returns the event to undo the update with, if any
     async fn update_note(
         &self,
         update_note_request: UpdateNotesRequest,
         at: DateTime<Utc>,
-    ) -> Result<(), Error> {
-        match &self.request_processor {
+    ) -> Result<Option<i64>, Error> {
+        let response: UpdateNotesResponse = match &self.request_processor {
             SparesRequestProcessorInternal::Server {
                 base_url,
                 client,
@@ -147,14 +195,14 @@ impl SparesAdapter {
                     .send()
                     .await
                     .map_err(Error::ApiRequest)?;
-                self.handle_response(response).await?;
+                let response = self.handle_response(response).await?;
+                response.json().await.map_err(Error::ApiRequest)?
             }
             SparesRequestProcessorInternal::Database { pool } => {
-                let _notes_res =
-                    update_notes(pool, update_note_request, at, &get_all_parsers(), true).await?;
+                update_notes(pool, update_note_request, at, &get_all_parsers(), true).await?
             }
-        }
-        Ok(())
+        };
+        Ok(response.event_id)
     }
 
     async fn relocate_live_cards(
@@ -183,7 +231,7 @@ impl SparesAdapter {
                 })
             }
             SparesRequestProcessorInternal::Database { pool } => {
-                relocate_live_cards(pool, request, at).await
+                relocate_live_cards(pool, request, at, true).await
             }
         }
     }
@@ -329,6 +377,7 @@ impl SrsAdapter for SparesAdapter {
             parser_id,
             requests: create_note_requests,
         };
+        let mut event_ids = Vec::new();
         let created_note_ids = match &self.request_processor {
             SparesRequestProcessorInternal::Server {
                 base_url,
@@ -348,11 +397,13 @@ impl SrsAdapter for SparesAdapter {
                         error: e.to_string(),
                     }))
                 })?;
+                event_ids.extend(response.event_id);
                 response.notes.into_iter().map(|n| n.id).collect::<Vec<_>>()
             }
             SparesRequestProcessorInternal::Database { pool } => {
                 let notes_res =
                     create_notes(pool, create_notes_request, at, &get_all_parsers(), true).await?;
+                event_ids.extend(notes_res.event_id);
                 notes_res
                     .notes
                     .into_iter()
@@ -385,11 +436,11 @@ impl SrsAdapter for SparesAdapter {
                 live_sync_name,
                 notes,
             };
-            self.relocate_live_cards(request, at).await?;
+            event_ids.extend(self.relocate_live_cards(request, at).await?.event_id);
         }
 
         for update_note_request in update_note_requests {
-            self.update_note(update_note_request, at).await?;
+            event_ids.extend(self.update_note(update_note_request, at).await?);
         }
 
         // Issue a single bulk delete for all collected note IDs.
@@ -409,13 +460,18 @@ impl SrsAdapter for SparesAdapter {
                         .send()
                         .await
                         .map_err(Error::ApiRequest)?;
-                    self.handle_response(response).await?;
+                    let response = self.handle_response(response).await?;
+                    // A server from before deletes returned their event responds with no body
+                    let response: Option<DeleteNotesResponse> = response.json().await.ok();
+                    event_ids.extend(response.and_then(|r| r.event_id));
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
-                    delete_notes(pool, request, &get_all_parsers(), true).await?;
+                    let response = delete_notes(pool, request, &get_all_parsers(), true).await?;
+                    event_ids.extend(response.event_id);
                 }
             }
         }
+        self.group_import_events(event_ids).await;
 
         // Render created notes + live-updated notes
         // We cannot render non-live updated notes since that might overwrite unsaved changes.

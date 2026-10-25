@@ -35,6 +35,7 @@ use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::RateCardPayload;
+use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
@@ -47,6 +48,7 @@ use crate::model::EventType;
 use crate::model::NoteId;
 use crate::notes_vcs;
 use crate::schema::undo::EventSummary;
+use crate::schema::undo::GroupEventsRequest;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
 use crate::schema::undo::UndoEventRequest;
@@ -221,6 +223,45 @@ async fn summarize_all(db: &SqlitePool, events: &[Event]) -> Result<Vec<EventSum
     Ok(summaries)
 }
 
+/// Puts `body.event_ids`, with the groups they lead, in one group led by the oldest, so undoing
+/// the group reverts them all.
+///
+/// Each must be an action that has not been undone, and lead its group if it is in one: taking an
+/// event out of the middle of a group would leave the rest to be undone without it.
+pub async fn group_events(db: &SqlitePool, body: GroupEventsRequest) -> Result<(), Error> {
+    let mut event_ids = body.event_ids;
+    event_ids.sort_unstable();
+    event_ids.dedup();
+    let Some((&leader, others)) = event_ids.split_first() else {
+        return Ok(());
+    };
+    let mut events = Vec::with_capacity(event_ids.len());
+    for &id in &event_ids {
+        let Some(event) = fetch_event(db, id).await? else {
+            return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                "Event {id} does not exist"
+            ))));
+        };
+        if event_action(db, id).await? != EventAction::Do || is_reverted(db, id).await? {
+            return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                "Event {id} is not an action that can still be undone, so it cannot be grouped"
+            ))));
+        }
+        if event.group_id.is_some_and(|group_id| group_id != id) {
+            return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                "Event {id} is part of the group of event {}, so it cannot be grouped alone",
+                event.group_id.unwrap()
+            ))));
+        }
+        events.push(event);
+    }
+    check_not_synced(db, &events).await?;
+    for &other in others {
+        join_event_group(db, leader, other).await?;
+    }
+    Ok(())
+}
+
 /// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone, other
 /// than an [automatic](EventType::is_automatic) one.
 pub async fn undo_event(
@@ -337,6 +378,10 @@ async fn affected_note_ids(db: &SqlitePool, events: &[Event]) -> Result<Vec<Note
                     .map(NoteId::from_packed),
             );
         }
+        if event.kind == EventType::RelocateCards {
+            let payload: RelocateCardsPayload = serde_json::from_value(payload.clone()).unwrap();
+            ids.extend(payload.note_ids());
+        }
         let query = match event.kind {
             EventType::UpdateTag => Some(r"SELECT note_id FROM note_tag WHERE tag_id = ?"),
             EventType::UpdateParser => Some(r"SELECT id FROM note WHERE parser_id = ?"),
@@ -440,6 +485,7 @@ async fn validate_undo_dependencies(db: &SqlitePool, event: &Event) -> Result<()
     Ok(())
 }
 
+#[expect(clippy::too_many_lines)]
 async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
     use crate::api::card::update_card_event;
     use crate::api::note::create_notes_event;
@@ -493,6 +539,11 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
             let payload: DeleteNotesPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             delete_notes_event(db, payload, false).await?;
+        }
+        EventType::RelocateCards => {
+            let payload: RelocateCardsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            crate::api::note::relocate_cards_event(db, &payload).await?;
         }
         EventType::UpdateNotes => {
             let payload: UpdateNotesPayload =
