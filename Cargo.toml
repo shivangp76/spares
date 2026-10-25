@@ -6,6 +6,12 @@ members = [
     "spares_frontend",
 ]
 resolver = "2"
+exclude = ["vendor"]
+
+# sqlx with a path for wasm32-unknown-unknown (see vendor/README.md).
+[patch.crates-io]
+sqlx-core = { path = "vendor/sqlx-core-0.9.0" }
+sqlx-sqlite = { path = "vendor/sqlx-sqlite-0.9.0" }
 
 # [workspace.dependencies]
 # tokio = { version = "1.39.1", features = ["full"] }
