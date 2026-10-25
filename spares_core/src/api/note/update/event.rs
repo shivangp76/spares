@@ -8,13 +8,16 @@ use crate::Error;
 use crate::LibraryError;
 use crate::api::execute_batched_query;
 use crate::api::max_rows_for;
+use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag;
 use crate::api::tag::restore_tags;
 use crate::api::undo::insert_events;
+use crate::api::undo::payloads::CardSnapshot;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
+use crate::model::CardId;
 use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
@@ -148,44 +151,7 @@ pub async fn update_notes_event(
 
         // Restore cards
         if let Some(cards_transition) = cards {
-            // Delete all existing cards
-            sqlx::query(r"DELETE FROM card WHERE note_id = ?")
-                .bind(id)
-                .execute(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-
-            // Re-insert cards from `after` with specific IDs
-            let card_snapshots = &cards_transition.after;
-            if !card_snapshots.is_empty() {
-                execute_batched_query(db, card_snapshots, max_rows_for(12), async |db, chunk| {
-                    let query_str = format!(
-                        "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
-                        placeholders_2d(chunk.len(), 12)
-                    );
-                    let mut query = sqlx::query(&query_str);
-                    for card in chunk {
-                        query = query.bind(card.id);
-                        query = query.bind(id);
-                        query = query.bind(card.order);
-                        query = query.bind(card.back_type);
-                        query = query.bind(card.due.timestamp());
-                        query = query.bind(card.due.timestamp());
-                        query = query.bind(card.stability);
-                        query = query.bind(card.difficulty);
-                        query = query.bind(card.desired_retention);
-                        query = query.bind(card.special_state);
-                        query = query.bind(card.state);
-                        query = query.bind(&card.custom_data);
-                    }
-                    query
-                        .execute(db)
-                        .await
-                        .map_err(|e| Error::Sqlx { source: e })?;
-                    Ok(())
-                })
-                .await?;
-            }
+            restore_note_cards(db, *id, &cards_transition.after, at).await?;
         }
     }
 
@@ -207,4 +173,62 @@ pub async fn update_notes_event(
     }
 
     Ok(())
+}
+
+/// Gives note `note_id` exactly the cards `snapshots`, as they were. Cards are updated in place
+/// rather than deleted and inserted again, so they keep their reviews and filtered tags, and sync
+/// sees them change rather than being deleted. A card another note has now (e.g. one moved
+/// between live notes) is moved back.
+async fn restore_note_cards(
+    db: &SqlitePool,
+    note_id: NoteId,
+    snapshots: &[CardSnapshot],
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), Error> {
+    let keep: Vec<CardId> = snapshots.iter().map(|card| card.id).collect();
+    let query_str = format!(
+        "DELETE FROM card WHERE note_id = ? AND id NOT IN ({})",
+        placeholders(keep.len())
+    );
+    let mut query = sqlx::query(&query_str).bind(note_id);
+    for card_id in &keep {
+        query = query.bind(card_id);
+    }
+    query
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+    execute_batched_query(db, snapshots, max_rows_for(12), async |db, chunk| {
+        let query_str = format!(
+            "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}
+            ON CONFLICT (id) DO UPDATE SET note_id = excluded.note_id, \"order\" = excluded.\"order\",
+                back_type = excluded.back_type, updated_at = excluded.updated_at, due = excluded.due,
+                stability = excluded.stability, difficulty = excluded.difficulty,
+                desired_retention = excluded.desired_retention, special_state = excluded.special_state,
+                state = excluded.state, custom_data = excluded.custom_data",
+            placeholders_2d(chunk.len(), 12)
+        );
+        let mut query = sqlx::query(&query_str);
+        for card in chunk {
+            query = query.bind(card.id);
+            query = query.bind(note_id);
+            query = query.bind(card.order);
+            query = query.bind(card.back_type);
+            query = query.bind(at.timestamp());
+            query = query.bind(card.due.timestamp());
+            query = query.bind(card.stability);
+            query = query.bind(card.difficulty);
+            query = query.bind(card.desired_retention);
+            query = query.bind(card.special_state);
+            query = query.bind(card.state);
+            query = query.bind(&card.custom_data);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await
 }

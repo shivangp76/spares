@@ -773,3 +773,72 @@ async fn e2e_undo_update_notes_restores_auto_deleted_tag(pool: SqlitePool) {
     assert!(tag_named(&pool, "lonely").await.is_none());
     assert_eq!(note_tag_ids(&pool, note_id).await, Vec::<TagId>::new());
 }
+
+#[sqlx::test]
+async fn e2e_undo_update_notes_keeps_the_reviews_of_cards_it_restores(pool: SqlitePool) {
+    use crate::api::review::submit_study_action;
+    use crate::schema::review::RatingSubmission;
+    use crate::schema::review::StudyAction;
+    use crate::schema::review::SubmitStudyActionRequest;
+
+    let (note_id, _) = create_lonely_tagged_note(&pool).await;
+    let card_ids = async || -> Vec<CardId> {
+        sqlx::query_scalar("SELECT id FROM card WHERE note_id = ? ORDER BY \"order\"")
+            .bind(note_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    let card_id = card_ids().await[0];
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 3,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: None,
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let reviews_of_card = async || -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    // The stored data numbers its cloze, which keeps the card matched to it
+    let data: String = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let add_cloze = UpdateNotesRequest {
+        selector: NotesSelector::Ids(vec![note_id]),
+        parser_id: None,
+        data: Some(format!("{data} and {{{{ more }}}}")),
+        keywords: None,
+        tags: UpdateTags::None,
+        custom_data: None,
+    };
+    update_notes(&pool, add_cloze, Utc::now(), &get_all_parsers(), true)
+        .await
+        .unwrap();
+    let with_new_card = card_ids().await;
+    assert_eq!(with_new_card.len(), 2);
+    assert!(with_new_card.contains(&card_id), "{with_new_card:?}");
+
+    undo_latest(&pool).await;
+    assert_eq!(card_ids().await, vec![card_id]);
+    assert_eq!(reviews_of_card().await, 1, "the card kept its review");
+
+    redo_latest(&pool).await;
+    assert_eq!(card_ids().await, with_new_card);
+    assert_eq!(reviews_of_card().await, 1);
+}
