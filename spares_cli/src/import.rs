@@ -959,6 +959,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(notes.len(), 2, "expected 2 notes in DB");
+        // The import can be undone, as one through the server can
+        let create_events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event WHERE kind = ?")
+            .bind(spares_core::model::EventType::CreateNotes)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(create_events, 1);
 
         let live_note = notes
             .iter()

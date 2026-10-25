@@ -67,7 +67,7 @@ pub struct SparesAdapter {
 #[derive(Debug)]
 pub enum SparesRequestProcessor {
     Server,
-    /// For testing use only
+    /// For testing use only. Logs undo events, as the server's handlers do.
     Database {
         pool: SqlitePool,
     },
@@ -151,7 +151,7 @@ impl SparesAdapter {
             }
             SparesRequestProcessorInternal::Database { pool } => {
                 let _notes_res =
-                    update_notes(pool, update_note_request, at, &get_all_parsers(), false).await?;
+                    update_notes(pool, update_note_request, at, &get_all_parsers(), true).await?;
             }
         }
         Ok(())
@@ -352,7 +352,7 @@ impl SrsAdapter for SparesAdapter {
             }
             SparesRequestProcessorInternal::Database { pool } => {
                 let notes_res =
-                    create_notes(pool, create_notes_request, at, &get_all_parsers(), false).await?;
+                    create_notes(pool, create_notes_request, at, &get_all_parsers(), true).await?;
                 notes_res
                     .notes
                     .into_iter()
@@ -412,7 +412,7 @@ impl SrsAdapter for SparesAdapter {
                     self.handle_response(response).await?;
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
-                    delete_notes(pool, request, &get_all_parsers(), false).await?;
+                    delete_notes(pool, request, &get_all_parsers(), true).await?;
                 }
             }
         }
