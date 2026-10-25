@@ -1,10 +1,13 @@
 //! Requests and responses between the client and the server (`/api/sync/*`).
 //!
-//! There is no chunking, since there are only two replicas. A normal sync:
+//! There is no chunking: there are a few replicas (the laptop, the server and up to three browsers,
+//! see [More replicas](super#more-replicas)), and a normal sync sends only what changed. A normal
+//! sync:
 //!
 //! 1. **`meta`**. The client refuses to sync if the clocks differ by more than 5 minutes, the
 //!    schema versions differ, both sides have the same replica number, or the roles aren't one
-//!    `client` and one `server`. It requires a full sync (412, with the reason) if it has never
+//!    `client` and one `server`. The server refuses a replica from 2 up that isn't enrolled
+//!    ([`super::devices`]). It requires a full sync (412, with the reason) if it has never
 //!    synced, `needs_full_sync` is set, the server's epoch changed (another full upload replaced
 //!    it), its last usn is ahead of the server's (server restored from a backup), or behind what
 //!    `sync_client` recorded for it (client restored from a backup).

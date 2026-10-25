@@ -5,10 +5,10 @@
 //!
 //! In a browser there is no file system. There, the files are an in-memory directory:
 //!
-//! - The device fills it when it opens its copy of the collection ([`load`]), from what it saved in
-//!   the browser's storage (OPFS).
+//! - The device fills it when it opens its copy of the collection (`load`, wasm only), from what
+//!   it saved in the browser's storage (OPFS).
 //! - The device gets the server's `config.toml` and parser templates at each sync, writes them here
-//!   ([`write`]), and saves them again ([`files`]). Settings are changed on the laptop, so on the
+//!   (`write`), and saves them again (`files`). Settings are changed on the laptop, so on the
 //!   device these files are read-only in practice.
 //!
 //! A browser never writes note or card files, nor renders them: the server does that after the

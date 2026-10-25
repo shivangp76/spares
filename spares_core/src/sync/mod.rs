@@ -1,11 +1,13 @@
-//! Two-way sync between the laptop and the server. How to set it up and use it is in the manual's
-//! Getting Started and Deploying pages.
+//! Two-way sync between the laptop, the server and browsers that keep a copy of the collection. How
+//! to set it up and use it is in the manual's Getting Started and Deploying pages.
 //!
 //! # Goal
 //!
 //! Review and edit notes from the phone anywhere, even when the laptop is off. The laptop and a
 //! small server (reached over Tailscale) both hold the whole database and sync like Anki and
-//! `AnkiWeb`. Notes can be edited on the laptop (CLI, note files, live notes) or on the web.
+//! `AnkiWeb`. Notes can be edited on the laptop (CLI, note files, live notes) or on the web. A
+//! browser can also keep a copy of its own and sync it like the laptop, so the phone works offline
+//! ([More replicas](#more-replicas)).
 //!
 //! **Unsynced laptop edits must never be silently overwritten by later phone edits.** Laptop edits
 //! often sit unsynced for a while.
@@ -33,12 +35,17 @@
 //!    settings, both required with no default (tests default to replica `0`, role `client`):
 //!    - `SPARES_REPLICA`, `0`–`7` ([`crate::config::Replica`]): which id form the replica writes
 //!      and its residue for the other tables (see [`crate::ids`]). `0` is the laptop, `1` the
-//!      server.
+//!      server. Any other has to be enrolled with the server first (`spares sync devices add`),
+//!      which only hands out `2` to `4` ([`devices`]).
 //!    - `SPARES_SYNC_ROLE`, `server` or `client` ([`crate::config::SyncRole`]): whether this
 //!      instance answers `/api/sync/*` or runs the client side, including the merge.
 //!
 //!    Keeping them apart means a new replica only takes a new number, and code never infers the
 //!    role from the number.
+//!
+//!    A browser has no environment. Its number comes from the server when it enrolls, and it keeps
+//!    it in its own storage next to the database, so a full download doesn't change it either. A
+//!    browser is always a client ([`devices`]).
 //!
 //! # Change tracking
 //!
@@ -74,6 +81,32 @@
 //! they are rebuilt wherever a note is applied. `event`, `offline_action` and `app_state` aren't
 //! synced. `render_asset` and `render_package` rows are sent in full on every push, since assets
 //! are only added on the laptop.
+//!
+//! # More replicas
+//!
+//! The laptop (`0`) and the server (`1`) were the first replicas. Browsers that keep a copy of the
+//! collection are replicas `2` to `4`, clients like the laptop:
+//!
+//! - **Enrolling** gives one a number ([`devices`]), then it does a full download. Its note ids are
+//!   its own letter after the laptop note they follow ([`crate::ids`]), and its other ids take its
+//!   residue modulo 8.
+//! - **Nothing in the protocol assumes one client.** The usn is the server's counter, whichever
+//!   client a change came from. A pull returns everything after the client's last sync, other
+//!   clients' pushes included. A push is refused while anything changed on the server since that
+//!   client's pull, another client's push included, and the client starts over. `sync_client`
+//!   checks each replica's last usn on its own.
+//! - **A full upload replaces the server's database for everyone**: its new epoch makes every
+//!   other client do a full sync. So a browser never full-uploads on its own. When it can't sync
+//!   normally and has changes, the user chooses: download the server's copy and lose them, or
+//!   upload its own and make the other devices download.
+//! - **What a browser needs besides the database:** the config and parser templates
+//!   (`GET /api/sync/config`, read through [`crate::platform`]), rendered files, and its own
+//!   images and audio ([`media`]). A browser writes no note files and renders nothing; the server
+//!   does that after each push ([`files::after_sync`]).
+//! - **When a browser syncs.** Undo stops at the last sync ([`LAST_SYNC_EVENT_ID_KEY`]), as in Anki.
+//!   A browser that synced after every action would lose undo within seconds. So it syncs when the
+//!   app is hidden or closed, from the Sync button, after reconnecting, and after some minutes
+//!   idle, never right after an action. Undo past a sync could come later.
 //!
 //! # The rest
 //!
