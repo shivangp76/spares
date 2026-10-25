@@ -39,8 +39,12 @@ pub enum Error {
     /// An error from keeping the notes repository (see [`notes_vcs`]) in sync with the database.
     #[error("{0}")]
     NotesVcs(String),
-    /// A `git push` into spares holds the notes lock, so note changes cannot be made right now.
-    #[error("a git push into spares is in progress; retry shortly")]
+    /// Another change holds the notes lock, so note changes cannot be made right now: a `git push`
+    /// into spares, say, or a full upload regenerating every note's files.
+    #[error(
+        "another change to the notes is in progress (such as a git push into spares, or a full \
+         upload's files); retry shortly"
+    )]
     NotesVcsBusy,
     /// Sync failed. Nothing was committed on this side.
     #[error("Sync failed: {0}")]

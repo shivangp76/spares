@@ -22,6 +22,8 @@ use spares_core::config::get_cache_dir;
 use spares_core::config::get_replica;
 use spares_core::config::get_sync_role;
 use spares_core::config::read_external_config;
+use spares_core::notes_vcs::WRITER_WAIT;
+use spares_core::notes_vcs::exclusive_guard;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::parsers::get_all_parsers;
 use spares_core::sync::conflicts;
@@ -140,6 +142,9 @@ pub(crate) async fn sync_full_upload_handler(
             Json(json!({ "message": "missing `replica`" })),
         )
     })?;
+    let guard = exclusive_guard(Some(WRITER_WAIT))
+        .await
+        .map_err(error_to_response)?;
     let path = temp_dir()?.join(format!("upload-{}.sqlite", std::process::id()));
     std::fs::write(&path, &body).map_err(|e| {
         error_to_response(Error::Io {
@@ -148,17 +153,33 @@ pub(crate) async fn sync_full_upload_handler(
         })
     })?;
     let db = data.db.clone();
-    let upload_path = path.clone();
-    let result = run_exclusive(async move {
-        let before = files::note_ids(&db).await?;
-        let response = server::full_upload(&db, &upload_path, replica).await?;
-        let after = files::note_ids(&db).await?;
-        let deleted = before.difference(&after).copied().collect();
-        files::after_sync(&db, &after, &deleted).await;
-        Ok(response)
-    })
-    .await;
-    let _ = std::fs::remove_file(&path);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    // Answers once the database is replaced, then regenerates every note's files, still holding the
+    // guard. Without a cache that takes minutes, which the device uploading shouldn't wait for.
+    tokio::spawn(async move {
+        let _guard = guard;
+        let uploaded = async {
+            let before = files::note_ids(&db).await?;
+            let response = server::full_upload(&db, &path, replica).await?;
+            let after = files::note_ids(&db).await?;
+            Ok::<_, Error>((response, before, after))
+        }
+        .await;
+        let _ = std::fs::remove_file(&path);
+        match uploaded {
+            Ok((response, before, after)) => {
+                let _ = sender.send(Ok(response));
+                let deleted = before.difference(&after).copied().collect();
+                files::after_sync(&db, &after, &deleted).await;
+            }
+            Err(e) => {
+                let _ = sender.send(Err(e));
+            }
+        }
+    });
+    let result = receiver
+        .await
+        .map_err(|_| error_to_response(Error::Sync("the full upload stopped".to_string())))?;
     Ok(Json(result.map_err(error_to_response)?))
 }
 
