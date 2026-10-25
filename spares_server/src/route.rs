@@ -133,6 +133,8 @@ use crate::handlers::scheduler::list_schedulers_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::MEDIA_BODY_LIMIT;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::SYNC_BODY_LIMIT;
 use crate::handlers::sync::list_sync_conflicts_handler;
 use crate::handlers::sync::resolve_sync_conflict_handler;
@@ -143,9 +145,13 @@ use crate::handlers::sync::sync_devices_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_enroll_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_files_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_full_download_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_full_upload_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_media_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_meta_handler;
 #[cfg(not(target_family = "wasm"))]
@@ -259,6 +265,11 @@ fn sync_routes() -> Router<Arc<AppState>> {
         .route("/api/sync/unenroll", post(sync_unenroll_handler))
         .route("/api/sync/devices", get(sync_devices_handler))
         .route("/api/sync/config", get(sync_config_handler))
+        .route("/api/sync/files", get(sync_files_handler))
+        .route(
+            "/api/sync/media/{kind}/{name}",
+            put(sync_media_handler).layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT)),
+        )
         .route("/api/sync/run", post(sync_run_handler))
 }
 

@@ -106,6 +106,7 @@ pub mod devices;
 pub mod files;
 pub mod full;
 pub mod http;
+pub mod media;
 pub mod merge;
 mod orders;
 pub mod protocol;
