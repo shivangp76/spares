@@ -1,7 +1,4 @@
 use std::fmt::Write as _;
-use std::fs::create_dir_all;
-use std::fs::read_to_string;
-use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -24,6 +21,10 @@ use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
+use crate::platform::write;
 
 pub mod audio;
 mod cards;
@@ -406,7 +407,7 @@ pub trait Parseable: Send + Sync {
         let file_extension = self.file_extension();
         let read_or_create_template = |name: &str| -> Result<String, std::io::Error> {
             let path = templates_dir.join(format!("{name}.{file_extension}"));
-            if !path.is_file() {
+            if !is_file(&path) {
                 create_dir_all(&templates_dir)?;
                 write(&path, self.default_template())?;
             }
@@ -417,7 +418,7 @@ pub trait Parseable: Send + Sync {
             TemplateType::Card => {
                 let card_template_path =
                     templates_dir.join(format!("card_template.{file_extension}"));
-                let card_template_contents = if card_template_path.is_file() {
+                let card_template_contents = if is_file(&card_template_path) {
                     read_to_string(&card_template_path)?
                 } else {
                     read_or_create_template("note_template")?

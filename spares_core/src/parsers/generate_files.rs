@@ -248,10 +248,16 @@ pub fn file_in_cache(
 /// - (optional) a raw and rendered version of each card in the cards
 ///
 /// Returns the file path of the raw note file.
+///
+/// Does nothing in a browser, which has no files: the server writes them once the browser's
+/// changes reach it (see [`crate::platform`]).
 pub fn create_note_files_bulk(
     parser: &dyn Parseable,
     request: &GenerateNoteFilesRequests,
 ) -> Result<Vec<Result<PathBuf, Error>>, Error> {
+    if cfg!(target_family = "wasm") {
+        return Ok(Vec::new());
+    }
     // Get template
     let (note_template_contents, body_placeholder) = parser
         .get_template_data(TemplateType::Note)
