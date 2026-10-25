@@ -651,35 +651,49 @@ async fn e2e_undo_delete_notes_restores_auto_deleted_tag_and_card_links(
         .fetch_one(&pool)
         .await
         .unwrap();
-    submit_study_action(
-        &pool,
-        SubmitStudyActionRequest {
-            scheduler_name: "fsrs".to_string(),
-            action: StudyAction::Rate(RatingSubmission {
-                card_id,
-                rating: 3,
-                recall_duration: chrono::Duration::seconds(5),
-                rate_duration: chrono::Duration::seconds(2),
-                tag_id: None,
-            }),
-        },
-        Utc::now(),
-    )
-    .await
-    .unwrap();
+    // Deleted with the card, its last
     let filtered = create_tag(
         &pool,
         CreateTagRequest {
             name: "filtered".to_string(),
             description: String::new(),
             query: Some("Hello".to_string()),
-            auto_delete: false,
+            auto_delete: true,
             reschedule: true,
         },
         false,
     )
     .await
     .unwrap();
+    // Studied in the filtered tag, without finishing it
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 1,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: Some(filtered.id),
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let review_id: i64 = sqlx::query_scalar("SELECT id FROM review_log WHERE card_id = ?")
+        .bind(card_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let review_tag = async || -> Option<TagId> {
+        sqlx::query_scalar("SELECT tag_id FROM review_log WHERE id = ?")
+            .bind(review_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
     let card_tags = async || -> Vec<TagId> {
         sqlx::query_scalar("SELECT tag_id FROM card_tag WHERE card_id = ?")
             .bind(card_id)
@@ -696,10 +710,13 @@ async fn e2e_undo_delete_notes_restores_auto_deleted_tag_and_card_links(
     };
     assert_eq!(card_tags().await, vec![filtered.id]);
     assert_eq!(reviews_of_card().await, 1);
+    assert_eq!(review_tag().await, Some(filtered.id));
 
     delete_note(&pool, note_id).await;
     assert!(tag_named(&pool, "lonely").await.is_none());
+    assert!(tag_named(&pool, "filtered").await.is_none());
     assert_eq!(reviews_of_card().await, 0);
+    assert_eq!(review_tag().await, None);
 
     // A plain undo reverts the delete, with the tag it deleted and what its card had
     undo_latest(&pool).await;
@@ -709,6 +726,7 @@ async fn e2e_undo_delete_notes_restores_auto_deleted_tag_and_card_links(
     assert_eq!(note_tag_ids(&pool, note_id).await, vec![tag.id]);
     assert_eq!(reviews_of_card().await, 1);
     assert_eq!(card_tags().await, vec![filtered.id]);
+    assert_eq!(review_tag().await, Some(filtered.id));
 
     redo_latest(&pool).await;
     assert!(tag_named(&pool, "lonely").await.is_none());

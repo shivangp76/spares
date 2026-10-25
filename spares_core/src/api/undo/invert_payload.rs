@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
+use crate::api::tag::review_ids_with_tag;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateParserPayload;
 use crate::api::undo::payloads::CreateTagPayload;
@@ -231,6 +232,10 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             } else {
                 vec![]
             };
+            let review_log_ids = match payload.id {
+                Some(id) => review_ids_with_tag(db, id).await?,
+                None => Vec::new(),
+            };
             // To undo CreateTag, we need DeleteTag with the tag info
             let delete_payload = DeleteTagPayload {
                 id: payload.id,
@@ -243,6 +248,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 updated_at: payload.updated_at,
                 note_ids,
                 card_ids,
+                review_log_ids,
             };
             Ok(serde_json::to_value(delete_payload).unwrap())
         }
@@ -273,6 +279,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                 updated_at: payload.updated_at,
                 note_ids: payload.note_ids,
                 card_ids: payload.card_ids,
+                review_log_ids: payload.review_log_ids,
             };
             Ok(serde_json::to_value(create_payload).unwrap())
         }

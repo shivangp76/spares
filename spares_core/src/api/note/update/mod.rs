@@ -19,6 +19,7 @@ use crate::api::undo::create_event_group;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::CardSnapshot;
 use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateNotePayload;
@@ -31,7 +32,6 @@ use crate::model::Card;
 use crate::model::EventType;
 use crate::model::Note;
 use crate::model::NoteId;
-use crate::model::Tag;
 use crate::notes_vcs;
 use crate::parsers::CardData;
 use crate::parsers::Parseable;
@@ -173,7 +173,7 @@ pub async fn update_notes(
     let mut parse_note_requests = Vec::new();
     let mut update_note_payloads: Vec<UpdateNotePayload> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
-    let mut deleted_tags: Vec<Tag> = Vec::new();
+    let mut deleted_tags: Vec<DeletedTag> = Vec::new();
 
     // ---- Phase 1: Batch pre-fetches ----
 

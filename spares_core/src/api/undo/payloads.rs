@@ -33,6 +33,9 @@ pub struct CreateTagPayload {
     pub note_ids: Vec<NoteId>,
     #[serde(default)]
     pub card_ids: Vec<CardId>,
+    /// The reviews done under the tag, whose `tag_id` deleting it cleared
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_log_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -72,6 +75,9 @@ pub struct DeleteTagPayload {
     pub note_ids: Vec<NoteId>,
     #[serde(default)]
     pub card_ids: Vec<CardId>,
+    /// The reviews done under the tag, whose `tag_id` deleting it cleared
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_log_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -178,7 +184,7 @@ pub struct CreateNotesPayload {
     /// Carried from `DeleteNotesPayload::deleted_tags` when undoing a delete, and restored before
     /// the notes link to them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub restored_tags: Vec<Tag>,
+    pub restored_tags: Vec<DeletedTag>,
 }
 
 /// Payload for `DeleteNotes` event.
@@ -193,7 +199,17 @@ pub struct DeleteNotesPayload {
     /// [`auto_delete`](Tag::auto_delete) tags deleted because these notes were the last to have
     /// them, so undo can restore them as they were.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deleted_tags: Vec<Tag>,
+    pub deleted_tags: Vec<DeletedTag>,
+}
+
+/// A tag deleted along with an action, and the reviews done under it, whose `tag_id` deleting it
+/// cleared
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeletedTag {
+    #[serde(flatten)]
+    pub tag: Tag,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_log_ids: Vec<i64>,
 }
 
 /// What deleting a card detached from it, so undoing the delete can reattach it
@@ -245,11 +261,11 @@ pub struct UpdateNotesPayload {
     /// [`auto_delete`](Tag::auto_delete) tags deleted because the notes no longer had them, so
     /// undo can restore them as they were.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deleted_tags: Vec<Tag>,
+    pub deleted_tags: Vec<DeletedTag>,
     /// Tags to restore before the notes link to them: an undo's, swapped from the `deleted_tags`
     /// of the update it reverts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub restored_tags: Vec<Tag>,
+    pub restored_tags: Vec<DeletedTag>,
 }
 
 /// Payload for `RelocateCards`, applied in this order: `deleted_cards` are deleted, `moved` cards
@@ -352,6 +368,10 @@ pub struct FilteredTagExit {
     /// deleted with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_tag: Option<Tag>,
+    /// With `deleted_tag`, the reviews done under the tag, whose `tag_id` deleting it cleared.
+    /// Empty in events recorded before they were kept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_log_ids: Vec<i64>,
 }
 
 /// Payload for `UnrateCard` and `UnforgetCard`, the undos of `RateCard` and `ForgetCard`.

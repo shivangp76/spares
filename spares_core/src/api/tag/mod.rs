@@ -5,9 +5,12 @@ use sqlx::sqlite::SqlitePool;
 use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
+use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::execute_batched_query;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
+use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::ids::IdTable;
@@ -48,6 +51,7 @@ pub async fn create_tag(
         updated_at: now,
         note_ids: vec![],
         card_ids: vec![],
+        review_log_ids: vec![],
     };
     create_tag_event(db, payload, log).await
 }
@@ -144,6 +148,7 @@ pub async fn create_tag_event(
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
     }
+    restore_review_tags(db, tag.id, &payload.review_log_ids).await?;
 
     // Log event
     if log {
@@ -158,6 +163,7 @@ pub async fn create_tag_event(
             updated_at: tag.updated_at,
             note_ids: payload.note_ids.clone(),
             card_ids: payload.card_ids.clone(),
+            review_log_ids: payload.review_log_ids.clone(),
         };
         let _event_id = insert_events(
             db,
@@ -172,10 +178,15 @@ pub async fn create_tag_event(
 }
 
 /// Recreates `tags`, which an undone action deleted, as they were, without their notes or cards and
-/// without running their queries. A tag whose name another tag has taken since is skipped: notes
-/// link to tags by name, so the restored notes link to that one instead.
-pub(crate) async fn restore_tags(db: &SqlitePool, tags: &[Tag]) -> Result<(), Error> {
-    for tag in tags {
+/// without running their queries, and gives their reviews back their tag. A tag whose name another
+/// tag has taken since is skipped: notes link to tags by name, so the restored notes link to that
+/// one instead.
+pub(crate) async fn restore_tags(db: &SqlitePool, tags: &[DeletedTag]) -> Result<(), Error> {
+    for DeletedTag {
+        tag,
+        review_log_ids,
+    } in tags
+    {
         sqlx::query(
             r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
@@ -192,8 +203,46 @@ pub(crate) async fn restore_tags(db: &SqlitePool, tags: &[Tag]) -> Result<(), Er
         .execute(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
+        restore_review_tags(db, tag.id, review_log_ids).await?;
     }
     Ok(())
+}
+
+/// The reviews done under `tag_id`, whose `tag_id` deleting the tag will clear
+pub(crate) async fn review_ids_with_tag(db: &SqlitePool, tag_id: TagId) -> Result<Vec<i64>, Error> {
+    sqlx::query_scalar(r"SELECT id FROM review_log WHERE tag_id = ? ORDER BY id")
+        .bind(tag_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
+/// Gives `review_log_ids` back the tag `tag_id`, which deleting it cleared, if the tag exists
+pub(crate) async fn restore_review_tags(
+    db: &SqlitePool,
+    tag_id: TagId,
+    review_log_ids: &[i64],
+) -> Result<(), Error> {
+    execute_batched_query(db, review_log_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
+        let query_str = format!(
+            "UPDATE review_log SET tag_id = ?1 WHERE id IN ({}) AND tag_id IS NULL
+            AND EXISTS (SELECT 1 FROM tag WHERE id = ?1)",
+            (0..chunk.len())
+                .map(|i| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut query = sqlx::query(&query_str).bind(tag_id);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        query
+            .execute(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn get_tag(db: &SqlitePool, id: i64) -> Result<TagResponse, Error> {
@@ -295,6 +344,7 @@ async fn merge_tag_into(
         updated_at: source_tag.updated_at,
         note_ids,
         card_ids,
+        review_log_ids: review_ids_with_tag(db, source_id).await?,
     };
     delete_tag_event(db, delete_payload, log).await?;
 
@@ -469,6 +519,7 @@ async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<(), Err
         updated_at: tag.updated_at,
         note_ids,
         card_ids,
+        review_log_ids: review_ids_with_tag(db, id).await?,
     };
     delete_tag_event(db, payload, log).await
 }
@@ -1038,6 +1089,7 @@ pub(crate) mod tests {
             updated_at: tag.updated_at,
             note_ids: vec![],
             card_ids: vec![],
+            review_log_ids: vec![],
         };
         delete_tag_event(&pool, payload, false).await.unwrap();
         assert_eq!(

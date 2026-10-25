@@ -13,9 +13,9 @@ use crate::api::placeholders_2d;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag_row;
 use crate::api::undo::payloads::CreateTagPayload;
+use crate::api::undo::payloads::DeletedTag;
 use crate::helpers::remove_ancestor_tags;
 use crate::model::NoteId;
-use crate::model::Tag;
 use crate::model::TagId;
 use crate::schema::note::UpdateTags;
 
@@ -88,6 +88,7 @@ pub(super) async fn add_tags_to_note(
             updated_at: created_tag.updated_at,
             note_ids: vec![],
             card_ids: vec![],
+            review_log_ids: vec![],
         });
     }
     for chunk in new_tag_ids.chunks(MAX_ROWS_IN_QUERY) {
@@ -112,8 +113,8 @@ pub(super) async fn add_tags_to_note(
 #[derive(Default)]
 pub(super) struct TagChanges {
     pub created: Vec<CreateTagPayload>,
-    /// [`auto_delete`](Tag::auto_delete) tags the note was the last to have
-    pub deleted: Vec<Tag>,
+    /// [`auto_delete`](crate::model::Tag::auto_delete) tags the note was the last to have
+    pub deleted: Vec<DeletedTag>,
 }
 
 #[expect(clippy::too_many_lines)]

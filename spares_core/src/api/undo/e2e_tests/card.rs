@@ -1057,3 +1057,127 @@ async fn e2e_daily_unbury_is_skipped_by_plain_undo_and_redo(pool: SqlitePool) {
     .unwrap();
     assert_eq!(special_state().await, Some(SpecialState::UserBuried));
 }
+
+#[sqlx::test]
+async fn e2e_undo_rate_card_gives_reviews_back_the_filtered_tag_it_deleted(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    // Its filtered tag searches text, which needs `REGEXP`.
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+    let card_id = create_card_helper(&pool).await;
+    let tag = create_tag(
+        &pool,
+        CreateTagRequest {
+            name: "filtered".to_string(),
+            description: String::new(),
+            query: Some("Hello".to_string()),
+            auto_delete: true,
+            reschedule: true,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let rate = async |rating: u32| {
+        submit_study_action(
+            &pool,
+            SubmitStudyActionRequest {
+                scheduler_name: "fsrs".to_string(),
+                action: StudyAction::Rate(RatingSubmission {
+                    card_id,
+                    rating,
+                    recall_duration: chrono::Duration::seconds(5),
+                    rate_duration: chrono::Duration::seconds(2),
+                    tag_id: Some(tag.id),
+                }),
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+    };
+    let review_tags = async || -> Vec<Option<TagId>> {
+        sqlx::query_scalar("SELECT tag_id FROM review_log ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    // Again keeps the card in the tag, and Easy finishes it, deleting the tag
+    rate(1).await;
+    rate(4).await;
+    assert!(!tag_exists(&pool, tag.id).await);
+    assert_eq!(review_tags().await, [None, None]);
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(tag_exists(&pool, tag.id).await);
+    assert_eq!(review_tags().await, [Some(tag.id)]);
+}
+
+#[sqlx::test]
+async fn e2e_undo_delete_tag_gives_reviews_back_their_tag(
+    pool_options: sqlx::sqlite::SqlitePoolOptions,
+    options: sqlx::sqlite::SqliteConnectOptions,
+) {
+    use crate::api::tag::delete_tag;
+
+    let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
+    let card_id = create_card_helper(&pool).await;
+    let tag = create_tag(
+        &pool,
+        CreateTagRequest {
+            name: "filtered".to_string(),
+            description: String::new(),
+            query: Some("Hello".to_string()),
+            auto_delete: false,
+            reschedule: true,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    submit_study_action(
+        &pool,
+        SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: StudyAction::Rate(RatingSubmission {
+                card_id,
+                rating: 1,
+                recall_duration: chrono::Duration::seconds(5),
+                rate_duration: chrono::Duration::seconds(2),
+                tag_id: Some(tag.id),
+            }),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let review_tag = async || -> Option<TagId> {
+        sqlx::query_scalar("SELECT tag_id FROM review_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    delete_tag(&pool, tag.id, true).await.unwrap();
+    assert_eq!(review_tag().await, None);
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(review_tag().await, Some(tag.id));
+    assert_eq!(card_tag_ids(&pool, card_id).await, vec![tag.id]);
+}

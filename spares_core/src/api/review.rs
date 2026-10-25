@@ -44,8 +44,10 @@ use crate::api::study_pace::MIN_CARD_REVIEWS;
 use crate::api::study_pace::StudyPaces;
 use crate::api::study_pace::capped_review_seconds;
 use crate::api::tag::create_tag;
+use crate::api::tag::restore_review_tags;
 use crate::api::undo::insert_events;
 use crate::api::undo::join_event_group;
+use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::FilteredTagExit;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
@@ -1467,14 +1469,7 @@ pub(crate) async fn rate_card_with_config(
     // Remove the card from the filtered tag it finished. This waits until the review is written,
     // since deleting an emptied tag first would leave the review referencing a missing tag.
     let left_tag = match finished_tag {
-        Some(filtered_tag) => {
-            let deleted =
-                leave_filtered_tag(db, card_id, filtered_tag.id, filtered_tag.auto_delete).await?;
-            Some(FilteredTagExit {
-                tag_id: filtered_tag.id,
-                deleted_tag: deleted.then(|| filtered_tag.clone()),
-            })
-        }
+        Some(filtered_tag) => Some(finish_filtered_tag(db, card_id, filtered_tag).await?),
         None => None,
     };
 
@@ -1613,17 +1608,7 @@ async fn rate_card_without_rescheduling(
     // Written after the cram, since deleting an emptied tag first would leave the cram
     // referencing a missing tag.
     let left_tag = if finished {
-        let deleted = leave_filtered_tag(
-            db,
-            before_card.id,
-            filtered_tag.id,
-            filtered_tag.auto_delete,
-        )
-        .await?;
-        Some(FilteredTagExit {
-            tag_id: filtered_tag.id,
-            deleted_tag: deleted.then(|| filtered_tag.clone()),
-        })
+        Some(finish_filtered_tag(db, before_card.id, filtered_tag).await?)
     } else {
         None
     };
@@ -1756,24 +1741,32 @@ async fn bury_siblings(
 }
 
 /// Removes the card from a filtered tag it finished, deleting the tag if `auto_delete` is set and
-/// the card was its last. Returns whether the tag was deleted.
+/// the card was its last. Returns the tag if it was deleted.
 pub(crate) async fn leave_filtered_tag(
     db: &SqlitePool,
     card_id: CardId,
     tag_id: TagId,
     auto_delete: bool,
-) -> Result<bool, Error> {
+) -> Result<Option<DeletedTag>, Error> {
     delete_card_tags(db, &[(card_id, tag_id)]).await?;
     if !auto_delete {
-        return Ok(false);
+        return Ok(None);
     }
-    delete_empty_tags(db, &[tag_id]).await?;
-    let remaining: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM tag WHERE id = ?")
-        .bind(tag_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(remaining == 0)
+    Ok(delete_empty_tags(db, &[tag_id]).await?.pop())
+}
+
+/// [`leave_filtered_tag`] for a rating, recording how the card left `tag` for its undo
+async fn finish_filtered_tag(
+    db: &SqlitePool,
+    card_id: CardId,
+    tag: &Tag,
+) -> Result<FilteredTagExit, Error> {
+    let deleted = leave_filtered_tag(db, card_id, tag.id, tag.auto_delete).await?;
+    Ok(FilteredTagExit {
+        tag_id: tag.id,
+        deleted_tag: deleted.as_ref().map(|d| d.tag.clone()),
+        review_log_ids: deleted.map(|d| d.review_log_ids).unwrap_or_default(),
+    })
 }
 
 /// Reverses [`leave_filtered_tag`] for an undone review, recreating the tag if it was deleted.
@@ -1801,6 +1794,7 @@ pub(crate) async fn rejoin_filtered_tag(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     }
+    restore_review_tags(db, left_tag.tag_id, &left_tag.review_log_ids).await?;
     // Skipped if the tag has since been deleted some other way.
     sqlx::query(
         r"INSERT OR IGNORE INTO card_tag (card_id, tag_id) SELECT ?, id FROM tag WHERE id = ?",

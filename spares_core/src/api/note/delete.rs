@@ -20,6 +20,7 @@ use crate::api::placeholders;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::CardLinks;
 use crate::api::undo::payloads::DeleteNotesPayload;
+use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::NoteSnapshot;
 use crate::config::is_test_mode;
 use crate::config::read_internal_config;
@@ -468,7 +469,10 @@ pub(crate) async fn delete_notes_event(
 
 /// Deletes those of `tag_ids` that are [`auto_delete`](Tag::auto_delete) and have no notes or
 /// cards left. Returns the deleted tags.
-pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<Vec<Tag>, Error> {
+pub async fn delete_empty_tags(
+    db: &SqlitePool,
+    tag_ids: &[TagId],
+) -> Result<Vec<DeletedTag>, Error> {
     let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
     delete_empty_tags_on(&mut conn, tag_ids).await
 }
@@ -476,9 +480,23 @@ pub async fn delete_empty_tags(db: &SqlitePool, tag_ids: &[TagId]) -> Result<Vec
 pub(crate) async fn delete_empty_tags_on(
     conn: &mut sqlx::sqlite::SqliteConnection,
     tag_ids: &[TagId],
-) -> Result<Vec<Tag>, Error> {
+) -> Result<Vec<DeletedTag>, Error> {
     let mut deleted = Vec::new();
     for chunk in tag_ids.chunks(MAX_ROWS_IN_QUERY) {
+        // Their reviews, read first since deleting a tag clears the reviews' `tag_id`
+        let query_str = format!(
+            "SELECT tag_id, id FROM review_log WHERE tag_id IN ({}) ORDER BY id",
+            placeholders(chunk.len()),
+        );
+        let mut query = sqlx::query_as(&query_str);
+        for tag_id in chunk {
+            query = query.bind(tag_id);
+        }
+        let reviews: Vec<(TagId, i64)> = query
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let mut reviews = reviews.into_iter().into_group_map();
         let query_str = format!(
             r"DELETE FROM tag
             WHERE id IN ({})
@@ -496,12 +514,14 @@ pub(crate) async fn delete_empty_tags_on(
         for tag_id in chunk {
             query = query.bind(tag_id);
         }
-        deleted.extend(
-            query
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?,
-        );
+        let tags: Vec<Tag> = query
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        deleted.extend(tags.into_iter().map(|tag| DeletedTag {
+            review_log_ids: reviews.remove(&tag.id).unwrap_or_default(),
+            tag,
+        }));
     }
     Ok(deleted)
 }

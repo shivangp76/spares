@@ -833,6 +833,7 @@ async fn add_note_tags(
                 updated_at: tag_response.updated_at,
                 note_ids: vec![],
                 card_ids: vec![],
+                review_log_ids: vec![],
             });
 
             // Add to tag_map for following create note requests
