@@ -12,8 +12,10 @@
 //!   device these files are read-only in practice.
 //!
 //! A browser never writes note or card files, nor renders them: the server does that after the
-//! device's changes reach it (see [`crate::sync`]). So only the code that reads config and
-//! templates goes through this module. Everything else uses `std::fs`, which fails in a browser.
+//! device's changes reach it (see [`crate::sync`]). The web app downloads them, and tells the device
+//! which non-empty HTML files for web clients it has (`load_web_renders`, wasm only), which
+//! [`has_web_render`] answers from. Apart from that, only the code that reads config and templates
+//! goes through this module. Everything else uses `std::fs`, which fails in a browser.
 
 #[cfg(not(target_family = "wasm"))]
 pub use std::fs::create_dir_all;
@@ -29,9 +31,13 @@ pub use memory::create_dir_all;
 #[cfg(target_family = "wasm")]
 pub use memory::files;
 #[cfg(target_family = "wasm")]
+pub use memory::has_web_render;
+#[cfg(target_family = "wasm")]
 pub use memory::is_file;
 #[cfg(target_family = "wasm")]
 pub use memory::load;
+#[cfg(target_family = "wasm")]
+pub use memory::load_web_renders;
 #[cfg(target_family = "wasm")]
 pub use memory::read_to_string;
 #[cfg(target_family = "wasm")]
@@ -43,11 +49,19 @@ pub fn is_file(path: &Path) -> bool {
     path.is_file()
 }
 
+/// Whether `path`, the HTML for web clients next to a rendered file, is there and not empty (see
+/// [`crate::parsers::web_render_filepath`]).
+#[cfg(not(target_family = "wasm"))]
+pub fn has_web_render(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.len() > 0)
+}
+
 /// The in-memory directory of a browser. It's compiled natively under tests, to test it.
 #[cfg(any(test, target_family = "wasm"))]
 #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
 mod memory {
     use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
     use std::io;
     use std::path::Path;
     use std::path::PathBuf;
@@ -64,6 +78,15 @@ mod memory {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The non-empty HTML files for web clients the web app has downloaded, by absolute path
+    static WEB_RENDERS: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+    fn web_renders_lock() -> MutexGuard<'static, BTreeSet<PathBuf>> {
+        WEB_RENDERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Replaces every file with `files`.
     pub fn load(files: BTreeMap<PathBuf, Vec<u8>>) {
         *files_lock() = files;
@@ -76,6 +99,15 @@ mod memory {
 
     pub fn is_file(path: &Path) -> bool {
         files_lock().contains_key(path)
+    }
+
+    /// Replaces the downloaded HTML files for web clients with `paths`.
+    pub fn load_web_renders(paths: BTreeSet<PathBuf>) {
+        *web_renders_lock() = paths;
+    }
+
+    pub fn has_web_render(path: &Path) -> bool {
+        web_renders_lock().contains(path)
     }
 
     pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
@@ -134,6 +166,18 @@ mod memory {
                 io::ErrorKind::InvalidData
             );
             load(BTreeMap::new());
+        }
+
+        /// The only test of `WEB_RENDERS`, which is global.
+        #[test]
+        fn loads_web_renders() {
+            let path = Path::new("/spares/cache/markdown/abc.html");
+            assert!(!has_web_render(path));
+            load_web_renders(BTreeSet::from([path.to_path_buf()]));
+            assert!(has_web_render(path));
+            assert!(!has_web_render(&path.with_extension("pdf")));
+            load_web_renders(BTreeSet::new());
+            assert!(!has_web_render(path));
         }
     }
 }
