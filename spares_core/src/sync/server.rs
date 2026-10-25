@@ -220,7 +220,7 @@ pub async fn full_download(db: &SqlitePool, path: &Path) -> Result<(), Error> {
 }
 
 /// Replaces the server's database with the client's at `path`. Every other client has to do a
-/// full sync afterwards, since the epoch changes.
+/// full sync afterwards, since the epoch changes. Enrolled devices stay enrolled.
 pub async fn full_upload(
     db: &SqlitePool,
     path: &Path,
