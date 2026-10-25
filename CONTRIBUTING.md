@@ -27,6 +27,17 @@ cargo fmt
 cargo clippy
 ```
 
+`spares_core` also builds for the browser, so that the web app can keep a copy of the collection there (in progress). Check that it still does:
+
+```sh
+rustup target add wasm32-unknown-unknown
+# SQLite's C needs a clang that targets wasm. On macOS, Apple's doesn't: use Homebrew's LLVM.
+export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
+cargo clippy -p spares_core --target wasm32-unknown-unknown
+```
+
+There, sqlx is the patched copy in `vendor/` (see `vendor/README.md`).
+
 ## Documentation
 
 Document things where they are implemented, so the docs change with the code:

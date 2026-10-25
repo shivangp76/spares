@@ -4044,6 +4044,7 @@ dependencies = [
  "fancy-regex",
  "fsrs",
  "futures",
+ "getrandom 0.4.3",
  "image",
  "indexmap 2.14.2",
  "indicatif",
@@ -4074,6 +4075,7 @@ dependencies = [
  "unicode-normalization",
  "unscanny",
  "uuid",
+ "web-time",
  "xmltree",
 ]
 

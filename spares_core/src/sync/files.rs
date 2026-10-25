@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 
 use super::bump_notes_version;
 use super::http::HttpRemote;
+use super::http::SYNC_API_KEY_ENV;
 use super::run::SyncMode;
 use super::run::SyncReport;
 use super::run::sync;
@@ -46,7 +47,7 @@ pub async fn sync_now(
         .sync
         .url
         .ok_or_else(|| Error::Sync("`sync.url` is not set in config.toml".to_string()))?;
-    let remote = HttpRemote::new(&url)?;
+    let remote = HttpRemote::new(&url, std::env::var(SYNC_API_KEY_ENV).ok())?;
     let report = sync(db, &remote, mode, temp_dir).await?;
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;
     // Automatic sync sends local changes within a minute, so a sync that only sent is routine.

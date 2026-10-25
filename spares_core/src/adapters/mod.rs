@@ -17,7 +17,8 @@ use crate::parsers::Parseable;
 pub mod impls;
 pub mod migration;
 
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 pub trait SrsAdapter: Send + Sync {
     fn get_adapter_name(&self) -> &'static str;
 
@@ -80,13 +81,15 @@ pub fn get_adapter_from_string(adapter_str: &str) -> Result<Box<dyn SrsAdapter>,
 
 pub fn get_all_adapters() -> Vec<fn() -> Box<dyn SrsAdapter>> {
     // NOTE: Add adapter here
-    let all_adapters: Vec<fn() -> Box<dyn SrsAdapter>> =
-        vec![|| Box::new(impls::anki::AnkiAdapter::new()), || {
+    vec![
+        #[cfg(not(target_family = "wasm"))]
+        || Box::new(impls::anki::AnkiAdapter::new()),
+        || {
             Box::new(impls::spares::SparesAdapter::new(
                 impls::spares::SparesRequestProcessor::Server,
             ))
-        }];
-    all_adapters
+        },
+    ]
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 //! The server over HTTP: `/api/sync/*` on `sync.url` (see `spares_server`'s sync handlers).
 
 use std::path::Path;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -27,16 +28,19 @@ pub struct HttpRemote {
 }
 
 impl HttpRemote {
-    /// `base_url` is the server's address, such as `https://spares.tail1234.ts.net`. The API key
-    /// comes from `SPARES_SYNC_API_KEY`.
-    pub fn new(base_url: &str) -> Result<Self, Error> {
+    /// `base_url` is the server's address, such as `https://spares.tail1234.ts.net`, and
+    /// `api_key` its `SPARES_API_KEY` (a client's `SPARES_SYNC_API_KEY`).
+    pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, Error> {
+        let client = reqwest::Client::builder();
+        // The browser's `fetch` has no timeouts to set.
+        #[cfg(not(target_family = "wasm"))]
+        let client = client
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(600));
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: std::env::var(SYNC_API_KEY_ENV).ok(),
-            client: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(600))
-                .build()?,
+            api_key,
+            client: client.build()?,
         })
     }
 
@@ -94,7 +98,8 @@ impl HttpRemote {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 impl SyncRemote for HttpRemote {
     async fn meta(&self, replica: u8) -> Result<MetaResponse, Error> {
         Ok(self

@@ -12,7 +12,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 
+#[cfg(not(target_family = "wasm"))]
 use indicatif::ParallelProgressIterator;
+#[cfg(not(target_family = "wasm"))]
 use indicatif::ProgressStyle;
 use log::debug;
 use log::info;
@@ -277,17 +279,17 @@ pub fn create_note_files_bulk(
         "Generating note files for the `{}` parser",
         parser.get_parser_name()
     );
-    let style = ProgressStyle::with_template(
-        "[{elapsed_precise}] ETA: {eta} {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-    )
-    .unwrap()
-    .progress_chars("##-");
-    // request.requests.len() as u64
-    let result = request
-        .requests
-        // .iter()
-        .par_iter()
-        .progress_with_style(style)
+    let requests = request.requests.par_iter();
+    // A progress bar in the terminal
+    #[cfg(not(target_family = "wasm"))]
+    let requests = requests.progress_with_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] ETA: {eta} {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-"),
+    );
+    let result = requests
         .map(|create_note_files_request| {
             create_note_files(
                 parser,

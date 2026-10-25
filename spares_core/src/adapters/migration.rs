@@ -1,3 +1,7 @@
+// Creating spares notes from Anki's needs the Anki adapter, which a browser doesn't have, so most
+// of these imports are unused there.
+#![cfg_attr(target_family = "wasm", allow(unused_imports))]
+
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -7,6 +11,7 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+#[cfg(not(target_family = "wasm"))]
 use crate::adapters::impls::anki::AnkiNote;
 use crate::model::NoteId;
 use crate::schema::note::CreateNoteRequest;
@@ -26,6 +31,7 @@ pub struct MigrationData {
 
 pub type MigrationFunc = fn(MigrationData) -> (String, String);
 
+#[cfg(not(target_family = "wasm"))]
 async fn create_parsers(
     client: &Client,
     base_url: &str,
@@ -65,6 +71,7 @@ async fn create_parsers(
     Ok(parser_responses)
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn create_notes(
     client: &Client,
     base_url: &str,

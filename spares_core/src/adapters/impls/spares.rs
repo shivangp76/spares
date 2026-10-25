@@ -258,7 +258,8 @@ impl SparesAdapter {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 impl SrsAdapter for SparesAdapter {
     fn get_adapter_name(&self) -> &'static str {
         "spares"
