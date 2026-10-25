@@ -223,6 +223,13 @@ pub(crate) async fn sync_unenroll_handler(
     Ok(Json(json!({ "removed": removed })))
 }
 
+/// What a device needs from the server's config directory (`spares_core::sync::devices`).
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_config_handler() -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    Ok(Json(devices::device_config().map_err(error_to_response)?))
+}
+
 pub(crate) async fn sync_devices_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, HandlerError> {

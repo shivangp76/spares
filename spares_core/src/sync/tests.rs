@@ -1344,6 +1344,27 @@ async fn the_laptop_and_a_device_editing_one_note_merge() {
     );
 }
 
+#[test]
+fn a_device_gets_the_config_and_every_template() {
+    let config_dir = crate::config::get_config_dir();
+    let template = config_dir.join("typst/templates/spares-test-device-config/card.typ");
+    std::fs::create_dir_all(template.parent().unwrap()).unwrap();
+    std::fs::write(&template, "#let card = 1").unwrap();
+    std::fs::write(template.with_file_name("binary.png"), [0xff, 0xfe]).unwrap();
+    let config = super::devices::device_config();
+    std::fs::remove_dir_all(template.parent().unwrap()).unwrap();
+    let config = config.unwrap();
+    assert_eq!(
+        config.files["typst/templates/spares-test-device-config/card.typ"],
+        "#let card = 1"
+    );
+    assert!(!config.files.keys().any(|path| path.ends_with("binary.png")));
+    let toml = &config.files["config.toml"];
+    assert!(toml.contains("render_browser_parsers = false"), "{toml}");
+    assert!(!toml.contains("[sync]"), "{toml}");
+    assert_eq!(config.image_dir, crate::api::image::get_image_directory());
+}
+
 /// A browser's pool has one connection. A full download used to wait on a second one, which
 /// never came, until the pool timed out.
 #[tokio::test]

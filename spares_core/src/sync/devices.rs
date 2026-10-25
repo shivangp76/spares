@@ -20,6 +20,10 @@
 //! the new device starts above every id the old one handed out before its last sync, deleted ones
 //! too, and the ones it handed out after reached no one.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::path::PathBuf;
+
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
@@ -27,6 +31,13 @@ use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::api::audio::get_audio_directory;
+use crate::api::image::get_image_directory;
+use crate::config::get_config_dir;
+use crate::config::get_external_config_file;
+use crate::config::read_external_config;
+use crate::config::server_config;
+use crate::parsers::get_all_parsers;
 
 /// The replica numbers devices are enrolled under. `0` is the laptop and `1` the server.
 pub const DEVICE_REPLICAS: std::ops::RangeInclusive<u8> = 2..=4;
@@ -147,4 +158,70 @@ pub(crate) async fn check_enrolled(conn: &mut SqliteConnection, replica: u8) -> 
     } else {
         Err(Error::NotEnrolled(replica))
     }
+}
+
+/// `GET /api/sync/config`: the files a device needs from the server's config directory, which it
+/// loads into [`crate::platform`] and saves at each sync. Settings are changed on the laptop, so
+/// they are read-only on a device.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeviceConfig {
+    /// By path relative to the config directory: `config.toml` (made by [`server_config`], as for
+    /// the server itself) and every file in each parser's `templates` directory, such as
+    /// `typst/templates/card_template.typ`. Typst cards compile in the browser from their template,
+    /// which can import the files next to it.
+    pub files: BTreeMap<String, String>,
+    /// Where the server stores images and audio. Notes name these files by their path, so a device
+    /// names the ones it adds by the path they get on the server.
+    pub image_dir: PathBuf,
+    pub audio_dir: PathBuf,
+}
+
+/// The server's [`DeviceConfig`]. Files that aren't UTF-8 are left out.
+pub fn device_config() -> Result<DeviceConfig, Error> {
+    // Writes the default config.toml if there is none yet.
+    read_external_config()?;
+    let path = get_external_config_file();
+    let contents = std::fs::read_to_string(&path).map_err(|e| Error::Io {
+        description: format!("Failed to read {}", path.display()),
+        source: e,
+    })?;
+    let config_dir = get_config_dir();
+    let mut files = BTreeMap::from([("config.toml".to_string(), server_config(&contents)?)]);
+    for parser in get_all_parsers() {
+        let templates = config_dir
+            .join(parser().get_parser_name())
+            .join("templates");
+        add_text_files(&config_dir, &templates, &mut files)?;
+    }
+    Ok(DeviceConfig {
+        files,
+        image_dir: get_image_directory(),
+        audio_dir: get_audio_directory(),
+    })
+}
+
+/// Adds the UTF-8 files under `dir` to `files`, by their path relative to `base`.
+fn add_text_files(
+    base: &Path,
+    dir: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<(), Error> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            add_text_files(base, &path, files)?;
+        } else if let Ok(contents) = std::fs::read_to_string(&path) {
+            let relative = path.strip_prefix(base).unwrap_or(&path);
+            files.insert(relative.to_string_lossy().into_owned(), contents);
+        } else {
+            log::warn!(
+                "Not sending {} to devices: not a UTF-8 text file",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }

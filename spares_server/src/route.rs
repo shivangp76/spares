@@ -137,6 +137,8 @@ use crate::handlers::sync::SYNC_BODY_LIMIT;
 use crate::handlers::sync::list_sync_conflicts_handler;
 use crate::handlers::sync::resolve_sync_conflict_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_config_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_devices_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_enroll_handler;
@@ -256,6 +258,7 @@ fn sync_routes() -> Router<Arc<AppState>> {
         .route("/api/sync/enroll", post(sync_enroll_handler))
         .route("/api/sync/unenroll", post(sync_unenroll_handler))
         .route("/api/sync/devices", get(sync_devices_handler))
+        .route("/api/sync/config", get(sync_config_handler))
         .route("/api/sync/run", post(sync_run_handler))
 }
 
