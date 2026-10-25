@@ -513,6 +513,12 @@ pub mod note {
         pub event_id: Option<i64>,
     }
 
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct DeleteNotesResponse {
+        /// The event to undo the delete with, if it was logged and deleted any notes
+        pub event_id: Option<i64>,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct FindLiveNoteRequest {
         pub live_sync_name: String,

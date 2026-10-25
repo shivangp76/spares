@@ -40,6 +40,7 @@ use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::parsers::web_render_filepath;
 use crate::schema::note::DeleteNotesRequest;
+use crate::schema::note::DeleteNotesResponse;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
     if is_test_mode() {
@@ -191,13 +192,13 @@ pub async fn delete_notes(
     body: DeleteNotesRequest,
     all_parsers: &[fn() -> Box<dyn Parseable>],
     log: bool,
-) -> Result<(), Error> {
+) -> Result<DeleteNotesResponse, Error> {
     let DeleteNotesRequest { selector } = body;
 
     // Resolve selector to get note ids
     let note_ids = selector.to_note_ids(db).await?;
     if note_ids.is_empty() {
-        return Ok(());
+        return Ok(DeleteNotesResponse::default());
     }
 
     // Fetch note snapshots (includes cards, tags, keywords) for logging and file deletion
@@ -269,7 +270,7 @@ pub async fn delete_notes(
         notes: note_snapshots,
         deleted_tags: Vec::new(),
     };
-    let payload = delete_notes_from_db(db, &note_ids, payload, log).await?;
+    let (payload, event_id) = delete_notes_from_db(db, &note_ids, payload, log).await?;
 
     // Delete files for all notes (derive parser_id, data, and card orders from snapshots)
     let grouped_note_data = payload
@@ -304,7 +305,7 @@ pub async fn delete_notes(
     config.linked_notes_generated = false;
     write_internal_config(db, &config).await?;
 
-    Ok(())
+    Ok(DeleteNotesResponse { event_id })
 }
 
 /// What deleting the cards of `notes` will detach from them: their reviews and filtered tags
@@ -367,13 +368,13 @@ async fn fetch_card_links(
 }
 
 /// Shared core: delete notes from the DB, clean up auto-delete tags, and optionally log the event.
-/// Returns `payload` with the deleted tags.
+/// Returns `payload` with the deleted tags, and the event if `log`.
 async fn delete_notes_from_db(
     db: &SqlitePool,
     note_ids: &[NoteId],
     mut payload: DeleteNotesPayload,
     log: bool,
-) -> Result<DeleteNotesPayload, Error> {
+) -> Result<(DeleteNotesPayload, Option<i64>), Error> {
     // Get all tags with `auto_delete` enabled for all notes (batched query)
     // NOTE: AUTOMATIC REBUILD: If `Automatic` rebuild is enabled in the future, then a check would be added to ensure `auto_delete` is false. In other words, `auto_delete` as true and rebuild as `Automatic` conflict since once the tag has 0 notes left, it will be deleted so that means notes are not automatically added to it anymore.
     let tags_rows: Vec<TagId> =
@@ -430,8 +431,8 @@ async fn delete_notes_from_db(
         .collect::<Vec<_>>();
     payload.deleted_tags = delete_empty_tags(db, &all_tag_ids).await?;
 
-    if log {
-        insert_events(
+    let event_id = if log {
+        let event_ids = insert_events(
             db,
             &[(
                 EventType::DeleteNotes,
@@ -441,9 +442,12 @@ async fn delete_notes_from_db(
             None,
         )
         .await?;
-    }
+        event_ids.first().copied()
+    } else {
+        None
+    };
 
-    Ok(payload)
+    Ok((payload, event_id))
 }
 
 /// Delete notes from the DB only (no file operations, no config update).

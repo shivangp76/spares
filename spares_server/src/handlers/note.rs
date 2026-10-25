@@ -96,10 +96,11 @@ pub(crate) async fn delete_notes_handler(
     Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
-    run_shared(async move { delete_notes(&db, body, &get_all_parsers(), true).await })
-        .await
-        .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    let delete_notes_res =
+        run_shared(async move { delete_notes(&db, body, &get_all_parsers(), true).await })
+            .await
+            .map_err(error_to_response)?;
+    Ok(Json(delete_notes_res))
 }
 
 pub(crate) async fn list_notes_handler(

@@ -626,7 +626,9 @@ async fn delete_note(pool: &SqlitePool, note_id: crate::model::NoteId) {
         true,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .event_id
+    .expect("a logged delete returns its event");
 }
 
 #[sqlx::test]
