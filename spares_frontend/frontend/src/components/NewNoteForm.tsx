@@ -14,7 +14,7 @@ import type { NotePaneHandle } from './NoteDetail';
 import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
-const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13, background: 'var(--bg)' };
+const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, background: 'var(--bg)' };
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
 const VIM_TIP = 'With Vim keybindings, :w, :wq or :x creates the note, and :q cancels it (:q! drops what has been typed). :e! clears the form.';

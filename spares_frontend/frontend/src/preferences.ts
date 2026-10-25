@@ -128,6 +128,21 @@ const vimKeybindings = booleanPreference('spares_vim_keybindings', () => !window
 export const setVimKeybindings = vimKeybindings.set;
 export const useVimKeybindings = vimKeybindings.use;
 
+export const EDITOR_FONT_SIZES = ['12', '13', '14', '16', '18', '20'] as const;
+export type EditorFontSize = typeof EDITOR_FONT_SIZES[number];
+/** How large the note editors' text is, in pixels. The typed answer box keeps its own size. */
+const editorFontSize = choicePreference<EditorFontSize>('spares_editor_font_size', EDITOR_FONT_SIZES, '13');
+export const setEditorFontSize = editorFontSize.set;
+export const useEditorFontSize = editorFontSize.use;
+
+export const EDITOR_FONTS = ['monospace', 'interface'] as const;
+export type EditorFont = typeof EDITOR_FONTS[number];
+export const EDITOR_FONT_LABELS: Record<EditorFont, string> = { monospace: 'Monospace', interface: 'Same as Interface' };
+/** Which font the note editors use, as notes of prose can be easier to read in the interface's. */
+const editorFont = choicePreference<EditorFont>('spares_editor_font', EDITOR_FONTS, 'monospace');
+export const setEditorFont = editorFont.set;
+export const useEditorFont = editorFont.use;
+
 export const PAGE_WIDTHS = ['normal', 'wide', 'full'] as const;
 export type PageWidth = typeof PAGE_WIDTHS[number];
 export const PAGE_WIDTH_LABELS: Record<PageWidth, string> = { normal: 'Normal', wide: 'Wide', full: 'Full Screen' };

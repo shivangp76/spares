@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
-  CARD_ZOOMS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
-  setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom, usePageWidth, usePagesPerRow, useReadAloud,
-  useShowReviewTimer, useVimKeybindings,
-  type CardZoom,
+  CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, PAGE_WIDTH_LABELS, PAGE_WIDTHS, PAGES_PER_ROW, PAGES_PER_ROW_LABELS, setCardZoom, setPageWidth, setPagesPerRow,
+  setEditorFont, setEditorFontSize, setReadAloud, setShowReviewTimer, setVimKeybindings, useCardZoom, useEditorFont,
+  useEditorFontSize, usePageWidth, usePagesPerRow, useReadAloud, useShowReviewTimer, useVimKeybindings,
+  type CardZoom, type EditorFontSize,
 } from '../preferences';
 import {
   setThemePreference, setTypstThemePreference, useThemePreference, useTypstThemePreference,
@@ -49,6 +49,8 @@ export default function SettingsPage() {
   const readAloud = useReadAloud();
   const voices = useSpeechVoices();
   const vimKeybindings = useVimKeybindings();
+  const editorFontSize = useEditorFontSize();
+  const editorFont = useEditorFont();
   const pageWidth = usePageWidth();
   const cardZoom = useCardZoom();
   const pagesPerRow = usePagesPerRow();
@@ -207,6 +209,30 @@ export default function SettingsPage() {
         </label>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
           Off by default on touchscreens, since a phone keyboard can't leave Vim's normal mode to type.
+        </p>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 12 }}>
+          Text size:
+          <select value={editorFontSize} onChange={e => setEditorFontSize(e.target.value as EditorFontSize)}>
+            {EDITOR_FONT_SIZES.map(size => <option key={size} value={size}>{size}px</option>)}
+          </select>
+        </label>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
+          <span>Font:</span>
+          {EDITOR_FONTS.map(font => (
+            <label key={font} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="editor-font"
+                value={font}
+                checked={editorFont === font}
+                onChange={() => setEditorFont(font)}
+              />
+              {EDITOR_FONT_LABELS[font]}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          For the note editor&apos;s text, tags and keywords. The typed answer box while reviewing is unchanged.
         </p>
       </fieldset>
     </div>

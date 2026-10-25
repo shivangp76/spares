@@ -19,7 +19,7 @@ import NoteSyntaxButton from './NoteSyntaxHelp';
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
 const metaLabel: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' };
-const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4, fontSize: 13 };
+const cmStyle = { border: '1px solid var(--border-subtle)', borderRadius: 4 };
 
 const VIM_TIP = 'With Vim keybindings, :w saves the note, :q closes it (:q! drops unsaved changes), and :wq or :x saves and closes it. :e! undoes the changes since the note was last saved.';
 
