@@ -11,9 +11,6 @@
 //! edit stores a new image and clozes pair under a unique name and points the note at it. Names
 //! are not content addressed since the orders written into an SVG belong to one note.
 
-use std::fs::create_dir_all;
-use std::fs::read;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -43,6 +40,10 @@ use crate::parsers::image_occlusion::back_emphasis_image_occlusion_default;
 use crate::parsers::image_occlusion::get_clozes_from_svg_str;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
 use crate::parsers::image_occlusion::read_image_occlusions;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::read;
+use crate::platform::write;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::UpdateNotesRequest;
 use crate::schema::note::UpdateNotesResponse;
@@ -181,7 +182,7 @@ fn store_image_occlusion_files(
             clozes_path.set_extension("svg");
             (image_path, clozes_path)
         })
-        .find(|(image_path, clozes_path)| !image_path.exists() && !clozes_path.exists())
+        .find(|(image_path, clozes_path)| !is_file(image_path) && !is_file(clozes_path))
         .ok_or_else(|| {
             other_error(format!(
                 "Failed to find an unused image occlusion file name for {image_filename}"
@@ -277,10 +278,12 @@ pub async fn update_note_image_occlusion(
         ))
     })?;
 
-    let image = read(&old.original_image_filepath).map_err(|e| Error::Io {
-        description: format!("Failed to read {}", old.original_image_filepath.display()),
-        source: e,
-    })?;
+    let image = read(&old.original_image_filepath)
+        .await
+        .map_err(|e| Error::Io {
+            description: format!("Failed to read {}", old.original_image_filepath.display()),
+            source: e,
+        })?;
     let image_filename = old
         .original_image_filepath
         .file_name()
@@ -316,19 +319,32 @@ pub async fn update_note_image_occlusion(
 
 /// Reads a file from the image occlusion directory. Paths outside of it are rejected so this
 /// cannot be used to read arbitrary files.
-pub fn read_image_occlusion_file(path: &str) -> Result<Vec<u8>, Error> {
+pub async fn read_image_occlusion_file(path: &str) -> Result<Vec<u8>, Error> {
     let not_found = || other_error(format!("No image occlusion file at {path}"));
-    let directory = get_image_occlusion_directory()
-        .canonicalize()
-        .map_err(|_| not_found())?;
-    let path = Path::new(path).canonicalize().map_err(|_| not_found())?;
-    if !path.starts_with(&directory) || !path.is_file() {
-        return Err(not_found());
-    }
-    read(&path).map_err(|e| Error::Io {
+    let path = image_occlusion_file_path(Path::new(path)).ok_or_else(not_found)?;
+    read(&path).await.map_err(|e| Error::Io {
         description: format!("Failed to read {}", path.display()),
         source: e,
     })
+}
+
+/// `path`, if it is a file in the image occlusion directory, without symbolic links.
+#[cfg(not(target_family = "wasm"))]
+fn image_occlusion_file_path(path: &Path) -> Option<PathBuf> {
+    let directory = get_image_occlusion_directory().canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    (path.starts_with(&directory) && path.is_file()).then_some(path)
+}
+
+/// `path`, if it is a file in the image occlusion directory. A browser's files have no links, so
+/// only `..` could leave it.
+#[cfg(target_family = "wasm")]
+fn image_occlusion_file_path(path: &Path) -> Option<PathBuf> {
+    let inside = path.starts_with(get_image_occlusion_directory())
+        && !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+    (inside && is_file(path)).then(|| path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -426,20 +442,27 @@ mod tests {
         assert_eq!(image_name_again.len(), image_name.len());
     }
 
-    #[test]
-    fn test_read_file_only_from_image_occlusion_directory() {
+    #[tokio::test]
+    async fn test_read_file_only_from_image_occlusion_directory() {
         let svg = clozes_svg(RECT_1);
         let (image_path, _) =
             store_image_occlusion_files(IMAGE.as_bytes(), "read.svg", &svg).unwrap();
         assert_eq!(
-            read_image_occlusion_file(image_path.to_str().unwrap()).unwrap(),
+            read_image_occlusion_file(image_path.to_str().unwrap())
+                .await
+                .unwrap(),
             IMAGE.as_bytes()
         );
         let escaping = get_image_occlusion_directory().join("../../../etc/passwd");
-        assert!(read_image_occlusion_file(escaping.to_str().unwrap()).is_err());
-        assert!(read_image_occlusion_file("/etc/passwd").is_err());
+        let read = |path: String| async move { read_image_occlusion_file(&path).await };
+        assert!(read(escaping.to_string_lossy().into_owned()).await.is_err());
+        assert!(read("/etc/passwd".to_string()).await.is_err());
         let directory = get_image_occlusion_directory();
-        assert!(read_image_occlusion_file(directory.to_str().unwrap()).is_err());
+        assert!(
+            read(directory.to_string_lossy().into_owned())
+                .await
+                .is_err()
+        );
     }
 
     async fn create_note_with_image_occlusion(
