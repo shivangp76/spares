@@ -1,4 +1,5 @@
 mod cloud;
+mod devices;
 mod two_way;
 
 use clap::Args;
@@ -34,6 +35,11 @@ pub(crate) enum SyncSubcommand {
     },
     /// Resolve the notes a sync could not merge (tagged `sync-conflict`), one at a time
     Conflicts,
+    /// List the devices that keep a copy of the collection (replicas 2 to 4), or add or remove one
+    Devices {
+        #[command(subcommand)]
+        action: Option<devices::DevicesAction>,
+    },
 }
 
 pub(crate) async fn sync_notes(
@@ -56,5 +62,6 @@ pub(crate) async fn sync_notes(
             two_way::sync_cloud(base_url, client, mode).await
         }
         SyncSubcommand::Conflicts => two_way::resolve_conflicts(base_url, client).await,
+        SyncSubcommand::Devices { action } => devices::devices(action).await,
     }
 }
