@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, createTag, deleteTag, listTags, rebuildTag, renameTags, updateTag } from '../api/client';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import Pagination from '../components/Pagination';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { useAuth } from '../hooks/useAuth';
@@ -324,7 +324,7 @@ function TagForm({ tag, subtags, onSaved, onCancel }: { tag: TagResponse | null;
 }
 
 export default function TagsPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const [tags, setTags] = useState<TagResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -426,9 +426,7 @@ export default function TagsPage() {
 
   return (
     <div className="page" style={{ maxWidth: 'max(1000px, var(--page-max-width))' }}>
-      <div className="page-navbar">
-        <Navbar onLogout={logout} help={keys.help} />
-      </div>
+      <NavbarHelp help={keys.help} />
       <h2 style={{ marginBottom: 16 }}>Tags</h2>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { listParsers } from '../api/client';
 import ImageOcclusionEditor from '../components/ImageOcclusionEditor';
-import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { ParserResponse } from '../types/spares';
@@ -14,7 +13,7 @@ const PARSERS_LIMIT = 1000;
 /** Makes image occlusions for notes written outside of the frontend, e.g. in a text editor and
     synced with the CLI. Notes edited here can insert them directly instead. */
 export default function ImageOcclusionPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const isNarrow = useMediaQuery('(max-width: 640px)');
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
@@ -47,7 +46,6 @@ export default function ImageOcclusionPage() {
 
   return (
     <div className="page">
-      <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 8 }}>Image Occlusion</h2>
       <p style={{ marginTop: 0, fontSize: 14, color: 'var(--text-secondary)' }}>
         Draw clozes over an image. The image and clozes are stored on the server, and you get a block to paste into a note.

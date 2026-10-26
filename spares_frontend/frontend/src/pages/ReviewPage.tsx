@@ -49,7 +49,7 @@ import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
 import AudioBar from '../components/AudioBar';
 import ReviewHeatmap from '../components/ReviewHeatmap';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useAuth } from '../hooks/useAuth';
 import { useCardStates } from '../hooks/useCardStates';
@@ -201,7 +201,7 @@ const RECENT_FILTER_PREFIX: Record<FilterMode, string> = { query: '', tagName: '
 const sameFilter = (a: RecentFilter, b: RecentFilter) => a.mode === b.mode && a.input === b.input;
 
 export default function ReviewPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const { stateName } = useCardStates();
 
@@ -1089,7 +1089,7 @@ export default function ReviewPage() {
 
   return (
     <div className={splitNote ? 'page review-split' : 'page'}>
-      <Navbar onLogout={logout} help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
+      <NavbarHelp help={{ open: showKeybindings, onOpenChange: setShowKeybindings, bindings: keybindings }} />
       {/* On phones the heading, its top margin and the session's actions are kept to one short row,
           so the card starts near the top of the screen */}
       <div style={{ display: 'flex', alignItems: isNarrow ? 'center' : 'baseline', gap: 8, marginBottom: isNarrow ? 8 : 0 }}>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import { useRowKeys } from '../hooks/useRowKeys';
 import type { ParserResponse } from '../types/spares';
@@ -14,7 +14,7 @@ const smallButton: React.CSSProperties = { padding: '2px 8px', fontSize: 12 };
 
 /** `spares parser list/add/edit/delete`. */
 export default function ParsersPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export default function ParsersPage() {
 
   return (
     <div className="page">
-      <Navbar onLogout={logout} help={keys.help} />
+      <NavbarHelp help={keys.help} />
       <h2 style={{ marginBottom: 16 }}>Parsers</h2>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>

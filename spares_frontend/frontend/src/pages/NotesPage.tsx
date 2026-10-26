@@ -9,7 +9,7 @@ import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import type { IdsOrQuery, RowSelection } from '../selection';
@@ -75,7 +75,7 @@ function noteColumns(matches: Map<number, [number, number][]>): Column<NoteRespo
 }
 
 export default function NotesPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
@@ -365,9 +365,7 @@ export default function NotesPage() {
         .notes-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
-      <div className="page-navbar">
-        <Navbar onLogout={logout} help={keys} />
-      </div>
+      <NavbarHelp help={keys} />
       <h2 style={{ marginBottom: 16 }}>Notes</h2>
 
       <div className="split">

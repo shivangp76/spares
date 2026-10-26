@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, getNote, getNoteGraph } from '../api/client';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import NoteGraph, { type GraphLayout, type NoteGraphHandle } from '../components/NoteGraph';
 import { DEFAULT_DISPLAY, DEFAULT_FORCES, GROUP_COLORS, RELATION_COLORS, STUDY_COLORS, formatGroup, parseGroup, tagColor, unmatchedNodes, type GraphDisplay, type GraphForces, type GraphGroup } from '../graphLayout';
@@ -140,7 +140,7 @@ function Slider({ label, title, value, min, max, step, onChange, disabled }: {
 }
 
 export default function GraphPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   // Kept in the URL, so a graph can be linked to and is the same after going back to it
@@ -310,9 +310,7 @@ export default function GraphPage() {
 
   return (
     <div className="page-wide">
-      <div className="page-navbar">
-        <Navbar onLogout={logout} help={keys} />
-      </div>
+      <NavbarHelp help={keys} />
       <h2 style={{ marginBottom: 16 }}>Graph</h2>
 
       <div className="split">

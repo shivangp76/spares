@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Navbar from '../components/Navbar';
 import { useAuth } from '../hooks/useAuth';
 import {
   CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, LINE_WRAPPING_LABELS, LINE_WRAPPINGS, PAGE_WIDTH_LABELS,
@@ -44,7 +43,7 @@ function useSpeechVoices(): SpeechSynthesisVoice[] {
 
 /** Settings kept in this browser. */
 export default function SettingsPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const theme = useThemePreference();
   const typstTheme = useTypstThemePreference();
@@ -68,7 +67,6 @@ export default function SettingsPage() {
 
   return (
     <div className="page">
-      <Navbar onLogout={logout} />
       <h2 style={{ marginBottom: 16 }}>Settings</h2>
 
       <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>

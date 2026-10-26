@@ -345,10 +345,16 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   padding: 24px;
 }
 
-/* Their navbar, as wide as a common page's, so it stays put between pages */
-.page-navbar {
+/* The navbar above every page, as wide as a common page, so it stays put between pages */
+.app-navbar {
   max-width: var(--page-max-width);
   margin: 0 auto;
+  padding: 24px 24px 0;
+}
+
+.app-navbar ~ .page,
+.app-navbar ~ .page-wide {
+  padding-top: 0;
 }
 
 /* Wide tables scroll inside their own box instead of widening the page */
@@ -569,7 +575,8 @@ html:has(.review-answer-bar) {
 
 /* With a note open on a wide screen, the page is the left half of the screen, as wide as the page
    width setting allows within it, and the note editor the right half, scrolling on its own */
-.page.review-split {
+.page.review-split,
+:root:has(.page.review-split) .app-navbar {
   box-sizing: border-box;
   max-width: min(var(--page-max-width), 50%);
   margin: 0 0 0 max(0px, (50% - var(--page-max-width)) / 2);
@@ -631,6 +638,10 @@ html:has(.review-answer-bar) {
   .page,
   .page-wide {
     padding: 12px;
+  }
+
+  .app-navbar {
+    padding: 12px 12px 0;
   }
 
   .form-grid {

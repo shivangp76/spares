@@ -5,7 +5,6 @@ import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import BarChart from '../components/charts/BarChart';
 import { cumulative, daysBetween, fillDays, HOUR_LABELS, percent, toSeries, type Series } from '../components/charts/chartData';
 import Histogram from '../components/charts/Histogram';
-import Navbar from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import ReviewHeatmap from '../components/ReviewHeatmap';
@@ -426,7 +425,7 @@ function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) 
 }
 
 export default function StatisticsPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const { online, pending } = useOfflineStatus();
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_statistics_recent_searches');
@@ -537,8 +536,6 @@ export default function StatisticsPage() {
 
   return (
     <div className="page">
-      <Navbar onLogout={logout} />
-
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <SearchInput
           value={queryInput}

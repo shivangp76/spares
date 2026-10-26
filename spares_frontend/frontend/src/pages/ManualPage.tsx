@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Marked } from 'marked';
-import Navbar from '../components/Navbar';
 import { MANUAL_PAGES, headingAnchor, manualHref, manualPath } from '../help/pages';
 import { useAuth } from '../hooks/useAuth';
 
@@ -30,7 +29,7 @@ export default function ManualPage() {
   const { page = MANUAL_PAGES[0].file.replace(/\.md$/, '') } = useParams();
   const { hash } = useLocation();
   const navigate = useNavigate();
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const file = `${page}.md`;
   const text = FILES[`../manual/${file}`];
   const html = useMemo(() => (text === undefined ? '' : marked.parse(text, { async: false })), [text]);
@@ -54,7 +53,7 @@ export default function ManualPage() {
 
   return (
     <div className="page">
-      {credentials ? <Navbar onLogout={logout} /> : <div style={{ marginBottom: 16 }}><Link to="/login">Log in</Link></div>}
+      {!credentials && <div style={{ marginBottom: 16 }}><Link to="/login">Log in</Link></div>}
       <div className="manual">
         <nav className="manual-contents" aria-label="Pages of the manual">
           {MANUAL_PAGES.map(p =>

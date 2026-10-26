@@ -5,7 +5,7 @@ import BulkActionBar, { Checkbox, type BulkAction, type BulkActionBarHandle } fr
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
 import CardTools from '../components/CardTools';
-import Navbar from '../components/Navbar';
+import { NavbarHelp } from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import Pagination from '../components/Pagination';
@@ -152,7 +152,7 @@ function replaceCard(cards: CardResponse[], card: CardResponse): CardResponse[] 
 }
 
 export default function CardsPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const { stateName } = useCardStates();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -358,9 +358,7 @@ export default function CardsPage() {
         .cards-row-selected { background-color: var(--selected) !important; }
       `}</style>
 
-      <div className="page-navbar">
-        <Navbar onLogout={logout} help={keys} />
-      </div>
+      <NavbarHelp help={keys} />
       <h2 style={{ marginBottom: 16 }}>Cards</h2>
 
       <div className="split">

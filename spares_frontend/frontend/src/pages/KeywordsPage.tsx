@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDuplicateKeywords, getNote, getNoteLinks, getUnmatchedKeywords, listKeywords, searchKeyword } from '../api/client';
-import Navbar from '../components/Navbar';
 import NoteDetail from '../components/NoteDetail';
 import Pagination from '../components/Pagination';
 import RecentSearches from '../components/RecentSearches';
@@ -309,7 +308,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
 }
 
 export default function KeywordsPage() {
-  const { credentials, logout } = useAuth();
+  const { credentials } = useAuth();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('all');
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
@@ -331,10 +330,6 @@ export default function KeywordsPage() {
 
   return (
     <div className="page-wide">
-
-      <div className="page-navbar">
-        <Navbar onLogout={logout} />
-      </div>
       <h2 style={{ marginBottom: 16 }}>Keywords</h2>
 
       <div className="split">

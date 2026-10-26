@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { describeReverted, redoEvent, undoEvent } from '../api/client';
 import { PAGE_HELP } from '../help/pages';
@@ -12,25 +12,43 @@ import SavedCopiesNotice from './SavedCopiesNotice';
 import SyncButton from './SyncButton';
 import { errorMessage } from '../utils';
 
-interface NavbarProps {
-  onLogout: () => void;
-  extra?: React.ReactNode;
-  /** For a page that opens its help itself, with `?`, and has shortcuts of its own. Otherwise the
-      navbar's `?` opens it. */
-  help?: { open: boolean; onOpenChange: (open: boolean) => void; bindings: Keybinding[] };
+/** The help of a page that opens it itself, with `?`, and has shortcuts of its own. */
+interface Help {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  bindings: Keybinding[];
 }
+
+/** How a page's `NavbarHelp` lets the navbar's Help button open it. */
+const PageHelpContext = createContext<(opener: { setOpen: (open: boolean) => void } | null) => void>(() => {});
 
 // How long after `g` its second key can be pressed
 const GO_TO_MS = 1500;
 
-export default function Navbar({ onLogout, extra, help }: NavbarProps) {
+/**
+ * A page's help, with its shortcuts, which the navbar's Help button opens. Pages without
+ * shortcuts of their own leave it out, and the navbar's `?` opens their help.
+ */
+export function NavbarHelp({ help: { open, onOpenChange, bindings } }: { help: Help }) {
+  const { pathname } = useLocation();
+  const setOpener = useContext(PageHelpContext);
+  useEffect(() => {
+    setOpener({ setOpen: onOpenChange });
+    return () => setOpener(null);
+  }, [setOpener, onOpenChange]);
+  const pageHelp = PAGE_HELP[pathname];
+  return open && pageHelp ? <PageHelp help={pageHelp} bindings={bindings} onClose={() => onOpenChange(false)} /> : null;
+}
+
+/** Shown above every page and kept between them, so its buttons don't flicker. */
+export default function Navbar({ onLogout, children }: { onLogout: () => void; children: React.ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [helpOpenHere, setHelpOpenHere] = useState(false);
-  const helpOpen = help?.open ?? helpOpenHere;
-  const setHelpOpen = help?.onOpenChange ?? setHelpOpenHere;
+  const [pageHelpOpener, setPageHelpOpener] = useState<{ setOpen: (open: boolean) => void } | null>(null);
+  // The page whose help the navbar opened, so going to another closes it
+  const [helpOpenOn, setHelpOpenOn] = useState<string | null>(null);
   const pageHelp = PAGE_HELP[pathname];
-  const handlesHelpKey = !help && !!pageHelp;
+  const handlesHelpKey = !pageHelpOpener && !!pageHelp;
 
   // `?` opens the help, unless the page handles it, or it is typed into a box
   useEffect(() => {
@@ -38,11 +56,11 @@ export default function Navbar({ onLogout, extra, help }: NavbarProps) {
     function handleKey(e: KeyboardEvent) {
       if (keyName(e) !== '?' || takesKeys(e.target)) return;
       e.preventDefault();
-      setHelpOpenHere(open => !open);
+      setHelpOpenOn(open => (open === pathname ? null : pathname));
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handlesHelpKey]);
+  }, [handlesHelpKey, pathname]);
   // `g` and then a page's key in `NAV_LINKS` goes to it, as in Gmail, listed as `GO_TO_SHORTCUTS`.
   // They are listened to before the page's own keys, so that the second does nothing else, as `s`
   // would suspend the card being reviewed.
@@ -102,39 +120,43 @@ export default function Navbar({ onLogout, extra, help }: NavbarProps) {
   }
 
   return (
-    <nav className="navbar">
-      <div className="navbar-links">
-        {NAV_LINKS.map(({ to, label }) =>
-          pathname === to || pathname.startsWith(`${to}/`) ? (
-            <span key={to} ref={currentLinkRef} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
-          ) : (
-            <Link key={to} to={to} className="navbar-link">{label}</Link>
-          )
-        )}
+    <PageHelpContext.Provider value={setPageHelpOpener}>
+      <div className="app-navbar">
+        <nav className="navbar">
+          <div className="navbar-links">
+            {NAV_LINKS.map(({ to, label }) =>
+              pathname === to || pathname.startsWith(`${to}/`) ? (
+                <span key={to} ref={currentLinkRef} className="navbar-link navbar-link-current" aria-current="page">{label}</span>
+              ) : (
+                <Link key={to} to={to} className="navbar-link">{label}</Link>
+              )
+            )}
+          </div>
+          <div className="navbar-actions">
+            <OfflineIndicator />
+            <SavedCopiesNotice />
+            <SyncButton onStatus={setUndoStatus} />
+            <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>
+            {lastUndoId !== null && <button onClick={redoLast} className="navbar-button" title="Redo the change just undone"><RedoIcon />Redo last undo</button>}
+            {pageHelp && (
+              <button onClick={() => (pageHelpOpener ? pageHelpOpener.setOpen(true) : setHelpOpenOn(pathname))} className="navbar-button" title="What this page is for, its keyboard shortcuts, and the manual">
+                Help <span className="key-hint">(?)</span>
+              </button>
+            )}
+            <button onClick={onLogout} className="navbar-button">Logout</button>
+          </div>
+          {helpOpenOn === pathname && !pageHelpOpener && pageHelp && <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />}
+          {undoStatus && (
+            <div style={{ flexBasis: '100%', marginTop: 4, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span>{undoStatus}</span>
+              {/* Pages don't know what the undone or redone event changed, so offer to refetch everything */}
+              <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>
+              <button onClick={() => setUndoStatus(null)} style={{ padding: '2px 8px', fontSize: 12 }}>Dismiss</button>
+            </div>
+          )}
+        </nav>
       </div>
-      <div className="navbar-actions">
-        <OfflineIndicator />
-        <SavedCopiesNotice />
-        {extra}
-        <SyncButton onStatus={setUndoStatus} />
-        <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>
-        {lastUndoId !== null && <button onClick={redoLast} className="navbar-button" title="Redo the change just undone"><RedoIcon />Redo last undo</button>}
-        {pageHelp && (
-          <button onClick={() => setHelpOpen(true)} className="navbar-button" title="What this page is for, its keyboard shortcuts, and the manual">
-            Help <span className="key-hint">(?)</span>
-          </button>
-        )}
-        <button onClick={onLogout} className="navbar-button">Logout</button>
-      </div>
-      {helpOpen && pageHelp && <PageHelp help={pageHelp} bindings={help?.bindings} onClose={() => setHelpOpen(false)} />}
-      {undoStatus && (
-        <div style={{ flexBasis: '100%', marginTop: 4, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span>{undoStatus}</span>
-          {/* Pages don't know what the undone or redone event changed, so offer to refetch everything */}
-          <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>
-          <button onClick={() => setUndoStatus(null)} style={{ padding: '2px 8px', fontSize: 12 }}>Dismiss</button>
-        </div>
-      )}
-    </nav>
+      {children}
+    </PageHelpContext.Provider>
   );
 }
