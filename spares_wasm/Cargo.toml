@@ -20,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 async-trait = "0.1.92"
 axum = { version = "0.8.9", default-features = false }
 console_error_panic_hook = "0.1.7"
+futures = "0.3.34"
 js-sys = "0.3.106"
 rsqlite-vfs = "0.2.0"
 serde = "1.0"

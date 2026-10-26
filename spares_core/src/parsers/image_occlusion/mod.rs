@@ -306,22 +306,6 @@ pub fn read_image_occlusions(
     let regex_string = format!(r"(?m){}", start.trim());
     let image_occlusion_settings_regex = get_or_compile_regex(&regex_string).unwrap();
     let image_occlusion_ranges = parser.get_image_occlusions(data)?;
-    // A browser that keeps a copy of the collection has neither of an occlusion's files: parsing
-    // checks that the image exists and reads the clozes. So such notes are read-only there.
-    #[cfg(target_family = "wasm")]
-    if let Some(range) = image_occlusion_ranges.first() {
-        return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
-            description: "Notes with an image occlusion are read-only on a device that keeps a \
-                          copy of the collection, since the occlusion's files are on the server."
-                .to_string(),
-            advice: Some(
-                "Change this note on the laptop, or in a browser that doesn't keep a copy."
-                    .to_string(),
-            ),
-            src: data.to_string(),
-            at: range.range.clone().into(),
-        }));
-    }
     image_occlusion_ranges
         .into_iter()
         .map(|range| {
