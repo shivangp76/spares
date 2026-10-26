@@ -102,7 +102,6 @@ pub(crate) struct ImageOcclusionFileQuery {
     path: String,
 }
 
-#[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn get_image_occlusion_file_handler(
     Query(ImageOcclusionFileQuery { path }): Query<ImageOcclusionFileQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -120,7 +119,7 @@ pub(crate) async fn get_image_occlusion_file_handler(
         Some("bmp") => "image/bmp",
         _ => "application/octet-stream",
     };
-    let contents = read_image_occlusion_file(&path).map_err(|e| {
+    let contents = read_image_occlusion_file(&path).await.map_err(|e| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "message": e.to_string() })),
