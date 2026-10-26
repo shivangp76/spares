@@ -13,6 +13,8 @@ use super::devices::DeviceConfig;
 use super::devices::EnrollRequest;
 use super::devices::EnrollResponse;
 use super::devices::UnenrollRequest;
+use super::media::MediaFile;
+use super::media::MediaKind;
 use super::protocol::FullUploadResponse;
 use super::protocol::MetaResponse;
 use super::protocol::PullRequest;
@@ -190,6 +192,52 @@ impl HttpRemote {
             .await?
             .json()
             .await?)
+    }
+
+    /// The server's files of `kind` (see [`super::media`]).
+    pub async fn list_media(&self, kind: MediaKind) -> Result<Vec<MediaFile>, Error> {
+        Ok(self
+            .send(self.request(
+                reqwest::Method::GET,
+                &format!("/api/sync/media/{}", kind.as_str()),
+                QUICK_TIMEOUT,
+            ))
+            .await?
+            .json()
+            .await?)
+    }
+
+    /// A file of `kind` from the server.
+    pub async fn download_media(&self, kind: MediaKind, name: &str) -> Result<Vec<u8>, Error> {
+        Ok(self
+            .send(self.request(
+                reqwest::Method::GET,
+                &format!("/api/sync/media/{}/{name}", kind.as_str()),
+                EXCHANGE_TIMEOUT,
+            ))
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
+    }
+
+    /// Stores a file this browser added on the server, before the push whose notes name it.
+    pub async fn upload_media(
+        &self,
+        kind: MediaKind,
+        name: &str,
+        contents: Vec<u8>,
+    ) -> Result<(), Error> {
+        self.send(
+            self.request(
+                reqwest::Method::PUT,
+                &format!("/api/sync/media/{}/{name}", kind.as_str()),
+                EXCHANGE_TIMEOUT,
+            )
+            .body(contents),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn post<B: Serialize + Sync, R: DeserializeOwned>(
