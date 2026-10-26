@@ -100,16 +100,24 @@
 //!   checks each replica's last usn on its own.
 //! - **A full upload replaces the server's database for everyone**: its new epoch makes every
 //!   other client do a full sync. So a browser never full-uploads on its own. When it can't sync
-//!   normally and has changes, the user chooses: download the server's copy and lose them, or
-//!   upload its own and make the other devices download.
+//!   normally, the user chooses: download the server's copy and lose the browser's changes, or
+//!   upload its own and make the other devices download. The server answers a full upload once
+//!   the database is replaced, and regenerates every note's files afterwards, which takes minutes.
 //! - **What a browser needs besides the database:** the config and parser templates
-//!   (`GET /api/sync/config`, read through [`crate::platform`]), rendered files, and its own
-//!   images and audio ([`media`]). A browser writes no note files and renders nothing; the server
-//!   does that after each push ([`files::after_sync`]).
+//!   (`GET /api/sync/config`, read through [`crate::platform`]), and the files its cards show
+//!   ([`media`]): rendered files, and the render assets Typst cards read, which the web app
+//!   downloads into Cache Storage after each sync. A browser writes no note files and renders
+//!   nothing; the server does that after each push ([`files::after_sync`]). Images, audio and image
+//!   occlusions added on a browser are uploaded before its push, and it downloads the server's
+//!   image occlusions, which notes are parsed with ([`media`]).
 //! - **When a browser syncs.** Undo stops at the last sync ([`LAST_SYNC_EVENT_ID_KEY`]), as in Anki.
 //!   A browser that synced after every action would lose undo within seconds. So it syncs when the
-//!   app is hidden or closed, from the Sync button, after reconnecting, and after some minutes
-//!   idle, never right after an action. Undo past a sync could come later.
+//!   app opens, when it is hidden or closed, from the Sync button, after reconnecting, and after
+//!   5 minutes idle, never right after an action (`src/local/copy.ts` in the web app). Undo past
+//!   a sync could come later.
+//! - **API responses are `Cache-Control: no-store`.** Firefox otherwise answers a sync's
+//!   `GET /api/sync/meta` from its HTTP cache, with a usn from before, and the sync takes the
+//!   server for one restored from a backup.
 //!
 //! # The rest
 //!
