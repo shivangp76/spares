@@ -8,7 +8,8 @@
 //!   file, and [`sync_render_assets`] copies the files it lists into a content-addressed store in
 //!   the data directory, which is synced to the server along with the database. Files are stored
 //!   by the absolute path sources read them by, except rendered image occlusions (see
-//!   [`IMAGE_OCCLUSION_ASSET_PREFIX`]).
+//!   [`IMAGE_OCCLUSION_ASSET_PREFIX`]). A device that keeps a copy of the collection makes those
+//!   itself instead (see `parsers::read_device_card`, wasm only).
 //! - Audio clips (see [`crate::parsers::audio`]) are stored the same way for every parser, since
 //!   web clients play them outside the rendered card.
 

@@ -66,6 +66,8 @@ use crate::parsers::Parseable;
 use crate::platform::read_to_string;
 
 mod construct;
+#[cfg(any(test, target_family = "wasm"))]
+mod device;
 mod hint;
 mod utils;
 pub use construct::ImageOcclusionSources;
@@ -73,8 +75,13 @@ pub use construct::combine_image_occlusion_clozes;
 pub use construct::construct_image_occlusion_from_image;
 pub use construct::create_image_occlusion_cards;
 pub use construct::image_occlusion_caption;
+#[cfg(target_family = "wasm")]
+pub use construct::image_occlusion_card_image_filepath;
+#[cfg(not(target_family = "wasm"))]
 pub use construct::image_occlusion_overlay;
 pub use construct::update_cloze_settings;
+#[cfg(target_family = "wasm")]
+pub use device::read_card as read_device_card;
 pub use utils::append_to_stem;
 pub use utils::get_image_occlusion_card_filepath;
 pub use utils::get_image_occlusion_directory;

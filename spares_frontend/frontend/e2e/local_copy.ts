@@ -2,12 +2,17 @@
 // and Firefox, against a server of its own on an empty collection:
 //
 // 1. Settings → Keep a Copy on This Device.
-// 2. Offline: review a card, add notes, edit a note the server also edits, search, open the
-//    statistics, undo.
-// 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Log out and back
-//    in without a reload: the copy syncs again, and shows the HTML the server rendered offline.
-// 4. The server has the device's notes and the resolved text, and rendered the device's Markdown
-//    note. Then Settings → Stop Keeping a Copy frees the device's number.
+// 2. Offline: review a card, open `/`, see a card's audio clip, add notes, one with a dropped
+//    image, edit a note the server also edits and one with the server's image occlusion, search,
+//    open the statistics, undo. Show a Typst card with the server's image occlusion, whose image
+//    the device makes.
+// 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Add a note with a
+//    new image occlusion, which the copy stores, and a Typst note with one, whose card shows before
+//    a sync, and sync. Log out and back in without a reload: the copy syncs again, and shows the
+//    HTML the server rendered offline.
+// 4. The server has the device's notes, image and image occlusion, and the resolved text, and
+//    rendered the device's Markdown note. Then Settings → Stop Keeping a Copy frees the device's
+//    number.
 //
 // It needs a build (`bun run build`) and the browsers of playwright-core
 // (`bunx playwright-core install chromium-headless-shell webkit firefox`). It builds spares_server,
@@ -18,6 +23,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { chromium, firefox, webkit, type BrowserContext, type Page } from 'playwright-core';
 import { formatNoteId } from '../src/utils';
 
@@ -76,6 +82,48 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 interface Note { id: number; data: string }
 
+const IMAGE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#F97316"/></svg>';
+const CLOZES_SVG = '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title><rect id="svg_1" x="10" y="10" width="50" height="50" fill="#FFEBA2"/></g></svg>';
+
+/** A `width`×`height` PNG of one color. Image occlusions in cards need an image the `image` crate reads, which an SVG isn't. */
+function png(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (data: Buffer) => {
+    let c = 0xffffffff;
+    for (const byte of data) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const typed = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(typed));
+    return Buffer.concat([length, typed, sum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: width }, () => [r, g, b]).flat())]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const IMAGE_PNG = png(400, 400, [249, 115, 22]);
+
+/** The names of the server's files of a kind (see `spares_core::sync::media`). */
+async function serverMedia(kind: 'image' | 'image-occlusion'): Promise<string[]> {
+  return (await api<{ name: string }[]>('GET', `/api/sync/media/${kind}`)).map(file => file.name);
+}
+
 async function serverNotes(query: string): Promise<Note[]> {
   const found = await api<{ Notes: [Note, string][] }>('POST', '/api/notes/search', { query, output_type: 'Notes' });
   return found.Notes.map(([note]) => note);
@@ -98,11 +146,50 @@ async function seed(): Promise<void> {
     }
   }
   const typst = (await api<{ id: number }>('POST', '/api/parsers', { name: 'typst' })).id;
-  await api('POST', '/api/parsers', { name: 'markdown' });
+  const markdown = (await api<{ id: number }>('POST', '/api/parsers', { name: 'markdown' })).id;
   await api('POST', '/api/notes', {
     parser_id: typst,
     requests: [{ data: 'Seed: #cl[Paris] is the capital of #cl[France].', keywords: [], tags: [], is_suspended: false, custom_data: {} }],
   });
+  // A clip on the front, which a device's review plays too
+  await api('POST', '/api/notes', {
+    parser_id: markdown,
+    requests: [{ data: 'Audio seed [listen](/clips/seed.mp3): {{Lyon}}', keywords: [], tags: [], is_suspended: false, custom_data: {} }],
+  });
+  // An image occlusion made on the server, whose files the device downloads
+  const form = new FormData();
+  form.append('parser_id', String(markdown));
+  form.append('image', new File([IMAGE_PNG], 'seed.png', { type: 'image/png' }));
+  form.append('clozes', CLOZES_SVG);
+  const res = await fetch(`${ORIGIN}/api/image-occlusions`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: form });
+  if (!res.ok) throw new Error(`POST /api/image-occlusions: ${res.status} ${await res.text()}`);
+  const { snippet } = await res.json() as { snippet: string };
+  await api('POST', '/api/notes', {
+    parser_id: markdown,
+    requests: [{ data: `Occlusion seed\n\n${snippet}`, keywords: [], tags: [], is_suspended: false, custom_data: {} }],
+  });
+  // A Typst one, whose card's image this server never renders: the device makes it
+  const typstForm = new FormData();
+  typstForm.append('parser_id', String(typst));
+  typstForm.append('image', new File([IMAGE_PNG], 'typst-seed.png', { type: 'image/png' }));
+  typstForm.append('clozes', CLOZES_SVG);
+  const typstRes = await fetch(`${ORIGIN}/api/image-occlusions`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: typstForm });
+  if (!typstRes.ok) throw new Error(`POST /api/image-occlusions: ${typstRes.status} ${await typstRes.text()}`);
+  const typstSnippet = (await typstRes.json() as { snippet: string }).snippet;
+  await api('POST', '/api/notes', {
+    parser_id: typst,
+    requests: [{ data: `Typst diagram seed\n\n${typstSnippet}`, keywords: [], tags: [], is_suspended: false, custom_data: {} }],
+  });
+}
+
+/** Opens the first card the Cards page finds for `query`, and waits for its front, a Typst card, to show an image, as the device makes it for an image occlusion. */
+async function seeTypstCardImage(page: Page, query: string): Promise<boolean> {
+  await page.goto(`${ORIGIN}/cards?q=${encodeURIComponent(query)}`);
+  await page.locator('tbody tr').first().click();
+  // A missing image fails the compile
+  const shown = page.locator('.typst-viewer image').or(page.getByText(/Error loading|failed|unavailable|doesn't have/i)).first();
+  await shown.waitFor({ state: 'attached', timeout: TIMEOUT });
+  return await page.locator('.typst-viewer image').count() > 0;
 }
 
 /** Text in the page, waited for. */
@@ -127,14 +214,32 @@ async function typeInto(page: Page, editor: ReturnType<Page['locator']>, text: s
   }
 }
 
-async function createNote(page: Page, parser: string, text: string): Promise<void> {
+/** Opens the New Note form with `parser` selected and `text` typed, and returns the form. */
+async function startNote(page: Page, parser: string, text: string): Promise<ReturnType<Page['locator']>> {
   await page.getByRole('button', { name: 'New note' }).click();
   const form = page.locator('div').filter({ has: page.getByRole('heading', { name: 'New Note' }) }).last();
   const option = form.locator('select option').filter({ hasText: new RegExp(`^${parser} `) }).first();
   await form.locator('select').first().selectOption(await option.getAttribute('value') ?? '');
   await typeInto(page, form.locator('.cm-content').first(), text);
+  return form;
+}
+
+async function createNote(page: Page, parser: string, text: string): Promise<void> {
+  const form = await startNote(page, parser, text);
   await form.getByRole('button', { name: 'Create' }).click();
   await see(page, /Note \w+ created\./);
+}
+
+/** Drops an image on the editor `editor`, and waits for the snippet that shows it. A drop, since
+    Firefox leaves out the data of a paste event made by a script. */
+async function dropImage(page: Page, editor: ReturnType<Page['locator']>, name: string): Promise<void> {
+  await editor.evaluate((element, [svg, name]) => {
+    const data = new DataTransfer();
+    data.items.add(new File([svg], name, { type: 'image/svg+xml' }));
+    const { right, bottom } = element.getBoundingClientRect();
+    element.dispatchEvent(new DragEvent('drop', { dataTransfer: data, clientX: right - 1, clientY: bottom - 1, bubbles: true, cancelable: true }));
+  }, [IMAGE_SVG, name]);
+  await page.waitForFunction(element => /!\[\]\(\/[^)]*\/images\//.test(element!.textContent ?? ''), await editor.elementHandle(), { timeout: TIMEOUT });
 }
 
 async function run(engine: keyof typeof ENGINES): Promise<void> {
@@ -172,11 +277,12 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     const devices = await api<{ replica: number; name: string }[]>('GET', '/api/sync/devices');
     check('the server has the device', devices.length === 1, JSON.stringify(devices));
     await page.waitForFunction(() => document.body.innerText.match(/Downloading files/) === null, null, { timeout: TIMEOUT });
-    // Until the service worker has the modules the copy needs offline
+    // Until the service worker has the modules the copy needs offline, and the image occlusion editor
     await page.reload();
     await page.waitForFunction(async () => {
       const keys = await (await caches.open('spares-assets')).keys();
-      return keys.some(request => request.url.includes('spares_wasm_bg')) && keys.some(request => request.url.includes('typst_ts_web_compiler'));
+      return keys.some(request => request.url.includes('spares_wasm_bg')) && keys.some(request => request.url.includes('typst_ts_web_compiler'))
+        && await caches.match('/svgedit/src/editor/index.html') !== undefined;
     }, null, { timeout: TIMEOUT, polling: 500 });
 
     // A page put into the back-forward cache lets go of the copy, so the page after it can open
@@ -205,6 +311,11 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await see(page, /unsynced/);
     check('rated a card offline', true);
 
+    await page.goto(`${ORIGIN}/review?query=${encodeURIComponent('"Audio seed"')}`);
+    await page.getByRole('button', { name: 'Start Review' }).click();
+    await page.locator('.audio-bar button[title="/clips/seed.mp3"]').waitFor({ timeout: TIMEOUT });
+    check('a card from the copy has its audio clip', true);
+
     await page.goto(`${ORIGIN}/notes`);
     const markdownText = `# Offline in ${engine}\n\nWritten on the device.\n\n<img src="x" onerror="window.parent.pwned = true">`;
     await createNote(page, 'markdown', markdownText);
@@ -213,6 +324,14 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     const pendingHeading = page.frameLocator('iframe[title="Rendered card"]').getByRole('heading', { name: `Offline in ${engine}` });
     await pendingHeading.waitFor({ timeout: TIMEOUT });
     check('a Markdown note not rendered yet shows its text, sandboxed', !await page.evaluate(() => 'pwned' in window));
+    // An image added offline, shown from the device until the server has it
+    const imageForm = await startNote(page, 'markdown', `# Image in ${engine}`);
+    await dropImage(page, imageForm.locator('.cm-content').first(), `offline-${engine}.svg`);
+    await imageForm.getByRole('button', { name: 'Create' }).click();
+    await see(page, /Note \w+ created\./);
+    await page.frameLocator('iframe[title="Rendered card"]').locator('img[src^="blob:"]').first().waitFor({ timeout: TIMEOUT });
+    check('added an image offline, shown from the device', true);
+
     await createNote(page, 'typst', `Device note in ${engine}: #cl[Rome] is in #cl[Italy].`);
     await createNote(page, 'typst', `Undone in ${engine}: #cl[Bern] is in #cl[Switzerland].`);
     await page.getByRole('button', { name: 'Undo last change' }).click();
@@ -220,7 +339,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     check('undid a note offline', true);
 
     // The seed note, edited here and on the server
-    const [seedNote] = await serverNotes('Seed');
+    const seedNote = (await serverNotes('Seed')).find(note => note.data.startsWith('Seed:'))!;
     await api('PATCH', '/api/notes', { selector: { Ids: [seedNote.id] }, data: `Seed: #cl[Paris] is the capital of #cl[France]. Server edit for ${engine}.`, tags: 'None' });
     await page.getByPlaceholder('Search notes…').fill('Seed');
     await page.keyboard.press('Enter');
@@ -231,10 +350,25 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await page.locator('button.button-primary', { hasText: /^Save$/ }).click();
     await see(page, 'Saved');
 
+    // The server's image occlusion, parsed with the files the device downloaded
+    await page.getByPlaceholder('Search notes…').fill('Occlusion seed');
+    await page.keyboard.press('Enter');
+    await page.getByRole('row').filter({ hasText: 'Occlusion seed' }).first().click();
+    await page.getByRole('button', { name: /Edit image occlusion 1/ }).waitFor();
+    const occlusionEditor = page.locator('.cm-content').first();
+    await occlusionEditor.click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Home' : 'Control+Home');
+    await page.keyboard.press('End');
+    await page.keyboard.type(` (${engine})`);
+    await page.locator('button.button-primary', { hasText: /^Save$/ }).click();
+    await see(page, 'Saved');
+    check('edited a note with the server\'s image occlusion offline', true);
+
     await page.getByPlaceholder('Search notes…').fill(engine);
     await page.keyboard.press('Enter');
     await see(page, `Device note in ${engine}`);
     check('searched offline', await page.getByText(`Undone in ${engine}`).count() === 0);
+    check('a Typst card shows the server\'s image occlusion offline, made by the device', await seeTypstCardImage(page, '"Typst diagram seed"'));
 
     await page.goto(`${ORIGIN}/statistics`);
     await page.waitForLoadState('networkidle');
@@ -253,6 +387,43 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await see(page, /Resolved the conflict/);
     await page.getByRole('button', { name: /^Sync/ }).click();
     await see(page, /Synced: received \d+ changes, sent [1-9]/);
+
+    // A new image occlusion, stored by the copy and uploaded with the note that names it
+    const occlusionsBefore = await serverMedia('image-occlusion');
+    await page.goto(`${ORIGIN}/notes`);
+    const occlusionForm = await startNote(page, 'markdown', `Occlusion from ${engine}`);
+    await occlusionForm.getByRole('button', { name: /Insert image occlusion/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Image occlusion editor' });
+    // Once svgedit has loaded, which enables the file input
+    await dialog.getByText(/Choose, paste or drop an image/).waitFor();
+    await dialog.locator('input[type="file"]').setInputFiles({ name: `made-${engine}.svg`, mimeType: 'image/svg+xml', buffer: Buffer.from(IMAGE_SVG) });
+    await dialog.getByText(/Shapes on the Clozes layer/).waitFor();
+    await dialog.getByRole('button', { name: 'Save and insert' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    check('the server doesn\'t have the image occlusion before a note names it', (await serverMedia('image-occlusion')).length === occlusionsBefore.length);
+    await occlusionForm.getByRole('button', { name: 'Create' }).click();
+    await see(page, /Note \w+ created\./);
+    await page.getByRole('button', { name: /^Sync/ }).click();
+    await see(page, /Synced: received \d+ changes, sent [1-9]/);
+    const madeOcclusion = (await serverMedia('image-occlusion')).filter(name => name.startsWith(`made_${engine}-`));
+    check('uploaded the image occlusion with its note', madeOcclusion.length === 2, madeOcclusion.join(', '));
+
+    // A Typst card with an image occlusion made here, shown before the server has its note
+    await page.goto(`${ORIGIN}/notes`);
+    const typstOcclusionForm = await startNote(page, 'typst', `Typst diagram from ${engine}`);
+    await typstOcclusionForm.getByRole('button', { name: /Insert image occlusion/ }).click();
+    await dialog.getByText(/Choose, paste or drop an image/).waitFor();
+    await dialog.locator('input[type="file"]').setInputFiles({ name: `typst-${engine}.png`, mimeType: 'image/png', buffer: IMAGE_PNG });
+    await dialog.getByText(/Shapes on the Clozes layer/).waitFor();
+    // A cloze, as if drawn in svgedit, so the note has a card
+    await page.locator('iframe[src*="/svgedit/"]').evaluate((frame, clozes) => {
+      (frame as HTMLIFrameElement & { contentWindow: { sparesBridge: { getClozesSvg: () => string } } }).contentWindow.sparesBridge.getClozesSvg = () => clozes;
+    }, CLOZES_SVG);
+    await dialog.getByRole('button', { name: 'Save and insert' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await typstOcclusionForm.getByRole('button', { name: 'Create' }).click();
+    await see(page, /Note \w+ created\./);
+    check('a Typst card shows an image occlusion made on the device before a sync', await seeTypstCardImage(page, `"Typst diagram from ${engine}"`));
 
     // Logging out keeps the copy and its files, and logging back in starts it again
     await page.getByRole('button', { name: 'Logout' }).click();
@@ -284,8 +455,14 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     const texts = deviceNotes.map(note => note.data);
     check('the server has the device notes', texts.some(text => text.startsWith('Device note')) && texts.some(text => text.startsWith('# Offline')), JSON.stringify(texts));
     check('the undone note never reached the server', !texts.some(text => text.startsWith('Undone')));
-    const [seedAfter] = await serverNotes('Seed');
+    const seedAfter = (await serverNotes('Seed')).find(note => note.data.startsWith('Seed:'))!;
     check('the conflict resolution reached the server', seedAfter.data.includes(`Device edit for ${engine}`) && !seedAfter.data.includes(`Server edit for ${engine}`), seedAfter.data);
+    const imageNote = deviceNotes.find(note => note.data.startsWith('# Image in'));
+    const images = await serverMedia('image');
+    check('the server has the image added offline', images.some(name => name.startsWith(`offline_${engine}-`) && imageNote?.data.includes(name)), images.join(', '));
+    const occlusionNote = deviceNotes.find(note => note.data.startsWith('Occlusion from'));
+    const [occlusionSeed] = await serverNotes('Occlusion seed');
+    check('the server has the notes with image occlusions', occlusionNote !== undefined && occlusionSeed.data.includes(`(${engine})`), occlusionSeed.data);
     const markdownNote = deviceNotes.find(note => note.data.startsWith('# Offline'))!;
     const letters = formatNoteId(markdownNote.id);
     const files = (await api<{ path: string }[]>('GET', '/api/sync/files')).map(file => file.path).filter(path => path.includes(letters));

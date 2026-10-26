@@ -252,14 +252,23 @@ const NULL_BODY_STATUSES = [101, 204, 205, 304];
 /** `fetch` of an API path (`/api/...`), answered by this device's copy. Requests it can't answer get `503 {needs_server: true}`. */
 export async function localFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const method = init.method ?? 'GET';
-  const headers = [...new Headers(init.headers).entries()];
-  const body = init.body == null ? undefined : new Uint8Array(await new Response(init.body).arrayBuffer());
+  const headers = new Headers(init.headers);
+  const encoded = init.body == null ? null : new Response(init.body);
+  // A `FormData` body's multipart type, with its boundary, as `fetch` would send it
+  const bodyType = encoded?.headers.get('Content-Type');
+  if (bodyType && !headers.has('Content-Type')) headers.set('Content-Type', bodyType);
+  const body = encoded ? new Uint8Array(await encoded.arrayBuffer()) : undefined;
   await openCopy();
   const res = await post<{ status: number; headers: [string, string][]; body: Uint8Array }>(
-    'handle', [method, path, headers, body], body ? [body.buffer] : [],
+    'handle', [method, path, [...headers.entries()], body], body ? [body.buffer] : [],
   );
   if (method !== 'GET') for (const listener of writeListeners) listener();
   return new Response(NULL_BODY_STATUSES.includes(res.status) ? null : res.body as Uint8Array<ArrayBuffer>, { status: res.status, headers: res.headers });
+}
+
+/** An image, clip or image occlusion file this device has, by the path notes name it by (see `spares_wasm::media_file`). */
+export async function deviceMediaFile(path: string): Promise<Uint8Array | null> {
+  return (await call<Uint8Array | undefined>('media_file', path)) ?? null;
 }
 
 /** Whether `res` is the copy's answer to a request only the server can answer. Reads a copy of the body. */

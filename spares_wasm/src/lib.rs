@@ -19,6 +19,8 @@
 //! audio and image occlusions, and keeps the server's image occlusions, which notes are parsed with
 //! ([`media`]). It writes no note or card files and renders nothing (see
 //! [`spares_core::platform`]): the server does that once a sync brings it the device's changes.
+//! Only the images of image occlusions in Typst cards, which the web app compiles, are made here
+//! ([`media_file`]), so they show offline and as soon as a note changes.
 //! Settings come from the server's `config.toml` at each sync, and are read-only here.
 //!
 //! Errors are JS `Error`s with a `message`, and `full_sync_required` (then the user has to choose
@@ -36,7 +38,9 @@ use std::path::Path;
 
 use axum::body::Body;
 use spares_core::Error;
+use spares_core::api::browser_render::IMAGE_OCCLUSION_ASSET_PREFIX;
 use spares_core::config::get_replica;
+use spares_core::parsers::read_device_card;
 use spares_core::sync::http::HttpRemote;
 use spares_core::sync::run::SyncMode;
 use tower::ServiceExt;
@@ -245,13 +249,16 @@ pub async fn pending_notes() -> Result<Vec<i64>, JsValue> {
 
 /// `[{path, hash}]`: every file the server read while rendering notes (`render_asset`), such as
 /// Typst preambles and images, which Typst cards need to compile offline. A device downloads them
-/// with `GET /api/render-assets?path=`, again when the hash changes.
+/// with `GET /api/render-assets?path=`, again when the hash changes. Not the images of cards' image
+/// occlusions, which the device makes itself ([`media_file`]).
 #[wasm_bindgen]
 pub async fn render_assets() -> Result<JsValue, JsValue> {
-    let assets: Vec<(String, String)> = sqlx::query_as("SELECT path, hash FROM render_asset")
-        .fetch_all(&opened()?.db)
-        .await
-        .map_err(|e| js_error(&e.to_string()))?;
+    let assets: Vec<(String, String)> =
+        sqlx::query_as("SELECT path, hash FROM render_asset WHERE instr(path, ?) != 1")
+            .bind(IMAGE_OCCLUSION_ASSET_PREFIX)
+            .fetch_all(&opened()?.db)
+            .await
+            .map_err(|e| js_error(&e.to_string()))?;
     let assets: Vec<serde_json::Value> = assets
         .into_iter()
         .map(|(path, hash)| serde_json::json!({ "path": path, "hash": hash }))
@@ -260,10 +267,16 @@ pub async fn render_assets() -> Result<JsValue, JsValue> {
 }
 
 /// The image, clip or image occlusion file at `path`, as notes name it, if the device has it: the
-/// web app shows one added here from it until the server has it.
+/// web app shows one added here from it until the server has it. Also the image of a card's image
+/// occlusion, which the device makes for the sources of Typst cards
+/// (`spares_core::parsers::read_device_card`).
 #[wasm_bindgen]
 pub async fn media_file(path: String) -> Result<Option<Vec<u8>>, JsValue> {
-    media::read(&opened()?.device, &path).await
+    let opened = opened()?;
+    if let Some(card) = read_device_card(Path::new(&path)).await {
+        return card.map(Some).map_err(|e| core_error(&e));
+    }
+    media::read(&opened.device, &path).await
 }
 
 /// Records `paths`, relative to the files directory, as the non-empty HTML files for web clients

@@ -3,7 +3,6 @@ import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-code
 import { getCM } from '@replit/codemirror-vim';
 import { getNoteRender, isNetworkError, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
-import { useLocalStatus } from '../local/copy';
 import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
@@ -85,17 +84,14 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
     return () => { cancelled = true; };
   }, [note.id, renderVersion]);
 
-  // Only the server has their files, so a device that uses its copy shows none
-  const { active: usesCopy } = useLocalStatus();
   useEffect(() => {
-    if (usesCopy) return;
     let cancelled = false;
     listNoteImageOcclusions(note.id).then(
       list => { if (!cancelled) { setImageOcclusions(list); setImageOcclusionsError(null); } },
       (e: unknown) => { if (!cancelled && !isNetworkError(e)) setImageOcclusionsError(errorMessage(e)); },
     );
     return () => { cancelled = true; };
-  }, [note.id, savedData, usesCopy]);
+  }, [note.id, savedData]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   useVimCommands(rootRef, ({ command, force, warn }) => {
@@ -330,7 +326,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
         </div>
       </div>
 
-      {(imageOcclusions.length > 0 || imageOcclusionsError) && !usesCopy && (
+      {(imageOcclusions.length > 0 || imageOcclusionsError) && (
         <div style={{ marginBottom: 16 }}>
           <div style={metaLabel}>Image Occlusions</div>
           {imageOcclusionsError && <div style={{ fontSize: 13, color: 'var(--error)' }}>{imageOcclusionsError}</div>}

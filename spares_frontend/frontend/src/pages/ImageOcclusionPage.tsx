@@ -4,7 +4,7 @@ import { listParsers } from '../api/client';
 import ImageOcclusionEditor from '../components/ImageOcclusionEditor';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { OCCLUSIONS_NEED_SERVER, useLocalStatus } from '../local/copy';
+import { OCCLUSIONS_FROM_NOTES, useLocalStatus } from '../local/copy';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, sectionLabel } from '../utils';
 
@@ -55,7 +55,7 @@ export default function ImageOcclusionPage() {
       </p>
 
       {local.active ? (
-        <p style={{ fontSize: 14 }}>{OCCLUSIONS_NEED_SERVER}</p>
+        <p style={{ fontSize: 14 }}>{OCCLUSIONS_FROM_NOTES}</p>
       ) : isNarrow ? (
         <p style={{ fontSize: 14 }}>The image occlusion editor needs a larger screen.</p>
       ) : (

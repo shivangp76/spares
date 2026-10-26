@@ -128,8 +128,12 @@ export function usePendingRender(noteId: number | undefined): boolean {
   return noteId !== undefined && pendingNotes.has(noteId);
 }
 
-/** The image occlusion editor's message on a device that uses its copy (see `spares_core::parsers::image_occlusion`). */
-export const OCCLUSIONS_NEED_SERVER = "Image occlusions can't be added or edited on a device that keeps a copy of the collection, since their files are on the server. Use the laptop, or a browser that doesn't keep a copy.";
+/**
+ * The Image Occlusion page's message on a device that uses its copy. The device uploads an image
+ * occlusion once one of its notes names it (see `spares_wasm::media`), so one made for a note
+ * written elsewhere would never reach the server.
+ */
+export const OCCLUSIONS_FROM_NOTES = "On a device that keeps a copy of the collection, insert image occlusions from a note's editor: the device sends them to the server with the note, at the next sync.";
 
 function currentServer(): { serverUrl: string; apiKey: string } | null {
   try {
@@ -466,6 +470,16 @@ async function downloadFiles(): Promise<void> {
     await filesCache.delete(fileUrl(path, serverUrl));
     delete knownFiles[path];
   }
+  // Also those the device no longer needs, such as images of cards' image occlusions, which it makes itself
+  const currentAssets = new Set(assets.map(asset => asset.path));
+  // For the Typst compiler, which otherwise keeps what it read of them while the page is open
+  const changedAssets = new Set<string>();
+  for (const path of Object.keys(knownAssets)) {
+    if (currentAssets.has(path)) continue;
+    await assetsCache.delete(renderAssetUrl(path, serverUrl));
+    delete knownAssets[path];
+    changedAssets.add(path);
+  }
   const save = () => {
     localStorage.setItem(FILES_KEY, JSON.stringify(knownFiles));
     localStorage.setItem(ASSETS_KEY, JSON.stringify(knownAssets));
@@ -492,6 +506,7 @@ async function downloadFiles(): Promise<void> {
       if (response.ok) {
         await assetsCache.put(url, response);
         knownAssets[asset.path] = asset.hash;
+        changedAssets.add(asset.path);
       } else if (!await assetsCache.match(url, { ignoreVary: true })) {
         await assetsCache.put(url, response);
       }
@@ -513,6 +528,9 @@ async function downloadFiles(): Promise<void> {
     await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, tasks.length) }, worker));
   } finally {
     save();
+    if (changedAssets.size > 0) {
+      await import('../typst/compiler').then(({ forgetTypstFiles }) => forgetTypstFiles(changedAssets)).catch(console.error);
+    }
   }
   // The device can't look at its files, so it shows notes and cards with their HTML (`web_path`)
   // only once it's here. An empty one means the rendered file instead.

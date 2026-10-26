@@ -20,7 +20,9 @@
 //!   [`read`] gets them from there (`set_loader`).
 //!
 //! A browser never writes note or card files, nor renders them: the server does that after the
-//! device's changes reach it (see [`crate::sync`]). The web app downloads them, and tells the device
+//! device's changes reach it (see [`crate::sync`]). It only makes the images of its Typst cards'
+//! image occlusions, in memory, when the web app asks for them (see
+//! `parsers::read_device_card`, wasm only). The web app downloads them, and tells the device
 //! which non-empty HTML files for web clients it has (`load_web_renders`, wasm only), which
 //! [`has_web_render`] answers from. Apart from that, only the code that reads config and templates,
 //! and that stores and parses those files, goes through this module. Everything else uses `std::fs`,

@@ -208,6 +208,13 @@ const IMAGE_TYPE_EXTENSIONS: Record<string, string> = {
   'image/svg+xml': 'svg',
 };
 
+/** The type of the image at `path`, by its extension, or `null` if cards can't show its format. */
+export function imageMimeType(path: string): string | null {
+  const extension = /\.([^./]*)$/.exec(path)?.[1].toLowerCase();
+  if (extension === 'jpeg') return 'image/jpeg';
+  return Object.entries(IMAGE_TYPE_EXTENSIONS).find(([, e]) => e === extension)?.[0] ?? null;
+}
+
 /** The name to upload an image file under, or `null` if cards can't show its format. Pasted images
     often have a generic name or none, so without a supported extension, it comes from the type. */
 export function imageUploadName(file: { name: string; type: string }): string | null {

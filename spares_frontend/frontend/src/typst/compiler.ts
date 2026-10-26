@@ -204,6 +204,27 @@ async function runTasks(): Promise<void> {
 }
 
 /**
+ * Makes the compiler ask for `paths` again at the next compile, e.g. render assets that a sync of
+ * this device's copy changed, added or removed. Otherwise it keeps the contents it was given, or
+ * that the server had none, for as long as the page is open.
+ */
+export function forgetTypstFiles(paths: Iterable<string>): Promise<void> {
+  const forget = [...paths].filter(path => requestedFiles.has(path));
+  if (forget.length === 0) return Promise.resolve();
+  // Queued, so that no compile is running meanwhile
+  return enqueue(async () => {
+    for (const path of forget) {
+      requestedFiles.delete(path);
+      // Unmapping one that was never mapped would create a compiler
+      if (!unavailableFiles.delete(path)) await $typst.unmapShadow(path);
+    }
+    precompiled.clear();
+    // Which gives the compiler those of `forget` that are sources again, before the next compile
+    sourcesLoaded = null;
+  });
+}
+
+/**
  * Loads the compiler with its fonts and the renderer, and prefetches packages, ahead of the first
  * compile, e.g. before a review starts. Otherwise the first compile loads them.
  */
