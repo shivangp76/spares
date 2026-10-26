@@ -301,7 +301,7 @@ fn func_name(call: &LinkedNode<'_>) -> Option<IdentInfo> {
     for child in call.children() {
         if child.kind() == SyntaxKind::Ident {
             return Some(IdentInfo {
-                text: child.text().to_string(),
+                text: child.leaf_text().to_string(),
             });
         }
     }
