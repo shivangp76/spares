@@ -1504,6 +1504,10 @@ fn a_device_gets_the_config_and_every_template() {
     assert!(toml.contains("render_browser_parsers = false"), "{toml}");
     assert!(!toml.contains("[sync]"), "{toml}");
     assert_eq!(config.image_dir, crate::api::image::get_image_directory());
+    assert_eq!(
+        config.image_occlusion_dir,
+        crate::parsers::image_occlusion::get_image_occlusion_directory()
+    );
 }
 
 /// A browser's pool has one connection. A full download used to wait on a second one, which

@@ -151,7 +151,11 @@ use crate::handlers::sync::sync_full_download_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_full_upload_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_media_download_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_media_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_media_list_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_meta_handler;
 #[cfg(not(target_family = "wasm"))]
@@ -266,9 +270,12 @@ fn sync_routes() -> Router<Arc<AppState>> {
         .route("/api/sync/devices", get(sync_devices_handler))
         .route("/api/sync/config", get(sync_config_handler))
         .route("/api/sync/files", get(sync_files_handler))
+        .route("/api/sync/media/{kind}", get(sync_media_list_handler))
         .route(
             "/api/sync/media/{kind}/{name}",
-            put(sync_media_handler).layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT)),
+            get(sync_media_download_handler)
+                .put(sync_media_handler)
+                .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT)),
         )
         .route("/api/sync/run", post(sync_run_handler))
 }

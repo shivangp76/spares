@@ -138,6 +138,18 @@ pub(crate) fn sanitized_stem(filename: &str, default: &str) -> String {
     }
 }
 
+/// Fails if the parser could not read the clozes of `clozes_svg`.
+pub(crate) fn check_clozes_svg(clozes_svg: &str) -> Result<(), Error> {
+    get_clozes_from_svg_str(
+        clozes_svg,
+        FrontConceal::image_occlusion_default(),
+        BackReveal::image_occlusion_default(),
+        back_emphasis_image_occlusion_default(),
+        &mut 0,
+    )?;
+    Ok(())
+}
+
 /// Stores an image and its clozes SVG in the image occlusion directory, where
 /// `read_image_occlusion_data` expects them, and returns their paths.
 ///
@@ -148,13 +160,7 @@ fn store_image_occlusion_files(
     clozes_svg: &str,
 ) -> Result<(PathBuf, PathBuf), Error> {
     // Reject SVGs the parser could not read, before anything is written
-    get_clozes_from_svg_str(
-        clozes_svg,
-        FrontConceal::image_occlusion_default(),
-        BackReveal::image_occlusion_default(),
-        back_emphasis_image_occlusion_default(),
-        &mut 0,
-    )?;
+    check_clozes_svg(clozes_svg)?;
 
     let extension = image_extension(image_filename)?;
     let stem = sanitized_stem(image_filename, "image_occlusion");
