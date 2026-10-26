@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { OCCLUSIONS_NEED_SERVER, useLocalStatus } from "../local/copy";
 import ImageOcclusionEditor from "./ImageOcclusionEditor";
 
 /** Opens the image occlusion editor, and hands over the stored image occlusion's block to insert into a note. */
@@ -11,15 +10,15 @@ export default function InsertImageOcclusionButton({
   onInsert: (snippet: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const local = useLocalStatus();
-  let title = "Draw clozes over an image and insert them at the cursor";
-  if (local.active) title = OCCLUSIONS_NEED_SERVER;
-  else if (parserId === null) title = "Select a parser first";
+  const title =
+    parserId === null
+      ? "Select a parser first"
+      : "Draw clozes over an image and insert them at the cursor";
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        disabled={parserId === null || local.active}
+        disabled={parserId === null}
         className="button-tool tool-purple"
         title={title}
         style={{ padding: "2px 8px", fontSize: 12 }}

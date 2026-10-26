@@ -93,14 +93,16 @@ pub fn construct_image_occlusion_from_image(
             note_id,
             card_order,
             image_occlusion_order,
-            ..
+            cloze_indices,
         } => construct_image_fn(
             &image_occlusion_card_image_filepath(
                 parser,
+                image_occlusion_data,
                 side,
                 note_id,
                 card_order,
                 image_occlusion_order,
+                cloze_indices,
             ),
             &caption,
         ),
@@ -117,14 +119,29 @@ pub fn image_occlusion_caption(image_occlusion_data: &ImageOcclusionData) -> Str
 }
 
 /// The image that `side` of card `card_order` of note `note_id` shows for its
-/// `image_occlusion_order`th image occlusion (see [`get_image_occlusion_card_filepath`]).
+/// `image_occlusion_order`th image occlusion, `image_occlusion_data` with the clozes at
+/// `cloze_indices` (see [`get_image_occlusion_card_filepath`]).
 pub fn image_occlusion_card_image_filepath(
     parser: &(impl Parseable + ?Sized),
+    image_occlusion_data: &ImageOcclusionData,
     side: CardSide,
     note_id: NoteId,
     card_order: usize,
     image_occlusion_order: usize,
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
 ) -> PathBuf {
+    // A device renders no cards, so it names the image it makes itself
+    #[cfg(target_family = "wasm")]
+    if let Some(path) = super::device::card_filepath(
+        cloze_indices,
+        image_occlusion_data,
+        side,
+        parser.image_occlusion_overlays(),
+    ) {
+        return path;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    let _ = (image_occlusion_data, cloze_indices);
     let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
     output_rendered_filepath
         .push(parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id));
@@ -344,14 +361,13 @@ impl ImageOcclusionSources {
             side,
             self.config()?,
         )?;
+        // Read as `self.overlay` needs it (see `read_original_image`)
         match original {
-            // Read as `self.overlay` needs it (see `read_original_image`)
             OriginalImage::Size(width, height) => {
-                image_occlusion_overlay_svg(&clozes_svg, (*width, *height))
+                Ok(overlay_svg_of_size(&clozes_svg, (*width, *height)))
             }
-            OriginalImage::Decoded(image) => {
-                compose_image_occlusion_card(&clozes_svg, image.clone())
-            }
+            OriginalImage::Decoded(image) => compose_over(image.clone(), &clozes_svg)
+                .map_err(|e| Error::Library(original_image_error(original_image_filepath, &e))),
         }
     }
 }
@@ -393,7 +409,7 @@ fn decode_original_image(original_image_filepath: &Path) -> Result<RgbaImage, Li
         .map_err(|e| original_image_error(original_image_filepath, &e))
 }
 
-fn original_image_error(original_image_filepath: &Path, e: &image::ImageError) -> LibraryError {
+fn original_image_error(original_image_filepath: &Path, e: &dyn std::fmt::Display) -> LibraryError {
     LibraryError::Note(NoteErrorKind::Other {
         description: format!(
             "Failed to open input image {}: {}",
@@ -406,8 +422,9 @@ fn original_image_error(original_image_filepath: &Path, e: &image::ImageError) -
 /// The SVG that `side` of a card shows over the original image of `image_occlusion_data`, with
 /// `cloze_indices` of its clozes, for parsers that put it in the card's source (see
 /// [`Parseable::image_occlusion_overlays`]): its clozes SVG, read and colored for the card, in an
-/// SVG the size of the original image (see [`image_occlusion_overlay_svg`]). Of the original image
+/// SVG the size of the original image (see [`overlay_svg_of_size`]). Of the original image
 /// only the header is read, for its size.
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 pub fn image_occlusion_overlay(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
@@ -628,16 +645,28 @@ fn write_card_image(card_filepath: &Path, contents: &[u8]) -> Result<(), Error> 
     })
 }
 
-/// The clozes SVG of `image_occlusion_data`, read as `clozes`, as `side` of a card shows it: its
-/// clozes recolored, hidden or labeled with hints (see [`modify_clozes_for_card`]), and its
-/// markup as it is.
+/// The clozes SVG of `image_occlusion_data` as `side` of a card shows it: its clozes recolored,
+/// hidden or labeled with hints (see [`modify_clozes_for_card`]), and its markup as it is.
+// For a device, which makes the images itself (see `device.rs`)
+#[cfg(any(test, target_family = "wasm"))]
+pub(crate) fn card_clozes_svg(
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+    config: &ImageOcclusionConfig,
+) -> Result<Vec<u8>, Error> {
+    let clozes = read_clozes_svg(&image_occlusion_data.clozes_filepath)?;
+    card_clozes_svg_of(&clozes, cloze_indices, image_occlusion_data, side, config)
+}
+
+/// [`card_clozes_svg`], with the clozes SVG of `image_occlusion_data` read as `clozes`.
 fn card_clozes_svg_of(
     clozes: &ClozesSvg,
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     side: CardSide,
     config: &ImageOcclusionConfig,
-) -> Result<Element, Error> {
+) -> Result<Vec<u8>, Error> {
     let ImageOcclusionData {
         front_conceal,
         back_reveal,
@@ -668,7 +697,14 @@ fn card_clozes_svg_of(
         config,
         image_size,
     );
-    Ok(clozes_svg_element)
+
+    // Get card's clozes as bytes
+    let mut clozes_file_contents_buffer: Vec<u8> = Vec::new();
+    let _ = clozes_svg_element.write_with_config(
+        &mut clozes_file_contents_buffer,
+        EmitterConfig::new().perform_indent(true),
+    );
+    Ok(clozes_file_contents_buffer)
 }
 
 /// The width and height of `svg` from its attributes, which the image occlusion editor sets to
@@ -686,50 +722,66 @@ fn svg_size(svg: &Element) -> Option<(f64, f64)> {
     Some((length("width")?, length("height")?))
 }
 
-/// `clozes_svg`, from [`card_clozes_svg_of`], as an image the size of the original image,
+/// `clozes_svg`, from [`card_clozes_svg`], as an image the size of `original_image`, in any format
+/// the `image` crate reads, so that a card shows it over the original image by giving both the
+/// same width (see [`overlay_svg_of_size`]).
+// For a device, which makes the images itself (see `device.rs`)
+#[cfg(any(test, target_family = "wasm"))]
+pub(crate) fn image_occlusion_overlay_svg(
+    original_image: &[u8],
+    clozes_svg: &[u8],
+) -> Result<Vec<u8>, String> {
+    let size = image::ImageReader::new(std::io::Cursor::new(original_image))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())
+        .and_then(|reader| reader.into_dimensions().map_err(|e| e.to_string()))
+        .map_err(|e| format!("Failed to open input image: {}", e))?;
+    Ok(overlay_svg_of_size(clozes_svg, size))
+}
+
+/// `clozes_svg`, from [`card_clozes_svg`], as an image the size of the original image,
 /// `(width, height)`, so that a card shows it over the original image by giving both the same
 /// width.
 ///
 /// It is drawn as [`compose_image_occlusion_card`] draws it: at its own size, from the top left
 /// corner of the original image, and clipped to it. So it is nested in an SVG whose size and
 /// coordinates are the original image's pixels.
-fn image_occlusion_overlay_svg(
-    clozes_svg: &Element,
-    (width, height): (u32, u32),
-) -> Result<Vec<u8>, Error> {
-    let mut clozes = Vec::new();
-    clozes_svg
-        .write_with_config(
-            &mut clozes,
-            EmitterConfig::new().write_document_declaration(false),
-        )
-        .map_err(|e| {
-            Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!("Failed to serialize clozes as svg: {}", e),
-            }))
-        })?;
+fn overlay_svg_of_size(clozes_svg: &[u8], (width, height): (u32, u32)) -> Vec<u8> {
+    // An XML declaration may only start a document
+    let clozes_svg = clozes_svg
+        .strip_prefix(b"<?xml")
+        .and_then(|rest| {
+            let end = rest.windows(2).position(|w| w == b"?>")?;
+            Some(rest[end + 2..].trim_ascii_start())
+        })
+        .unwrap_or(clozes_svg);
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">"#
     )
     .into_bytes();
-    svg.extend_from_slice(&clozes);
+    svg.extend_from_slice(clozes_svg);
     svg.extend_from_slice(b"</svg>\n");
-    Ok(svg)
+    svg
 }
 
-/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg_of`], drawn over
-/// `base_img`, the original image, decoded.
-fn compose_image_occlusion_card(
-    clozes_svg: &Element,
-    mut base_img: RgbaImage,
-) -> Result<Vec<u8>, Error> {
-    // Get card's clozes as bytes
-    let mut clozes_file_contents_buffer: Vec<u8> = Vec::new();
-    let _ = clozes_svg.write_with_config(
-        &mut clozes_file_contents_buffer,
-        EmitterConfig::new().perform_indent(true),
-    );
+/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg`], drawn over
+/// `original_image`, in any format the `image` crate reads.
+// For a device, which makes the images itself (see `device.rs`)
+#[cfg(any(test, target_family = "wasm"))]
+pub(crate) fn compose_image_occlusion_card(
+    original_image: &[u8],
+    clozes_svg: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Load the base image (any supported format: jpeg, png, etc.)
+    let base_img = image::load_from_memory(original_image)
+        .map_err(|e| format!("Failed to open input image: {}", e))?
+        .to_rgba8();
+    compose_over(base_img, clozes_svg)
+}
 
+/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg`], drawn over
+/// `base_img`, the original image, decoded.
+fn compose_over(mut base_img: RgbaImage, clozes_svg: &[u8]) -> Result<Vec<u8>, String> {
     // - x and y: The top-left position (in pixels) where the rendered SVG is placed on the base image. Measured in the base image’s pixel coordinate space. Defaults: 0, 0.
     // - width and height: The output pixel size to render the SVG before compositing.
     //   - Both provided: SVG is scaled to exactly width×height (may distort aspect ratio).
@@ -745,8 +797,7 @@ fn compose_image_occlusion_card(
     let opt_h: Option<u32> = None;
 
     // Render SVG to RGBA (unpremultiplied) with optional scaling
-    let overlay_img = render_svg_to_rgba(clozes_file_contents_buffer.as_slice(), opt_w, opt_h)
-        .map_err(|e| Error::Library(LibraryError::Note(NoteErrorKind::Other { description: e })))?;
+    let overlay_img = render_svg_to_rgba(clozes_svg, opt_w, opt_h)?;
 
     // Composite overlay onto base at (x, y)
     // imageops::overlay performs alpha blending using unpremultiplied RGBA
@@ -755,11 +806,7 @@ fn compose_image_occlusion_card(
     let mut png = Vec::new();
     base_img
         .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
-        .map_err(|e| {
-            Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!("Failed to encode PNG: {}", e),
-            }))
-        })?;
+        .map_err(|e| format!("Failed to encode PNG: {}", e))?;
     Ok(png)
 }
 

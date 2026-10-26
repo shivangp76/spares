@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::path::Path;
 use std::sync::Arc;
 
 use super::generate_files::CardSide;
@@ -277,7 +276,7 @@ fn complete_note(
 
     // Audio clips are found by their absolute path, both by PDF viewers and by the server
     for audio_ref in output_parser.audio_refs(&new_data) {
-        if !Path::new(&audio_ref.path).is_absolute() {
+        if !audio_ref.is_absolute() {
             local_settings.errors_and_warnings.push(LibraryError::Note(
                 NoteErrorKind::SettingsWarning {
                     description: format!(

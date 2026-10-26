@@ -46,6 +46,8 @@ pub use cli::CliData;
 pub use clozes::*;
 pub use helpers::*;
 pub use image_occlusion::get_image_occlusion_rendered_directory;
+#[cfg(target_family = "wasm")]
+pub use image_occlusion::read_device_card;
 pub use notes::*;
 pub use settings::*;
 

@@ -3,8 +3,9 @@ import { marked } from "marked";
 import { fetchFile, getNote } from "../api/client";
 import { useAuthedFileUrl } from "../hooks/useAuthedFileUrl";
 import { usePendingRender } from "../local/copy";
+import { deviceMediaFile } from "../local/transport";
 import type { NoteResponse } from "../types/spares";
-import { errorMessage } from "../utils";
+import { errorMessage, imageMimeType } from "../utils";
 import HtmlViewer from "./HtmlViewer";
 import PdfViewer from "./PdfViewer";
 import TypstViewer from "./TypstViewer";
@@ -160,10 +161,37 @@ function PendingRender({
     current && "note" in current && current.note.parser_name === "markdown"
       ? current.note.data
       : null;
-  const html = useMemo(
+  const parsed = useMemo(
     () => (markdown === null ? null : marked.parse(markdown, { async: false })),
     [markdown],
   );
+  const [withImages, setWithImages] = useState<{
+    parsed: string;
+    html: string;
+  } | null>(null);
+  useEffect(() => {
+    if (parsed === null) return;
+    let cancelled = false;
+    const urls: string[] = [];
+    showDeviceImages(parsed, urls).then(
+      (html) => {
+        if (!cancelled) setWithImages({ parsed, html });
+      },
+      () => {
+        if (!cancelled) setWithImages({ parsed, html: parsed });
+      },
+    );
+    return () => {
+      cancelled = true;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [parsed]);
+  const html =
+    parsed === null
+      ? null
+      : withImages?.parsed === parsed
+        ? withImages.html
+        : parsed;
 
   if (current === null) return <div className="loading-delayed">Loading…</div>;
   if ("rendered" in current) {
@@ -198,4 +226,32 @@ function PendingRender({
       )}
     </>
   );
+}
+
+/**
+ * `html` with the images it names by path that were added on this device shown from there, since
+ * the server, where the note names them, doesn't have them until the next sync. Their object URLs
+ * are added to `urls`, to revoke.
+ */
+async function showDeviceImages(html: string, urls: string[]): Promise<string> {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const images = [...doc.images].filter((image) =>
+    image.getAttribute("src")?.startsWith("/"),
+  );
+  if (images.length === 0) return html;
+  await Promise.all(
+    images.map(async (image) => {
+      const path = decodeURI(image.getAttribute("src")!);
+      const type = imageMimeType(path);
+      const data =
+        type === null ? null : await deviceMediaFile(path).catch(() => null);
+      if (!data) return;
+      const url = URL.createObjectURL(
+        new Blob([data as BlobPart], { type: type! }),
+      );
+      urls.push(url);
+      image.src = url;
+    }),
+  );
+  return doc.body.innerHTML;
 }
