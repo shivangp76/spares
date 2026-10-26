@@ -248,7 +248,32 @@ pub(crate) async fn sync_files_handler(
     ))
 }
 
-/// An image or clip a device added offline, before the push whose notes name it.
+/// The server's files of a kind, which a device downloads (`spares_core::sync::media`).
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_media_list_handler(
+    Path(kind): Path<MediaKind>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    Ok(Json(media::list_media(kind).map_err(error_to_response)?))
+}
+
+/// One of them.
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_media_download_handler(
+    Path((kind, name)): Path<(MediaKind, String)>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_role(SyncRole::Server)?;
+    media::read_media(kind, &name)
+        .map_err(error_to_response)?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "message": format!("The server has no {name}") })),
+            )
+        })
+}
+
+/// A file a device added offline, before the push whose notes name it.
 #[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn sync_media_handler(
     Path((kind, name)): Path<(MediaKind, String)>,
