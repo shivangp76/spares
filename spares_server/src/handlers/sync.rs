@@ -4,6 +4,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use axum::Json;
 use axum::body::Bytes;
@@ -70,6 +72,14 @@ fn temp_dir() -> Result<PathBuf, HandlerError> {
     Ok(dir)
 }
 
+/// A database snapshot's file in [`temp_dir`], one for each request: `snapshot` removes the file
+/// before writing it, so two full downloads at once must not share one.
+fn temp_file(name: &str) -> Result<PathBuf, HandlerError> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    Ok(temp_dir()?.join(format!("{name}-{}-{n}.sqlite", std::process::id())))
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReplicaQuery {
     replica: Option<u8>,
@@ -117,7 +127,7 @@ pub(crate) async fn sync_full_download_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
-    let path = temp_dir()?.join(format!("download-{}.sqlite", std::process::id()));
+    let path = temp_file("download")?;
     let result = server::full_download(&data.db, &path).await;
     let bytes = result.and_then(|()| {
         std::fs::read(&path).map_err(|e| Error::Io {
@@ -145,7 +155,7 @@ pub(crate) async fn sync_full_upload_handler(
     let guard = exclusive_guard(Some(WRITER_WAIT))
         .await
         .map_err(error_to_response)?;
-    let path = temp_dir()?.join(format!("upload-{}.sqlite", std::process::id()));
+    let path = temp_file("upload")?;
     std::fs::write(&path, &body).map_err(|e| {
         error_to_response(Error::Io {
             description: format!("Failed to write {}", path.display()),
