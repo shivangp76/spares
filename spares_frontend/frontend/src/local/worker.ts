@@ -35,6 +35,7 @@ const calls = {
   pending_notes: spares.pending_notes,
   render_assets: spares.render_assets,
   web_renders: spares.web_renders,
+  media_file: spares.media_file,
 } as const;
 
 const ready = init();

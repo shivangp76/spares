@@ -19,7 +19,6 @@ import {
   updateNoteImageOcclusion,
 } from "../api/client";
 import { EDITOR_TIPS, useEditorSetup } from "../hooks/useEditorSetup";
-import { useLocalStatus } from "../local/copy";
 import { useVimKeybindings } from "../preferences";
 import { useResolvedTheme } from "../theme";
 import type {
@@ -171,10 +170,7 @@ export default function NoteDetail({
     };
   }, [note.id, renderVersion]);
 
-  // Only the server has their files, so a device that uses its copy shows none
-  const { active: usesCopy } = useLocalStatus();
   useEffect(() => {
-    if (usesCopy) return;
     let cancelled = false;
     listNoteImageOcclusions(note.id).then(
       (list) => {
@@ -191,7 +187,7 @@ export default function NoteDetail({
     return () => {
       cancelled = true;
     };
-  }, [note.id, savedData, usesCopy]);
+  }, [note.id, savedData]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   useVimCommands(rootRef, ({ command, force, warn }) => {
@@ -577,7 +573,7 @@ export default function NoteDetail({
         </div>
       </div>
 
-      {(imageOcclusions.length > 0 || imageOcclusionsError) && !usesCopy && (
+      {(imageOcclusions.length > 0 || imageOcclusionsError) && (
         <div style={{ marginBottom: 16 }}>
           <div style={metaLabel}>Image Occlusions</div>
           {imageOcclusionsError && (

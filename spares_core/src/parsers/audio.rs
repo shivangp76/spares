@@ -84,6 +84,19 @@ pub struct AudioRef {
     pub path: String,
 }
 
+impl AudioRef {
+    /// Whether the path is absolute, which a clip's must be. A device (wasm) has notes from the
+    /// laptop or the server, whose paths are Unix ones, which `Path::is_absolute` doesn't know of
+    /// there.
+    pub fn is_absolute(&self) -> bool {
+        if cfg!(target_family = "wasm") {
+            self.path.starts_with('/')
+        } else {
+            Path::new(&self.path).is_absolute()
+        }
+    }
+}
+
 /// Something a client plays for a card: an audio clip, or text to speak (see [`super::tts`]).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -211,7 +224,7 @@ pub fn card_audio(
     let mut back: Vec<(usize, AudioItem)> = Vec::new();
     let audio_refs = parser.audio_refs(&note_data);
     for audio_ref in &audio_refs {
-        if !Path::new(&audio_ref.path).is_absolute() {
+        if !audio_ref.is_absolute() {
             continue;
         }
         let Some(is_back) = side_at(audio_ref.range.start) else {

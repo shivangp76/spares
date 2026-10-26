@@ -123,7 +123,8 @@ function listFiles(dir: string): string[] {
     the page and everything it may load except the image occlusion editor and WebAssembly modules,
     which are large and only cached once used. The modules, having hashed names, are kept across
     builds that still have them. Devices that keep a copy of the collection cache the modules with
-    the page, since they can't do without spares_wasm and the Typst compiler (see src/local). */
+    the page, since they can't do without spares_wasm and the Typst compiler (see src/local), and
+    the editor, so image occlusions can be inserted offline. */
 function serviceWorker(): Plugin {
   return {
     name: "service-worker",
@@ -146,10 +147,12 @@ function serviceWorker(): Plugin {
         const keep = files.filter(
           (path) => path.startsWith("assets/") && path.endsWith(".wasm"),
         );
+        const editor = files.filter((path) => path.startsWith("svgedit/"));
         const source = template
           .replace("__BUILD__", JSON.stringify(hash.digest("hex").slice(0, 16)))
           .replace("__PRECACHE__", JSON.stringify(precache, null, 2))
-          .replace("__KEEP__", JSON.stringify(keep, null, 2));
+          .replace("__KEEP__", JSON.stringify(keep, null, 2))
+          .replace("__EDITOR__", JSON.stringify(editor, null, 2));
         writeFileSync(join(DIST_DIR, "sw.js"), source);
       },
     },

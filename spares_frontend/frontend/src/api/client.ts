@@ -56,6 +56,7 @@ import { clearOfflineQueues, clearStatisticsEntries } from "../offline/db";
 import {
   COPY_FILES_CACHE,
   COPY_RENDER_ASSETS_CACHE,
+  deviceMediaFile,
   localFetch,
   needsServer,
   usesLocalCopy,
@@ -178,8 +179,10 @@ async function cacheListPage<T>(
   return page;
 }
 
-function authHeaders(): HeadersInit {
+/** For a `FormData` body, without `Content-Type`, which the browser sets with the multipart boundary. */
+function authHeaders(body?: RequestInit["body"]): HeadersInit {
   const { apiKey } = getCredentials();
+  if (body instanceof FormData) return { Authorization: `Bearer ${apiKey}` };
   return {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
@@ -391,7 +394,7 @@ async function apiSend(
 ): Promise<Response> {
   const { serverUrl } = getCredentials();
   if ((init.method ?? "GET") !== "GET") listPages.clear();
-  const request = { ...init, headers: authHeaders() };
+  const request = { ...init, headers: authHeaders(init.body) };
   let res: Response | null = null;
   if (usesLocalCopy(serverUrl)) {
     res = await localFetch(path, request);
@@ -477,10 +480,21 @@ export function renderAssetUrl(
   return `${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`;
 }
 
-/** A file a browser-rendered source reads, by the absolute path the source uses. `null` if the server does not have it. */
+/**
+ * A file a browser-rendered source reads, by the absolute path the source uses. `null` if the
+ * server does not have it. A device that keeps a copy of the collection first looks among the
+ * images and clips added on it, which the server doesn't have until the next sync, and the images of
+ * cards' image occlusions, which it makes itself.
+ */
 export async function fetchRenderAsset(
   path: string,
 ): Promise<Uint8Array | null> {
+  if (usesLocalCopy(getCredentials().serverUrl)) {
+    // Its error, e.g. for an image occlusion whose image it can't read, names that image, which
+    // the server's 404 for the file the device makes from it wouldn't
+    const added = await deviceMediaFile(path);
+    if (added) return added;
+  }
   const url = renderAssetUrl(path);
   const res =
     (await copyFile(url, COPY_RENDER_ASSETS_CACHE)) ??
@@ -501,25 +515,23 @@ export async function getImageOcclusionEditorConfig(): Promise<ImageOcclusionEdi
   });
 }
 
+// Images, clips and image occlusions are stored on the server, or, on a device that keeps a copy
+// of the collection, on the device until its next sync uploads them (see `spares_core::sync::media`).
+
 /** Stores a new image occlusion. `snippet` is its block in the parser's syntax, ready to insert into a note. */
 export async function createImageOcclusion(
   parserId: number,
   image: File,
   clozesSvg: string,
 ): Promise<{ image_occlusion: ImageOcclusionData; snippet: string }> {
-  const { serverUrl, apiKey } = getCredentials();
   const form = new FormData();
   form.append("parser_id", String(parserId));
   form.append("image", image, image.name);
   form.append("clozes", clozesSvg);
-  // The browser sets the multipart Content-Type, with its boundary
-  const res = await fetch(`${serverUrl}/api/image-occlusions`, {
+  return apiFetch("Save image occlusion", "/api/image-occlusions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  await throwIfNotOk(res, "Save image occlusion");
-  return res.json();
 }
 
 /** Stores an image pasted or dropped into a note. `snippet` shows it in the parser's syntax, ready to insert into the note. */
@@ -527,18 +539,13 @@ export async function uploadImage(
   parserId: number,
   image: File,
 ): Promise<{ path: string; snippet: string }> {
-  const { serverUrl, apiKey } = getCredentials();
   const form = new FormData();
   form.append("parser_id", String(parserId));
   form.append("image", image, image.name);
-  // The browser sets the multipart Content-Type, with its boundary
-  const res = await fetch(`${serverUrl}/api/images`, {
+  return apiFetch(`Upload ${image.name}`, "/api/images", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  await throwIfNotOk(res, `Upload ${image.name}`);
-  return res.json();
 }
 
 /** Stores an audio clip recorded for a note. `snippet` links to it in the parser's syntax, ready to insert into the note. */
@@ -546,18 +553,13 @@ export async function uploadAudio(
   parserId: number,
   audio: File,
 ): Promise<{ path: string; snippet: string }> {
-  const { serverUrl, apiKey } = getCredentials();
   const form = new FormData();
   form.append("parser_id", String(parserId));
   form.append("audio", audio, audio.name);
-  // The browser sets the multipart Content-Type, with its boundary
-  const res = await fetch(`${serverUrl}/api/audio`, {
+  return apiFetch("Upload recording", "/api/audio", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  await throwIfNotOk(res, "Upload recording");
-  return res.json();
 }
 
 /** Has the server download and store an image dragged from a web page, which browsers hand over
@@ -588,8 +590,9 @@ export async function listNoteImageOcclusions(
   return apiFetch("Image occlusions", `/api/notes/${noteId}/image-occlusions`);
 }
 
-/** Replaces the clozes of the note's `index`th image occlusion (0 based). The server stores them as
-    new files and updates the note, so its cards follow and the change can be undone. */
+/** Replaces the clozes of the note's `index`th image occlusion (0 based). The server (or this
+    device's copy) stores them as new files and updates the note, so its cards follow and the change
+    can be undone. */
 export async function updateNoteImageOcclusion(
   noteId: number,
   index: number,
