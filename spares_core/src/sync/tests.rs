@@ -1075,3 +1075,30 @@ async fn the_note_change_number_moves_on_after_syncs() {
     create(&replicas.laptop, &["D {{ four }}"], &[]).await;
     assert!(latest(replicas.laptop.clone()).await > after_full);
 }
+
+/// A browser's pool has one connection. A full download used to wait on a second one, which
+/// never came, until the pool timed out.
+#[tokio::test]
+async fn a_full_download_works_on_a_single_connection() {
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    let path = replicas.dir.join("one-connection.sqlite");
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+        .unwrap()
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let report = sync(
+        &pool,
+        &replicas.remote,
+        SyncMode::FullDownload,
+        &replicas.dir,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.notes_changed.len(), 1);
+}

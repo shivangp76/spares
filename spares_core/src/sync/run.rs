@@ -368,13 +368,16 @@ async fn full_download(
     .await;
     let _ = std::fs::remove_file(&path);
     let restored = result?;
-    let mut conn = db.acquire().await.map_err(sqlx_error)?;
-    set_state(&mut conn, SYNC_USN_KEY, restored.usn).await?;
-    if let Some(epoch) = &restored.epoch {
-        set_state(&mut conn, SYNC_EPOCH_KEY, epoch).await?;
+    {
+        // Released before `all_note_ids` takes one: a browser's pool has a single connection.
+        let mut conn = db.acquire().await.map_err(sqlx_error)?;
+        set_state(&mut conn, SYNC_USN_KEY, restored.usn).await?;
+        if let Some(epoch) = &restored.epoch {
+            set_state(&mut conn, SYNC_EPOCH_KEY, epoch).await?;
+        }
+        set_state(&mut conn, LAST_SYNC_AT_KEY, Utc::now().timestamp()).await?;
+        remove_state(&mut conn, NEEDS_FULL_SYNC_KEY).await?;
     }
-    set_state(&mut conn, LAST_SYNC_AT_KEY, Utc::now().timestamp()).await?;
-    remove_state(&mut conn, NEEDS_FULL_SYNC_KEY).await?;
     let notes_changed = all_note_ids(db).await?;
     Ok(SyncReport {
         mode: Some(SyncMode::FullDownload),
