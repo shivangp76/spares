@@ -96,14 +96,14 @@ With Tailscale on, open the address `init` printed, e.g. `https://spares.tail681
 - **API key:** the server's key. To show it on the laptop: `security find-generic-password -s spares-sync -w`.
 - **Scheduler:** leave it empty for the server's default, unless you use another one on the laptop.
 
-To review without a connection, add the page to the home screen (see [Reviewing offline](./getting_started.md#reviewing-offline)).
+To use spares on the phone without a connection, add the page to the home screen, open it from there, and in **Settings → This Device** choose **Keep a Copy on This Device** (see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device)).
 
 ## Day to day
 
 - **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts, when the laptop wakes, every `sync.interval_minutes`, and 30 seconds after you stop reviewing or editing (`sync.push_delay_seconds`), so you can close the laptop and carry on on your phone. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
 - **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
-- **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
+- **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`, or on the Conflicts page of the web app on the machine or phone whose sync found them.
+- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. A phone that keeps a copy loads the new web app the next time it opens it online, before it syncs. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server
