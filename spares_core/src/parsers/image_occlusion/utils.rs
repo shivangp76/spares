@@ -1,4 +1,3 @@
-use std::fs::create_dir_all;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -14,17 +13,23 @@ use crate::config::get_cache_dir;
 use crate::config::get_data_dir;
 use crate::parsers::generate_files::CardSide;
 
+/// Where image occlusions' files are stored. In a browser, where the server stores them (see
+/// [`crate::platform`]).
 pub fn get_image_occlusion_directory() -> PathBuf {
+    #[cfg(target_family = "wasm")]
+    if let Some(dirs) = crate::platform::media_dirs() {
+        return dirs.image_occlusion;
+    }
     let mut image_occlusions_dir = get_data_dir();
     image_occlusions_dir.push("image_occlusions");
-    create_dir_all(&image_occlusions_dir).unwrap();
+    crate::platform::create_dir_all(&image_occlusions_dir).unwrap();
     image_occlusions_dir
 }
 
 pub fn get_image_occlusion_rendered_directory() -> PathBuf {
     let mut image_occlusions_dir = get_cache_dir();
     image_occlusions_dir.push("image_occlusions");
-    create_dir_all(&image_occlusions_dir).unwrap();
+    crate::platform::create_dir_all(&image_occlusions_dir).unwrap();
     image_occlusions_dir
 }
 

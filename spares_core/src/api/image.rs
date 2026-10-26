@@ -23,9 +23,6 @@
 //! Unlike image occlusions, nothing is ever written into a stored image, so files are named by
 //! their contents: uploading the same image again reuses its file.
 
-use std::fs::create_dir_all;
-use std::fs::rename;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -42,6 +39,10 @@ use crate::api::parser::get_parser_name;
 use crate::config::get_data_dir;
 use crate::parsers::Parseable;
 use crate::parsers::find_parser;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::rename;
+use crate::platform::write;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateImageResponse {
@@ -51,8 +52,13 @@ pub struct CreateImageResponse {
     pub snippet: String,
 }
 
-/// Where images uploaded for notes are stored.
+/// Where images uploaded for notes are stored. In a browser, where the server stores them (see
+/// [`crate::platform`]).
 pub fn get_image_directory() -> PathBuf {
+    #[cfg(target_family = "wasm")]
+    if let Some(dirs) = crate::platform::media_dirs() {
+        return dirs.image;
+    }
     get_data_dir().join("images")
 }
 
@@ -68,7 +74,7 @@ fn store_image(image: &[u8], image_filename: &str) -> Result<PathBuf, Error> {
         source: e,
     })?;
     let path = directory.join(format!("{stem}-{}.{extension}", &hash[..HASH_LENGTH]));
-    if !path.exists() {
+    if !is_file(&path) {
         // Write then rename so a partially written image is never rendered
         let temp_path = path.with_extension(format!("{extension}.tmp"));
         write(&temp_path, image)

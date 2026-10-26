@@ -207,7 +207,7 @@ async fn load_config(device: &SqlitePool) -> Result<(), JsValue> {
         .into_iter()
         .map(|(path, contents)| (dir.join(path), contents.into_bytes()))
         .collect();
-    spares_core::platform::load(files);
+    spares_core::platform::load_dir(&dir, files);
     Ok(())
 }
 
@@ -277,7 +277,7 @@ pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     opened.device.close().await;
     OPENED.with(|o| *o.borrow_mut() = None);
     set_device_replica(None);
-    spares_core::platform::load(BTreeMap::new());
+    spares_core::platform::clear();
     spares_core::platform::load_web_renders(BTreeSet::new());
     for file in [DB_FILE, DEVICE_FILE]
         .into_iter()

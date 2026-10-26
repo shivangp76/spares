@@ -39,7 +39,6 @@
 //! - `roxmltree`: Not writable.
 //! - `svg`: No DOM-style reading support. See <https://github.com/bodoni/svg/issues/41>.
 
-use std::fs::read_to_string;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -64,6 +63,7 @@ use crate::parsers::ClozeGroupingSettings;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeSettings;
 use crate::parsers::Parseable;
+use crate::platform::read_to_string;
 
 mod construct;
 mod hint;

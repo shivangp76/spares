@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::read_to_string;
-use std::fs::{self};
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -54,6 +52,9 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::image_occlusion::utils::render_svg_to_rgba;
 use crate::parsers::parse_card_settings;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
+use crate::platform::rename;
 
 const CLOZE_NOT_TO_ANSWER_TEXT: &str = "(no answer)";
 
@@ -201,7 +202,7 @@ pub fn update_cloze_settings(
     if buffer == clozes_file_contents.as_bytes() {
         return Ok(());
     }
-    std::fs::write(clozes_filepath, buffer).map_err(|_| {
+    crate::platform::write(clozes_filepath, buffer).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!("Failed to write file {}.", clozes_filepath.display()),
             advice: None,
@@ -615,12 +616,12 @@ pub(crate) fn create_image_occlusion_card(
 /// when it is rendered again.
 fn write_card_image(card_filepath: &Path, contents: &[u8]) -> Result<(), Error> {
     // Compared by size first, so a changed image is usually not read
-    if fs::metadata(card_filepath).is_ok_and(|m| m.len() == contents.len() as u64)
-        && fs::read(card_filepath).is_ok_and(|old| old == contents)
+    if std::fs::metadata(card_filepath).is_ok_and(|m| m.len() == contents.len() as u64)
+        && std::fs::read(card_filepath).is_ok_and(|old| old == contents)
     {
         return Ok(());
     }
-    fs::write(card_filepath, contents).map_err(|e| {
+    std::fs::write(card_filepath, contents).map_err(|e| {
         Error::Library(LibraryError::Note(NoteErrorKind::Other {
             description: format!("Failed to save {}: {}", card_filepath.display(), e),
         }))
@@ -868,7 +869,7 @@ pub fn read_image_occlusion_data(
                 at: image_occlusion_capture_range.clone().into(),
             })
         })?;
-    if !image_occlusion_data.original_image_filepath.exists() {
+    if !is_file(&image_occlusion_data.original_image_filepath) {
         return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!(
                 "Failed to find image occlusion image: {}",
@@ -879,7 +880,7 @@ pub fn read_image_occlusion_data(
             at: image_occlusion_capture_range.clone().into(),
         }));
     }
-    if !image_occlusion_data.clozes_filepath.exists() {
+    if !is_file(&image_occlusion_data.clozes_filepath) {
         return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!(
                 "Failed to find image occlusion clozes image: {}",
@@ -911,7 +912,7 @@ pub fn read_image_occlusion_data(
     let move_original_image_file =
         image_occlusion_data.original_image_filepath != new_image_filepath;
     if move_original_image_file {
-        if new_image_filepath.exists() {
+        if is_file(&new_image_filepath) {
             return Err(LibraryError::Note(NoteErrorKind::Other {
                 description: format!(
                     "An image occlusion file with the same name already exists. Please rename the file.: {}",
@@ -920,7 +921,7 @@ pub fn read_image_occlusion_data(
             }));
         }
         if move_files {
-            fs::rename(
+            rename(
                 &image_occlusion_data.original_image_filepath,
                 &new_image_filepath,
             )
@@ -943,7 +944,7 @@ pub fn read_image_occlusion_data(
     new_cloze_filepath.set_extension("svg");
     let existing_cloze_file = image_occlusion_data.clozes_filepath == new_cloze_filepath;
     if !existing_cloze_file {
-        if new_cloze_filepath.exists() {
+        if is_file(&new_cloze_filepath) {
             return Err(LibraryError::Note(NoteErrorKind::Other {
                 description: format!(
                     "Failed to move image occlusion cloze image since file already exists: {}",
@@ -952,16 +953,14 @@ pub fn read_image_occlusion_data(
             }));
         }
         if move_files {
-            fs::rename(&image_occlusion_data.clozes_filepath, &new_cloze_filepath).map_err(
-                |_| {
-                    LibraryError::Note(NoteErrorKind::Other {
-                        description: format!(
-                            "Failed to move image occlusion cloze image: {}",
-                            image_occlusion_data.clozes_filepath.display()
-                        ),
-                    })
-                },
-            )?;
+            rename(&image_occlusion_data.clozes_filepath, &new_cloze_filepath).map_err(|_| {
+                LibraryError::Note(NoteErrorKind::Other {
+                    description: format!(
+                        "Failed to move image occlusion cloze image: {}",
+                        image_occlusion_data.clozes_filepath.display()
+                    ),
+                })
+            })?;
             image_occlusion_data.clozes_filepath = new_cloze_filepath;
         }
     }
