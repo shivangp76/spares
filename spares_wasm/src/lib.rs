@@ -11,13 +11,15 @@
 //! - [`enroll`], [`sync`] and [`unenroll`] talk to the server, through the browser's `fetch`.
 //! - [`pending_notes`] and [`render_assets`] tell the web app what to show for notes the server
 //!   hasn't rendered yet, and what to download for Typst cards. [`web_renders`] tells the device
-//!   which HTML files for web clients the web app has downloaded.
+//!   which HTML files for web clients the web app has downloaded. [`media_file`] gives it an image
+//!   or clip added here, to show until the server has it.
 //!
 //! **What runs where.** The device runs `spares_core` on its own database: reviews and their
-//! scheduling, searches, statistics, creating and editing notes, tags and undo. It writes no note
-//! or card files and renders nothing (see [`spares_core::platform`]): the server does that once a
-//! sync brings it the device's changes. Settings come from the server's `config.toml` at each
-//! sync, and are read-only here.
+//! scheduling, searches, statistics, creating and editing notes, tags and undo. It adds images,
+//! audio and image occlusions, and keeps the server's image occlusions, which notes are parsed with
+//! ([`media`]). It writes no note or card files and renders nothing (see
+//! [`spares_core::platform`]): the server does that once a sync brings it the device's changes.
+//! Settings come from the server's `config.toml` at each sync, and are read-only here.
 //!
 //! Errors are JS `Error`s with a `message`, and `full_sync_required` (then the user has to choose
 //! between downloading the server's copy and uploading this one), `not_enrolled` (the device has
@@ -26,6 +28,7 @@
 //! shortly) when those apply.
 #![cfg(target_family = "wasm")]
 
+mod media;
 mod remote;
 mod storage;
 
@@ -115,7 +118,8 @@ pub async fn handle(
     headers: js_sys::Array,
     body: Option<Vec<u8>>,
 ) -> Result<JsValue, JsValue> {
-    let router = opened()?.router;
+    let opened = opened()?;
+    let router = opened.router.clone();
     let mut request = axum::http::Request::builder()
         .method(method.as_str())
         .uri(&uri);
@@ -136,6 +140,7 @@ pub async fn handle(
     let body = axum::body::to_bytes(body, MAX_RESPONSE)
         .await
         .map_err(|e| js_error(&format!("{method} {uri}: {e}")))?;
+    media::save_written(&opened.device).await?;
     let headers = js_sys::Array::new();
     for (name, value) in &parts.headers {
         if let Ok(value) = value.to_str() {
@@ -180,14 +185,19 @@ pub async fn enroll(server: String, key: Option<String>, name: String) -> Result
 
 /// Syncs with `server` and returns `spares_core::sync::run::SyncReport`. `mode` is `"normal"`,
 /// `"full_download"` (replace this copy with the server's) or `"full_upload"` (replace the
-/// server's, which makes every other device download it). Then it updates the config and parser
-/// templates from the server.
+/// server's, which makes every other device download it). First it uploads the images, audio and
+/// image occlusions added here. Then it updates the config and parser templates from the server,
+/// and downloads its new image occlusions ([`media`]).
 #[wasm_bindgen]
 pub async fn sync(server: String, key: Option<String>, mode: String) -> Result<JsValue, JsValue> {
     let opened = opened()?;
     let mode: SyncMode = serde_json::from_value(serde_json::Value::String(mode.clone()))
         .map_err(|_| js_error(&format!("unknown sync mode `{mode}`")))?;
     let remote = remote(&server, key)?;
+    // A full download drops what they were added to
+    if mode != SyncMode::FullDownload {
+        media::upload(&opened.db, &opened.device, &remote.0).await?;
+    }
     let report = spares_core::sync::run::sync(&opened.db, &remote, mode, Path::new(""))
         .await
         .map_err(|e| core_error(&e));
@@ -198,6 +208,7 @@ pub async fn sync(server: String, key: Option<String>, mode: String) -> Result<J
     let report = report?;
     let config = remote.0.device_config().await.map_err(|e| core_error(&e))?;
     storage::save_config(&opened.device, &config).await?;
+    media::download(&opened.device, &remote.0).await?;
     to_js(&report)
 }
 
@@ -246,6 +257,13 @@ pub async fn render_assets() -> Result<JsValue, JsValue> {
         .map(|(path, hash)| serde_json::json!({ "path": path, "hash": hash }))
         .collect();
     to_js(&assets)
+}
+
+/// The image, clip or image occlusion file at `path`, as notes name it, if the device has it: the
+/// web app shows one added here from it until the server has it.
+#[wasm_bindgen]
+pub async fn media_file(path: String) -> Result<Option<Vec<u8>>, JsValue> {
+    media::read(&opened()?.device, &path).await
 }
 
 /// Records `paths`, relative to the files directory, as the non-empty HTML files for web clients

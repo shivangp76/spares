@@ -6,7 +6,8 @@
 //! - `device.sqlite`: what the device knows about itself, kept out of the collection (decision 6
 //!   in `spares_core::sync`): its replica number, and the config and parser templates from the
 //!   server's last `GET /api/sync/config`, which [`spares_core::platform`] reads, and which
-//!   HTML files for web clients the web app has downloaded.
+//!   HTML files for web clients the web app has downloaded. Also its images, audio and image
+//!   occlusions ([`crate::media`]).
 //! - `spares-download.sqlite` and `spares-upload.sqlite`: a full sync's snapshot, while it runs.
 //!
 //! The VFS has no locks between tabs, so one tab at a time may open the storage (the web app
@@ -23,6 +24,7 @@ use spares_core::config::Replica;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_files_dir;
 use spares_core::config::set_device_replica;
+use spares_core::platform::MediaDirs;
 use spares_core::sync::devices::DeviceConfig;
 use spares_server::AppState;
 use spares_server::route::create_local_router;
@@ -80,7 +82,7 @@ pub(crate) fn opened() -> Result<Opened, JsValue> {
 }
 
 #[allow(clippy::needless_pass_by_value, reason = "for `map_err`")]
-fn sqlx_error(e: sqlx::Error) -> JsValue {
+pub(crate) fn sqlx_error(e: sqlx::Error) -> JsValue {
     js_error(&e.to_string())
 }
 
@@ -114,6 +116,7 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
         "CREATE TABLE IF NOT EXISTS device_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS config_file (path TEXT PRIMARY KEY NOT NULL, contents TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS web_render_file (path TEXT PRIMARY KEY NOT NULL)",
+        crate::media::CREATE_TABLE,
     ] {
         sqlx::query(statement)
             .execute(&device)
@@ -127,7 +130,9 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
         .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;
     set_device_replica(load_replica(&device).await?);
     load_config(&device).await?;
+    load_media_dirs(&device).await?;
     load_web_renders(&device).await?;
+    crate::media::load(&device).await?;
     let router = create_local_router(Arc::new(AppState {
         db: db.clone(),
         api_key: None,
@@ -230,10 +235,30 @@ pub(crate) async fn save_config(device: &SqlitePool, config: &DeviceConfig) -> R
     for (key, dir) in [
         ("image_dir", &config.image_dir),
         ("audio_dir", &config.audio_dir),
+        ("image_occlusion_dir", &config.image_occlusion_dir),
     ] {
         set_state(device, key, Some(&dir.to_string_lossy())).await?;
     }
-    load_config(device).await
+    load_config(device).await?;
+    load_media_dirs(device).await
+}
+
+/// Makes the server's directories for images, audio and image occlusions the ones
+/// [`spares_core::platform`] names files by, once a sync has brought them.
+async fn load_media_dirs(device: &SqlitePool) -> Result<(), JsValue> {
+    let image = get_state(device, "image_dir").await?;
+    let audio = get_state(device, "audio_dir").await?;
+    let image_occlusion = get_state(device, "image_occlusion_dir").await?;
+    let dirs = match (image, audio, image_occlusion) {
+        (Some(image), Some(audio), Some(image_occlusion)) => Some(MediaDirs {
+            image: image.into(),
+            audio: audio.into(),
+            image_occlusion: image_occlusion.into(),
+        }),
+        _ => None,
+    };
+    spares_core::platform::set_media_dirs(dirs);
+    Ok(())
 }
 
 /// Puts the saved HTML files for web clients in [`spares_core::platform`].
@@ -270,7 +295,7 @@ pub(crate) async fn save_web_renders(
     load_web_renders(device).await
 }
 
-/// Forgets the device's copy: its collection, replica number, config and downloaded files. The
+/// Forgets the device's copy: its collection, replica number, config, media and downloaded files. The
 /// next [`open`] in a new worker starts empty.
 pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     opened.db.close().await;
@@ -278,6 +303,7 @@ pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     OPENED.with(|o| *o.borrow_mut() = None);
     set_device_replica(None);
     spares_core::platform::clear();
+    spares_core::platform::set_media_dirs(None);
     spares_core::platform::load_web_renders(BTreeSet::new());
     for file in [DB_FILE, DEVICE_FILE]
         .into_iter()

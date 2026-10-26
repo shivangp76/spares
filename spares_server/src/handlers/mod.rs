@@ -21,10 +21,8 @@ use spares_core::TagErrorKind;
 
 use crate::AppState;
 
-#[cfg(not(target_family = "wasm"))]
 pub(crate) mod audio;
 pub(crate) mod card;
-#[cfg(not(target_family = "wasm"))]
 pub(crate) mod image;
 pub(crate) mod image_occlusion;
 pub(crate) mod note;

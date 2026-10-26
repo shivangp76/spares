@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-#[cfg(not(target_family = "wasm"))]
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 #[cfg(not(target_family = "wasm"))]
@@ -20,9 +19,7 @@ use tower_http::services::ServeDir;
 use tower_http::services::ServeFile;
 
 use crate::AppState;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::audio::AUDIO_BODY_LIMIT;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::audio::create_audio_handler;
 use crate::handlers::card::count_cards_handler;
 use crate::handlers::card::forget_card_handler;
@@ -34,22 +31,15 @@ use crate::handlers::card::list_cards_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image::IMAGE_BODY_LIMIT;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::image::create_image_from_url_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image::create_image_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image_occlusion::IMAGE_OCCLUSION_BODY_LIMIT;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image_occlusion::create_image_occlusion_handler;
 use crate::handlers::image_occlusion::get_image_occlusion_editor_config_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image_occlusion::get_image_occlusion_file_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image_occlusion::list_note_image_occlusions_handler;
-#[cfg(not(target_family = "wasm"))]
 use crate::handlers::image_occlusion::update_note_image_occlusion_handler;
 use crate::handlers::note::count_notes_handler;
 use crate::handlers::note::create_notes_handler;
@@ -180,16 +170,26 @@ use crate::handlers::undo::group_events_handler;
 use crate::handlers::undo::redo_event_handler;
 use crate::handlers::undo::undo_event_handler;
 
-/// Images and audio added to notes, and image occlusions, which are files on the server
+/// Files on the server that a browser's copy doesn't have
 #[cfg(not(target_family = "wasm"))]
 fn media_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        // Images dragged from a web page, which the server downloads
+        .route("/api/images/url", post(create_image_from_url_handler))
+        // Files read by sources that clients compile themselves
+        .route("/api/render-assets", get(get_render_asset_handler))
+}
+
+/// Images and audio added to notes, and image occlusions. A browser's copy stores the files it
+/// adds through `spares_core::platform`, and uploads them before the push whose notes name them
+/// (see `spares_core::sync::media`).
+fn shared_media_routes() -> Router<Arc<AppState>> {
     Router::new()
         // Images pasted or dropped into a note
         .route(
             "/api/images",
             post(create_image_handler).layer(DefaultBodyLimit::max(IMAGE_BODY_LIMIT)),
         )
-        .route("/api/images/url", post(create_image_from_url_handler))
         // Audio clips recorded into a note
         .route(
             "/api/audio",
@@ -205,6 +205,10 @@ fn media_routes() -> Router<Arc<AppState>> {
             get(get_image_occlusion_file_handler),
         )
         .route(
+            "/api/image-occlusions/editor-config",
+            get(get_image_occlusion_editor_config_handler),
+        )
+        .route(
             "/api/notes/{id}/image-occlusions",
             get(list_note_image_occlusions_handler),
         )
@@ -212,8 +216,6 @@ fn media_routes() -> Router<Arc<AppState>> {
             "/api/notes/{id}/image-occlusions/{index}",
             put(update_note_image_occlusion_handler),
         )
-        // Files read by sources that clients compile themselves
-        .route("/api/render-assets", get(get_render_asset_handler))
 }
 
 /// Notes repository (`spares vcs init`, its push hooks, and the web UI's notice of saved
@@ -333,8 +335,9 @@ fn offline_review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/sync", post(sync_offline_actions_handler))
 }
 
-/// The routes that only need the database (and the config and parser templates, see
-/// `spares_core::platform`): what a browser can answer from its own copy.
+/// The routes that only need the database (and the files of `spares_core::platform`: config,
+/// parser templates, images, audio and image occlusions): what a browser can answer from its own
+/// copy.
 #[allow(clippy::too_many_lines, reason = "one line per route")]
 fn shared_routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -424,10 +427,7 @@ fn shared_routes() -> Router<Arc<AppState>> {
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .route("/api/undo/group", post(group_events_handler))
-        .route(
-            "/api/image-occlusions/editor-config",
-            get(get_image_occlusion_editor_config_handler),
-        )
+        .merge(shared_media_routes())
         .route(
             "/api/render-assets/packages",
             get(list_render_packages_handler),
@@ -512,16 +512,14 @@ async fn not_stored(mut response: axum::response::Response) -> axum::response::R
 /// A few requests act on the server's files or devices rather than on the collection. They are
 /// answered with [`needs_server`], so the web app sends them to the server instead. Every other
 /// request is refused ([`not_on_device`]) rather than sent on, so a server route added later never
-/// changes the server's database behind the copy's back. Of those, image occlusions, rendering,
-/// live notes and optimizing a scheduler (which writes `config.toml` and reschedules the server's
-/// cards) stay on the server.
+/// changes the server's database behind the copy's back. Of those, rendering, live notes and
+/// optimizing a scheduler (which writes `config.toml` and reschedules the server's cards) stay on
+/// the server.
 pub fn create_local_router(app_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/healthcheck", get(health_check_handler))
         .merge(shared_routes())
-        .route("/api/images", post(needs_server))
         .route("/api/images/url", post(needs_server))
-        .route("/api/audio", post(needs_server))
         .route("/api/render-assets", get(needs_server))
         .route("/api/notes/vcs/status", get(needs_server))
         .route("/api/notes/vcs/saved-copies/remove", post(needs_server))
@@ -597,8 +595,8 @@ mod tests {
         (status, serde_json::from_slice(&body).unwrap_or_default())
     }
 
-    /// A browser's router answers from its database, sends requests for the server's files and
-    /// devices to the server, and refuses the rest.
+    /// A browser's router answers from its database and files, sends requests for the server's
+    /// files and devices to the server, and refuses the rest.
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn the_local_router_answers_what_it_can(pool: SqlitePool) {
         let router = create_local_router(Arc::new(AppState {
@@ -622,10 +620,27 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{exported}");
+        // Images, audio and image occlusions are stored on the device (here, invalid requests)
         for (method, uri) in [
             ("POST", "/api/images"),
-            ("POST", "/api/images/url"),
             ("POST", "/api/audio"),
+            ("POST", "/api/image-occlusions"),
+            ("GET", "/api/image-occlusions/file?path=/a.svg"),
+            ("GET", "/api/notes/1/image-occlusions"),
+            ("PUT", "/api/notes/1/image-occlusions/0"),
+        ] {
+            let status = call(&router, method, uri).await.0;
+            assert!(
+                status.is_client_error() || status.is_server_error(),
+                "{method} {uri}: {status}"
+            );
+            assert!(
+                ![StatusCode::SERVICE_UNAVAILABLE, StatusCode::NOT_IMPLEMENTED].contains(&status),
+                "{method} {uri}: {status}"
+            );
+        }
+        for (method, uri) in [
+            ("POST", "/api/images/url"),
             ("GET", "/api/render-assets?path=/a.typ"),
             ("GET", "/api/notes/vcs/status"),
             ("POST", "/api/notes/vcs/saved-copies/remove"),
@@ -641,10 +656,6 @@ mod tests {
             ("GET", "/api/sync/meta?replica=2"),
             ("POST", "/api/sync/push"),
             ("POST", "/api/sync/run"),
-            ("POST", "/api/image-occlusions"),
-            ("GET", "/api/image-occlusions/file?path=/a.svg"),
-            ("GET", "/api/notes/1/image-occlusions"),
-            ("PUT", "/api/notes/1/image-occlusions/0"),
             ("POST", "/api/scheduler/fsrs/optimize"),
             ("POST", "/api/notes/generate_files"),
             ("POST", "/api/notes/live"),
