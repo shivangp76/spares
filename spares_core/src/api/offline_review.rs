@@ -1,5 +1,9 @@
 //! Reviewing on a web client without a connection to the server.
 //!
+//! This is for browsers that don't keep a copy of the collection. One that does reviews on its
+//! copy, online or not, and schedules cards itself (see [`crate::sync`], More replicas). Its
+//! ratings still go through [`sync_offline_actions`], answered by the copy at once.
+//!
 //! While online, the client downloads the cards a review would show next ([`get_review_queue`]).
 //! Offline, it shows those and records what was done with them, then submits the actions once it
 //! is back online ([`sync_offline_actions`]).

@@ -6,11 +6,17 @@
 //!   browser's Cache Storage, where the web app already keeps the files of its offline queue.
 //!   Typst cards compile in the browser instead, from render assets the device fetches by the
 //!   hashes in its own `render_asset` table, which follows the server's at each sync.
-//! - **Images and audio** added on a device are named as the server names them, `<stem>-<hash>.<ext>`
-//!   in its image or audio directory (see [`super::devices::DeviceConfig`]). The device uploads each
-//!   with `PUT /api/sync/media/{kind}/{name}` ([`store_media`]) before the push whose notes name it.
-//!   The name ends in the start of the file's blake3 hash, so an upload never replaces a file with
-//!   other contents, and sending one again changes nothing.
+//! - **Images and audio** added on a device are named as the server names them,
+//!   `<stem>-<hash>.<ext>` in its image or audio directory (see
+//!   [`super::devices::DeviceConfig`]), and uploaded with `PUT /api/sync/media/{kind}/{name}`
+//!   ([`store_media`]) before the push whose notes name them. The name ends in the start of the
+//!   file's blake3 hash, so an upload never replaces a file with other contents, and sending one
+//!   again changes nothing. Until then, the web app shows them from the device.
+//! - **Image occlusions** are parsed from their files, so a device downloads the server's
+//!   ([`list_media`], [`read_media`]) after each sync, and a clozes SVG again when the server
+//!   rewrote it. One made on a device is named as on the server too, and uploaded like an image
+//!   once a note names it: saving the note parses it, which writes card orders into the SVG, and
+//!   the server never replaces a file. Where a device keeps them: `spares_wasm`'s `media`.
 
 use std::path::Path;
 use std::path::PathBuf;

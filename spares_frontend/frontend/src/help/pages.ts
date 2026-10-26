@@ -72,6 +72,11 @@ const SCHEDULING: DocLink = {
   file: "concepts.md",
   heading: "Scheduling",
 };
+const LOCAL_COPY: DocLink = {
+  label: "Keeping a copy on this device",
+  file: "getting_started.md",
+  heading: "Keeping a copy on this device",
+};
 
 /** The help for each page, by its path. */
 export const PAGE_HELP: Record<string, PageHelp> = {
@@ -94,7 +99,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       {
         label: "Reviewing offline",
         file: "getting_started.md",
-        heading: "Reviewing offline",
+        heading: "Keeping a copy on this device",
       },
       {
         label: "Putting cards off until after an exam",
@@ -222,6 +227,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     shortcuts: [],
     docs: [
       SCHEDULING,
+      LOCAL_COPY,
       { label: "Deploying a sync server", file: "deploying.md" },
     ],
   },
@@ -231,7 +237,14 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       "Notes a sync could not merge on its own: both sides changed the same lines, or one deleted the note while the other edited it. Each can be kept as it is, replaced by the other side, edited, or deleted. The next sync sends the result.",
     ],
     shortcuts: [],
-    docs: [],
+    docs: [
+      {
+        label: "Two-way sync",
+        file: "getting_started.md",
+        heading: "Two-way sync",
+      },
+      LOCAL_COPY,
+    ],
   },
 };
 

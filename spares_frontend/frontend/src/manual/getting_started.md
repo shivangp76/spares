@@ -40,12 +40,14 @@ Notes can be edited and reviewed both on your machine and on the server (e.g. fr
 - your machine: `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client`, and `SPARES_SYNC_API_KEY` set to the server's `SPARES_API_KEY`;
 - the server: `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server` (`setup_vps.sh` sets these).
 
+A phone's browser can be a replica too, with a copy of its own: see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device). It gets its number from the server.
+
 Set `url` in the `[sync]` table of your `config.toml` to the server's address. Then `spares sync cloud` exchanges changes both ways. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync.interval_minutes`, your local server also syncs in the background, and the web app it serves has a Sync button.
 
 A sync merges notes both sides changed: changes to different lines, tags and fields are combined, and reviews from both sides are kept. A note whose same lines were changed on both sides keeps your machine's text and is tagged `sync-conflict`; resolve it with `spares sync conflicts`. A note deleted on one side and edited on the other is kept. Changes made before a sync can no longer be undone. Live notes are read-only in the web app, since their text comes from files on your machine. How sync works, and why, is documented on `spares_core::sync` (`cargo doc -p spares_core --document-private-items --open`).
 
 Some limitations:
-- Conflicts can only be resolved on your machine. The web app shows the `sync-conflict` tag but cannot resolve them.
+- Conflicts are resolved where the sync that found them ran: on your machine (`spares sync conflicts`, or the Conflicts page of the web app it serves), or on a device that keeps a copy (its Conflicts page). The server's web app shows the `sync-conflict` tag but cannot resolve them.
 - Without the [notes repository](./workflows.md#notes-as-a-git-or-jj-repository), a note file you edit while a sync runs can be overwritten if the sync changes that note. With it, nothing is lost.
 - `spares sync cloud` copies its rendered cards of markdown and LaTeX notes to the server after the sync. If such a note is edited on the web in between, the server's newer cards are replaced by yours until the next `spares sync cloud`.
 
@@ -60,9 +62,32 @@ To keep a remote server's compute low, render notes on your own machine and push
 
 Rendering a Markdown note also writes an HTML file, which the web app shows instead of the PDF. It needs pandoc 3.12.1 or later; see `spares_core::parsers::impls::markdown` for when the PDF is shown instead and how to style the HTML.
 
-#### Reviewing offline
+#### Keeping a copy on this device
 
-The web app can be installed as an app (e.g. "Add to Home Screen" on a phone) and used to review without a connection, if the server is reached over HTTPS or at `localhost`. What works offline is described on `spares_core::api::offline_review`.
+A browser can keep the whole collection, so the web app works without a connection: reviewing, searching, statistics, and adding and editing notes and tags, with undo. The device schedules cards itself, so a card rated Again comes back after its step. It syncs with the server as your machine does. It needs the server to be reached over HTTPS (or at `localhost`), and storage the page can use, which private windows don't have.
+
+1. On an iPhone or iPad, add the web app to the Home Screen and open it from there: Safari deletes a website's storage after 7 days without a visit, but not a Home Screen app's.
+2. In **Settings → This Device**, choose **Keep a Copy on This Device**. The device registers with the server under the name shown (up to three devices), downloads the collection, and then the rendered cards and the files Typst cards read.
+3. From then on, every page uses the copy, online or not. The navbar shows **Offline** when the server can't be reached, and how many changes haven't been synced.
+
+The copy syncs when the app opens, when it is hidden or closed, when the connection comes back, after 5 minutes without changes (and every 15 minutes while the app stays open), and with the **Sync** button. It never syncs right after an action, since changes made before a sync can no longer be undone.
+
+- Typst cards compile on the device. Other notes changed there are rendered by the server after the next sync; until then they show as they were last rendered, or as their text.
+- Images, audio and image occlusions can be added offline too: the device keeps them, and sends them to the server at the next sync. Until then, Typst cards and audio play them from the device, and Markdown notes show them in their text. It also keeps the server's image occlusions, so they can be edited offline.
+- Insert image occlusions from a note's editor: the device sends one to the server along with a note that has it, so the Image Occlusion page, for notes written elsewhere, isn't available on the device.
+- Images dragged from a web page by their address, and the notes repository need the server, so they work only online.
+- Logging out keeps the copy and its files: it stops syncing until you log in to its server again.
+- In a second tab, the app says the copy is open in another tab, and uses it once that tab is closed.
+- If the copy and the server can no longer be merged, for example after `spares sync cloud --full-upload`, **Sync** asks which to keep: download the server's collection, dropping the changes made on the device, or upload the device's, which makes your machine and other devices download it.
+- Notes the device's syncs couldn't merge are on its **Conflicts** page, which the badge next to **Sync** opens.
+- **Stop Keeping a Copy**, in the same place, sends the device's changes, removes it from the server's devices, and deletes the copy. Offline, it can delete the copy without sending them; the device then stays on the server's list of devices, to remove there once online.
+- A device that lost its copy without that, for example because the browser deleted its storage, stays on the server's list of devices, below. **Remove** it there (or with `spares sync devices remove`) to free its place for another device.
+
+Notes created on the device get ids that follow your machine's newest note, with a letter of the device's own: after `hbp`, the first device's next note is `hbph`. How it works is documented on `spares_core::sync` (More replicas) and `spares_wasm`.
+
+#### Reviewing offline without a copy
+
+A browser that doesn't keep a copy can still review without a connection once the web app is installed as an app (e.g. "Add to Home Screen"). It downloads the next cards while online, and sends ratings once it is back. What works is described on `spares_core::api::offline_review`.
 
 ### Migration (optional)
 
