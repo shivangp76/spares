@@ -81,6 +81,10 @@ export default function HtmlViewer({ path, version, onOpenNote, onReady, onPlayA
       onReady?.();
     };
     iframe.addEventListener('load', onLoad);
+    // WebKit can load a document given as `srcDoc` before this runs. Firefox can have a complete
+    // one without a head, whose load event is still to come.
+    const doc = iframe.contentDocument;
+    if (doc?.URL === 'about:srcdoc' && doc.readyState === 'complete' && doc.head) onLoad();
     return () => {
       iframe.removeEventListener('load', onLoad);
       observer?.disconnect();
