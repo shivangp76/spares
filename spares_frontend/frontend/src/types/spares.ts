@@ -26,6 +26,8 @@ export interface GetReviewCardResponse {
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_sources?: BrowserRenderSources;
+  // Present iff the card is a Markdown card on a device that keeps a copy, which shows them while the server hasn't rendered its note's latest change
+  device_sources?: BrowserRenderSources;
   // Present iff the card asks for its answers to be typed (the cloze key `t`)
   typed_answer?: TypedAnswerInfo;
   // Present iff the card has audio clips or text to read aloud

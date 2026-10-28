@@ -401,6 +401,7 @@ export default function CardDetail({
               <CardRenderer
                 path={reviewCard.card_front_rendered_path}
                 source={reviewCard.browser_sources?.card_front}
+                deviceSource={reviewCard.device_sources?.card_front}
                 noteId={reviewCard.note_id}
                 webPath={reviewCard.card_front_web_path}
                 onOpenNote={openNote}
@@ -412,6 +413,7 @@ export default function CardDetail({
               <CardRenderer
                 path={backPath(reviewCard)}
                 source={reviewCard.browser_sources?.card_back}
+                deviceSource={reviewCard.device_sources?.card_back}
                 noteId={reviewCard.note_id}
                 webPath={backWebPath(reviewCard)}
                 onOpenNote={openNote}

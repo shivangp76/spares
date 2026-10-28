@@ -72,8 +72,8 @@ A browser can keep the whole collection, so the web app works without a connecti
 
 The copy syncs when the app opens, when it is hidden or closed, when the connection comes back, after 5 minutes without changes (and every 15 minutes while the app stays open), and with the **Sync** button. It never syncs right after an action, since changes made before a sync can no longer be undone.
 
-- Typst cards compile on the device. Other notes changed there are rendered by the server after the next sync; until then they show as they were last rendered, or as their text.
-- Images, audio and image occlusions can be added offline too: the device keeps them, and sends them to the server at the next sync. Until then, Typst cards and audio play them from the device, and Markdown notes show them in their text. It also keeps the server's image occlusions, so they can be edited offline.
+- Typst cards compile on the device. Other notes changed there are rendered by the server after the next sync. Until then, Markdown cards show from their own text, with their clozes hidden and their image occlusions drawn by the device, though math and other pandoc syntax show as written. LaTeX cards show as they were last rendered, or as their note's text.
+- Images, audio and image occlusions can be added offline too: the device keeps them, and sends them to the server at the next sync. Until then, Typst and Markdown cards and audio play them from the device. It also keeps the server's image occlusions, so they can be edited offline.
 - Insert image occlusions from a note's editor: the device sends one to the server along with a note that has it, so the Image Occlusion page, for notes written elsewhere, isn't available on the device.
 - Images dragged from a web page by their address, and the notes repository need the server, so they work only online.
 - Logging out keeps the copy and its files: it stops syncing until you log in to its server again.
