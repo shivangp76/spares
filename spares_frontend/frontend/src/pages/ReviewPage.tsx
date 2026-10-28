@@ -1296,7 +1296,7 @@ export default function ReviewPage() {
               <>
                 {phase === 'front' && cardAudio && <AudioBar audio={cardAudio} flipped={false} player={audioPlayer} />}
                 <div onClick={onFrontClick} style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, cursor: phase === 'front' ? 'pointer' : undefined }}>
-                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} noteId={card.note_id} webPath={card.card_front_web_path} version={cardVersion} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
+                  <CardRenderer path={card.card_front_rendered_path} source={card.browser_sources?.card_front} deviceSource={card.device_sources?.card_front} noteId={card.note_id} webPath={card.card_front_web_path} version={cardVersion} onOpenNote={openNote} onReady={onFrontRendered} onPlayAudio={playAudioClip} onTypstWidth={rememberReviewWidth} scrollToCloze={phase === 'front'} />
                 </div>
               </>
             )}
@@ -1307,7 +1307,7 @@ export default function ReviewPage() {
               {phase === 'back' && cardAudio && <AudioBar audio={cardAudio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
-                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} noteId={card.note_id} webPath={backWebPath(card)} version={cardVersion} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
+                <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} deviceSource={card.device_sources?.card_back} noteId={card.note_id} webPath={backWebPath(card)} version={cardVersion} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
               </div>
             </div>
           )}

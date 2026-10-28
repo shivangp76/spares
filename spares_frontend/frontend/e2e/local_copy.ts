@@ -8,7 +8,8 @@
 //    the device makes.
 // 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Add a note with a
 //    new image occlusion, which the copy stores, and a Typst note with one, whose card shows before
-//    a sync, and sync. Log out and back in without a reload: the copy syncs again, and shows the
+//    a sync, and sync. Offline, a Markdown note with a cloze and an image occlusion, whose cards
+//    show from their source, also after an edit. Log out and back in without a reload: the copy syncs again, and shows the
 //    HTML the server rendered offline.
 // 4. The server has the device's notes, image and image occlusion, and the resolved text, and
 //    rendered the device's Markdown note. Then Settings → Stop Keeping a Copy frees the device's
@@ -190,6 +191,40 @@ async function seeTypstCardImage(page: Page, query: string): Promise<boolean> {
   const shown = page.locator('.typst-viewer image').or(page.getByText(/Error loading|failed|unavailable|doesn't have/i)).first();
   await shown.waitFor({ state: 'attached', timeout: TIMEOUT });
   return await page.locator('.typst-viewer image').count() > 0;
+}
+
+type ShownCard = { marks: number; text: string; images: string[] };
+
+/** The front of each card the Cards page finds for `query`, a Markdown card the device shows from its source. Navigates within the app, since a reload offline is what other steps test. */
+async function deviceMarkdownFronts(page: Page, query: string): Promise<ShownCard[]> {
+  await page.getByRole('link', { name: 'Cards', exact: true }).click();
+  await page.getByPlaceholder(/^Search cards/).fill(query);
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await see(page, `results for "${query}"`);
+  const rows = page.locator('tbody tr');
+  await rows.first().waitFor();
+  const count = await rows.count();
+  const fronts: ShownCard[] = [];
+  for (let i = 0; i < count; i++) {
+    await rows.nth(i).click();
+    await see(page, `Card ${i + 1} of ${count}`);
+    await see(page, /shown from its text/);
+    const frame = page.locator('iframe[title="Rendered card"]').first();
+    // The previous card's front until this one's loads
+    const shown = () => frame.evaluate(iframe => {
+      const doc = (iframe as HTMLIFrameElement).contentDocument!;
+      return { marks: doc.querySelectorAll('mark').length, text: doc.body?.textContent ?? '', images: [...doc.images].map(image => image.src) };
+    });
+    for (let tries = 0; ; tries++) {
+      const front = await shown();
+      if (front.text.trim() !== '' && (i === 0 || front.text !== fronts[i - 1].text) || tries === 50) {
+        fronts.push(front);
+        break;
+      }
+      await page.waitForTimeout(200);
+    }
+  }
+  return fronts;
 }
 
 /** Text in the page, waited for. */
@@ -424,6 +459,39 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await typstOcclusionForm.getByRole('button', { name: 'Create' }).click();
     await see(page, /Note \w+ created\./);
     check('a Typst card shows an image occlusion made on the device before a sync', await seeTypstCardImage(page, `"Typst diagram from ${engine}"`));
+
+    // A Markdown note with a cloze and an image occlusion made here offline, whose cards show from their own source
+    await context.setOffline(true);
+    await page.getByRole('link', { name: 'Notes', exact: true }).click();
+    const markdownOcclusionForm = await startNote(page, 'markdown', `{{Paris}} is in France, said ${engine}.\n\n`);
+    await markdownOcclusionForm.getByRole('button', { name: /Insert image occlusion/ }).click();
+    await dialog.getByText(/Choose, paste or drop an image/).waitFor();
+    await dialog.locator('input[type="file"]').setInputFiles({ name: `markdown-${engine}.png`, mimeType: 'image/png', buffer: IMAGE_PNG });
+    await dialog.getByText(/Shapes on the Clozes layer/).waitFor();
+    await page.locator('iframe[src*="/svgedit/"]').evaluate((frame, clozes) => {
+      (frame as HTMLIFrameElement & { contentWindow: { sparesBridge: { getClozesSvg: () => string } } }).contentWindow.sparesBridge.getClozesSvg = () => clozes;
+    }, CLOZES_SVG);
+    await dialog.getByRole('button', { name: 'Save and insert' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await markdownOcclusionForm.getByRole('button', { name: 'Create' }).click();
+    await see(page, /Note \w+ created\./);
+    const fronts = await deviceMarkdownFronts(page, `"said ${engine}"`);
+    const clozeFront = fronts.find(front => front.marks > 0 && front.text.includes('is in France'));
+    check('a Markdown card made offline hides its cloze, from its source', fronts.length === 2 && clozeFront !== undefined && !clozeFront.text.includes('Paris'), JSON.stringify(fronts));
+    check('a Markdown card made offline shows its image occlusion as the device makes it', fronts.some(front => front.images.length > 0 && front.images.every(src => src.startsWith('blob:'))), JSON.stringify(fronts));
+    await page.getByRole('link', { name: 'Notes', exact: true }).click();
+    await page.getByPlaceholder('Search notes…').fill(`"said ${engine}"`);
+    await page.keyboard.press('Enter');
+    await page.getByRole('row').filter({ hasText: `said ${engine}` }).first().click();
+    await page.getByRole('button', { name: /Edit image occlusion 1/ }).waitFor();
+    await page.locator('.cm-content').first().click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Home' : 'Control+Home');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' Edited offline.');
+    await page.locator('button.button-primary', { hasText: /^Save$/ }).click();
+    await see(page, 'Saved');
+    check('a Markdown card shows its note\'s latest change made offline', (await deviceMarkdownFronts(page, `"said ${engine}"`)).every(front => front.text.includes('Edited offline.')));
+    await context.setOffline(false);
 
     // Logging out keeps the copy and its files, and logging back in starts it again
     await page.getByRole('button', { name: 'Logout' }).click();

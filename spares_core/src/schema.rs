@@ -919,6 +919,11 @@ pub mod review {
         /// Present iff the parser [renders in the browser](crate::parsers::Parseable::renders_in_browser).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub browser_sources: Option<BrowserRenderSources>,
+        /// Present iff the card is a Markdown card and this is a device that keeps a copy of the
+        /// collection, which renders nothing: the sources the web app shows while the server
+        /// hasn't rendered the note's latest change (see `api::browser_render::add_device_sources`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub device_sources: Option<BrowserRenderSources>,
         /// Present iff the card asks for its answers to be typed (the cloze key `t`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub typed_answer: Option<TypedAnswerInfo>,

@@ -131,6 +131,33 @@ pub(crate) fn add_browser_render_sources(
     if !parser.renders_in_browser() {
         return Ok(());
     }
+    response.browser_sources = Some(card_sources(parser, response, request, card)?);
+    Ok(())
+}
+
+/// Fills in [`GetReviewCardResponse::device_sources`] for `card` as
+/// [`add_browser_render_sources`] does, on a device and if `parser` is Markdown's: the web app
+/// shows them with its own Markdown renderer while the server hasn't rendered the card's note.
+pub(crate) fn add_device_sources(
+    parser: &dyn Parseable,
+    response: &mut GetReviewCardResponse,
+    request: &GenerateNoteFilesRequest,
+    card: &CardData,
+) -> Result<(), Error> {
+    if !cfg!(target_family = "wasm") || parser.get_parser_name() != "markdown" {
+        return Ok(());
+    }
+    response.device_sources = Some(card_sources(parser, response, request, card)?);
+    Ok(())
+}
+
+/// The sources of both sides of `card`, `response`'s card parsed from `request`.
+fn card_sources(
+    parser: &dyn Parseable,
+    response: &GetReviewCardResponse,
+    request: &GenerateNoteFilesRequest,
+    card: &CardData,
+) -> Result<BrowserRenderSources, Error> {
     let card_order = response.card_order as usize;
     let template = |template_type| get_template(parser, template_type);
     let (card_template, body_placeholder) = template(TemplateType::Card)?;
@@ -149,14 +176,18 @@ pub(crate) fn add_browser_render_sources(
         CardBackRenderedPath::CardBack(_) => card_side(CardSide::Back),
         CardBackRenderedPath::Note(_) => {
             let (note_template, body_placeholder) = template(TemplateType::Note)?;
-            construct_note_file_contents(parser, &note_template, &body_placeholder, request)
+            parser.note_render_source(construct_note_file_contents(
+                parser,
+                &note_template,
+                &body_placeholder,
+                request,
+            ))
         }
     };
-    response.browser_sources = Some(BrowserRenderSources {
+    Ok(BrowserRenderSources {
         card_front: card_side(CardSide::Front),
         card_back,
-    });
-    Ok(())
+    })
 }
 
 /// How a client shows note `note_id` rendered: the rendered file, or the raw source to compile
@@ -583,5 +614,60 @@ mod tests {
             hash("/elsewhere/abc-1-front-io-1.png".to_string()).await,
             None
         );
+    }
+
+    /// A Markdown card's sources hide the card's own cloze on the front. A server leaves them out
+    /// of its answer, since it renders the card.
+    #[sqlx::test]
+    async fn test_markdown_card_sources(pool: SqlitePool) {
+        use chrono::Utc;
+
+        use super::card_sources;
+        use super::load_review_card;
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::api::review::get_review_card_by_id;
+        use crate::model::CardId;
+        use crate::parsers::get_all_parsers;
+        use crate::parsers::impls::markdown::MarkdownParser;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "{{Paris}} is in France and {{Berlin}} in Germany.".to_string(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let now = Utc::now();
+        create_notes(&pool, request, now, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let card_id: CardId = sqlx::query_scalar(r#"SELECT id FROM card WHERE "order" = 1"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let response = get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.device_sources.is_none());
+
+        let parser = MarkdownParser::new();
+        let (request, card) = load_review_card(&pool, &parser, &response).await.unwrap();
+        let sources = card_sources(&parser, &response, &request, &card).unwrap();
+        assert!(
+            sources
+                .card_front
+                .contains("[card-aaa-1 _____]{.mark} is in France")
+        );
+        assert!(!sources.card_front.contains("Paris"));
+        // The card's back is its note, by default, with its clozes as their text
+        assert!(sources.card_back.contains(r"\[Paris\] is in France"));
     }
 }

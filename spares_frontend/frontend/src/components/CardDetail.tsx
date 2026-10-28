@@ -192,11 +192,11 @@ export default function CardDetail({ card, index, total, onGoTo, onClose, onCard
         <>
           <div style={sectionLabel}>Front</div>
           <div style={renderBox}>
-            <CardRenderer path={reviewCard.card_front_rendered_path} source={reviewCard.browser_sources?.card_front} noteId={reviewCard.note_id} webPath={reviewCard.card_front_web_path} onOpenNote={openNote} version={loaded?.version} />
+            <CardRenderer path={reviewCard.card_front_rendered_path} source={reviewCard.browser_sources?.card_front} deviceSource={reviewCard.device_sources?.card_front} noteId={reviewCard.note_id} webPath={reviewCard.card_front_web_path} onOpenNote={openNote} version={loaded?.version} />
           </div>
           <div style={sectionLabel}>Back</div>
           <div style={renderBox}>
-            <CardRenderer path={backPath(reviewCard)} source={reviewCard.browser_sources?.card_back} noteId={reviewCard.note_id} webPath={backWebPath(reviewCard)} onOpenNote={openNote} version={loaded?.version} />
+            <CardRenderer path={backPath(reviewCard)} source={reviewCard.browser_sources?.card_back} deviceSource={reviewCard.device_sources?.card_back} noteId={reviewCard.note_id} webPath={backWebPath(reviewCard)} onOpenNote={openNote} version={loaded?.version} />
           </div>
         </>
       ))}

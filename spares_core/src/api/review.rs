@@ -24,6 +24,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::browser_render::add_browser_render_sources;
+use crate::api::browser_render::add_device_sources;
 use crate::api::browser_render::load_review_card;
 use crate::api::card::build_update_card_payload;
 use crate::api::card::create_card_tags;
@@ -369,6 +370,7 @@ fn build_review_card_response(
         keywords,
         cli,
         browser_sources: None,
+        device_sources: None,
         typed_answer: None,
         audio: None,
         cards_left_by_state,
@@ -1165,7 +1167,7 @@ pub(crate) async fn review_card_response(
 }
 
 /// Fills in the parts of `response` that come from parsing its card's note: the sources to compile
-/// in the browser, the answers to type and the audio clips and text to play.
+/// in the browser or to show on a device, the answers to type and the audio clips and text to play.
 async fn add_card_extras(
     db: &SqlitePool,
     response: &mut GetReviewCardResponse,
@@ -1187,6 +1189,7 @@ async fn add_card_extras(
         Err(e) => return Err(e),
     };
     add_browser_render_sources(parser.as_ref(), response, &request, &card)?;
+    add_device_sources(parser.as_ref(), response, &request, &card)?;
     response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
     let note_tts = TtsSetting::of_note(&request.custom_data);
     response.audio = card_audio(parser.as_ref(), &card, note_tts.as_ref());

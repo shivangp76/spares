@@ -19,7 +19,8 @@
 //! audio and image occlusions, and keeps the server's image occlusions, which notes are parsed with
 //! ([`media`]). It writes no note or card files and renders nothing (see
 //! [`spares_core::platform`]): the server does that once a sync brings it the device's changes.
-//! Only the images of image occlusions in Typst cards, which the web app compiles, are made here
+//! Only the images of image occlusions in Typst cards, which the web app compiles, and in Markdown
+//! cards, which it shows from their source until the server renders them, are made here
 //! ([`media_file`]), so they show offline and as soon as a note changes.
 //! Settings come from the server's `config.toml` at each sync, and are read-only here.
 //!
