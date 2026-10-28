@@ -688,6 +688,8 @@ export interface NoteMatch {
   note: NoteResponse;
   parser_name: string;
   matches: [number, number][];
+  /** When any of its cards was last reviewed, leaving out crams, or `null` if none was */
+  last_reviewed: string | null;
 }
 
 /** What a card's reviews say about it, counted as the search fields `c.interval`, `c.reps`, `c.lapses` and `c.reviewed` are. */

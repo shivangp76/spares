@@ -227,7 +227,7 @@ const cardColumns = listPreference<CardColumn>('spares_cards_columns', CARD_COLU
 export const setCardColumns = cardColumns.set;
 export const useCardColumns = cardColumns.use;
 
-export const NOTE_COLUMNS = ['id', 'data', 'tags', 'keywords', 'cards', 'parser', 'created', 'updated'] as const;
+export const NOTE_COLUMNS = ['id', 'data', 'tags', 'keywords', 'cards', 'parser', 'reviewed', 'created', 'updated'] as const;
 export type NoteColumn = typeof NOTE_COLUMNS[number];
 /** Which columns the notes page's table shows. */
 const noteColumns = listPreference<NoteColumn>('spares_notes_columns', NOTE_COLUMNS, ['id', 'data', 'tags', 'keywords', 'cards']);

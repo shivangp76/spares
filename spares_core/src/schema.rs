@@ -297,6 +297,8 @@ pub mod note {
         /// starts and ends in UTF-16 code units, in order and not overlapping. Terms the query
         /// excludes, like `-dog`, are not marked.
         pub matches: Vec<(usize, usize)>,
+        /// When any of the note's cards was last reviewed, leaving out crams. `None` if none was.
+        pub last_reviewed: Option<DateTime<Utc>>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

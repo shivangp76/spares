@@ -20,7 +20,7 @@ import { setNoteColumns, setNotesPageSize, useNoteColumns, useNotesPageSize, typ
 import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
 import { useTableSort } from '../hooks/useTableSort';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatDate, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -42,7 +42,7 @@ async function tagsByUse(notes: NoteResponse[]): Promise<string[]> {
 }
 
 /** The columns the notes table can show, marking where each note's text matches the search. */
-function noteColumns(matches: Map<number, [number, number][]>): Column<NoteResponse, NoteColumn>[] {
+function noteColumns(matches: Map<number, [number, number][]>, lastReviewed: Map<number, string | null>): Column<NoteResponse, NoteColumn>[] {
   const nowrap = { whiteSpace: 'nowrap' } as const;
   return [
     {
@@ -68,6 +68,7 @@ function noteColumns(matches: Map<number, [number, number][]>): Column<NoteRespo
     { id: 'keywords', label: 'Keywords', sortField: 'keyword', hideNarrow: true, render: note => <>{note.keywords.slice(0, 4).join(', ')}{note.keywords.length > 4 ? '…' : ''}</> },
     { id: 'cards', label: 'Cards', hideNarrow: true, render: note => note.card_count },
     { id: 'parser', label: 'Parser', sortField: 'parser_name', hideNarrow: true, render: note => note.parser_name },
+    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', hideNarrow: true, tdStyle: nowrap, render: note => formatDate(lastReviewed.get(note.id)) },
     { id: 'created', label: 'Created', sortField: 'created_at', hideNarrow: true, tdStyle: nowrap, render: note => formatDateTime(note.created_at) },
     { id: 'updated', label: 'Modified', sortField: 'updated_at', hideNarrow: true, tdStyle: nowrap, render: note => formatDateTime(note.updated_at) },
   ];
@@ -90,15 +91,19 @@ export default function NotesPage() {
   const [searchResults, setSearchResults] = useState<NoteResponse[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchMatches, setSearchMatches] = useState<Map<number, [number, number][]>>(new Map());
+  // When each note's cards were last reviewed, for the pages read from a search
+  const [lastReviewed, setLastReviewed] = useState<Map<number, string | null>>(new Map());
   const [searchError, setSearchError] = useState<SearchInputError | null>(null);
   const { sort, cycle: cycleSort } = useTableSort();
   const sortField = sort?.field ?? null;
   const sortDescending = sort?.descending ?? false;
-  // How many notes there are without a search, which a sorted list reads from a search for every
-  // note, and an unsorted one counts
-  const [listTotal, setListTotal] = useState<number | null>(null);
   const shownColumnIds = useNoteColumns();
-  const allColumns = noteColumns(searchMatches);
+  // Without a search, the list is read from a search for every note when sorted or showing when
+  // notes were last reviewed, which only a search returns
+  const listBySearch = sortField !== null || shownColumnIds.includes('reviewed');
+  // How many notes there are without a search, which that search says, or which are counted
+  const [listTotal, setListTotal] = useState<number | null>(null);
+  const allColumns = noteColumns(searchMatches, lastReviewed);
   const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
@@ -120,14 +125,15 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
-    if (searchQuery !== null || sortField === null) return;
+    if (searchQuery !== null || !listBySearch) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading state while the page is fetched
     setLoading(true);
     let cancelled = false;
-    searchNotesPage('', page, pageSize, { field: sortField, descending: sortDescending })
+    searchNotesPage('', page, pageSize, sortField === null ? null : { field: sortField, descending: sortDescending })
       .then(data => {
         if (cancelled) return;
         setNotes(data.items.map(m => m.note));
+        setLastReviewed(new Map(data.items.map(m => [m.note.id, m.last_reviewed])));
         for (const { note } of data.items) seenNotes.current.set(note.id, note);
         setListTotal(data.total);
         setError(null);
@@ -135,11 +141,11 @@ export default function NotesPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, sortField, sortDescending]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch, sortField, sortDescending]);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
-    if (searchQuery !== null || sortField !== null) return;
+    if (searchQuery !== null || listBySearch) return;
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedNotesPage(page, pageSize);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- show the cached page while the page is fetched
@@ -160,7 +166,7 @@ export default function NotesPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, sortField]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_notes_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -181,6 +187,7 @@ export default function NotesPage() {
         for (const { note } of data.items) seenNotes.current.set(note.id, note);
         setSearchTotal(data.total);
         setSearchMatches(new Map(data.items.map(m => [m.note.id, m.matches])));
+        setLastReviewed(new Map(data.items.map(m => [m.note.id, m.last_reviewed])));
         saveRecentSearch(searchQuery);
         setError(null);
         setSearchError(null);

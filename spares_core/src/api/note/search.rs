@@ -133,6 +133,7 @@ pub async fn search_page(
                 #[sqlx(flatten)]
                 note: Note,
                 name: String,
+                last_reviewed: Option<i64>,
             }
             let ids = match Evaluator::new(&sorted_query).get_note_ids(db).await {
                 Ok(ids) => ids,
@@ -140,7 +141,11 @@ pub async fn search_page(
             };
             let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
             let rows: Vec<NoteWithParser> = sqlx::query_as(AssertSqlSafe(format!(
-                "SELECT n.*, p.name FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({})",
+                "SELECT n.*, p.name,
+                   (SELECT MAX(rl.reviewed_at) FROM review_log rl JOIN card c ON c.id = rl.card_id
+                     WHERE c.note_id = n.id AND rl.kind = {}) AS last_reviewed
+                 FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({})",
+                ReviewLogKind::Review as u8,
                 in_list(&mut page_ids.iter().map(|id| id.packed()))
             )))
             .fetch_all(db)
@@ -160,6 +165,9 @@ pub async fn search_page(
                     matches: text_matches(&patterns, &row.note.data),
                     note: enrich_note(db, &row.note, config.linked_notes_generated).await?,
                     parser_name: row.name,
+                    last_reviewed: row
+                        .last_reviewed
+                        .and_then(|at| DateTime::from_timestamp(at, 0)),
                 });
             }
             Ok(SearchPageResponse {
@@ -963,6 +971,28 @@ mod tests {
         assert_eq!(other.stats, CardStats::default());
         assert_eq!(other.note_tags, Vec::<String>::new());
         assert_eq!(reviewed.parser_name, "markdown");
+
+        // A note's last review is its cards' latest, leaving out the cram after it.
+        let page = search_page(
+            &pool,
+            SearchPageRequest {
+                query: String::new(),
+                output_type: QueryReturnItemType::Notes,
+                page: 1,
+                limit: 10,
+                sort: None,
+            },
+        )
+        .await
+        .unwrap();
+        let SearchPageItems::Notes(notes) = page.items else {
+            panic!("asked for notes")
+        };
+        for note in notes {
+            let expected = (note.note.id == reviewed.card.note_id)
+                .then(|| DateTime::from_timestamp(300_000 - 86400, 0).unwrap());
+            assert_eq!(note.last_reviewed, expected);
+        }
     }
 
     /// Notes `a` to `e`, where `d` links to `c`, `c` to `b`, `b` to `a` and `e` to `a`, and `a`
