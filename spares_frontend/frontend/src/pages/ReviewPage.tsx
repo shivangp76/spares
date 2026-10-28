@@ -2094,6 +2094,7 @@ export default function ReviewPage() {
                   <CardRenderer
                     path={card.card_front_rendered_path}
                     source={card.browser_sources?.card_front}
+                    deviceSource={card.device_sources?.card_front}
                     noteId={card.note_id}
                     webPath={card.card_front_web_path}
                     version={cardVersion}
@@ -2134,6 +2135,7 @@ export default function ReviewPage() {
                 <CardRenderer
                   path={backPath(card)}
                   source={card.browser_sources?.card_back}
+                  deviceSource={card.device_sources?.card_back}
                   noteId={card.note_id}
                   webPath={backWebPath(card)}
                   version={cardVersion}

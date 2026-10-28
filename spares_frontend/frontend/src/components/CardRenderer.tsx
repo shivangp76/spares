@@ -6,6 +6,7 @@ import { usePendingRender } from "../local/copy";
 import { deviceMediaFile } from "../local/transport";
 import type { NoteResponse } from "../types/spares";
 import { errorMessage, imageMimeType } from "../utils";
+import { markdownCardHtml } from "../markdownCard";
 import HtmlViewer from "./HtmlViewer";
 import PdfViewer from "./PdfViewer";
 import TypstViewer from "./TypstViewer";
@@ -18,6 +19,8 @@ interface Props {
   source?: string;
   /** HTML for web clients, shown instead of the rendered file at `path`. */
   webPath?: string;
+  /** The card's Markdown source, on a device, shown while the server hasn't rendered its note's latest change. */
+  deviceSource?: string;
   /** The card's note, for telling whether the server has rendered its latest change (see `PendingRender`). */
   noteId?: number;
   /** Opens a note linked from the card. */
@@ -38,6 +41,7 @@ export default function CardRenderer({
   path,
   source,
   webPath,
+  deviceSource,
   noteId,
   onOpenNote,
   version,
@@ -80,6 +84,17 @@ export default function CardRenderer({
       <RenderedFile path={path} version={version} onReady={onReady} />
     );
   if (!pending || noteId === undefined) return rendered;
+  if (deviceSource !== undefined)
+    return (
+      <DeviceSource
+        source={deviceSource}
+        onOpenNote={onOpenNote}
+        onReady={onReady}
+        onPlayAudio={onPlayAudio}
+        scrollToCloze={scrollToCloze}
+        zoom={zoom}
+      />
+    );
   return (
     <PendingRender noteId={noteId} path={webPath ?? path} onReady={onReady}>
       {rendered}
@@ -112,13 +127,87 @@ const badge: React.CSSProperties = {
   margin: "0 0 6px",
 };
 
+/**
+ * A Markdown card of a note changed on this device, from its own source (see `markdownCardHtml`),
+ * so that it is never behind, though not quite as the server renders it. Its image occlusions are
+ * the images the device makes.
+ */
+function DeviceSource({
+  source,
+  onOpenNote,
+  onReady,
+  onPlayAudio,
+  scrollToCloze,
+  zoom,
+}: {
+  source: string;
+  onOpenNote?: (noteId: number) => void;
+  onReady?: () => void;
+  onPlayAudio?: (path: string) => void;
+  scrollToCloze?: boolean;
+  zoom: number;
+}) {
+  const parsed = useMemo(() => markdownCardHtml(source), [source]);
+  const html = useDeviceImages(parsed);
+  return (
+    <>
+      <p style={badge}>
+        Changed on this device: shown from its text until the server renders it,
+        after the next sync.
+      </p>
+      {html === null ? (
+        <div className="loading-delayed">Loading…</div>
+      ) : (
+        <HtmlViewer
+          path=""
+          html={html}
+          onOpenNote={onOpenNote}
+          onReady={onReady}
+          onPlayAudio={onPlayAudio}
+          scrollToCloze={scrollToCloze}
+          zoom={zoom}
+        />
+      )}
+    </>
+  );
+}
+
+/** `html` with the images on this device shown (see `showDeviceImages`), or `null` until then. */
+function useDeviceImages(html: string | null): string | null {
+  const [withImages, setWithImages] = useState<{
+    html: string;
+    shown: string;
+  } | null>(null);
+  useEffect(() => {
+    if (html === null) return;
+    let cancelled = false;
+    const urls: string[] = [];
+    showDeviceImages(html, urls).then(
+      (shown) => {
+        if (!cancelled) setWithImages({ html, shown });
+      },
+      () => {
+        if (!cancelled) setWithImages({ html, shown: html });
+      },
+    );
+    return () => {
+      cancelled = true;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [html]);
+  return withImages !== null && withImages.html === html
+    ? withImages.shown
+    : null;
+}
+
 type Shown = { path: string } & (
   { rendered: true } | { note: NoteResponse } | { error: string }
 );
 
 /**
- * A card of a note changed on this device, which the server renders after the next sync: as it
- * was last rendered, or, for a note never rendered, as the note's text (Markdown as HTML, sandboxed
+ * A card of a note changed on this device, which the server renders after the next sync, unless
+ * it's a Markdown card (`DeviceSource`): as it was last rendered, or, for a note never rendered, as
+ * the note's text (Markdown as HTML, sandboxed
  * like a rendered card, since a note's raw HTML could run scripts in the app otherwise).
  */
 function PendingRender({
@@ -165,33 +254,7 @@ function PendingRender({
     () => (markdown === null ? null : marked.parse(markdown, { async: false })),
     [markdown],
   );
-  const [withImages, setWithImages] = useState<{
-    parsed: string;
-    html: string;
-  } | null>(null);
-  useEffect(() => {
-    if (parsed === null) return;
-    let cancelled = false;
-    const urls: string[] = [];
-    showDeviceImages(parsed, urls).then(
-      (html) => {
-        if (!cancelled) setWithImages({ parsed, html });
-      },
-      () => {
-        if (!cancelled) setWithImages({ parsed, html: parsed });
-      },
-    );
-    return () => {
-      cancelled = true;
-      urls.forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, [parsed]);
-  const html =
-    parsed === null
-      ? null
-      : withImages?.parsed === parsed
-        ? withImages.html
-        : parsed;
+  const html = useDeviceImages(parsed) ?? parsed;
 
   if (current === null) return <div className="loading-delayed">Loading…</div>;
   if ("rendered" in current) {
