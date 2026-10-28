@@ -230,3 +230,18 @@ export function draggedImageUrl(html: string): string | null {
     return null;
   }
 }
+
+// Made once, as building a formatter for every table cell is slow. The date is as
+// `toLocaleDateString` writes it.
+const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+/** `at` as a date in the browser's time zone, or a dash without one. */
+export function formatDate(at: string | null | undefined): string {
+  return at ? dateFormat.format(new Date(at)) : '—';
+}
+
+/** `at` as a date and time to the minute in the browser's time zone, or a dash without one. */
+export function formatDateTime(at: string | null | undefined): string {
+  return at ? dateTimeFormat.format(new Date(at)) : '—';
+}

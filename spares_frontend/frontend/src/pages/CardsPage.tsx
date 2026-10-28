@@ -22,7 +22,7 @@ import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import { selectedCount, type IdsOrQuery } from '../selection';
 import type { CardResponse, CardStats, UpdateCardsRequest } from '../types/spares';
-import { errorMessage, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
+import { errorMessage, formatDate, formatDateTime, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
@@ -125,14 +125,13 @@ function formatDays(days: number): string {
 const STATS_COLUMNS: readonly CardColumn[] = ['interval', 'reps', 'lapses', 'reviewed'];
 
 function cardColumns(stateName: (state: number) => string): Column<CardRow, CardColumn>[] {
-  const date = (at: string | null | undefined) => (at ? new Date(at).toLocaleDateString() : '—');
   const nowrap = { whiteSpace: 'nowrap' } as const;
   return [
     { id: 'id', label: 'ID', sortField: 'c.id', render: r => r.card.id },
     { id: 'note', label: 'Note', sortField: 'id', render: r => formatNoteId(r.card.note_id) },
     { id: 'order', label: 'Order', hideNarrow: true, render: r => r.card.order },
     { id: 'state', label: 'State', sortField: 'c.state', render: r => stateName(r.card.state) },
-    { id: 'due', label: 'Due', sortField: 'c.due', tdStyle: nowrap, render: r => date(r.card.due) },
+    { id: 'due', label: 'Due', sortField: 'c.due', tdStyle: nowrap, render: r => formatDate(r.card.due) },
     { id: 'retention', label: 'Retention', sortField: 'c.desired_retention', hideNarrow: true, render: r => r.card.desired_retention },
     { id: 'special', label: 'Special', hideNarrow: true, render: r => r.card.special_state ?? '—' },
     { id: 'stability', label: 'Stability', sortField: 'c.stability', hideNarrow: true, render: r => (r.card.state === 0 ? '—' : formatDays(r.card.stability)) },
@@ -140,9 +139,9 @@ function cardColumns(stateName: (state: number) => string): Column<CardRow, Card
     { id: 'interval', label: 'Interval', sortField: 'c.interval', render: r => (r.stats?.interval_days != null ? formatDays(r.stats.interval_days) : '—') },
     { id: 'reps', label: 'Reviews', sortField: 'c.reps', hideNarrow: true, render: r => r.stats?.reps ?? '—' },
     { id: 'lapses', label: 'Lapses', sortField: 'c.lapses', hideNarrow: true, render: r => r.stats?.lapses ?? '—' },
-    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', tdStyle: nowrap, render: r => date(r.stats?.last_reviewed) },
-    { id: 'created', label: 'Created', sortField: 'c.created_at', tdStyle: nowrap, hideNarrow: true, render: r => date(r.card.created_at) },
-    { id: 'updated', label: 'Modified', sortField: 'c.updated_at', tdStyle: nowrap, hideNarrow: true, render: r => date(r.card.updated_at) },
+    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', tdStyle: nowrap, render: r => formatDate(r.stats?.last_reviewed) },
+    { id: 'created', label: 'Created', sortField: 'c.created_at', tdStyle: nowrap, hideNarrow: true, render: r => formatDateTime(r.card.created_at) },
+    { id: 'updated', label: 'Modified', sortField: 'c.updated_at', tdStyle: nowrap, hideNarrow: true, render: r => formatDateTime(r.card.updated_at) },
   ];
 }
 

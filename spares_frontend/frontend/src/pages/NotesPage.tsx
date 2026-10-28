@@ -20,7 +20,7 @@ import { setNoteColumns, setNotesPageSize, useNoteColumns, useNotesPageSize, typ
 import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
 import { useTableSort } from '../hooks/useTableSort';
 import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
+import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -43,7 +43,6 @@ async function tagsByUse(notes: NoteResponse[]): Promise<string[]> {
 
 /** The columns the notes table can show, marking where each note's text matches the search. */
 function noteColumns(matches: Map<number, [number, number][]>): Column<NoteResponse, NoteColumn>[] {
-  const date = (at: string) => new Date(at).toLocaleDateString();
   const nowrap = { whiteSpace: 'nowrap' } as const;
   return [
     {
@@ -69,8 +68,8 @@ function noteColumns(matches: Map<number, [number, number][]>): Column<NoteRespo
     { id: 'keywords', label: 'Keywords', sortField: 'keyword', hideNarrow: true, render: note => <>{note.keywords.slice(0, 4).join(', ')}{note.keywords.length > 4 ? '…' : ''}</> },
     { id: 'cards', label: 'Cards', hideNarrow: true, render: note => note.card_count },
     { id: 'parser', label: 'Parser', sortField: 'parser_name', hideNarrow: true, render: note => note.parser_name },
-    { id: 'created', label: 'Created', sortField: 'created_at', hideNarrow: true, tdStyle: nowrap, render: note => date(note.created_at) },
-    { id: 'updated', label: 'Modified', sortField: 'updated_at', hideNarrow: true, tdStyle: nowrap, render: note => date(note.updated_at) },
+    { id: 'created', label: 'Created', sortField: 'created_at', hideNarrow: true, tdStyle: nowrap, render: note => formatDateTime(note.created_at) },
+    { id: 'updated', label: 'Modified', sortField: 'updated_at', hideNarrow: true, tdStyle: nowrap, render: note => formatDateTime(note.updated_at) },
   ];
 }
 
