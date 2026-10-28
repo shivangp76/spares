@@ -697,12 +697,20 @@ export interface CardStats {
   reps: number;
   lapses: number;
   last_reviewed: string | null;
+  /** How likely the card is to be recalled now, from 0 to 1, or `null` for a new card or one never reviewed */
+  retrievability: number | null;
+  /** Whether the card lapsed at least `lapses_threshold` times */
+  leech: boolean;
 }
 
 /** A card a search found, with what its table shows besides the card. */
 export interface CardMatch {
   card: CardResponse;
   parser_name: string;
+  /** The start of its note's text */
+  note_preview: string;
+  /** Its note's tags, leaving out filtered tags */
+  note_tags: string[];
   stats: CardStats;
 }
 

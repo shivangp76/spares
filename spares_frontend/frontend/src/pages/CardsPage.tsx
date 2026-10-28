@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedCardsPage, countCards, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
+import { ApiError, cachedCardsPage, countCards, forgetCard, getCard, getQueuePositions, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
 import BulkActionBar, { Checkbox, type BulkAction, type BulkActionBarHandle } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
@@ -21,7 +21,7 @@ import { useRowSelection } from '../hooks/useRowSelection';
 import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import { selectedCount, type IdsOrQuery } from '../selection';
-import type { CardResponse, CardStats, UpdateCardsRequest } from '../types/spares';
+import type { CardMatch, CardResponse, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatDate, formatDateTime, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
@@ -107,10 +107,21 @@ const BULK_ACTIONS: BulkAction[] = [
   FILTERED_TAG_ACTION,
 ];
 
-/** A row of the cards table: a card, with what its reviews say when the page was read from a search. */
+/** What a search returns of a card besides the card. */
+type CardExtras = Omit<CardMatch, 'card'>;
+
+/** Where a card is in the default review's queue: its place, or held back until later today. */
+type QueueSpot = number | 'later';
+
+/**
+ * A row of the cards table: a card, with its note's text and what its reviews say when the page
+ * was read from a search, and where it is in the queue once that is looked up.
+ */
 interface CardRow {
   card: CardResponse;
-  stats: CardStats | undefined;
+  extras: CardExtras | undefined;
+  /** `null` when it isn't in the queue */
+  queue: QueueSpot | null | undefined;
 }
 
 /** `days` as a short length of time, like `10m`, `5h`, `12d` or `1.5y`. */
@@ -121,25 +132,35 @@ function formatDays(days: number): string {
   return `${(days / 365).toFixed(1)}y`;
 }
 
-/** The columns read from a card's reviews, which only a search returns. */
-const STATS_COLUMNS: readonly CardColumn[] = ['interval', 'reps', 'lapses', 'reviewed'];
+/** The columns read from a card's note and reviews, which only a search returns. */
+const SEARCH_COLUMNS: readonly CardColumn[] = ['text', 'tags', 'retrievability', 'interval', 'reps', 'lapses', 'leech', 'reviewed'];
+
+const textTd: React.CSSProperties = { maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
 function cardColumns(stateName: (state: number) => string): Column<CardRow, CardColumn>[] {
   const nowrap = { whiteSpace: 'nowrap' } as const;
   return [
     { id: 'id', label: 'ID', sortField: 'c.id', render: r => r.card.id },
     { id: 'note', label: 'Note', sortField: 'id', render: r => formatNoteId(r.card.note_id) },
+    { id: 'text', label: 'Note text', sortField: 'data', tdStyle: textTd, render: r => <span title={r.extras?.note_preview}>{r.extras?.note_preview ?? '—'}</span> },
+    { id: 'tags', label: 'Tags', sortField: 'tag', hideNarrow: true, render: r => r.extras?.note_tags.join(', ') || '—' },
     { id: 'order', label: 'Order', hideNarrow: true, render: r => r.card.order },
     { id: 'state', label: 'State', sortField: 'c.state', render: r => stateName(r.card.state) },
     { id: 'due', label: 'Due', sortField: 'c.due', tdStyle: nowrap, render: r => formatDate(r.card.due) },
+    {
+      id: 'queue', label: 'Queue', hideNarrow: true,
+      render: r => (r.queue === 'later' ? <span title="A learning card, which review shows later today">Later</span> : r.queue === null ? <span title="Not in the default review today">—</span> : r.queue),
+    },
     { id: 'retention', label: 'Retention', sortField: 'c.desired_retention', hideNarrow: true, render: r => r.card.desired_retention },
     { id: 'special', label: 'Special', hideNarrow: true, render: r => r.card.special_state ?? '—' },
     { id: 'stability', label: 'Stability', sortField: 'c.stability', hideNarrow: true, render: r => (r.card.state === 0 ? '—' : formatDays(r.card.stability)) },
     { id: 'difficulty', label: 'Difficulty', sortField: 'c.difficulty', hideNarrow: true, render: r => (r.card.state === 0 ? '—' : r.card.difficulty.toFixed(1)) },
-    { id: 'interval', label: 'Interval', sortField: 'c.interval', render: r => (r.stats?.interval_days != null ? formatDays(r.stats.interval_days) : '—') },
-    { id: 'reps', label: 'Reviews', sortField: 'c.reps', hideNarrow: true, render: r => r.stats?.reps ?? '—' },
-    { id: 'lapses', label: 'Lapses', sortField: 'c.lapses', hideNarrow: true, render: r => r.stats?.lapses ?? '—' },
-    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', tdStyle: nowrap, render: r => formatDate(r.stats?.last_reviewed) },
+    { id: 'retrievability', label: 'Retrievability', sortField: 'c.retrievability', hideNarrow: true, render: r => (r.extras?.stats.retrievability != null ? `${(r.extras.stats.retrievability * 100).toFixed(0)}%` : '—') },
+    { id: 'interval', label: 'Interval', sortField: 'c.interval', render: r => (r.extras?.stats.interval_days != null ? formatDays(r.extras.stats.interval_days) : '—') },
+    { id: 'reps', label: 'Reviews', sortField: 'c.reps', hideNarrow: true, render: r => r.extras?.stats.reps ?? '—' },
+    { id: 'lapses', label: 'Lapses', sortField: 'c.lapses', hideNarrow: true, render: r => r.extras?.stats.lapses ?? '—' },
+    { id: 'leech', label: 'Leech', hideNarrow: true, render: r => (r.extras?.stats.leech ? 'Leech' : '—') },
+    { id: 'reviewed', label: 'Last reviewed', sortField: 'c.reviewed', tdStyle: nowrap, render: r => formatDate(r.extras?.stats.last_reviewed) },
     { id: 'created', label: 'Created', sortField: 'c.created_at', tdStyle: nowrap, hideNarrow: true, render: r => formatDateTime(r.card.created_at) },
     { id: 'updated', label: 'Modified', sortField: 'c.updated_at', tdStyle: nowrap, hideNarrow: true, render: r => formatDateTime(r.card.updated_at) },
   ];
@@ -159,15 +180,15 @@ export default function CardsPage() {
   const pageSizeChoice = useCardsPageSize();
   const pageSize = Number(pageSizeChoice);
   const [cards, setCards] = useState<CardResponse[]>([]);
-  // What the cards' reviews say, by card id, for the pages read from a search
-  const [stats, setStats] = useState<Map<number, CardStats>>(new Map());
+  // Their notes' text and what their reviews say, by card id, for the pages read from a search
+  const [extras, setExtras] = useState<Map<number, CardExtras>>(new Map());
   const { sort, cycle: cycleSort } = useTableSort();
   const shownColumnIds = useCardColumns();
   const allColumns = cardColumns(stateName);
   const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
   // Without a search, the list is read from a search for every card when sorted or showing what
   // only a search returns
-  const listBySearch = sort !== null || shownColumnIds.some(c => STATS_COLUMNS.includes(c));
+  const listBySearch = sort !== null || shownColumnIds.some(c => SEARCH_COLUMNS.includes(c));
   // How many cards there are without a search, which that search says, or which are counted
   const [listTotal, setListTotal] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -206,7 +227,7 @@ export default function CardsPage() {
       .then(data => {
         if (cancelled) return;
         setCards(data.items.map(m => m.card));
-        setStats(new Map(data.items.map(m => [m.card.id, m.stats])));
+        setExtras(new Map(data.items.map(({ card, ...rest }) => [card.id, rest])));
         setListTotal(data.total);
         setError(null);
       })
@@ -255,7 +276,7 @@ export default function CardsPage() {
       .then(data => {
         if (cancelled) return;
         setSearchResults(data.items.map(m => m.card));
-        setStats(new Map(data.items.map(m => [m.card.id, m.stats])));
+        setExtras(new Map(data.items.map(({ card, ...rest }) => [card.id, rest])));
         setSearchTotal(data.total);
         saveRecentSearch(searchQuery);
         if (!reloading.current) setBrowse(null);
@@ -305,6 +326,27 @@ export default function CardsPage() {
   const detail = useDetailView(browse !== null, () => setBrowse(null));
 
   const displayedCards = searchResults ?? cards;
+
+  // Where the cards shown are in the default review's queue, looked up when that column is shown
+  const showQueue = shownColumnIds.includes('queue');
+  const [queueSpots, setQueueSpots] = useState<Map<number, QueueSpot> | null>(null);
+  const shownCardIds = displayedCards.map(c => c.id).join(',');
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the old page's places don't apply
+    setQueueSpots(null);
+    if (!showQueue || shownCardIds === '') return;
+    const ids = shownCardIds.split(',');
+    let cancelled = false;
+    getQueuePositions({ filter: null, match_query: ids.map(id => `c.id=${id}`).join(' or '), limit: ids.length })
+      .then(res => {
+        if (cancelled) return;
+        const spots = new Map<number, QueueSpot>(res.positions.map(p => [p.card_id, p.position]));
+        for (const card of res.held_back) spots.set(card.card_id, 'later');
+        setQueueSpots(spots);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showQueue, shownCardIds, reloadCount]);
   const selected = browse ? browse.cards[browse.index] : null;
 
   /** Shows what a bulk action, or undoing it, changed. */
@@ -475,11 +517,14 @@ export default function CardsPage() {
                       <td style={checkTd} onClick={e => { e.stopPropagation(); rows.toggleRow(displayedCards, i, e.shiftKey); }}>
                         <Checkbox checked={rows.isSelected(card.id)} onClick={e => rows.toggleRow(displayedCards, i, e.shiftKey)} label={`Select card ${card.id}`} />
                       </td>
-                      {columns.map(column => (
-                        <td key={column.id} style={column.tdStyle ? { ...td, ...column.tdStyle } : td} className={column.hideNarrow ? 'hide-narrow' : undefined}>
-                          {column.render({ card, stats: stats.get(card.id) })}
-                        </td>
-                      ))}
+                      {columns.map(column => {
+                        const className = [column.hideNarrow && 'hide-narrow', column.id === 'text' && 'clamp-narrow'].filter(Boolean).join(' ') || undefined;
+                        return (
+                          <td key={column.id} style={column.tdStyle ? { ...td, ...column.tdStyle } : td} className={className}>
+                            {column.render({ card, extras: extras.get(card.id), queue: queueSpots ? queueSpots.get(card.id) ?? null : undefined })}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                   {displayedCards.length === 0 && (

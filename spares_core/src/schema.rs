@@ -256,8 +256,15 @@ pub mod note {
     pub struct CardMatch {
         pub card: CardResponse,
         pub parser_name: String,
+        /// The start of the text of the card's note, up to [`CARD_NOTE_PREVIEW_CHARS`] characters.
+        pub note_preview: String,
+        /// The tags of the card's note, leaving out filtered tags.
+        pub note_tags: Vec<String>,
         pub stats: CardStats,
     }
+
+    /// How many characters of its note's text [`CardMatch::note_preview`] has at most.
+    pub const CARD_NOTE_PREVIEW_CHARS: usize = 200;
 
     /// What a card's reviews say about it, as the search fields of the same names count it.
     #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -271,6 +278,14 @@ pub mod note {
         pub lapses: u32,
         /// When the card was last reviewed, leaving out crams, as `c.reviewed`.
         pub last_reviewed: Option<DateTime<Utc>>,
+        /// How likely the card is to be recalled now, from 0 to 1, as `c.retrievability`: from
+        /// the forgetting curve of the scheduler that last reviewed it. `None` for a new card, one
+        /// never reviewed, or one whose scheduler has no forgetting curve.
+        pub retrievability: Option<f64>,
+        /// Whether the card lapsed at least
+        /// [`LeechConfig::lapses_threshold`](crate::config::LeechConfig::lapses_threshold) times,
+        /// as `c.leech`.
+        pub leech: bool,
     }
 
     /// A note a search found, and where its text has what the search looks for.

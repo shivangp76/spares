@@ -3,8 +3,10 @@ use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 
 use chrono::DateTime;
+use chrono::Utc;
 use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
+use sqlx::types::Json;
 
 use super::enrich_note;
 use crate::Error;
@@ -16,12 +18,18 @@ use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::NEW_CARD_STATE;
 use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::NoteLink;
+use crate::model::ReviewLogKind;
 use crate::model::Score;
 use crate::model::SpecialState;
+use crate::schedulers::RetrievabilityFn;
+use crate::schedulers::get_default_scheduler_name;
+use crate::schedulers::get_scheduler_from_string;
 use crate::schema::card::CardResponse;
+use crate::schema::note::CARD_NOTE_PREVIEW_CHARS;
 use crate::schema::note::CardMatch;
 use crate::schema::note::CardStats;
 use crate::schema::note::GraphEdge;
@@ -182,48 +190,94 @@ pub async fn search_page(
     }
 }
 
-/// The cards `ids_sql`, a list of ids for `IN`, with what their reviews say, by id.
+/// The cards `ids_sql`, a list of ids for `IN`, with their notes' text and tags and what their
+/// reviews say, by id.
 async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, CardMatch>, Error> {
     #[derive(sqlx::FromRow)]
     struct CardWithParser {
         #[sqlx(flatten)]
         card: Card,
         name: String,
+        note_data: String,
+        note_tags: Json<Vec<String>>,
         interval_days: Option<f64>,
         reps: u32,
         lapses: u32,
         last_reviewed: Option<i64>,
+        scheduler_name: Option<String>,
     }
     let rows: Vec<CardWithParser> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT c.*, p.name, {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed
+        "SELECT c.*, p.name, n.data AS note_data,
+           COALESCE((SELECT JSON_GROUP_ARRAY(t.name) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id
+             WHERE nt.note_id = n.id), '[]') AS note_tags,
+           {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed,
+           (SELECT rl.scheduler_name FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {}
+             ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1) AS scheduler_name
         FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id
         WHERE c.id IN ({ids_sql})",
         interval_sql(),
         reps_sql(),
         lapses_sql(),
         last_rated_sql(),
+        ReviewLogKind::Review as u8,
     )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let card_match = CardMatch {
-                card: CardResponse::new(&row.card),
-                parser_name: row.name,
-                stats: CardStats {
-                    interval_days: row.interval_days,
-                    reps: row.reps,
-                    lapses: row.lapses,
-                    last_reviewed: row
-                        .last_reviewed
-                        .and_then(|at| DateTime::from_timestamp(at, 0)),
-                },
-            };
-            (row.card.id, card_match)
-        })
-        .collect())
+    let config = read_external_config()?;
+    let now = Utc::now();
+    // Each scheduler's forgetting curve, read from the config once
+    let mut curves: HashMap<String, Option<RetrievabilityFn>> = HashMap::new();
+    let mut matches = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let last_reviewed = row
+            .last_reviewed
+            .and_then(|at| DateTime::from_timestamp(at, 0));
+        // As `c.retrievability`, which a cram leaves alone and a new card has none of
+        let retrievability = match (row.card.state, last_reviewed) {
+            (NEW_CARD_STATE, _) | (_, None) => None,
+            (_, Some(at)) => {
+                let name = row
+                    .scheduler_name
+                    .unwrap_or_else(|| get_default_scheduler_name().to_string());
+                let curve = match curves.entry(name) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let curve = get_scheduler_from_string(entry.key())
+                            .ok()
+                            .and_then(|scheduler| scheduler.retrievability(&config));
+                        entry.insert(curve)
+                    }
+                };
+                #[allow(clippy::cast_precision_loss)]
+                let elapsed_days = (now - at).num_seconds() as f64 / 86400.0;
+                curve
+                    .as_ref()
+                    .map(|curve| curve(row.card.stability, elapsed_days))
+                    .filter(|recall| recall.is_finite())
+            }
+        };
+        let card_match = CardMatch {
+            card: CardResponse::new(&row.card),
+            parser_name: row.name,
+            note_preview: row
+                .note_data
+                .chars()
+                .take(CARD_NOTE_PREVIEW_CHARS)
+                .collect(),
+            note_tags: row.note_tags.0,
+            stats: CardStats {
+                interval_days: row.interval_days,
+                reps: row.reps,
+                lapses: row.lapses,
+                last_reviewed,
+                retrievability,
+                leech: row.lapses >= config.leech.lapses_threshold,
+            },
+        };
+        matches.insert(row.card.id, card_match);
+    }
+    Ok(matches)
 }
 
 /// The error of `query` alone, whose place in the query is right, as it isn't in the query with the
@@ -855,8 +909,42 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query("UPDATE card SET stability = 10 WHERE id = ?")
+            .bind(card_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'animal', '', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO note_tag (note_id, tag_id) SELECT note_id, 1 FROM card WHERE id = ?",
+        )
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
         let cards = card_page(&pool, "", None).await;
         let reviewed = cards.iter().find(|m| m.card.id == card_id).unwrap();
+        // As `c.retrievability` finds it
+        let retrievability = reviewed.stats.retrievability.unwrap();
+        let found = card_page(
+            &pool,
+            &format!(
+                "c.retrievability>{} c.retrievability<{}",
+                retrievability - 0.001,
+                retrievability + 0.001
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(
+            found.iter().map(|m| m.card.id).collect::<Vec<_>>(),
+            [card_id]
+        );
         assert_eq!(
             reviewed.stats,
             CardStats {
@@ -864,10 +952,16 @@ mod tests {
                 reps: 2,
                 lapses: 1,
                 last_reviewed: DateTime::from_timestamp(300_000 - 86400, 0),
+                retrievability: Some(retrievability),
+                leech: false,
             }
         );
+        assert_eq!(reviewed.note_preview, "dog a");
+        assert_eq!(reviewed.note_tags, ["animal"]);
+        // Never reviewed, so it has no retrievability though it is in review.
         let other = cards.iter().find(|m| m.card.id != card_id).unwrap();
         assert_eq!(other.stats, CardStats::default());
+        assert_eq!(other.note_tags, Vec::<String>::new());
         assert_eq!(reviewed.parser_name, "markdown");
     }
 

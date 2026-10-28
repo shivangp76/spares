@@ -220,10 +220,10 @@ const keywordsPageSize = choicePreference<PageSize>('spares_keywords_page_size',
 export const setKeywordsPageSize = keywordsPageSize.set;
 export const useKeywordsPageSize = keywordsPageSize.use;
 
-export const CARD_COLUMNS = ['id', 'note', 'order', 'state', 'due', 'retention', 'special', 'stability', 'difficulty', 'interval', 'reps', 'lapses', 'reviewed', 'created', 'updated'] as const;
+export const CARD_COLUMNS = ['id', 'note', 'text', 'tags', 'order', 'state', 'due', 'queue', 'retention', 'special', 'stability', 'difficulty', 'retrievability', 'interval', 'reps', 'lapses', 'leech', 'reviewed', 'created', 'updated'] as const;
 export type CardColumn = typeof CARD_COLUMNS[number];
 /** Which columns the cards page's table shows. */
-const cardColumns = listPreference<CardColumn>('spares_cards_columns', CARD_COLUMNS, ['id', 'note', 'order', 'state', 'due', 'retention', 'special']);
+const cardColumns = listPreference<CardColumn>('spares_cards_columns', CARD_COLUMNS, ['id', 'note', 'text', 'order', 'state', 'due', 'retention', 'special']);
 export const setCardColumns = cardColumns.set;
 export const useCardColumns = cardColumns.use;
 
