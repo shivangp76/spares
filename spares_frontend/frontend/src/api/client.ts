@@ -733,6 +733,11 @@ export async function listNotes(page: number, limit: number): Promise<NoteRespon
   return cacheListPage(`notes?${pageQuery(page, limit)}`, apiFetch('Notes fetch', `/api/notes?${pageQuery(page, limit)}`));
 }
 
+/** How many notes there are, for the pages `listNotes` has. */
+export async function countNotes(): Promise<number> {
+  return apiFetch('Notes count', '/api/notes/count');
+}
+
 /** The page `listNotes` last returned, if it hasn't been invalidated since. */
 export function cachedNotesPage(page: number, limit: number): NoteResponse[] | undefined {
   return listPages.get(`notes?${pageQuery(page, limit)}`) as NoteResponse[] | undefined;
@@ -781,6 +786,11 @@ export async function exportNotes(query: string): Promise<Record<string, string>
 
 export async function listCards(page: number, limit: number): Promise<CardResponse[]> {
   return cacheListPage(`cards?${pageQuery(page, limit)}`, apiFetch('Cards fetch', `/api/cards?${pageQuery(page, limit)}`));
+}
+
+/** How many cards there are, for the pages `listCards` has. */
+export async function countCards(): Promise<number> {
+  return apiFetch('Cards count', '/api/cards/count');
 }
 
 /** The page `listCards` last returned, if it hasn't been invalidated since. */

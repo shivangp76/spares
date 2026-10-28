@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
 use spares_core::api::browser_render::get_note_render;
+use spares_core::api::note::count_notes;
 use spares_core::api::note::create_notes;
 use spares_core::api::note::delete_notes;
 use spares_core::api::note::export::export_notes;
@@ -111,6 +112,14 @@ pub(crate) async fn list_notes_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(list_notes_res))
+}
+
+/// How many notes there are, for the pages `GET /api/notes` has.
+pub(crate) async fn count_notes_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let count = count_notes(&data.db).await.map_err(error_to_response)?;
+    Ok(Json(count))
 }
 
 pub(crate) async fn search_notes_handler(

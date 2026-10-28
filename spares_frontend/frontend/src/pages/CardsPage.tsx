@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedCardsPage, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
+import { ApiError, cachedCardsPage, countCards, forgetCard, getCard, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
 import BulkActionBar, { Checkbox, type BulkAction, type BulkActionBarHandle } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
@@ -167,8 +167,9 @@ export default function CardsPage() {
   const allColumns = cardColumns(stateName);
   const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
   // Without a search, the list is read from a search for every card when sorted or showing what
-  // only a search returns, and how many cards there are in all
+  // only a search returns
   const listBySearch = sort !== null || shownColumnIds.some(c => STATS_COLUMNS.includes(c));
+  // How many cards there are without a search, which that search says, or which are counted
   const [listTotal, setListTotal] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -218,13 +219,14 @@ export default function CardsPage() {
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     if (searchQuery !== null || listBySearch) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the total is only known from a search
-    setListTotal(null);
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedCardsPage(page, pageSize);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the cached page while the page is fetched
     if (cached) setCards(cached);
     setLoading(cached === undefined);
     let cancelled = false;
+    // Until it is counted, the last page is the one with fewer cards than a page has
+    countCards().then(total => { if (!cancelled) setListTotal(total); }, () => {});
     listCards(page, pageSize)
       .then(data => {
         if (cancelled) return;

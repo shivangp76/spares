@@ -136,6 +136,15 @@ pub(crate) async fn fetch_note_snapshot(
     })
 }
 
+/// How many notes there are, for the pages [`list_notes`] has.
+pub async fn count_notes(db: &SqlitePool) -> Result<i64, Error> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(count)
+}
+
 pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<NoteResponse>, Error> {
     #[derive(sqlx::FromRow)]
     struct ListNotesRow {

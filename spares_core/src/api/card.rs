@@ -123,6 +123,15 @@ pub async fn get_cards(db: &SqlitePool, note_id: NoteId) -> Result<Vec<CardRespo
         .collect::<Vec<_>>())
 }
 
+/// How many cards there are, for the pages [`list_cards`] has.
+pub async fn count_cards(db: &SqlitePool) -> Result<i64, Error> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card")
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(count)
+}
+
 pub async fn list_cards(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<CardResponse>, Error> {
     let limit = opts.limit.unwrap_or(DEFAULT_CARDS_LIMIT);
     let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;

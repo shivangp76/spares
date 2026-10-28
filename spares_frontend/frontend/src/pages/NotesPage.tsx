@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedNotesPage, changeNotesParser, deleteNotes, exportNotes, getNote, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
+import { ApiError, cachedNotesPage, changeNotesParser, countNotes, deleteNotes, exportNotes, getNote, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
@@ -95,8 +95,8 @@ export default function NotesPage() {
   const { sort, cycle: cycleSort } = useTableSort();
   const sortField = sort?.field ?? null;
   const sortDescending = sort?.descending ?? false;
-  // Without a search, a sorted list is read from a search for every note, which also says how
-  // many there are in all
+  // How many notes there are without a search, which a sorted list reads from a search for every
+  // note, and an unsorted one counts
   const [listTotal, setListTotal] = useState<number | null>(null);
   const shownColumnIds = useNoteColumns();
   const allColumns = noteColumns(searchMatches);
@@ -141,13 +141,14 @@ export default function NotesPage() {
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     if (searchQuery !== null || sortField !== null) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the total is only known from a search
-    setListTotal(null);
     // Show the page from an earlier visit straight away while it is refetched
     const cached = cachedNotesPage(page, pageSize);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the cached page while the page is fetched
     if (cached) setNotes(cached);
     setLoading(cached === undefined);
     let cancelled = false;
+    // Until it is counted, the last page is the one with fewer notes than a page has
+    countNotes().then(total => { if (!cancelled) setListTotal(total); }, () => {});
     listNotes(page, pageSize)
       .then(data => {
         if (cancelled) return;
@@ -253,6 +254,7 @@ export default function NotesPage() {
       await deleteNotes({ Ids: [id] });
       setNotes(prev => prev.filter(n => n.id !== id));
       if (searchResults?.some(n => n.id === id)) setSearchTotal(total => total - 1);
+      if (notes.some(n => n.id === id)) setListTotal(total => (total === null ? null : total - 1));
       setSearchResults(prev => (prev ? prev.filter(n => n.id !== id) : prev));
       setSelectedNote(null);
       setPaneStatus(`Note ${id} deleted.`);

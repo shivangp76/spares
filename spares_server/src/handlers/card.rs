@@ -6,6 +6,7 @@ use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
+use spares_core::api::card::count_cards;
 use spares_core::api::card::get_card;
 use spares_core::api::card::get_card_reviews;
 use spares_core::api::card::get_cards;
@@ -61,6 +62,14 @@ pub(crate) async fn list_cards_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(card_res))
+}
+
+/// How many cards there are, for the pages `GET /api/cards` has.
+pub(crate) async fn count_cards_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let count = count_cards(&data.db).await.map_err(error_to_response)?;
+    Ok(Json(count))
 }
 
 pub(crate) async fn update_cards_handler(

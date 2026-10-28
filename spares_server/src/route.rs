@@ -15,6 +15,7 @@ use tower_http::services::ServeFile;
 use crate::AppState;
 use crate::handlers::audio::AUDIO_BODY_LIMIT;
 use crate::handlers::audio::create_audio_handler;
+use crate::handlers::card::count_cards_handler;
 use crate::handlers::card::forget_card_handler;
 use crate::handlers::card::get_card_handler;
 use crate::handlers::card::get_card_reviews_handler;
@@ -33,6 +34,7 @@ use crate::handlers::image_occlusion::get_image_occlusion_editor_config_handler;
 use crate::handlers::image_occlusion::get_image_occlusion_file_handler;
 use crate::handlers::image_occlusion::list_note_image_occlusions_handler;
 use crate::handlers::image_occlusion::update_note_image_occlusion_handler;
+use crate::handlers::note::count_notes_handler;
 use crate::handlers::note::create_notes_handler;
 use crate::handlers::note::delete_notes_handler;
 use crate::handlers::note::export_notes_handler;
@@ -283,6 +285,7 @@ pub(crate) fn create_router(
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>
         .route("/api/notes", delete(delete_notes_handler))
         .route("/api/notes", get(list_notes_handler))
+        .route("/api/notes/count", get(count_notes_handler))
         .route(
             "/api/notes/generate_files",
             post(generate_note_files_handler),
@@ -322,6 +325,7 @@ pub(crate) fn create_router(
         )
         // Card
         .route("/api/cards", get(list_cards_handler))
+        .route("/api/cards/count", get(count_cards_handler))
         .route("/api/cards/{id}", get(get_card_handler))
         .route("/api/cards/note_id/{id}", get(get_cards_handler))
         .route("/api/cards/leeches", post(get_leeches_handler))
