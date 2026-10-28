@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { PAGE_SIZES, type PageSize } from '../preferences';
 
 /**
- * Prev and Next buttons around the page number, which can be typed over to go straight to a page,
- * going there on Enter or on leaving the box, and a choice of how many rows each page has.
+ * First, Prev, Next and Last buttons around the page number and how many pages there are. The
+ * number can be typed over to go straight to a page, going there on Enter or on leaving the box.
+ * Then a choice of how many rows each page has.
  */
 export default function Pagination({ page, pageCount, prevPage, nextPage, goToPage, pageSize, setPageSize }: {
   page: number;
@@ -30,6 +31,7 @@ export default function Pagination({ page, pageCount, prevPage, nextPage, goToPa
 
   return (
     <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button disabled={page === 1} className="touch-target-small" onClick={() => goToPage(1)} title="Go to the first page">First</button>
       <button disabled={!prevPage} className="touch-target-small" onClick={() => prevPage?.()}>Prev</button>
       <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center' }}>
         Page
@@ -52,6 +54,14 @@ export default function Pagination({ page, pageCount, prevPage, nextPage, goToPa
         {pageCount !== null && `of ${pageCount}`}
       </label>
       <button disabled={!nextPage} className="touch-target-small" onClick={() => nextPage?.()}>Next</button>
+      <button
+        disabled={pageCount === null || page >= pageCount}
+        className="touch-target-small"
+        onClick={() => { if (pageCount !== null) goToPage(pageCount); }}
+        title={pageCount === null ? 'Not known yet how many pages there are' : `Go to the last page, ${pageCount}`}
+      >
+        Last
+      </button>
       <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
         Per page
         <select value={pageSize} onChange={e => setPageSize(e.target.value as PageSize)} style={{ fontSize: 13 }}>
