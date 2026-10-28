@@ -544,7 +544,7 @@ export default function CardsPage() {
           {!queueOrder && <Pagination page={page} pageCount={searchResults !== null || listTotal !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />}
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="split-detail" style={{ flex: 1, minWidth: 0 }}>
           {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to cards</button>}
           {browse && selected
             ? <CardDetail

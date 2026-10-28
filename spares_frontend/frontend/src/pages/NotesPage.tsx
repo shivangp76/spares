@@ -481,7 +481,7 @@ export default function NotesPage() {
           <Pagination page={page} pageCount={searchResults !== null || listTotal !== null ? pageCount : null} prevPage={prevPage} nextPage={nextPage} goToPage={goToPage} pageSize={pageSizeChoice} setPageSize={changePageSize} />
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="split-detail" style={{ flex: 1, minWidth: 0 }}>
           {!detail.showList && <button onClick={detail.back} className="touch-target" style={{ marginBottom: 12 }}>← Back to notes</button>}
           {paneStatus && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{paneStatus}</div>}
           {hasDraft && (

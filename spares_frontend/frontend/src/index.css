@@ -369,6 +369,15 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   align-items: flex-start;
 }
 
+/* The detail panel beside a list stays in view while the list scrolls, and scrolls on its own
+   when it is taller than the screen */
+.split-detail {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
 /* The list beside a detail panel, which is narrow on mid-sized screens though the page isn't */
 .split-list {
   container-type: inline-size;
@@ -631,6 +640,13 @@ html:has(.review-answer-bar) {
     flex-direction: column;
     /* Stacked columns take the full width rather than their content's */
     align-items: stretch;
+  }
+
+  /* Stacked, the panel is shown in place of the list, so the page scrolls it */
+  .split-detail {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
