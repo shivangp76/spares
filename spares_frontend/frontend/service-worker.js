@@ -138,7 +138,12 @@ async function navigate(request) {
     // The image occlusion editor is its own page, whose settings are in its query, and is available
     // offline only on a device that keeps a copy
     const editor = new URL(request.url).pathname.startsWith("/svgedit/");
-    const cached = await caches.match(request, { ignoreSearch: editor });
+    // Only this build's pages: other caches have other responses at app routes, such as the
+    // marker of a device that keeps a copy at `/`
+    const cached = await caches.match(request, {
+      cacheName: PAGE_CACHE,
+      ignoreSearch: editor,
+    });
     if (cached) return cached;
     if (!editor) {
       const page = await caches.match(PAGE_URL);
