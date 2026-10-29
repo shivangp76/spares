@@ -239,9 +239,25 @@ pub(crate) async fn save_config(device: &SqlitePool, config: &DeviceConfig) -> R
     ] {
         set_state(device, key, Some(&dir.to_string_lossy())).await?;
     }
+    set_state(device, "pandoc_version", config.pandoc_version.as_deref()).await?;
     load_config(device).await?;
     load_media_dirs(device).await
 }
+
+/// The server's pandoc version and its web defaults file, as the last sync brought them.
+pub(crate) async fn pandoc_config(
+    device: &SqlitePool,
+) -> Result<(Option<String>, Option<String>), JsValue> {
+    let web_defaults = sqlx::query_scalar("SELECT contents FROM config_file WHERE path = ?")
+        .bind(WEB_DEFAULTS_FILE)
+        .fetch_optional(device)
+        .await
+        .map_err(sqlx_error)?;
+    Ok((get_state(device, "pandoc_version").await?, web_defaults))
+}
+
+/// Where [`DeviceConfig::files`] has the web defaults file, relative to the config directory
+const WEB_DEFAULTS_FILE: &str = "markdown/web-defaults.yaml";
 
 /// Makes the server's directories for images, audio and image occlusions the ones
 /// [`spares_core::platform`] names files by, once a sync has brought them.

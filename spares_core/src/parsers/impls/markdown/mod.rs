@@ -24,6 +24,11 @@
 //!   notes using them show their PDF; define macros in the note itself to have them apply to both.
 //! - Notes rendered before upgrading show their PDF until they are rendered again, e.g. with
 //!   `spares note generate --render --force-render`.
+//! - A browser that keeps a copy of the collection converts the cards of notes changed there with
+//!   pandoc's WebAssembly build, of the server's version, until the server renders them after the
+//!   next sync (`src/local/pandoc.ts` in the web app). It gets the web defaults file at each sync,
+//!   and leaves out what it names files with, such as `css` and `filters`, since it doesn't have
+//!   them.
 
 use std::fs::read_to_string;
 use std::fs::remove_file;
@@ -563,8 +568,9 @@ impl Drop for PandocInput<'_> {
     }
 }
 
-/// Optional pandoc defaults file for the HTML for web clients.
-fn web_defaults_filepath() -> PathBuf {
+/// Optional pandoc defaults file for the HTML for web clients. Devices that keep a copy get it too
+/// (`spares_core::sync::devices::DeviceConfig`), for the cards they convert themselves.
+pub fn web_defaults_filepath() -> PathBuf {
     get_config_dir().join("markdown").join("web-defaults.yaml")
 }
 
@@ -804,14 +810,30 @@ fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
 
 fn pandoc_user_data_dir() -> Option<&'static Path> {
     static DIR: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
-        let output = Command::new("pandoc").arg("--version").output().ok()?;
-        String::from_utf8(output.stdout)
-            .ok()?
+        pandoc_version_output()?
             .lines()
             .find_map(|line| line.strip_prefix("User data directory: "))
             .map(|dir| PathBuf::from(dir.trim()))
     });
     DIR.as_deref()
+}
+
+/// The version of the pandoc that renders notes, e.g. `3.12.1`, if it runs.
+pub fn pandoc_version() -> Option<&'static str> {
+    pandoc_version_output()?
+        .lines()
+        .next()?
+        .strip_prefix("pandoc ")
+        .map(str::trim)
+}
+
+/// `pandoc --version`, run once.
+fn pandoc_version_output() -> Option<&'static str> {
+    static OUTPUT: LazyLock<Option<String>> = LazyLock::new(|| {
+        let output = Command::new("pandoc").arg("--version").output().ok()?;
+        String::from_utf8(output.stdout).ok()
+    });
+    OUTPUT.as_deref()
 }
 
 /// <https://pandoc.org/MANUAL.html?pandocs-markdown#reference-links>
