@@ -225,6 +225,11 @@ const imageDropTheme = EditorView.baseTheme({
   },
 });
 
+/** Stores image files picked with a button (`InsertImageButton`) and inserts them at the cursor. */
+export function insertImageFiles(view: EditorView, parserId: number, files: File[]): void {
+  void insertImages(view, files.map(file => fileUpload(parserId, file)), view.state.selection.main.head);
+}
+
 /** Uploads images pasted or dropped into the editor, and inserts them in the syntax of the note's
     parser where they were pasted or dropped. */
 export function imageUpload(parserId: number): Extension {

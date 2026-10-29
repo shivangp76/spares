@@ -162,7 +162,7 @@ Image occlusions are clozes drawn on an image. In the web app, click "Insert ima
 
 ## Images
 
-Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown. In the web app, paste or drop an image into a note's editor to upload and insert it (see `spares_core::api::image`).
+Notes refer to images by absolute path, e.g. `![](/Users/me/media/cell.png)` in Markdown. In the web app, paste or drop an image into a note's editor to upload and insert it, or click "Insert image", which on a phone also offers the photo library and the camera (see `spares_core::api::image`).
 
 ## Audio
 

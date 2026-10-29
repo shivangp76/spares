@@ -688,6 +688,12 @@ html:has(.review-answer-bar) {
     font-size: 16px !important;
   }
 
+  /* Likewise CodeMirror's editable text, such as the note editors', whose size is a setting. The
+     zoom would stay after leaving the editor, and the page would scroll sideways. */
+  .cm-content {
+    font-size: max(16px, 1em);
+  }
+
   /* The links scroll sideways on one row instead of wrapping onto several */
   .navbar-links {
     flex-wrap: nowrap;

@@ -3,7 +3,6 @@ import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-code
 import { getCM } from '@replit/codemirror-vim';
 import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
-import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
 import type { ImageOcclusionData, NoteRenderResponse, NoteResponse } from '../types/spares';
@@ -13,6 +12,7 @@ import Backlinks from './Backlinks';
 import CardRenderer from './CardRenderer';
 import ImageOcclusionEditor from './ImageOcclusionEditor';
 import InsertAudioButton from './InsertAudioButton';
+import InsertImageButton from './InsertImageButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 import LocalGraph from './LocalGraph';
 import NoteSyntaxButton from './NoteSyntaxHelp';
@@ -60,7 +60,6 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
       : editor.dataExtensions,
     [live, editor.dataExtensions],
   );
-  const isNarrow = useMediaQuery('(max-width: 640px)');
   const [imageOcclusions, setImageOcclusions] = useState<ImageOcclusionData[]>([]);
   const [imageOcclusionsError, setImageOcclusionsError] = useState<string | null>(null);
   const [editingOcclusion, setEditingOcclusion] = useState<{ index: number; occlusion: ImageOcclusionData } | null>(null);
@@ -260,6 +259,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
                   parserId={note.parser_id}
                   onInsert={snippet => setDataContent(insertInline(dataEditorRef.current?.view, dataContent, snippet))}
                 />
+                <InsertImageButton parserId={note.parser_id} view={() => dataEditorRef.current?.view} />
                 <InsertImageOcclusionButton
                   parserId={note.parser_id}
                   onInsert={snippet => setDataContent(insertBlock(dataEditorRef.current?.view, dataContent, snippet))}
@@ -326,7 +326,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
         </div>
       </div>
 
-      {(imageOcclusions.length > 0 || imageOcclusionsError) && !isNarrow && (
+      {(imageOcclusions.length > 0 || imageOcclusionsError) && (
         <div style={{ marginBottom: 16 }}>
           <div style={metaLabel}>Image Occlusions</div>
           {imageOcclusionsError && <div style={{ fontSize: 13, color: 'var(--error)' }}>{imageOcclusionsError}</div>}

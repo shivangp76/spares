@@ -9,6 +9,7 @@ import type { NoteResponse, ParserResponse } from '../types/spares';
 import { errorMessage, formatNoteId, insertBlock, insertInline, insertSource } from '../utils';
 import { NO_WRITE_WARNING, useVimCommands } from '../vimCommands';
 import InsertAudioButton from './InsertAudioButton';
+import InsertImageButton from './InsertImageButton';
 import InsertImageOcclusionButton from './InsertImageOcclusionButton';
 import type { NotePaneHandle } from './NoteDetail';
 import NoteSyntaxButton from './NoteSyntaxHelp';
@@ -121,9 +122,11 @@ export default function NewNoteForm({ onCreated, onCancel, ref }: { onCreated: (
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <div style={fieldLabel}>Data</div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          {/* Wraps on phones rather than pushing the page sideways */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <NoteSyntaxButton parserId={parserId} tips={vimEnabled ? [...EDITOR_TIPS, VIM_TIP] : EDITOR_TIPS} onInsert={source => setData(insertSource(dataEditorRef.current?.view, data, source))} />
             <InsertAudioButton parserId={parserId} onInsert={snippet => setData(insertInline(dataEditorRef.current?.view, data, snippet))} />
+            <InsertImageButton parserId={parserId} view={() => dataEditorRef.current?.view} />
             <InsertImageOcclusionButton parserId={parserId} onInsert={snippet => setData(insertBlock(dataEditorRef.current?.view, data, snippet))} />
           </div>
         </div>

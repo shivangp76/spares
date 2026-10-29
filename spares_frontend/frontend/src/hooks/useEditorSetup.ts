@@ -10,7 +10,7 @@ import {
 import { useMediaQuery } from './useMediaQuery';
 
 /** What the note editors do beyond typing, for their Syntax popup. */
-export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded and inserted at that spot.'];
+export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded and inserted at that spot. Insert image inserts them at the cursor, from the photo library or the camera on a phone.'];
 
 /** CodeMirror extensions and basic setups for the note editors, following the editor settings. On
     phones, line numbers are left out to give the text the width, and lines wrap unless turned
