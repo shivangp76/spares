@@ -295,8 +295,9 @@ impl Parseable for MarkdownParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let card_data_str =
-                    construct_card_data(self, card_order, card_data, side, *note_id);
+                let card_data_str = without_cloze_delimiters(&construct_card_data(
+                    self, card_order, card_data, side, *note_id,
+                ));
                 let mut lines = vec![format!(
                     "- note-id{} {}",
                     settings_key_value_delim,
@@ -806,6 +807,28 @@ fn get_linked_notes_string(
     }
 }
 
+/// `card_data` without the delimiters of the clozes it still has: the note's other cards', which
+/// show as their text. pandoc, unlike LaTeX and Typst with their templates, would show them as
+/// written, e.g. `{{[o:2]Paris}}`.
+fn without_cloze_delimiters(card_data: &str) -> String {
+    let mut delimiters = Vec::new();
+    let mut cloze_parser = ClozeParser::new(card_data);
+    while let Some(clozes) = cloze_parser.next_cloze() {
+        for cloze in clozes {
+            delimiters.extend([cloze.start_match, cloze.end_match]);
+        }
+    }
+    delimiters.sort_by_key(|range| range.start);
+    let mut text = String::with_capacity(card_data.len());
+    let mut at = 0;
+    for delimiter in delimiters {
+        text.push_str(&card_data[at..delimiter.start]);
+        at = delimiter.end;
+    }
+    text.push_str(&card_data[at..]);
+    text
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::path::PathBuf;
@@ -872,6 +895,37 @@ pub mod tests {
                 end_match: 24..26,
                 settings_match: 8..11,
             }]
+        );
+    }
+
+    /// A card shows the note's other clozes as their text, and its own as a `.mark` span.
+    #[test]
+    fn test_markdown_card_other_clozes() {
+        use crate::ids::NoteId;
+        use crate::parsers::construct_card_data;
+        use crate::parsers::generate_files::CardSide;
+        use crate::parsers::get_cards;
+
+        let parser = MarkdownParser::new();
+        let data =
+            "Spain: {{[o:1]Madrid}}, France: {{[o:2]Paris}}, $3^{2^{2}}$ {{Rome {{[o:4]Lazio}}}}";
+        let cards = get_cards(&parser, None, data, false, false).unwrap();
+        let card = |order: usize, side| {
+            super::without_cloze_delimiters(&construct_card_data(
+                &parser,
+                order,
+                &cards[order - 1],
+                side,
+                NoteId::from_packed(1 << 8),
+            ))
+        };
+        assert_eq!(
+            card(2, CardSide::Front),
+            "Spain: Madrid, France: [card-#256-2 _____]{.mark}, $3^{2^{2}}$ Rome Lazio"
+        );
+        assert_eq!(
+            card(4, CardSide::Back),
+            "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-#256-4 Lazio]{.mark}"
         );
     }
 
