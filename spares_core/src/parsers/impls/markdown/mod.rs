@@ -1,5 +1,11 @@
 //! The "markdown" parser, which renders notes with pandoc.
 //!
+//! A note rendered whole, which is also the back of a card whose back is its note (`b:`'s
+//! default), shows each cloze as its text in brackets, `[Paris]` for `{{[o:1]Paris}}`, as the Typst
+//! template's `cl` does. The note's file keeps the clozes as written. Notes rendered before this
+//! show their clozes as written until they are rendered again, e.g. with
+//! `spares note generate --render --force-render`.
+//!
 //! # On the web
 //!
 //! Rendering a Markdown note also writes an HTML file next to its PDF, which the web app shows
@@ -21,6 +27,7 @@
 
 use std::fs::read_to_string;
 use std::fs::remove_file;
+use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -149,6 +156,11 @@ impl Parseable for MarkdownParser {
         let links_regex = get_or_compile_regex(r"!?\[([^\]]*)\](?:\([^)]*\)|\{[^}]*\})").unwrap();
         let text = links_regex.replace_all(text, "$1");
         text.replace(['*', '_', '`'], "")
+    }
+
+    /// Each cloze as its text in square brackets, as `cl` in the Typst template shows it.
+    fn note_render_source(&self, contents: String) -> String {
+        replace_cloze_delimiters(&contents, r"\[", r"\]")
     }
 
     fn audio_refs(&self, text: &str) -> Vec<AudioRef> {
@@ -414,11 +426,20 @@ impl Parseable for MarkdownParser {
         // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
         let mut log_filepath = dependencies_filepath.clone();
         log_filepath.set_extension("pandoc-log.json");
+        let input = PandocInput::new(
+            self,
+            output_text_filepath,
+            dependencies_filepath.with_extension("pandoc-input.md"),
+        )
+        .map_err(|source| Error::Io {
+            description: format!("Failed to read {}", output_text_filepath.display()),
+            source,
+        })?;
         let mut base_command = Command::new("pandoc");
         let mut command = base_command
             .arg("-o")
             .arg(output_rendered_filepath)
-            .arg(output_text_filepath)
+            .arg(input.path())
             .arg("--log")
             .arg(&log_filepath);
         let config = read_external_config().unwrap();
@@ -461,6 +482,12 @@ impl Parseable for MarkdownParser {
         let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
         let mut log_filepath = dependencies_filepath.clone();
         log_filepath.set_extension("pandoc-web-log.json");
+        let input = PandocInput::new(
+            self,
+            output_text_filepath,
+            dependencies_filepath.with_extension("pandoc-web-input.md"),
+        )
+        .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
         let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
         let page_title = output_rendered_filepath
             .file_stem()
@@ -468,7 +495,7 @@ impl Parseable for MarkdownParser {
             .unwrap_or_default();
         let mut command = Command::new("pandoc");
         command
-            .arg(output_text_filepath)
+            .arg(input.path())
             .arg("-o")
             .arg(output_web_filepath)
             .args(["-t", "html5", "--standalone", "--embed-resources"])
@@ -492,6 +519,42 @@ impl Parseable for MarkdownParser {
         );
         let _ = remove_file(&log_filepath);
         result
+    }
+}
+
+/// The file pandoc reads for a raw file: the file itself, or, if rendering reads it otherwise
+/// ([`Parseable::note_render_source`], as for a note with clozes), a copy as it is read, removed
+/// when this is dropped. The copy is next to the rendered file, since the raw file may be in the
+/// notes repository.
+struct PandocInput<'a> {
+    raw: &'a Path,
+    copy: Option<PathBuf>,
+}
+
+impl<'a> PandocInput<'a> {
+    fn new(parser: &dyn Parseable, raw: &'a Path, copy: PathBuf) -> std::io::Result<Self> {
+        let contents = read_to_string(raw)?;
+        let source = parser.note_render_source(contents.clone());
+        if source == contents {
+            return Ok(Self { raw, copy: None });
+        }
+        write(&copy, source)?;
+        Ok(Self {
+            raw,
+            copy: Some(copy),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.copy.as_deref().unwrap_or(self.raw)
+    }
+}
+
+impl Drop for PandocInput<'_> {
+    fn drop(&mut self) {
+        if let Some(copy) = &self.copy {
+            let _ = remove_file(copy);
+        }
     }
 }
 
@@ -811,21 +874,27 @@ fn get_linked_notes_string(
 /// show as their text. pandoc, unlike LaTeX and Typst with their templates, would show them as
 /// written, e.g. `{{[o:2]Paris}}`.
 fn without_cloze_delimiters(card_data: &str) -> String {
+    replace_cloze_delimiters(card_data, "", "")
+}
+
+/// `data` with the delimiters of each cloze, its settings included, replaced by `start` and `end`.
+fn replace_cloze_delimiters(data: &str, start: &str, end: &str) -> String {
     let mut delimiters = Vec::new();
-    let mut cloze_parser = ClozeParser::new(card_data);
+    let mut cloze_parser = ClozeParser::new(data);
     while let Some(clozes) = cloze_parser.next_cloze() {
         for cloze in clozes {
-            delimiters.extend([cloze.start_match, cloze.end_match]);
+            delimiters.extend([(cloze.start_match, start), (cloze.end_match, end)]);
         }
     }
-    delimiters.sort_by_key(|range| range.start);
-    let mut text = String::with_capacity(card_data.len());
+    delimiters.sort_by_key(|(range, _)| range.start);
+    let mut text = String::with_capacity(data.len());
     let mut at = 0;
-    for delimiter in delimiters {
-        text.push_str(&card_data[at..delimiter.start]);
+    for (delimiter, replacement) in delimiters {
+        text.push_str(&data[at..delimiter.start]);
+        text.push_str(replacement);
         at = delimiter.end;
     }
-    text.push_str(&card_data[at..]);
+    text.push_str(&data[at..]);
     text
 }
 
@@ -927,6 +996,21 @@ pub mod tests {
             card(4, CardSide::Back),
             "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-#256-4 Lazio]{.mark}"
         );
+    }
+
+    /// A note's file, rendered as the back of a card whose back is the note, shows each cloze as its
+    /// text in brackets, as Typst's template does.
+    #[test]
+    fn test_markdown_note_render_source() {
+        let parser = MarkdownParser::new();
+        assert_eq!(
+            parser.note_render_source(
+                "Spain: {{[o:1]Madrid}}, {{ $3^{2^{2}}$}} {{Rome {{[o:4;h:region]Lazio}}}}".into()
+            ),
+            r"Spain: \[Madrid\], \[ $3^{2^{2}}$\] \[Rome \[Lazio\]\]"
+        );
+        let plain = "No clozes, `{x}` and [a link](/a.md)".to_string();
+        assert_eq!(parser.note_render_source(plain.clone()), plain);
     }
 
     #[test]
@@ -1081,6 +1165,26 @@ pub mod tests {
             );
             result.unwrap();
             assert!(read_to_string(html).unwrap().contains("<hr"));
+        }
+
+        /// A note's file keeps its clozes as written, which the HTML shows as their text.
+        #[test]
+        fn test_render_web_file_note_clozes() {
+            let markdown = "Capital: {{[o:1]Paris}}\n";
+            let (result, html) = render("note-clozes", markdown, WebRenderMode::Auto);
+            result.unwrap();
+            let html_text = read_to_string(&html).unwrap();
+            assert!(html_text.contains("Capital: [Paris]"), "{html_text}");
+            let dir = html.parent().unwrap();
+            assert_eq!(read_to_string(dir.join("0001.md")).unwrap(), markdown);
+            // The copy pandoc read is gone
+            let left = std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.contains("input"))
+                .collect::<Vec<_>>();
+            assert!(left.is_empty(), "{left:?}");
         }
 
         #[test]

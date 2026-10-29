@@ -144,6 +144,13 @@ pub trait Parseable: Send + Sync {
         text.to_string()
     }
 
+    /// What rendering a note file reads of `contents`, e.g. for the back of a card whose back is
+    /// its note. The file keeps its clozes as written, since notes are also exported as it, and the
+    /// LaTeX and Typst templates say how they show. pandoc has no such template.
+    fn note_render_source(&self, contents: String) -> String {
+        contents
+    }
+
     /// The links to audio files in `text` (see [`audio`]), in order.
     fn audio_refs(&self, _text: &str) -> Vec<audio::AudioRef> {
         Vec::new()
