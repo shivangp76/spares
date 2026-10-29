@@ -9,8 +9,10 @@
 // 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Add a note with a
 //    new image occlusion, which the copy stores, and a Typst note with one, whose card shows before
 //    a sync, and sync. Offline, a Markdown note with a cloze and an image occlusion, whose cards
-//    show from their source, also after an edit. Log out and back in without a reload: the copy syncs again, and shows the
-//    HTML the server rendered offline.
+//    show from their source, also after an edit, with `marked` since pandoc.wasm is deleted first.
+//    Log out and back in without a reload: the copy syncs again, downloads pandoc.wasm again, and
+//    shows the HTML the server rendered offline. A Markdown card made offline shows its math as
+//    pandoc converts it.
 // 4. The server has the device's notes, image and image occlusion, and the resolved text, and
 //    rendered the device's Markdown note. Then Settings → Stop Keeping a Copy frees the device's
 //    number.
@@ -314,7 +316,12 @@ async function seeTypstCardImage(page: Page, query: string): Promise<boolean> {
   return (await page.locator(".typst-viewer image").count()) > 0;
 }
 
-type ShownCard = { marks: number; text: string; images: string[] };
+type ShownCard = {
+  marks: number;
+  math: number;
+  text: string;
+  images: string[];
+};
 
 /** The front of each card the Cards page finds for `query`, a Markdown card the device shows from its source. Navigates within the app, since a reload offline is what other steps test. */
 async function deviceMarkdownFronts(
@@ -340,6 +347,7 @@ async function deviceMarkdownFronts(
         const doc = (iframe as HTMLIFrameElement).contentDocument!;
         return {
           marks: doc.querySelectorAll("mark").length,
+          math: doc.querySelectorAll("math").length,
           text: doc.body?.textContent ?? "",
           images: [...doc.images].map((image) => image.src),
         };
@@ -358,6 +366,30 @@ async function deviceMarkdownFronts(
     }
   }
   return fronts;
+}
+
+/** The front of the first card the Cards page finds for `query`, once it shows math, as pandoc converts a Markdown card on the device, or after 30 s. */
+async function deviceMathFront(page: Page, query: string): Promise<ShownCard> {
+  await page.getByRole("link", { name: "Cards", exact: true }).click();
+  await page.getByPlaceholder(/^Search cards/).fill(query);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await see(page, `result for "${query}"`);
+  await page.locator("tbody tr").first().click();
+  await see(page, /shown from its text/);
+  const frame = page.locator('iframe[title="Rendered card"]').first();
+  for (let tries = 0; ; tries++) {
+    const front = await frame.evaluate((iframe) => {
+      const doc = (iframe as HTMLIFrameElement).contentDocument!;
+      return {
+        marks: doc.querySelectorAll("mark").length,
+        math: doc.querySelectorAll("math").length,
+        text: doc.body?.textContent ?? "",
+        images: [],
+      };
+    });
+    if (front.math > 0 || tries === 150) return front;
+    await page.waitForTimeout(200);
+  }
 }
 
 /** Text in the page, waited for. */
@@ -789,11 +821,13 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
 
     // A Markdown note with a cloze and an image occlusion made here offline, whose cards show from their own source
     await context.setOffline(true);
+    // As before the copy has downloaded it: cards show as `marked` has them, math as written
+    await page.evaluate(() => caches.delete("spares-copy-pandoc"));
     await page.getByRole("link", { name: "Notes", exact: true }).click();
     const markdownOcclusionForm = await startNote(
       page,
       "markdown",
-      `{{Paris}} is in France, said ${engine}.\n\n`,
+      `{{Paris}} is in France, said ${engine}. $x^2$\n\n`,
     );
     await markdownOcclusionForm
       .getByRole("button", { name: /Insert image occlusion/ })
@@ -826,6 +860,13 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
         clozeFront !== undefined &&
         !clozeFront.text.includes("Paris"),
       JSON.stringify(fronts),
+    );
+    check(
+      "without pandoc.wasm, a Markdown card shows as `marked` has it",
+      clozeFront !== undefined &&
+        clozeFront.math === 0 &&
+        clozeFront.text.includes("$x^2$"),
+      JSON.stringify(clozeFront),
     );
     check(
       "a Markdown card made offline shows its image occlusion as the device makes it",
@@ -906,6 +947,20 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     check(
       "shows the rendered note offline, as HTML",
       (await page.getByText(/Not rendered yet|Error loading/i).count()) === 0,
+    );
+    // pandoc.wasm, downloaded again with the files
+    await createNote(
+      page,
+      "markdown",
+      `Math from ${engine}: $y_1$ and {{Paris}}\n\n$$\\int_0^1 x\\,dx$$\n`,
+    );
+    const mathFront = await deviceMathFront(page, `"Math from ${engine}"`);
+    check(
+      "a Markdown card made offline shows its math as MathML, with its cloze hidden",
+      mathFront.math >= 2 &&
+        mathFront.marks > 0 &&
+        !mathFront.text.includes("Paris"),
+      JSON.stringify(mathFront),
     );
     await context.setOffline(false);
 
@@ -990,6 +1045,10 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     check(
       "stopped keeping a copy",
       (await api<unknown[]>("GET", "/api/sync/devices")).length === 0,
+    );
+    check(
+      "stopping deleted pandoc.wasm",
+      !(await page.evaluate(() => caches.has("spares-copy-pandoc"))),
     );
   } catch (e) {
     failed += 1;

@@ -11,7 +11,8 @@
 //
 // **Files.** The server renders notes, and the device keeps every rendered file and every file
 // Typst cards read (`render_asset`) in Cache Storage, where the API client looks first. They are
-// downloaded again when they change, after each sync.
+// downloaded again when they change, after each sync. So is pandoc.wasm, from the app's own
+// build, which converts the Markdown cards of notes changed here (see pandoc.ts).
 //
 // **Logging in and out.** Everything the copy sends goes to its own server, with the API key only
 // when the credentials are for that server. On every change of credentials, the copy pauses: no
@@ -43,6 +44,7 @@ import {
   stopCopy,
   usesLocalCopy,
 } from "./transport";
+import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from "./pandoc";
 
 /** Syncs once nothing changed for this long */
 const IDLE_MS = 5 * 60 * 1000;
@@ -431,6 +433,7 @@ async function dropCopy(): Promise<void> {
     SERVICE_WORKER_MARKER,
     COPY_FILES_CACHE,
     COPY_RENDER_ASSETS_CACHE,
+    COPY_PANDOC_CACHE,
   ]) {
     await globalThis.caches?.delete(name).catch(console.error);
   }
@@ -498,7 +501,8 @@ let downloading: Promise<void> | null = null;
 
 /**
  * Downloads the rendered files and render assets that changed since the last time, and drops the
- * ones that are gone. Typst packages are fetched too, which the service worker keeps.
+ * ones that are gone, and pandoc.wasm if it isn't here. Typst packages are fetched too, which the
+ * service worker keeps.
  */
 export function refreshFiles(): Promise<void> {
   downloading ??= (async () => {
@@ -528,9 +532,10 @@ async function downloadFiles(): Promise<void> {
   const files = (await res.json()) as RenderedFile[];
   const assets = await call<{ path: string; hash: string }[]>("render_assets");
 
-  const [filesCache, assetsCache] = await Promise.all([
+  const [filesCache, assetsCache, pandocCache] = await Promise.all([
     caches.open(COPY_FILES_CACHE),
     caches.open(COPY_RENDER_ASSETS_CACHE),
+    caches.open(COPY_PANDOC_CACHE),
   ]);
   const knownFiles = readMap(FILES_KEY);
   const knownAssets = readMap(ASSETS_KEY);
@@ -586,6 +591,16 @@ async function downloadFiles(): Promise<void> {
         }
       }),
   ];
+  // The build's, which names its version. An earlier build's goes once this one's is here.
+  const pandocWasms = await pandocCache.keys();
+  if (!pandocWasms.some((request) => request.url === PANDOC_WASM_URL)) {
+    tasks.push(async () => {
+      const response = await fetch(PANDOC_WASM_URL, { cache: "no-cache" });
+      if (!response.ok) return;
+      await pandocCache.put(PANDOC_WASM_URL, response);
+      for (const request of pandocWasms) await pandocCache.delete(request);
+    });
+  }
   let next = 0;
   let done = 0;
   setStatus({ downloading: { done, total: tasks.length } });

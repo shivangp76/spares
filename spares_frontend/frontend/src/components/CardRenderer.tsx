@@ -3,6 +3,7 @@ import { marked } from "marked";
 import { fetchFile, getNote } from "../api/client";
 import { useAuthedFileUrl } from "../hooks/useAuthedFileUrl";
 import { usePendingRender } from "../local/copy";
+import { usePandocHtml } from "../local/pandoc";
 import { deviceMediaFile } from "../local/transport";
 import type { NoteResponse } from "../types/spares";
 import { errorMessage, imageMimeType } from "../utils";
@@ -128,9 +129,10 @@ const badge: React.CSSProperties = {
 };
 
 /**
- * A Markdown card of a note changed on this device, from its own source (see `markdownCardHtml`),
- * so that it is never behind, though not quite as the server renders it. Its image occlusions are
- * the images the device makes.
+ * A Markdown card of a note changed on this device, from its own source, so that it is never
+ * behind: at once as `marked` shows it (see `markdownCardHtml`), then as pandoc converts it on the
+ * device like the server does (see src/local/pandoc.ts), when it can. Its image occlusions are the
+ * images the device makes.
  */
 function DeviceSource({
   source,
@@ -148,7 +150,8 @@ function DeviceSource({
   zoom: number;
 }) {
   const parsed = useMemo(() => markdownCardHtml(source), [source]);
-  const html = useDeviceImages(parsed);
+  const marked = useDeviceImages(parsed);
+  const html = useDeviceImages(usePandocHtml(source)) ?? marked;
   return (
     <>
       <p style={badge}>
@@ -302,6 +305,8 @@ async function showDeviceImages(html: string, urls: string[]): Promise<string> {
     image.getAttribute("src")?.startsWith("/"),
   );
   if (images.length === 0) return html;
+  // pandoc's, with its styles in the head
+  const whole = /^\s*<!DOCTYPE/i.test(html);
   await Promise.all(
     images.map(async (image) => {
       const path = decodeURI(image.getAttribute("src")!);
@@ -316,5 +321,7 @@ async function showDeviceImages(html: string, urls: string[]): Promise<string> {
       image.src = url;
     }),
   );
-  return doc.body.innerHTML;
+  return whole
+    ? `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`
+    : doc.body.innerHTML;
 }

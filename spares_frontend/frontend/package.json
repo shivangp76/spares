@@ -17,6 +17,7 @@
     "start-image-occlusion": "bun install && bun run prepare-svgedit && bun run dev-image-occlusion"
   },
   "dependencies": {
+    "@bjorn3/browser_wasi_shim": "0.3.0",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.13.1",
     "@codemirror/language-data": "^6.5.2",
@@ -31,7 +32,8 @@
     "marked": "^18.1.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

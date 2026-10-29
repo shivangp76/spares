@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   cpSync,
   createReadStream,
+  existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   writeFileSync,
@@ -15,6 +18,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { buildId } from "./build-id.ts";
 import wasm from "vite-plugin-wasm";
+import { pandocWasm } from "./pandoc-wasm.ts";
 
 const SVGEDIT_EDITOR_DIR = fileURLToPath(
   new URL("./svgedit/src/editor", import.meta.url),
@@ -159,6 +163,36 @@ function serviceWorker(): Plugin {
   };
 }
 
+/** Puts pandoc.wasm of the server's version (see pandoc-wasm.ts) in the build, with its compressed
+    copies, at a path naming the version, which the app gets as `__PANDOC_WASM__`. Only devices
+    that keep a copy download it (see src/local/copy.ts), so it isn't precached, and the service
+    worker leaves it to them. */
+function pandocWasmFile(): Plugin {
+  let wasm: { version: string; path: string };
+  let url: string;
+  return {
+    name: "pandoc-wasm",
+    async config() {
+      wasm = await pandocWasm();
+      url = `/pandoc/pandoc-${wasm.version}.wasm`;
+      return { define: { __PANDOC_WASM__: JSON.stringify(url) } };
+    },
+    configureServer(server) {
+      server.middlewares.use(url, (_req, res) => {
+        res.setHeader("Content-Type", "application/wasm");
+        createReadStream(wasm.path).pipe(res);
+      });
+    },
+    // Before `serviceWorker`, so the build hash covers it, and `precompress`, which leaves it as it is
+    closeBundle() {
+      const out = join(DIST_DIR, url);
+      mkdirSync(join(out, ".."), { recursive: true });
+      for (const suffix of ["", ".br", ".gz"])
+        copyFileSync(`${wasm.path}${suffix}`, `${out}${suffix}`);
+    },
+  };
+}
+
 // Compressed copies written by `precompress`
 const COMPRESSED = /\.(br|gz)$/;
 // Formats that are not compressed already, unlike images
@@ -179,9 +213,12 @@ function precompress(): Plugin {
     closeBundle: {
       order: "post",
       async handler() {
+        // Not files that come with their compressed copies, such as pandoc.wasm
         await Promise.all(
           listFiles(DIST_DIR)
-            .filter((path) => COMPRESSIBLE.test(path))
+            .filter(
+              (path) => COMPRESSIBLE.test(path) && !existsSync(`${path}.br`),
+            )
             .map(async (path) => {
               const data = readFileSync(path);
               if (data.length < 1024) return;
@@ -240,6 +277,7 @@ export default defineConfig({
     react(),
     wasm(),
     copySvgeditAssets(),
+    pandocWasmFile(),
     buildId(),
     serviceWorker(),
     precompress(),
