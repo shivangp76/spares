@@ -27,6 +27,7 @@ const calls = {
   render_assets: spares.render_assets,
   web_renders: spares.web_renders,
   media_file: spares.media_file,
+  pandoc_config: spares.pandoc_config,
 } as const;
 
 const ready = init();

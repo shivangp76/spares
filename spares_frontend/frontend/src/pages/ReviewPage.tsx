@@ -24,6 +24,8 @@ import {
   undoEvent,
   updateCards,
 } from '../api/client';
+import { usePendingRender } from '../local/copy';
+import { convertAhead } from '../local/pandoc';
 import { queueKey } from '../offline/db';
 import {
   cancelPendingAction,
@@ -839,6 +841,14 @@ export default function ReviewPage() {
     }, PRECOMPILE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [shownCardId]);
+
+  // A Markdown card of a note changed on this device: its back is converted with pandoc while the
+  // front is shown, so showing the answer doesn't wait for it (see src/local/pandoc.ts)
+  const pendingRender = usePendingRender(card?.note_id);
+  const deviceBack = frontRendered && pendingRender ? card?.device_sources?.card_back : undefined;
+  useEffect(() => {
+    if (deviceBack !== undefined) convertAhead(deviceBack);
+  }, [deviceBack]);
 
   // Load the note editor while a card is shown, so opening the note isn't delayed by it
   const reviewing = phase === 'front' || phase === 'back';

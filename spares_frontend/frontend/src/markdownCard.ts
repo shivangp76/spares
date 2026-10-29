@@ -2,7 +2,8 @@
 // nothing (see `PendingRender` in CardRenderer). The server renders it with pandoc, whose Markdown
 // `marked` doesn't know all of, so this handles what card sources are made of: clozes, written as
 // pandoc's `[…]{.mark}` spans, the template's YAML metadata, and raw blocks such as
-// ```` ```{=latex} ````. Math and other pandoc syntax show as they are written.
+// ```` ```{=latex} ````. Math and other pandoc syntax show as they are written, until pandoc's own
+// HTML replaces it (see src/local/pandoc.ts).
 import { Marked, type TokenizerAndRendererExtension, type Tokens } from 'marked';
 
 const MARK_ATTRIBUTES = '{.mark}';
