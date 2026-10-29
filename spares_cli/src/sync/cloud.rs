@@ -75,7 +75,8 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
     args.extend([source.as_str(), destination.as_str()]);
     run_rsync(&args)?;
 
-    // Pass 3: Rendered files, so the server does not have to render notes again.
+    // Pass 3: Rendered files, so the server does not have to render notes again, but not over
+    // its newer ones (see `sync_rendered_files`).
     println!("Syncing rendered files → {}", remote_host);
     sync_rendered_files(remote_host, remote_rendered_dir, &note_ids)?;
 
@@ -184,8 +185,11 @@ fn dir_source(dir: &Path) -> Result<String, String> {
 /// Copies the rendered files of the notes the server renders into `remote_rendered_dir`, along
 /// with rendered image occlusions.
 ///
-/// This runs after the sync, so a note edited on the server between the two has the cards the
-/// server just rendered replaced by this machine's older ones.
+/// Files newer on the server are kept (`--update`). A note created or edited here isn't rendered
+/// here (`render: false` in `api::note`), so its files are from before the edit, while the server
+/// rendered the edit when this machine's changes reached it. Likewise a note edited on the server
+/// between the sync and this. Otherwise the server's render cache, whose hash is the edit's, would
+/// take the older files for its own. This needs the two clocks to roughly agree.
 fn sync_rendered_files(
     remote_host: &str,
     remote_rendered_dir: &str,
@@ -220,13 +224,14 @@ fn sync_rendered_files(
         }
         run_rsync_files_from(
             &names.join("\n"),
-            &["-avz"],
+            &["-avz", "--update"],
             &dir_source(&dir)?,
             &destination,
         )?;
     }
     run_rsync(&[
         "-avz",
+        "--update",
         &dir_source(&get_image_occlusion_rendered_directory())?,
         &format!("{destination}image_occlusions/"),
     ])
