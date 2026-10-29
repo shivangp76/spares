@@ -111,8 +111,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.origin !== self.location.origin) return;
-  // The server's data, which the app caches itself
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/files/"))
+  // The server's data, which the app caches itself, and pandoc.wasm, which a device that keeps a
+  // copy keeps itself (see src/local/pandoc.ts)
+  if (
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/files/") ||
+    url.pathname.startsWith("/pandoc/")
+  )
     return;
 
   if (request.mode === "navigate") {
