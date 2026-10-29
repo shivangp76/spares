@@ -328,7 +328,7 @@ export type SetupStep = 'Registering this device' | 'Downloading the collection'
  * the copy. Retrying after a failure carries on where it stopped.
  */
 export async function enableLocalCopy(name: string, onStep: (step: SetupStep) => void): Promise<void> {
-  if (!canKeepCopy()) throw new Error('This browser has no storage for a copy, as in a private window.');
+  if (!await canKeepCopy()) throw new Error('This browser has no storage for a copy, as in a private window.');
   const server = currentServer();
   if (!server) throw new Error('Log in first.');
   const { serverUrl, apiKey } = server;

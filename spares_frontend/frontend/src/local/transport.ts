@@ -45,9 +45,13 @@ export function usesLocalCopy(serverUrl: string): boolean {
   return copy !== null && copy.ready && copy.serverUrl === serverUrl;
 }
 
-/** Whether this browser can keep a copy: it needs workers, and storage only the origin can see (OPFS), which private windows may not have. */
-export function canKeepCopy(): boolean {
-  return typeof Worker !== 'undefined' && typeof navigator.storage?.getDirectory === 'function';
+let storageProbe: Promise<boolean> | null = null;
+
+/** Whether this browser can keep a copy: it needs workers, and storage only the origin can see (OPFS), which private windows may not have, or have and refuse, as WebKit's do. */
+export function canKeepCopy(): Promise<boolean> {
+  if (typeof Worker === 'undefined' || typeof navigator.storage?.getDirectory !== 'function') return Promise.resolve(false);
+  storageProbe ??= navigator.storage.getDirectory().then(() => true, () => false);
+  return storageProbe;
 }
 
 /** What a `LocalError` says about the sync that failed, from spares_wasm's error (see its docs). */

@@ -111,6 +111,14 @@ export default function LocalCopySettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [storage, setStorage] = useState<{ usage: number; persisted: boolean } | null>(null);
+  // Until known, offered as if it can
+  const [canKeep, setCanKeep] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    canKeepCopy().then(can => { if (!cancelled) setCanKeep(can); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!local.active) return;
@@ -209,7 +217,7 @@ export default function LocalCopySettings() {
         <button onClick={disable} style={{ marginTop: 8 }}>Stop Keeping a Copy</button>
       </>
     );
-  } else if (!canKeepCopy()) {
+  } else if (!canKeep) {
     body = <p style={{ margin: 0 }}>This browser can't keep a copy of the collection here, e.g. because private windows have no storage for it.</p>;
   } else {
     body = (
