@@ -611,6 +611,11 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await see(page, /unsynced/);
     check("rated a card offline", true);
 
+    // The address as typed, which other caches than the page's also have
+    await page.goto(`${ORIGIN}/`);
+    await see(page, /unsynced/);
+    check("opened the server's address offline", true);
+
     await page.goto(
       `${ORIGIN}/review?query=${encodeURIComponent('"Audio seed"')}`,
     );
