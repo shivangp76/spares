@@ -379,7 +379,7 @@ export async function enableLocalCopy(
   name: string,
   onStep: (step: SetupStep) => void,
 ): Promise<void> {
-  if (!canKeepCopy())
+  if (!(await canKeepCopy()))
     throw new Error(
       "This browser has no storage for a copy, as in a private window.",
     );

@@ -16,6 +16,7 @@
 // 4. The server has the device's notes, image and image occlusion, and the resolved text, and
 //    rendered the device's Markdown note. Then Settings → Stop Keeping a Copy frees the device's
 //    number.
+// 5. In WebKit without a profile, as in a private window, Settings says it can't keep a copy.
 //
 // It needs a build (`bun run build`) and the browsers of playwright-core
 // (`bunx playwright-core install chromium-headless-shell webkit firefox`). It builds spares_server,
@@ -1073,9 +1074,42 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
   }
 }
 
+/** WebKit without a profile, which has OPFS but refuses it, as a private window does: Settings says it can't keep a copy, rather than offering one. */
+async function privateWindow(): Promise<void> {
+  console.log("\nwebkit, without storage");
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${ORIGIN}/login`);
+    await page.getByRole("heading", { name: "Spares" }).waitFor();
+    const schedulers = await api<string[]>("GET", "/api/schedulers");
+    await page.evaluate(
+      (creds) =>
+        localStorage.setItem("spares_credentials", JSON.stringify(creds)),
+      { serverUrl: ORIGIN, apiKey: KEY, schedulerName: schedulers[0] },
+    );
+    await page.goto(`${ORIGIN}/settings`);
+    await see(page, /can't keep a copy of the collection here/);
+    check(
+      "a window without storage says it can't keep a copy",
+      (await page
+        .getByRole("button", { name: "Keep a Copy on This Device" })
+        .count()) === 0,
+    );
+  } catch (e) {
+    failed += 1;
+    console.log(
+      `FAIL webkit without storage: ${e instanceof Error ? e.message : e}`,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   await seed();
   for (const engine of engines) await run(engine);
+  if (engines.includes("webkit")) await privateWindow();
 } finally {
   server.kill();
 }

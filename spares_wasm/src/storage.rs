@@ -69,7 +69,11 @@ async fn vfs() -> Result<OpfsSAHPoolUtil, JsValue> {
         .build();
     let vfs = install::<sqlite_wasm_rs::WasmOsCallback>(&cfg, true)
         .await
-        .map_err(|e| js_error(&format!("browser storage (OPFS) is unavailable: {e:?}")))?;
+        .map_err(|e| {
+            js_error(&format!(
+                "This browser's storage for a copy can't be opened, e.g. in a private window ({e})."
+            ))
+        })?;
     VFS.with(|v| *v.borrow_mut() = Some(vfs.clone()));
     Ok(vfs)
 }
