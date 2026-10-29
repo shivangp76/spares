@@ -13,6 +13,7 @@ import { QueueOrder } from '../components/QueuePositions';
 import { setCardColumns, setCardsPageSize, useCardColumns, useCardsPageSize, type CardColumn, type PageSize } from '../preferences';
 import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
 import { useTableSort } from '../hooks/useTableSort';
+import { useTableWidths } from '../hooks/useTableWidths';
 import { useAuth } from '../hooks/useAuth';
 import { useCardStates } from '../hooks/useCardStates';
 import { useDetailView } from '../hooks/useDetailView';
@@ -186,6 +187,7 @@ export default function CardsPage() {
   const shownColumnIds = useCardColumns();
   const allColumns = cardColumns(stateName);
   const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
+  const widths = useTableWidths('cards');
   // Without a search, the list is read from a search for every card when sorted or showing what
   // only a search returns
   const listBySearch = sort !== null || shownColumnIds.some(c => SEARCH_COLUMNS.includes(c));
@@ -503,7 +505,7 @@ export default function CardsPage() {
                         label={searchQuery !== null ? 'Select all cards found' : 'Select the cards on this page'}
                       />
                     </th>
-                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} />)}
+                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} widths={widths} />)}
                   </tr>
                 </thead>
                 <tbody ref={tableBody}>
@@ -520,7 +522,7 @@ export default function CardsPage() {
                       {columns.map(column => {
                         const className = [column.hideNarrow && 'hide-narrow', column.id === 'text' && 'clamp-narrow'].filter(Boolean).join(' ') || undefined;
                         return (
-                          <td key={column.id} style={column.tdStyle ? { ...td, ...column.tdStyle } : td} className={className}>
+                          <td key={column.id} style={widths.style(column.id, column.tdStyle ? { ...td, ...column.tdStyle } : td)} className={className}>
                             {column.render({ card, extras: extras.get(card.id), queue: queueSpots ? queueSpots.get(card.id) ?? null : undefined })}
                           </td>
                         );

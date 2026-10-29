@@ -362,6 +362,24 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   overflow-x: auto;
 }
 
+/* The right edge of a table header, dragged to resize its column */
+.column-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.column-resize:hover,
+.column-resize:focus-visible {
+  outline: none;
+  box-shadow: inset -3px 0 var(--accent);
+}
+
 /* A list beside a detail panel, stacked on narrower screens */
 .split {
   display: flex;

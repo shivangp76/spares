@@ -19,6 +19,7 @@ import Pagination from '../components/Pagination';
 import { setNoteColumns, setNotesPageSize, useNoteColumns, useNotesPageSize, type NoteColumn, type PageSize } from '../preferences';
 import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
 import { useTableSort } from '../hooks/useTableSort';
+import { useTableWidths } from '../hooks/useTableWidths';
 import type { NoteResponse } from '../types/spares';
 import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatDate, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
@@ -105,6 +106,7 @@ export default function NotesPage() {
   const [listTotal, setListTotal] = useState<number | null>(null);
   const allColumns = noteColumns(searchMatches, lastReviewed);
   const columns = allColumns.filter(c => shownColumnIds.includes(c.id));
+  const widths = useTableWidths('notes');
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
   // The new note form stays mounted, hidden, while other notes are viewed, so its unsaved
@@ -443,7 +445,7 @@ export default function NotesPage() {
                         label={searchQuery !== null ? 'Select all notes found' : 'Select the notes on this page'}
                       />
                     </th>
-                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} />)}
+                    {columns.map(column => <ColumnHeader key={column.id} column={column} sort={sort} onSort={cycleSort} widths={widths} />)}
                   </tr>
                 </thead>
                 <tbody ref={tableBody}>
@@ -460,7 +462,7 @@ export default function NotesPage() {
                       {columns.map(column => {
                         const className = [column.hideNarrow && 'hide-narrow', column.id === 'data' && 'clamp-narrow'].filter(Boolean).join(' ') || undefined;
                         const style = column.id === 'data' ? dataTd : column.tdStyle ? { ...td, ...column.tdStyle } : td;
-                        return <td key={column.id} style={style} className={className}>{column.render(note)}</td>;
+                        return <td key={column.id} style={widths.style(column.id, style)} className={className}>{column.render(note)}</td>;
                       })}
                     </tr>
                   ))}

@@ -4,13 +4,15 @@ import { getDuplicateKeywords, getNote, getNoteLinks, getUnmatchedKeywords, list
 import NoteDetail from '../components/NoteDetail';
 import Pagination from '../components/Pagination';
 import RecentSearches from '../components/RecentSearches';
+import { ResizableHeader } from '../components/tableColumns';
 import { useAuth } from '../hooks/useAuth';
 import { useClientPages } from '../hooks/useClientPages';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
+import { useTableWidths } from '../hooks/useTableWidths';
 import { setKeywordsPageSize, useKeywordsPageSize, type PageSize } from '../preferences';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
-import { errorMessage, formatNoteId, keepShown, td, th } from '../utils';
+import { errorMessage, formatNoteId, keepShown, td } from '../utils';
 
 type Tab = 'all' | 'search' | 'unmatched' | 'duplicate' | 'links';
 
@@ -56,6 +58,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const shown = (keywords ?? []).filter(([, k]) => !needle || k.toLowerCase().includes(needle));
   const unique = [...new Set(shown.map(([, k]) => k))];
   const rowPages = useKeywordPages(shown);
+  const widths = useTableWidths('keywords');
   const uniquePages = useKeywordPages(unique);
 
   if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
@@ -82,12 +85,12 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
       ) : (
         <div className="table-scroll">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead><tr><th style={th}>Note</th><th style={th}>Keyword</th></tr></thead>
+            <thead><tr><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="keyword" label="Keyword" /></tr></thead>
             <tbody>
               {rowPages.shown.map(([id, k], i) => (
                 <tr key={`${id}-${k}-${i}`}>
-                  <td style={td}><NoteLinkButton id={id} onOpen={onOpen} /></td>
-                  <td style={td}>{k}</td>
+                  <td style={widths.style('note', td)}><NoteLinkButton id={id} onOpen={onOpen} /></td>
+                  <td style={widths.style('keyword', td)}>{k}</td>
                 </tr>
               ))}
             </tbody>
@@ -106,6 +109,7 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
   const [error, setError] = useState<string | null>(null);
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_keyword_recent_searches');
   const pages = useKeywordPages(results?.matches ?? []);
+  const widths = useTableWidths('keyword_search');
 
   async function search(q = keyword) {
     const k = q.trim();
@@ -142,14 +146,14 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
           <p style={hint}>Ranked best first; the first row is what a link to “{results.keyword}” resolves to.</p>
           <div className="table-scroll">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead><tr><th style={th}>#</th><th style={th}>Matched keyword</th><th style={th}>Note</th><th style={th}>Score</th></tr></thead>
+              <thead><tr><ResizableHeader widths={widths} column="rank" label="#" /><ResizableHeader widths={widths} column="matched" label="Matched keyword" /><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="score" label="Score" /></tr></thead>
               <tbody>
                 {pages.shown.map((m, i) => (
                   <tr key={`${m.note_id}-${m.matched_keyword}`} style={pages.offset + i === 0 ? { background: 'var(--selected)' } : undefined}>
-                    <td style={td}>{pages.offset + i + 1}</td>
-                    <td style={td}>{m.matched_keyword}</td>
-                    <td style={td}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(m.score)}</td>
+                    <td style={widths.style('rank', td)}>{pages.offset + i + 1}</td>
+                    <td style={widths.style('matched', td)}>{m.matched_keyword}</td>
+                    <td style={widths.style('note', td)}><NoteLinkButton id={m.note_id} onOpen={onOpen} /></td>
+                    <td style={widths.style('score', { ...td, fontVariantNumeric: 'tabular-nums' })}>{formatScore(m.score)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -167,6 +171,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [rows, setRows] = useState<UnmatchedKeywordResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pages = useKeywordPages(rows ?? []);
+  const widths = useTableWidths('unmatched_keywords');
 
   useEffect(() => {
     getUnmatchedKeywords().then(setRows, e => setError(errorMessage(e)));
@@ -179,12 +184,12 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
       <p style={hint}>Keywords that notes link to, but that no note has.</p>
       <div className="table-scroll">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead><tr><th style={th}>Note</th><th style={th}>Searched keyword</th></tr></thead>
+          <thead><tr><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="searched" label="Searched keyword" /></tr></thead>
           <tbody>
             {pages.shown.map((r, i) => (
               <tr key={`${r.note_id}-${r.searched_keyword}-${pages.offset + i}`}>
-                <td style={td}><NoteLinkButton id={r.note_id} onOpen={onOpen} /></td>
-                <td style={td}>{r.searched_keyword}</td>
+                <td style={widths.style('note', td)}><NoteLinkButton id={r.note_id} onOpen={onOpen} /></td>
+                <td style={widths.style('searched', td)}>{r.searched_keyword}</td>
               </tr>
             ))}
             {rows.length === 0 && <tr><td colSpan={2} style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>No unmatched keywords</td></tr>}
@@ -201,6 +206,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const [rows, setRows] = useState<[string, number[]][] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pages = useKeywordPages(rows ?? []);
+  const widths = useTableWidths('duplicate_keywords');
 
   useEffect(() => {
     getDuplicateKeywords().then(setRows, e => setError(errorMessage(e)));
@@ -213,12 +219,12 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
       <p style={hint}>Keywords on more than one note.</p>
       <div className="table-scroll">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead><tr><th style={th}>Keyword</th><th style={th}>Notes</th></tr></thead>
+          <thead><tr><ResizableHeader widths={widths} column="keyword" label="Keyword" /><ResizableHeader widths={widths} column="notes" label="Notes" /></tr></thead>
           <tbody>
             {pages.shown.map(([k, ids]) => (
               <tr key={k}>
-                <td style={td}>{k}</td>
-                <td style={td}>
+                <td style={widths.style('keyword', td)}>{k}</td>
+                <td style={widths.style('notes', td)}>
                   <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
                     {ids.map(id => <NoteLinkButton key={id} id={id} onOpen={onOpen} />)}
                   </span>
@@ -240,6 +246,7 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
   const [links, setLinks] = useState<{ threshold: number; links: NoteLink[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pages = useKeywordPages(links?.links ?? []);
+  const widths = useTableWidths('note_links');
 
   async function load() {
     const t = Number(threshold);
@@ -277,21 +284,21 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr>
-                  <th style={th}>Note</th>
-                  <th style={th}>Searched keyword</th>
-                  <th style={th}>Matched keyword</th>
-                  <th style={th}>Linked note</th>
-                  <th style={th}>Score</th>
+                  <ResizableHeader widths={widths} column="note" label="Note" />
+                  <ResizableHeader widths={widths} column="searched" label="Searched keyword" />
+                  <ResizableHeader widths={widths} column="matched" label="Matched keyword" />
+                  <ResizableHeader widths={widths} column="linked" label="Linked note" />
+                  <ResizableHeader widths={widths} column="score" label="Score" />
                 </tr>
               </thead>
               <tbody>
                 {pages.shown.map(l => (
                   <tr key={`${l.parent_note_id}-${l.order}`}>
-                    <td style={td}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
-                    <td style={td}>{l.searched_keyword}</td>
-                    <td style={td}>{l.matched_keyword ?? '—'}</td>
-                    <td style={td}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{formatScore(l.score)}</td>
+                    <td style={widths.style('note', td)}><NoteLinkButton id={l.parent_note_id} onOpen={onOpen} /></td>
+                    <td style={widths.style('searched', td)}>{l.searched_keyword}</td>
+                    <td style={widths.style('matched', td)}>{l.matched_keyword ?? '—'}</td>
+                    <td style={widths.style('linked', td)}>{l.linked_note_id === null ? '—' : <NoteLinkButton id={l.linked_note_id} onOpen={onOpen} />}</td>
+                    <td style={widths.style('score', { ...td, fontVariantNumeric: 'tabular-nums' })}>{formatScore(l.score)}</td>
                   </tr>
                 ))}
                 {links.links.length === 0 && (

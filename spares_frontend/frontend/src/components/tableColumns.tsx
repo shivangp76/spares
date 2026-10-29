@@ -1,5 +1,78 @@
+import type { TableWidths } from '../hooks/useTableWidths';
 import type { SearchSort } from '../types/spares';
 import { th } from '../utils';
+
+/** The narrowest a column can be dragged to, in pixels. */
+const MIN_COLUMN_WIDTH = 40;
+/** How far the arrow keys move a column's edge, in pixels. */
+const COLUMN_WIDTH_STEP = 20;
+
+/** The right edge of a header, dragged or moved with the arrow keys to resize its column, and
+    double-clicked to fit it to its contents again. */
+function ResizeHandle({ label, width, onResize }: { label: string; width: number | undefined; onResize: (width: number | null) => void }) {
+  function headerWidth(handle: HTMLElement): number {
+    return handle.parentElement!.getBoundingClientRect().width;
+  }
+
+  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    // Not selecting the header's text while dragging
+    e.preventDefault();
+    const handle = e.currentTarget;
+    const offset = headerWidth(handle) - e.clientX;
+    handle.setPointerCapture(e.pointerId);
+    function move(m: PointerEvent) {
+      onResize(Math.max(MIN_COLUMN_WIDTH, offset + m.clientX));
+    }
+    function end() {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+    }
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const step = e.key === 'ArrowLeft' ? -COLUMN_WIDTH_STEP : e.key === 'ArrowRight' ? COLUMN_WIDTH_STEP : null;
+    if (step === null) return;
+    // Not also turning the table's page
+    e.preventDefault();
+    e.stopPropagation();
+    onResize(Math.max(MIN_COLUMN_WIDTH, headerWidth(e.currentTarget) + step));
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize the ${label.toLowerCase()} column`}
+      aria-valuenow={width}
+      tabIndex={0}
+      title="Drag to resize the column, double-click to fit it to its contents"
+      className="column-resize"
+      onPointerDown={startDrag}
+      onDoubleClick={() => onResize(null)}
+      onKeyDown={handleKeyDown}
+    />
+  );
+}
+
+/** The header of `column` of a table whose column widths are `widths`, which can be resized from
+    its right edge. Shows `label` unless given what to show instead. */
+export function ResizableHeader({ widths, column, label, style = th, children, ...props }: React.ThHTMLAttributes<HTMLTableCellElement> & {
+  widths: TableWidths;
+  column: string;
+  label: string;
+}) {
+  return (
+    <th {...props} style={{ ...widths.style(column, style), position: 'relative' }}>
+      {children ?? label}
+      <ResizeHandle label={label} width={widths.width(column)} onResize={width => widths.resize(column, width)} />
+    </th>
+  );
+}
 
 /** A column a table can show, and what it is sorted by when its header is clicked. */
 export interface Column<Row, Id extends string = string> {
@@ -14,14 +87,14 @@ export interface Column<Row, Id extends string = string> {
 }
 
 /** The header of `column`, which sorts the table by it when clicked, if it can be sorted. */
-export function ColumnHeader<Row>({ column, sort, onSort }: { column: Column<Row>; sort: SearchSort | null; onSort: (field: string) => void }) {
+export function ColumnHeader<Row>({ column, sort, onSort, widths }: { column: Column<Row>; sort: SearchSort | null; onSort: (field: string) => void; widths: TableWidths }) {
   const className = column.hideNarrow ? 'hide-narrow' : undefined;
-  if (!column.sortField) return <th style={th} className={className}>{column.label}</th>;
+  if (!column.sortField) return <ResizableHeader widths={widths} column={column.id} label={column.label} className={className} />;
   const active = sort?.field === column.sortField;
   const ariaSort = active ? (sort.descending ? 'descending' : 'ascending') : 'none';
   const next = !active ? 'ascending' : !sort.descending ? 'descending' : 'the order of the search';
   return (
-    <th style={th} className={className} aria-sort={ariaSort}>
+    <ResizableHeader widths={widths} column={column.id} label={column.label} className={className} aria-sort={ariaSort}>
       <button
         onClick={() => onSort(column.sortField!)}
         title={`Sort by ${column.label.toLowerCase()}, ${next}`}
@@ -32,7 +105,7 @@ export function ColumnHeader<Row>({ column, sort, onSort }: { column: Column<Row
           {active ? (sort.descending ? '▼' : '▲') : ''}
         </span>
       </button>
-    </th>
+    </ResizableHeader>
   );
 }
 

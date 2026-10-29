@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
 import { NavbarHelp } from '../components/Navbar';
+import { ResizableHeader } from '../components/tableColumns';
 import { useAuth } from '../hooks/useAuth';
 import { useRowKeys } from '../hooks/useRowKeys';
+import { useTableWidths } from '../hooks/useTableWidths';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 
@@ -23,6 +25,7 @@ export default function ParsersPage() {
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
   // The parsers spares has code for. Null until fetched, or if that failed, so no parser is flagged.
   const [known, setKnown] = useState<string[] | null>(null);
+  const widths = useTableWidths('parsers');
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -108,16 +111,16 @@ export default function ParsersPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr>
-                <th style={th}>ID</th>
-                <th style={th}>Name</th>
+                <ResizableHeader widths={widths} column="id" label="ID" />
+                <ResizableHeader widths={widths} column="name" label="Name" />
                 <th style={th} />
               </tr>
             </thead>
             <tbody ref={tableBody}>
               {parsers.map((parser, i) => (
                 <tr key={parser.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
-                  <td style={td}>{parser.id}</td>
-                  <td style={td}>
+                  <td style={widths.style('id', td)}>{parser.id}</td>
+                  <td style={widths.style('name', td)}>
                     {renaming?.id === parser.id ? (
                       <input
                         autoFocus

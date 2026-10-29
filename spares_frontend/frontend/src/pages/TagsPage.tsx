@@ -4,9 +4,11 @@ import { ApiError, createTag, deleteTag, listTags, rebuildTag, renameTags, updat
 import { NavbarHelp } from '../components/Navbar';
 import Pagination from '../components/Pagination';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
+import { ResizableHeader } from '../components/tableColumns';
 import { useAuth } from '../hooks/useAuth';
 import { useClientPages } from '../hooks/useClientPages';
 import { useRowKeys } from '../hooks/useRowKeys';
+import { useTableWidths } from '../hooks/useTableWidths';
 import { setTagsPageSize, useTagsPageSize } from '../preferences';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
@@ -410,6 +412,7 @@ export default function TagsPage() {
   // Only the table is split into pages, as the tree's branches would be split across them
   const pages = useClientPages(found, useTagsPageSize(), setTagsPageSize);
   const shown = pages.shown;
+  const widths = useTableWidths('tags');
 
   const tableBody = useRef<HTMLTableSectionElement>(null);
   const filterInput = useRef<HTMLInputElement>(null);
@@ -476,22 +479,22 @@ export default function TagsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr>
-                  <th style={th} className="hide-narrow">ID</th>
-                  <th style={th}>Name</th>
-                  <th style={th} className="hide-narrow">Description</th>
-                  <th style={th} className="hide-narrow">Query</th>
-                  <th style={th} className="hide-narrow">Auto delete</th>
+                  <ResizableHeader widths={widths} column="id" label="ID" className="hide-narrow" />
+                  <ResizableHeader widths={widths} column="name" label="Name" />
+                  <ResizableHeader widths={widths} column="description" label="Description" className="hide-narrow" />
+                  <ResizableHeader widths={widths} column="query" label="Query" className="hide-narrow" />
+                  <ResizableHeader widths={widths} column="auto_delete" label="Auto delete" className="hide-narrow" />
                   <th style={th} />
                 </tr>
               </thead>
               <tbody ref={tableBody}>
                 {shown.map((tag, i) => (
                   <tr key={tag.id} style={i === keys.highlighted ? { background: 'var(--selected)' } : undefined}>
-                    <td style={td} className="hide-narrow">{tag.id}</td>
-                    <td style={{ ...td, overflowWrap: 'anywhere' }}>{tag.name}</td>
-                    <td style={td} className="hide-narrow">{tag.description || '—'}</td>
-                    <td style={td} className="hide-narrow">{tag.query !== null ? <><code>{tag.query}</code>{!tag.reschedule && ' (no rescheduling)'}</> : '—'}</td>
-                    <td style={td} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
+                    <td style={widths.style('id', td)} className="hide-narrow">{tag.id}</td>
+                    <td style={widths.style('name', { ...td, overflowWrap: 'anywhere' })}>{tag.name}</td>
+                    <td style={widths.style('description', td)} className="hide-narrow">{tag.description || '—'}</td>
+                    <td style={widths.style('query', td)} className="hide-narrow">{tag.query !== null ? <><code>{tag.query}</code>{!tag.reschedule && ' (no rescheduling)'}</> : '—'}</td>
+                    <td style={widths.style('auto_delete', td)} className="hide-narrow">{tag.auto_delete ? 'Yes' : 'No'}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
                       <span style={{ display: 'inline-flex', gap: 4 }}>
                         <Link to={reviewLink(tag)} style={{ fontSize: 12, alignSelf: 'center', marginRight: 4 }}>Review</Link>

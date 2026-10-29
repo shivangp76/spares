@@ -233,3 +233,55 @@ export type NoteColumn = typeof NOTE_COLUMNS[number];
 const noteColumns = listPreference<NoteColumn>('spares_notes_columns', NOTE_COLUMNS, ['id', 'data', 'tags', 'keywords', 'cards']);
 export const setNoteColumns = noteColumns.set;
 export const useNoteColumns = noteColumns.use;
+
+const COLUMN_WIDTHS_KEY = 'spares_column_widths';
+
+/** The widths, in pixels, that tables' columns were dragged to, by table and then column. */
+type ColumnWidths = Record<string, Record<string, number>>;
+
+function storedColumnWidths(): string | null {
+  try {
+    return localStorage.getItem(COLUMN_WIDTHS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The column widths in `raw`, leaving out any that aren't a positive number. */
+function parseColumnWidths(raw: string | null): ColumnWidths {
+  if (raw === null) return {};
+  try {
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== 'object' || stored === null) return {};
+    const widths: ColumnWidths = {};
+    for (const [table, columns] of Object.entries(stored)) {
+      if (typeof columns !== 'object' || columns === null) continue;
+      widths[table] = Object.fromEntries(Object.entries(columns).filter((c): c is [string, number] => typeof c[1] === 'number' && c[1] > 0));
+    }
+    return widths;
+  } catch {
+    return {};
+  }
+}
+
+/** Keeps `column` of `table` at `width` pixels, or, if null, as wide as its contents make it. */
+export function setColumnWidth(table: string, column: string, width: number | null): void {
+  const widths = parseColumnWidths(storedColumnWidths());
+  const columns = { ...widths[table] };
+  if (width === null) delete columns[column];
+  else columns[column] = Math.round(width);
+  widths[table] = columns;
+  try {
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(widths));
+  } catch {
+    // Without storage the width can't be remembered, so the column fits its contents
+  }
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+/** The widths `table`'s columns were dragged to, by column. Those not in it fit their contents. */
+export function useColumnWidths(table: string): Record<string, number> {
+  // The stored string is compared, as parsed widths would be new on each read
+  const raw = useSyncExternalStore(subscribe, storedColumnWidths);
+  return useMemo(() => parseColumnWidths(raw)[table] ?? {}, [raw, table]);
+}
