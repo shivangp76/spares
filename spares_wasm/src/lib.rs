@@ -12,7 +12,8 @@
 //! - [`pending_notes`] and [`render_assets`] tell the web app what to show for notes the server
 //!   hasn't rendered yet, and what to download for Typst cards. [`web_renders`] tells the device
 //!   which HTML files for web clients the web app has downloaded. [`media_file`] gives it an image
-//!   or clip added here, to show until the server has it.
+//!   or clip added here, to show until the server has it. [`pandoc_config`] gives it what it
+//!   converts the Markdown cards of notes changed here with.
 //!
 //! **What runs where.** The device runs `spares_core` on its own database: reviews and their
 //! scheduling, searches, statistics, creating and editing notes, tags and undo. It adds images,
@@ -278,6 +279,15 @@ pub async fn media_file(path: String) -> Result<Option<Vec<u8>>, JsValue> {
         return card.map(Some).map_err(|e| core_error(&e));
     }
     media::read(&opened.device, &path).await
+}
+
+/// `{version, web_defaults}`: the server's pandoc version and the contents of its web defaults file
+/// (`markdown/web-defaults.yaml`), either `null`. The web app converts the Markdown cards of notes
+/// changed here with pandoc's WebAssembly build, as the server renders them, until it does.
+#[wasm_bindgen]
+pub async fn pandoc_config() -> Result<JsValue, JsValue> {
+    let (version, web_defaults) = storage::pandoc_config(&opened()?.device).await?;
+    to_js(&serde_json::json!({ "version": version, "web_defaults": web_defaults }))
 }
 
 /// Records `paths`, relative to the files directory, as the non-empty HTML files for web clients

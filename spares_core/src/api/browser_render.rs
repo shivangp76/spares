@@ -137,7 +137,8 @@ pub(crate) fn add_browser_render_sources(
 
 /// Fills in [`GetReviewCardResponse::device_sources`] for `card` as
 /// [`add_browser_render_sources`] does, on a device and if `parser` is Markdown's: the web app
-/// shows them with its own Markdown renderer while the server hasn't rendered the card's note.
+/// shows them with its own Markdown renderer, then with pandoc's WebAssembly build, while the
+/// server hasn't rendered the card's note.
 pub(crate) fn add_device_sources(
     parser: &dyn Parseable,
     response: &mut GetReviewCardResponse,
