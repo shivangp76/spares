@@ -39,6 +39,8 @@ use crate::config::read_external_config;
 use crate::config::server_config;
 use crate::parsers::get_all_parsers;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
+use crate::parsers::impls::markdown::pandoc_version;
+use crate::parsers::impls::markdown::web_defaults_filepath;
 
 /// The replica numbers devices are enrolled under. `0` is the laptop and `1` the server.
 pub const DEVICE_REPLICAS: std::ops::RangeInclusive<u8> = 2..=4;
@@ -169,13 +171,17 @@ pub struct DeviceConfig {
     /// By path relative to the config directory: `config.toml` (made by [`server_config`], as for
     /// the server itself) and every file in each parser's `templates` directory, such as
     /// `typst/templates/card_template.typ`. Typst cards compile in the browser from their template,
-    /// which can import the files next to it.
+    /// which can import the files next to it. Also `markdown/web-defaults.yaml`, when there is one,
+    /// with which a device converts the Markdown cards it shows before the server renders them.
     pub files: BTreeMap<String, String>,
     /// Where the server stores images, audio and image occlusions. Notes name these files by their
     /// path, so a device names the ones it adds by the path they get on the server.
     pub image_dir: PathBuf,
     pub audio_dir: PathBuf,
     pub image_occlusion_dir: PathBuf,
+    /// The version of the server's pandoc, which a device compares with its own WebAssembly build.
+    #[serde(default)]
+    pub pandoc_version: Option<String>,
 }
 
 /// The server's [`DeviceConfig`]. Files that aren't UTF-8 are left out.
@@ -195,11 +201,19 @@ pub fn device_config() -> Result<DeviceConfig, Error> {
             .join("templates");
         add_text_files(&config_dir, &templates, &mut files)?;
     }
+    let web_defaults = web_defaults_filepath();
+    if let Ok(contents) = std::fs::read_to_string(&web_defaults) {
+        let relative = web_defaults
+            .strip_prefix(&config_dir)
+            .unwrap_or(&web_defaults);
+        files.insert(relative.to_string_lossy().into_owned(), contents);
+    }
     Ok(DeviceConfig {
         files,
         image_dir: get_image_directory(),
         audio_dir: get_audio_directory(),
         image_occlusion_dir: get_image_occlusion_directory(),
+        pandoc_version: pandoc_version().map(str::to_string),
     })
 }
 
