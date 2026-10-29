@@ -57,7 +57,6 @@ use super::apply::mark_dirty;
 use super::apply::release_live_keys;
 use super::apply::remove_grave;
 use super::apply::remove_saved_searches;
-use super::apply::row_exists;
 use super::apply::upsert_card;
 use super::apply::upsert_note;
 use super::apply::upsert_parser;
@@ -204,6 +203,18 @@ pub async fn merge_pulled(
     for (note_id, text) in reconcile {
         reconcile_cards(merger.conn, note_id, &text, now).await?;
         merger.outcome.applied.notes_changed.insert(note_id);
+        // `merge_note` wrote it dirty, with this side's text for `reconcile_cards` to replace. If
+        // that made it the server's, it isn't sent back: a delete there would then be taken for
+        // an edit here.
+        let remote = pulled.notes.iter().find(|note| note.id == note_id);
+        if remote.is_some() && read_note(merger.conn, note_id).await?.as_ref() == remote {
+            sqlx::query("UPDATE note SET usn = ? WHERE id = ?")
+                .bind(usn)
+                .bind(note_id)
+                .execute(&mut *merger.conn)
+                .await
+                .map_err(sqlx_error)?;
+        }
     }
     for grave in pulled.graves.iter().filter(|g| g.kind == SyncKind::Tag) {
         merger.apply_tag_grave(grave.oid).await?;
@@ -1025,7 +1036,8 @@ pub(crate) fn merge_card(
 /// card each cloze already has on either side: the card the text names (`text` has card ids for
 /// orders, see [`orders`]), else the one with the cloze's uid, else (when the text names no cards
 /// at all) the one in its place. Cards nothing asks for are deleted. Writes the text with its card
-/// orders renumbered. All of it is a local change, so the server gets the result.
+/// orders renumbered. What it changes is a local change, so the server gets the result. What it
+/// leaves as it was stays as the merge left it.
 #[expect(clippy::too_many_lines)]
 pub(crate) async fn reconcile_cards(
     conn: &mut SqliteConnection,
@@ -1137,6 +1149,16 @@ pub(crate) async fn reconcile_cards(
                 }
             }
         }
+        // Already as the merge left it, dirty only if it differs from the server's. Marked dirty
+        // regardless, a note received from the server could be pushed back, and a delete there
+        // then taken for an edit here.
+        if card.order == order
+            && card.back_type == card_data.back_type
+            && card.special_state == special_state
+            && card.custom_data == custom_data
+        {
+            continue;
+        }
         mark_dirty(conn, SyncKind::Card, &[card.id]).await?;
         sqlx::query(
             r#"UPDATE card SET "order" = ?, back_type = ?, special_state = ?, custom_data = ?,
@@ -1168,22 +1190,25 @@ pub(crate) async fn reconcile_cards(
     }
     create_cards_on(&mut *conn, &to_create).await?;
 
-    if !row_exists(conn, SyncKind::Note, note_id.packed()).await? {
+    // Likewise the note
+    let current: Option<String> = sqlx::query_scalar("SELECT data FROM note WHERE id = ?")
+        .bind(note_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
+    if current.is_none_or(|current| current == text) {
         return Ok(());
     }
     mark_dirty(conn, SyncKind::Note, &[note_id.packed()]).await?;
-    let changed = sqlx::query("UPDATE note SET data = ? WHERE id = ? AND data != ?")
+    sqlx::query("UPDATE note SET data = ? WHERE id = ?")
         .bind(&text)
         .bind(note_id)
-        .bind(&text)
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
-    if changed.rows_affected() > 0 {
-        // The renumbered orders can change embedded keywords' or links' positions only, but
-        // rebuild them like any other text change.
-        let record = read_note(conn, note_id).await?.expect("note exists");
-        upsert_note(conn, &record, -1, true).await?;
-    }
+    // The renumbered orders can change embedded keywords' or links' positions only, but rebuild
+    // them like any other text change.
+    let record = read_note(conn, note_id).await?.expect("note exists");
+    upsert_note(conn, &record, -1, true).await?;
     Ok(())
 }

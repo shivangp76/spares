@@ -434,6 +434,29 @@ async fn edits_on_different_notes_converge() {
     assert_eq!((report.pulled, report.pushed), (0, 0), "{report:?}");
 }
 
+/// A note whose merge is the server's text, since the server made this side's change too, isn't
+/// sent back as if changed here. A delete there would then be taken for an edit here, and the note
+/// kept.
+#[tokio::test]
+async fn a_merge_that_is_the_servers_text_is_not_sent_back() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}\nB {{ two }}\nC {{ three }}"]).await;
+    let text = data(&replicas.laptop, ids[0]).await.unwrap();
+    let laptop = text.replacen("A ", "A alike ", 1);
+    let server = laptop.replacen("C ", "C there ", 1);
+    edit(&replicas.laptop, ids[0], &laptop).await;
+    on_server(edit(&replicas.server, ids[0], &server)).await;
+    let report = replicas.sync().await;
+    assert_eq!(report.pushed, 0, "{report:?}");
+    assert_eq!(data(&replicas.laptop, ids[0]).await.unwrap(), server);
+    replicas.assert_converged().await;
+
+    on_server(delete(&replicas.server, ids[0])).await;
+    let report = replicas.sync().await;
+    assert!(report.conflicts.is_empty(), "{report:?}");
+    assert_eq!(data(&replicas.laptop, ids[0]).await, None);
+    replicas.assert_converged().await;
+}
+
 #[tokio::test]
 async fn old_unsynced_laptop_edit_survives_newer_phone_edit_to_another_line() {
     let (replicas, ids) = Replicas::synced(&[LINES]).await;
