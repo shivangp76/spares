@@ -84,7 +84,14 @@ pub(crate) async fn sync_cloud(
     };
     print_report(&report);
     if let Some(remote_host) = &config.sync.remote_host {
-        push_files(remote_host, &config.sync.remote_rendered_dir).await?;
+        let remote_rendered_dir = if config.sync.remote_rendered_dir.is_empty() {
+            spares_core::config::get_files_dir()
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            config.sync.remote_rendered_dir.clone()
+        };
+        push_files(remote_host, &remote_rendered_dir).await?;
     }
     Ok(())
 }
