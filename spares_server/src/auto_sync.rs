@@ -79,6 +79,18 @@ impl Scheduler {
         }
     }
 
+    /// Stops a user's automatic sync, e.g. when their account goes.
+    pub fn stop(&self, id: &str) {
+        let handle = self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+        if let Some(handle) = handle {
+            handle.abort();
+        }
+    }
+
     /// Stops every automatic sync, e.g. when the host stops.
     pub fn stop_all(&self) {
         let running = std::mem::take(
