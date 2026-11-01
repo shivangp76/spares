@@ -236,7 +236,7 @@ export default function FindInQueue({ filter, onOpenNote, onClose, refreshKey, c
         <button onClick={() => setSubmitted(match.trim())} className="touch-target-small">Find</button>
       </div>
       {lookup.kind === 'loading' && <div className="loading-delayed" style={{ fontSize: 13 }}>Looking up the queue…</div>}
-      {lookup.kind === 'offline' && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Needs the server: the cards downloaded for offline review are only some of the queue, and a query can't be searched without it.</div>}
+      {lookup.kind === 'offline' && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Needs the server, which can't be reached.</div>}
       {lookup.kind === 'error' && <pre style={{ color: 'var(--error)', marginTop: 0, whiteSpace: 'pre-wrap' }}>{lookup.message}</pre>}
       {lookup.kind === 'done' && <QueuePositionList response={lookup.response} onOpen={card => onOpenNote(card.note_id)} lookingUp={lookup.lookingUp} currentCardId={currentCardId} />}
     </div>

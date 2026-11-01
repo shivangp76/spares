@@ -47,7 +47,7 @@ export default function LoginPage() {
       else setError(`The server has no scheduler named “${name}”. Its schedulers are ${schedulers.join(', ')}.`);
     } catch (e) {
       setUnreachable(e instanceof NetworkError);
-      setError(e instanceof NetworkError ? 'The server could not be reached. Check its URL, or log in anyway to review offline.' : errorMessage(e));
+      setError(e instanceof NetworkError ? 'The server could not be reached. Check its URL, or log in anyway to use this device’s copy of its collection offline.' : errorMessage(e));
     } finally {
       setChecking(false);
     }

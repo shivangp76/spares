@@ -28,8 +28,6 @@ import type {
   ReviewConfig,
   ReviewFilter,
   ReviewHistoryResponse,
-  ReviewQueueRequest,
-  ReviewQueueResponse,
   ReviewSnapshotResponse,
   SavedSearch,
   SearchField,
@@ -42,8 +40,6 @@ import type {
   StepsStatsResponse,
   SubmitStudyActionRequest,
   SubmitStudyActionResponse,
-  SyncOfflineActionsRequest,
-  SyncOfflineActionsResponse,
   SyntaxExample,
   TagResponse,
   UndoEventResponse,
@@ -52,8 +48,8 @@ import type {
   UpdateCardsResponse,
   UpdateTagRequest,
 } from '../types/spares';
-import { clearOfflineQueues, clearStatisticsEntries } from '../offline/db';
 import { COPY_FILES_CACHE, COPY_RENDER_ASSETS_CACHE, deviceMediaFile, localFetch, needsServer, usesLocalCopy } from '../local/transport';
+import { reportServerReachable } from './reachability';
 
 const STORAGE_KEY = 'spares_credentials';
 
@@ -96,7 +92,6 @@ export function onCredentialsChange(listener: () => void): () => void {
 
 function credentialsChanged(): void {
   clearCaches();
-  clearOfflineCopies().catch(console.error);
   for (const listener of credentialsListeners) listener();
 }
 
@@ -131,25 +126,6 @@ function memoize<T>(key: string, fetch: () => Promise<T>): Promise<T> {
   return result;
 }
 
-const OFFLINE_COPY_PREFIX = 'spares_offline_copy:';
-
-/** `fetch`'s result, keeping a copy to return instead when the server cannot be reached. For small responses that reviewing offline needs. */
-async function withOfflineCopy<T>(key: string, fetch: () => Promise<T>): Promise<T> {
-  try {
-    const result = await fetch();
-    try {
-      localStorage.setItem(OFFLINE_COPY_PREFIX + key, JSON.stringify(result));
-    } catch (e) {
-      console.error(e);
-    }
-    return result;
-  } catch (e) {
-    const copy = isNetworkError(e) ? localStorage.getItem(OFFLINE_COPY_PREFIX + key) : null;
-    if (copy === null) throw e;
-    return JSON.parse(copy) as T;
-  }
-}
-
 async function cacheListPage<T>(key: string, fetch: Promise<T[]>): Promise<T[]> {
   const page = await fetch;
   listPages.set(key, page);
@@ -178,18 +154,6 @@ export function isNetworkError(e: unknown): boolean {
   return e instanceof NetworkError;
 }
 
-let reachabilityListener: ((reachable: boolean) => void) | null = null;
-
-/** Called with whether the server could be reached, after every request to it. */
-export function onServerReachability(listener: (reachable: boolean) => void): void {
-  reachabilityListener = listener;
-}
-
-/** Tells the listener whether the server could be reached by a request that didn't go through `send`, such as a sync of this device's copy. */
-export function reportServerReachable(reachable: boolean): void {
-  reachabilityListener?.(reachable);
-}
-
 /** `fetch`, throwing a `NetworkError` if the server cannot be reached. */
 async function send(label: string, url: string, init: RequestInit = {}): Promise<Response> {
   let res: Response;
@@ -198,19 +162,12 @@ async function send(label: string, url: string, init: RequestInit = {}): Promise
   } catch (e) {
     // An abort is the caller's, not the network's
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
-    reachabilityListener?.(false);
+    reportServerReachable(false);
     throw new NetworkError(label);
   }
-  reachabilityListener?.(true);
+  reportServerReachable(true);
   return res;
 }
-
-// Copies of server responses kept for offline use, by URL without the API key. Rendered files are
-// kept while a downloaded review queue uses them (see src/offline), and the files Typst sources
-// read until logout. A device that keeps a copy of the collection downloads all of both into
-// caches of its own instead, which are read first (see src/local/copy.ts).
-const FILES_CACHE = 'spares-offline-files';
-const RENDER_ASSETS_CACHE = 'spares-offline-render-assets';
 
 /**
  * What this device's copy downloaded for `url`, if it uses the copy for the server logged in to.
@@ -225,47 +182,9 @@ async function copyFile(url: string, cacheName: string): Promise<Response | null
   }
 }
 
-/**
- * Fetches `url` from the server, keeping a copy in `cacheName`, and falls back to the copy if the
- * server cannot be reached. Cache Storage is only available on secure origins (HTTPS or
- * localhost), so elsewhere this is a plain fetch.
- */
-async function sendKeepingCopy(label: string, url: string, cacheName: string): Promise<Response> {
-  const cache = typeof caches === 'undefined' ? null : await caches.open(cacheName).catch(() => null);
-  try {
-    // Revalidated, so the browser's HTTP cache does not answer for a server that cannot be reached
-    const res = await send(label, url, { headers: authHeaders(), cache: 'no-cache' });
-    // 404s are kept too, so a file the server does not have is not requested offline
-    if (cache && (res.ok || res.status === 404)) await cache.put(url, res.clone()).catch(console.error);
-    return res;
-  } catch (e) {
-    const copy = await cache?.match(url, { ignoreVary: true });
-    if (copy && isNetworkError(e)) return copy;
-    throw e;
-  }
-}
-
-/** Drops copies of rendered files that are not in `keep` (paths relative to the files directory). */
-export async function pruneOfflineFiles(keep: Iterable<string>): Promise<void> {
-  if (typeof caches === 'undefined') return;
-  const keepUrls = new Set([...keep].map(path => fileUrl(path)));
-  const cache = await caches.open(FILES_CACHE);
-  for (const request of await cache.keys()) {
-    if (!keepUrls.has(request.url)) await cache.delete(request);
-  }
-}
-
-/** Drops everything downloaded for offline use, except actions that are yet to be synced and this device's copy of the collection and its files. */
-async function clearOfflineCopies(): Promise<void> {
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(OFFLINE_COPY_PREFIX)) localStorage.removeItem(key);
-  }
-  if (typeof caches !== 'undefined') {
-    await caches.delete(FILES_CACHE);
-    await caches.delete(RENDER_ASSETS_CACHE);
-  }
-  await clearOfflineQueues();
-  await clearStatisticsEntries();
+/** A file from the server that the API key is needed for. Revalidated, so a newer render is shown. */
+function sendForFile(label: string, url: string): Promise<Response> {
+  return send(label, url, { headers: authHeaders(), cache: 'no-cache' });
 }
 
 /**
@@ -349,13 +268,12 @@ export function fileUrl(relativePath: string, serverUrl = getCredentials().serve
 }
 
 /**
- * Downloads a rendered file, which needs the API key like every other request. Offline, the copy
- * kept from the last download is returned. A device that keeps a copy of the collection asks the
- * server only for a file the copy hasn't downloaded.
+ * Downloads a rendered file, which needs the API key like every other request. A device that keeps
+ * a copy of the collection asks the server only for a file the copy hasn't downloaded.
  */
 export async function fetchFile(relativePath: string): Promise<Blob> {
   const url = fileUrl(relativePath);
-  const res = await copyFile(url, COPY_FILES_CACHE) ?? await sendKeepingCopy('Loading file', url, FILES_CACHE);
+  const res = await copyFile(url, COPY_FILES_CACHE) ?? await sendForFile('Loading file', url);
   await throwIfNotOk(res, 'Loading file');
   return res.blob();
 }
@@ -365,7 +283,7 @@ export async function listRenderPackages(): Promise<string[]> {
   const { serverUrl } = getCredentials();
   if (usesLocalCopy(serverUrl)) return apiFetch('Render packages fetch', '/api/render-assets/packages');
   const url = `${serverUrl}/api/render-assets/packages`;
-  const res = await sendKeepingCopy('Render packages fetch', url, RENDER_ASSETS_CACHE);
+  const res = await sendForFile('Render packages fetch', url);
   if (!res.ok) throw new Error(`Render packages fetch failed: ${res.status}`);
   return res.json();
 }
@@ -375,7 +293,7 @@ export async function listRenderSources(): Promise<string[]> {
   const { serverUrl } = getCredentials();
   if (usesLocalCopy(serverUrl)) return apiFetch('Render sources fetch', '/api/render-assets/sources');
   const url = `${serverUrl}/api/render-assets/sources`;
-  const res = await sendKeepingCopy('Render sources fetch', url, RENDER_ASSETS_CACHE);
+  const res = await sendForFile('Render sources fetch', url);
   if (!res.ok) throw new Error(`Render sources fetch failed: ${res.status}`);
   return res.json();
 }
@@ -399,7 +317,7 @@ export async function fetchRenderAsset(path: string): Promise<Uint8Array | null>
     if (added) return added;
   }
   const url = renderAssetUrl(path);
-  const res = await copyFile(url, COPY_RENDER_ASSETS_CACHE) ?? await sendKeepingCopy('Render asset fetch', url, RENDER_ASSETS_CACHE);
+  const res = await copyFile(url, COPY_RENDER_ASSETS_CACHE) ?? await sendForFile('Render asset fetch', url);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Render asset fetch failed for ${path}: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
@@ -512,7 +430,7 @@ export async function createReviewSnapshot(query: string): Promise<ReviewSnapsho
 }
 
 export async function getReviewConfig(): Promise<ReviewConfig> {
-  return memoize('reviewConfig', () => withOfflineCopy('reviewConfig', () => apiFetch('Review config fetch', '/api/review/config')));
+  return memoize('reviewConfig', () => apiFetch('Review config fetch', '/api/review/config'));
 }
 
 export async function getTagByName(name: string): Promise<TagResponse> {
@@ -782,27 +700,17 @@ export function cachedReviewHistory(): ReviewHistoryResponse | undefined {
 }
 
 export async function getSchedulerRatings(name: string): Promise<Rating[]> {
-  return memoize(`ratings:${name}`, () => withOfflineCopy(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`)));
+  return memoize(`ratings:${name}`, () => apiFetch('Ratings fetch', `/api/scheduler/${encodeURIComponent(name)}/ratings`));
 }
 
 /** The states the scheduler puts cards in. */
 export async function getSchedulerStates(name: string): Promise<CardState[]> {
-  return memoize(`states:${name}`, () => withOfflineCopy(`states:${name}`, () => apiFetch('States fetch', `/api/scheduler/${encodeURIComponent(name)}/states`)));
-}
-
-/** The cards a review would show next, to review offline. */
-export async function fetchReviewQueue(req: ReviewQueueRequest): Promise<ReviewQueueResponse> {
-  return apiFetch('Review queue fetch', '/api/review/queue', { method: 'POST', body: JSON.stringify(req) });
+  return memoize(`states:${name}`, () => apiFetch('States fetch', `/api/scheduler/${encodeURIComponent(name)}/states`));
 }
 
 /** Where the cards matching a query are in a review's queue, and why the others are not in it. */
 export async function getQueuePositions(req: QueuePositionRequest): Promise<QueuePositionResponse> {
   return apiFetch('Queue positions', '/api/review/queue/position', { method: 'POST', body: JSON.stringify(req) });
-}
-
-/** Submits actions performed offline. */
-export async function syncOfflineActions(req: SyncOfflineActionsRequest): Promise<SyncOfflineActionsResponse> {
-  return apiFetch('Sync', '/api/review/sync', { method: 'POST', body: JSON.stringify(req) });
 }
 
 export async function submitAction(req: SubmitStudyActionRequest): Promise<SubmitStudyActionResponse> {
@@ -1092,13 +1000,21 @@ export async function getNoteLinks(scoreThreshold: number): Promise<NoteLink[]> 
   });
 }
 
-// Offline copies made before note ids became letters (`spares migrate ids`) point at rendered files
-// that were renamed, so they are dropped once. Actions yet to be synced are kept: they refer to
-// cards, whose ids did not change.
-const OFFLINE_FORMAT_KEY = 'spares_offline_format';
-const OFFLINE_FORMAT = 'letter-note-ids';
-if (localStorage.getItem(OFFLINE_FORMAT_KEY) !== OFFLINE_FORMAT) {
-  clearOfflineCopies()
-    .then(() => localStorage.setItem(OFFLINE_FORMAT_KEY, OFFLINE_FORMAT))
-    .catch(console.error);
+// What browsers without a copy of the collection kept to review offline, before a device's copy
+// replaced it: the downloaded queues, the ratings waiting to be sent and the statistics last
+// shown (IndexedDB), the files those cards showed (Cache Storage), and responses such as the
+// ratings (localStorage). Dropped once.
+const RETIRED_OFFLINE_KEY = 'spares_offline_retired';
+if (localStorage.getItem(RETIRED_OFFLINE_KEY) === null) {
+  (async () => {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('spares_offline_copy:') || key === 'spares_offline_format') localStorage.removeItem(key);
+    }
+    if (typeof caches !== 'undefined') {
+      await caches.delete('spares-offline-files');
+      await caches.delete('spares-offline-render-assets');
+    }
+    if (typeof indexedDB !== 'undefined') indexedDB.deleteDatabase('spares-offline');
+    localStorage.setItem(RETIRED_OFFLINE_KEY, '1');
+  })().catch(console.error);
 }

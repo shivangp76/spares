@@ -1,8 +1,8 @@
 // Lets the app open without a network connection. Built into `dist/sw.js` by the `service-worker`
 // plugin in vite.config.ts, which fills in the build hash and the files to precache and keep.
 //
-// Only the app itself is cached here. Data from the server (`/api`, `/files`) is cached by the app
-// (see src/offline), which knows what to keep for offline review and when it is stale.
+// Only the app itself is cached here. Data from the server (`/api`, `/files`) is kept only by a
+// device that keeps a copy of the collection, in caches of its own (see src/local/copy.ts).
 
 const BUILD = __BUILD__;
 // The page and the scripts, styles and fonts it loads, relative to this file
