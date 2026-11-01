@@ -19,7 +19,9 @@ async fn collection(name: &str) -> Arc<Collection> {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    let root = Path::new("/nonexistent/spares/users").join(name);
+    let root = std::env::temp_dir()
+        .join(format!("spares-kill-renders-{}", std::process::id()))
+        .join(name);
     Arc::new(Collection::new(name, db, CollectionPaths::in_dir(root)))
 }
 
@@ -50,9 +52,15 @@ async fn test_kill_running_renders_stops_running_and_later_renders() {
         let _collection = stopped.enter();
         kill_running_renders();
     }
+    // Killed while running, or refused if it hadn't started yet
     for render in renders {
-        let output = render.join().unwrap().unwrap();
-        assert!(!output.status.success());
+        match render.join().unwrap() {
+            Ok(output) => assert!(!output.status.success()),
+            Err(Error::Io { source, .. }) => {
+                assert_eq!(source.kind(), std::io::ErrorKind::Interrupted);
+            }
+            Err(e) => panic!("{e}"),
+        }
     }
     assert!(start.elapsed() < Duration::from_secs(10));
 
@@ -75,4 +83,51 @@ async fn test_kill_running_renders_stops_running_and_later_renders() {
             .status
             .success()
     );
+}
+
+/// A render reads its collection and the system, writes its files and scratch directories, and
+/// nothing else: not another collection's files, not the network.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn renders_run_in_a_sandbox() {
+    let base = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join(format!("spares-sandbox-{}", std::process::id()));
+    let mine = Path::new(&base).join("users/mine");
+    let theirs = Path::new(&base).join("users/theirs");
+    for dir in [&mine, &theirs] {
+        CollectionPaths::in_dir(dir).create().unwrap();
+        std::fs::write(dir.join("secret.txt"), "secret").unwrap();
+    }
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let collection = Arc::new(Collection::new("mine", db, CollectionPaths::in_dir(&mine)));
+    let _entered = collection.enter();
+    let run = |script: String| {
+        render_command_output(Command::new("/bin/sh").args(["-c", &script]), "sh").unwrap()
+    };
+    let read_own = run(format!("cat {}", mine.join("secret.txt").display()));
+    assert!(read_own.status.success(), "{read_own:?}");
+    let read_theirs = run(format!("cat {}", theirs.join("secret.txt").display()));
+    assert!(!read_theirs.status.success(), "{read_theirs:?}");
+    let home = std::env::var("HOME").unwrap();
+    assert!(
+        !run(format!("ls {home}/.ssh {home}/Documents"))
+            .status
+            .success()
+    );
+    let write_files = run(format!("touch {}", mine.join("files/out.pdf").display()));
+    assert!(write_files.status.success(), "{write_files:?}");
+    let write_scratch = run(format!("touch {}", mine.join("render/x").display()));
+    assert!(write_scratch.status.success(), "{write_scratch:?}");
+    for outside in [mine.join("collection.sqlite"), theirs.join("files/x.pdf")] {
+        let write = run(format!("touch {}", outside.display()));
+        assert!(!write.status.success(), "{}: {write:?}", outside.display());
+    }
+    let network = run("/usr/bin/nc -z -G 3 1.1.1.1 443".to_string());
+    assert!(!network.status.success(), "{network:?}");
+    std::fs::remove_dir_all(&base).unwrap();
 }
