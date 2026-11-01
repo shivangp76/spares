@@ -156,9 +156,6 @@ pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathD
     })
 }
 
-/// How long a command rendering a note or card may run before it is stopped.
-pub const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// The render commands a collection is running (see [`crate::collection::CollectionState`]).
 #[derive(Default)]
 pub(crate) struct RunningRenders {
@@ -187,10 +184,15 @@ pub fn kill_renders_of(state: &crate::collection::CollectionState) {
     }
 }
 
-/// Like [`Command::output`], but stops the command, and any processes it started (e.g. `pdflatex`
-/// under `latexmk`), if it runs longer than [`RENDER_TIMEOUT`].
+/// Like [`Command::output`], but runs the command in the host's sandbox, with its limits (see
+/// [`crate::render`]), once the collection has a free turn at rendering, and stops it, and any
+/// processes it started (e.g. `pdflatex` under `latexmk`), if it runs too long.
 pub fn render_command_output(command: &mut Command, name: &str) -> Result<Output, Error> {
-    command_output_with_timeout(command, name, RENDER_TIMEOUT)
+    let renderer = crate::render::Renderer::current()?;
+    let mut sandboxed = renderer.prepare(command)?;
+    let state = crate::collection::state();
+    let _turn = state.render_slots.take(renderer.renders_at_once());
+    command_output_with_timeout(&mut sandboxed, name, renderer.timeout())
 }
 
 fn command_output_with_timeout(

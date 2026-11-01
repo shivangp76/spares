@@ -438,6 +438,7 @@ impl Parseable for MarkdownParser {
             .arg(&log_filepath);
         let config = read_external_config().unwrap();
         if let Some(defaults_file) = &config.parser.markdown.defaults_file {
+            check_defaults_file(Path::new(defaults_file))?;
             command = command.arg("--defaults").arg(defaults_file);
         }
         let output = render_command_output(command, "pandoc");
@@ -483,6 +484,9 @@ impl Parseable for MarkdownParser {
         )
         .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
         let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
+        if let Some(path) = &web_defaults_file {
+            check_defaults_file(path).map_err(|e| e.to_string())?;
+        }
         let page_title = output_rendered_filepath
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
@@ -792,6 +796,19 @@ fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
     }
     let path = pandoc_user_data_dir().join("defaults").join(defaults_file);
     path.is_file().then_some(path)
+}
+
+/// Refuses a defaults file that would have pandoc run other programs (see
+/// [`crate::render::check_pandoc_defaults`]).
+fn check_defaults_file(defaults_file: &Path) -> Result<(), Error> {
+    let Some(path) = find_defaults_file(defaults_file) else {
+        return Ok(());
+    };
+    let contents = std::fs::read_to_string(&path).map_err(|e| Error::Io {
+        description: format!("Failed to read {}", path.display()),
+        source: e,
+    })?;
+    crate::render::check_pandoc_defaults(&contents, &path)
 }
 
 /// The collection's pandoc user data directory, `pandoc` in its config directory, which renders

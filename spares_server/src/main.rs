@@ -123,6 +123,7 @@ fn spawn_idle_closer(host: Arc<Host>) {
         loop {
             tick.tick().await;
             host.close_idle().await;
+            host.clean_render_scratch().await;
             if let Err(e) = spares_server::host::auth::prune_sessions(&host.accounts).await {
                 warn!("Failed to remove expired sessions: {e}");
             }

@@ -150,7 +150,8 @@ if [[ -n "$TIMEZONE" && "$(timedatectl show -p Timezone --value)" != "$TIMEZONE"
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates)
+# bubblewrap is the sandbox every render runs in; git keeps each account's notes repository
+PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates bubblewrap git)
 # clang and llvm build SQLite's C for the copy of the collection browsers keep (spares_wasm)
 [[ "$PREBUILT" == false ]] && PACKAGES+=(build-essential pkg-config git unzip nodejs npm clang llvm)
 # pandoc and LaTeX render markdown and latex-note cards. Typst cards are compiled by the browser.

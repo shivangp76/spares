@@ -160,6 +160,8 @@ impl CollectionPaths {
 pub struct CollectionState {
     replica: RwLock<Option<Replica>>,
     pub(crate) renders: Mutex<crate::parsers::RunningRenders>,
+    /// Its turns at rendering (see [`crate::render`])
+    pub(crate) render_slots: crate::render::RenderSlots,
     pub(crate) vcs: crate::notes_vcs::VcsState,
 }
 
