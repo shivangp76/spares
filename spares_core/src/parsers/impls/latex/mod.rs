@@ -586,6 +586,8 @@ fn render_file(
     // `cd $XDG_DATA_HOME/spares/notes/latex-note/ && time latexmk -verbose -file-line-error -synctex=1 -interaction=nonstopmode -pdf -auxdir=$XDG_CACHE_HOME/vimtex/aux/2051 $XDG_DATA_HOME/spares/notes/latex-note/2051.tex`
     let mut command = Command::new("latexmk");
     command
+        // No `latexmkrc`, which is Perl
+        .arg("-norc")
         .arg("-verbose")
         .arg("-file-line-error")
         .arg("-synctex=1")
@@ -667,7 +669,7 @@ fn recorded_inputs(recorder: &str, excluded_dirs: &[&Path]) -> Vec<PathBuf> {
 
 /// Directories of the TeX distribution, along with its caches and configuration. `TEXMFHOME` is
 /// not included, since it holds packages the user added.
-fn tex_distribution_dirs() -> &'static [PathBuf] {
+pub(crate) fn tex_distribution_dirs() -> &'static [PathBuf] {
     static DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
         [
             "TEXMFROOT",

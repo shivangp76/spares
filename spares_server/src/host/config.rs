@@ -138,6 +138,13 @@ signups = "closed"
 # Directories outside users' collections that every render may read, such as preambles that this
 # machine's templates import. Leave it empty on a host whose users don't trust each other.
 # read_dirs = ["/Users/me/learning/preambles"]
+# sandbox = "auto"          # auto (sandbox-exec on macOS, bubblewrap on Linux), sandbox-exec,
+#                           # bubblewrap, or none
+# engines = ["latex", "pandoc", "typst"]
+# timeout_seconds = 60
+# cpu_seconds = 120
+# memory_mb = 2048          # Linux only
+# renders_at_once = 4       # per user
 "#
         )
     }
