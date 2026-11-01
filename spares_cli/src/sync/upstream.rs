@@ -23,6 +23,9 @@ pub(crate) struct UpstreamLoginArgs {
     /// Read the password from stdin instead of asking for it
     #[arg(long, conflicts_with = "token")]
     pub(crate) password_stdin: bool,
+    /// The password, given by `spares deploy`
+    #[arg(skip)]
+    pub(crate) password: Option<String>,
     /// A `sync` device token for the account there (`spares host token <user> --scope sync`)
     /// instead of a password
     #[arg(long)]
@@ -71,7 +74,12 @@ pub(crate) async fn login(
         "this host",
     )
     .await?;
-    if let Some(current) = status["sync_url"].as_str() {
+    // Logging in again to the same upstream, or to the one a collection from before hosts names
+    // without a token, replaces the token.
+    if let Some(current) = status["sync_url"].as_str()
+        && normalize_host(current) != url
+        && status["sync_token_set"].as_bool() == Some(true)
+    {
         return Err(format!(
             "This collection syncs with {current} already. `spares sync logout` first."
         ));
@@ -87,7 +95,9 @@ pub(crate) async fn login(
                     .prompt()
                     .map_err(|e| e.to_string())?,
             };
-            let password = if args.password_stdin {
+            let password = if let Some(password) = args.password {
+                password
+            } else if args.password_stdin {
                 let mut line = String::new();
                 std::io::stdin()
                     .lock()
@@ -173,12 +183,13 @@ pub(crate) async fn logout(base_url: &str, client: &Client) -> Result<(), String
     Ok(())
 }
 
-/// [`login`] with a password prompt, as `spares deploy init` does.
+/// [`login`] as `spares deploy` does: with `password` if it has it, else a prompt.
 pub(crate) async fn login_with(
     base_url: &str,
     client: &Client,
     url: &str,
     user: &str,
+    password: Option<String>,
 ) -> Result<(), String> {
     login(
         base_url,
@@ -187,6 +198,7 @@ pub(crate) async fn login_with(
             url: url.to_string(),
             user: Some(user.to_string()),
             password_stdin: false,
+            password,
             token: None,
         },
     )

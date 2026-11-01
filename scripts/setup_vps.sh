@@ -11,7 +11,7 @@
 # this for you with --bundle, and sets up the laptop's side.
 #
 # --root        The root of the spares host on the machine you sync from (its SPARES_ROOT, e.g.
-#               /Users/you/.local/share/spares-host). The host here gets the same path, so the paths
+#               /Users/you/.local/share/spares). The host here gets the same path, so the paths
 #               notes name images by are the same on both. The first run creates the host there
 #               with your account, asking for its password, and moves into it a collection kept the
 #               way spares kept one before hosts (in the --data-dir of an earlier run).
@@ -40,6 +40,13 @@
 # with it as one of your devices (`spares sync login`).
 #
 set -euo pipefail
+
+# The password of the account a server moving into a host gets, which `spares deploy update` sends
+# on standard input. Read first, before any command here can read standard input instead.
+ACCOUNT_PASSWORD=""
+if [[ ! -t 0 ]]; then
+  IFS= read -r ACCOUNT_PASSWORD || true
+fi
 
 REPO_URL="https://github.com/shivangp76/spares.git"
 # The arguments of the last run, for updating without them
@@ -122,8 +129,8 @@ done
   echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2
   exit 1
 }
-# Before hosts, a server only had --data-dir; its host goes next to it.
-[[ -n "$ROOT" || -z "$DATA_DIR" ]] || ROOT="$(dirname "$DATA_DIR")/spares-host"
+# Before hosts, a server only had --data-dir, which becomes its host.
+[[ -n "$ROOT" || -z "$DATA_DIR" ]] || ROOT="$DATA_DIR"
 [[ "$ROOT" == /* ]] || {
   echo "--root must be an absolute path." >&2
   exit 1
@@ -306,10 +313,33 @@ chown "$SPARES_USER": "$(dirname "$ROOT")"
 # into them
 find "$USER_HOME" -xdev -user root -exec chown -h "$SPARES_USER": {} +
 spares_host() { as_user "SPARES_ROOT='$ROOT' /usr/local/bin/spares_server host $1"; }
-if [[ ! -f "$ROOT/accounts.sqlite" ]]; then
+# Whether the host has the account: a host whose first account was never made (an earlier run
+# that stopped halfway) gets it now.
+has_account() {
+  [[ -f "$ROOT/accounts.sqlite" ]] &&
+    [[ "$(sqlite3 "$ROOT/accounts.sqlite" "SELECT COUNT(*) FROM user WHERE id = '$ACCOUNT_ID'" 2>/dev/null)" == 1 ]]
+}
+if ! has_account; then
   echo "==> Creating the host in $ROOT, with the account $ACCOUNT"
   systemctl stop spares 2>/dev/null || true
-  spares_host "init --user '$ACCOUNT' --user-id '$ACCOUNT_ID' --bind 127.0.0.1:8080" </dev/tty
+  if [[ -f "$ROOT/accounts.sqlite" ]]; then
+    CREATE="add-user '$ACCOUNT' --user-id '$ACCOUNT_ID' --admin"
+  else
+    CREATE="init --user '$ACCOUNT' --user-id '$ACCOUNT_ID' --bind 127.0.0.1:8080"
+  fi
+  # The password: typed (spares deploy init), or sent on standard input (spares deploy update)
+  if [[ -n "$ACCOUNT_PASSWORD" ]]; then
+    spares_host "$CREATE --password-stdin" <<<"$ACCOUNT_PASSWORD"
+  elif [[ -t 0 ]]; then
+    spares_host "$CREATE" </dev/tty
+  else
+    echo "The host here needs your account's password: run \`spares deploy update\` again, which asks for it." >&2
+    exit 1
+  fi
+  has_account || {
+    echo "The account $ACCOUNT wasn't created." >&2
+    exit 1
+  }
   if [[ -n "$DATA_DIR" && -f "$DATA_DIR/spares-main.sqlite" ]]; then
     echo "==> Moving the collection in $DATA_DIR into the host"
     spares_host "import '$DATA_DIR' '$ACCOUNT_ID' --config-dir '$CONFIG_DIR' --cache-dir '$RENDERED_DIR' --rendered-dir '$RENDERED_DIR' --replica 1"

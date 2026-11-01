@@ -3,18 +3,20 @@
 //! # Directories
 //!
 //! Every directory is the current collection's (see [`crate::collection`]): on a host,
-//! `users/<user_id>/` under `SPARES_ROOT`. Nothing is read from the environment, so two hosts on
-//! one machine (one for testing, say) never share files as long as their roots differ.
+//! `users/<user_id>/` under `SPARES_ROOT` and `users/<user_id>/` under its cache root
+//! (`~/.cache/spares`). Nothing is read from the environment, so two hosts on one machine (one for
+//! testing, say) never share files as long as their roots differ.
 //!
-//! - [`get_config_dir`]: `config.toml` and the parser templates
-//! - [`get_files_dir`]: rendered files, which the host serves at `/files`, and API responses name
-//!   files relative to
-//! - [`get_media_dir`]: images, audio and image occlusions
-//! - [`get_cache_dir`]: sync's snapshots and render hashes
 //! - [`get_data_dir`]: the collection's directory, with the database and raw note files
+//! - [`get_config_dir`]: `config.toml` and the parser templates
+//! - [`get_media_dir`]: images, audio and image occlusions
+//! - [`get_cache_dir`]: what spares recreates: rendered files, raw card files, render hashes and
+//!   sync's snapshots
+//! - [`get_files_dir`]: rendered files, in the cache, which the host serves at `/files`, and API
+//!   responses name files relative to
 //!
 //! A program that renders a note itself (vimtex compiling a LaTeX note, say) finds its PDF in the
-//! files directory, `users/<user_id>/files`.
+//! files directory, `~/.cache/spares/users/<user_id>/files`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -60,7 +62,8 @@ pub fn get_config_dir() -> PathBuf {
     collection::paths().config.clone()
 }
 
-/// The current collection's caches: sync's snapshots and render hashes.
+/// The current collection's cache: what spares recreates, such as rendered files, raw card files,
+/// render hashes and sync's snapshots (see [`collection::CollectionPaths::cache`]).
 pub fn get_cache_dir() -> PathBuf {
     collection::paths().cache.clone()
 }
@@ -78,8 +81,8 @@ pub fn resolve_in_files_dir(path: &Path) -> PathBuf {
     get_files_dir().join(path)
 }
 
-/// The current collection's directory: its database, raw note and card files, and what doesn't
-/// belong in another of its directories.
+/// The current collection's directory: its database, raw note files, and what doesn't belong in
+/// another of its directories.
 pub fn get_data_dir() -> PathBuf {
     collection::paths().root.clone()
 }

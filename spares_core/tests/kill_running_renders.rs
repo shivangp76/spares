@@ -1,7 +1,6 @@
 //! In its own test binary, since it runs render commands in collections of its own.
 #![cfg(unix)]
 
-use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
@@ -94,36 +93,49 @@ async fn renders_run_in_a_sandbox() {
         .canonicalize()
         .unwrap()
         .join(format!("spares-sandbox-{}", std::process::id()));
-    let mine = Path::new(&base).join("users/mine");
-    let theirs = Path::new(&base).join("users/theirs");
-    for dir in [&mine, &theirs] {
-        CollectionPaths::in_dir(dir).create().unwrap();
-        std::fs::write(dir.join("secret.txt"), "secret").unwrap();
+    let paths = |user: &str| {
+        CollectionPaths::new(
+            base.join("data/users").join(user),
+            base.join("cache/users").join(user),
+        )
+    };
+    let (mine, theirs) = (paths("mine"), paths("theirs"));
+    for paths in [&mine, &theirs] {
+        paths.create().unwrap();
+        std::fs::write(paths.root.join("secret.txt"), "secret").unwrap();
+        std::fs::write(paths.cache.join("card.typ"), "card").unwrap();
     }
     let db = sqlx::sqlite::SqlitePoolOptions::new()
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    let collection = Arc::new(Collection::new("mine", db, CollectionPaths::in_dir(&mine)));
+    let collection = Arc::new(Collection::new("mine", db, mine.clone()));
     let _entered = collection.enter();
     let run = |script: String| {
         render_command_output(Command::new("/bin/sh").args(["-c", &script]), "sh").unwrap()
     };
-    let read_own = run(format!("cat {}", mine.join("secret.txt").display()));
-    assert!(read_own.status.success(), "{read_own:?}");
-    let read_theirs = run(format!("cat {}", theirs.join("secret.txt").display()));
-    assert!(!read_theirs.status.success(), "{read_theirs:?}");
+    for own in [mine.root.join("secret.txt"), mine.cache.join("card.typ")] {
+        let read = run(format!("cat {}", own.display()));
+        assert!(read.status.success(), "{}: {read:?}", own.display());
+    }
+    for other in [
+        theirs.root.join("secret.txt"),
+        theirs.cache.join("card.typ"),
+    ] {
+        let read = run(format!("cat {}", other.display()));
+        assert!(!read.status.success(), "{}: {read:?}", other.display());
+    }
     let home = std::env::var("HOME").unwrap();
     assert!(
         !run(format!("ls {home}/.ssh {home}/Documents"))
             .status
             .success()
     );
-    let write_files = run(format!("touch {}", mine.join("files/out.pdf").display()));
+    let write_files = run(format!("touch {}", mine.files.join("out.pdf").display()));
     assert!(write_files.status.success(), "{write_files:?}");
-    let write_scratch = run(format!("touch {}", mine.join("render/x").display()));
+    let write_scratch = run(format!("touch {}", mine.render.join("x").display()));
     assert!(write_scratch.status.success(), "{write_scratch:?}");
-    for outside in [mine.join("collection.sqlite"), theirs.join("files/x.pdf")] {
+    for outside in [mine.database(), theirs.files.join("x.pdf")] {
         let write = run(format!("touch {}", outside.display()));
         assert!(!write.status.success(), "{}: {write:?}", outside.display());
     }
