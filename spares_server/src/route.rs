@@ -477,6 +477,9 @@ pub fn create_router(app_state: Arc<AppState>, frontend_dir: Option<PathBuf>) ->
             delete(auth::revoke_device_handler),
         )
         .route("/api/auth/password", post(auth::password_handler))
+        .route("/api/account", delete(auth::delete_account_handler))
+        .route("/api/account/export", get(auth::export_account_handler))
+        .route("/api/metrics", get(auth::metrics_handler))
         // Rendered notes and cards
         .nest_service("/files", tower::service_fn(serve_collection_file))
         .route_layer(middleware::from_fn_with_state(
@@ -493,7 +496,12 @@ pub fn create_router(app_state: Arc<AppState>, frontend_dir: Option<PathBuf>) ->
         .route("/api/auth/login", post(auth::login_handler))
         .route("/api/auth/logout", post(auth::logout_handler))
         .route("/api/auth/session", get(auth::session_handler))
-        .route("/api/auth/token", post(auth::token_handler));
+        .route("/api/auth/token", post(auth::token_handler))
+        .route("/api/auth/signups", get(auth::signups_handler))
+        .route("/api/auth/signup", post(auth::signup_handler))
+        .route("/api/auth/verify", get(auth::verify_handler))
+        .route("/api/auth/reset-request", post(auth::reset_request_handler))
+        .route("/api/auth/reset", post(auth::reset_handler));
 
     let mut router = Router::new()
         .merge(public)
@@ -1132,5 +1140,140 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// Invite signups need a code, used once; open ones an email address, verified by the link
+    /// sent to it before the account can log in.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one scenario")]
+    async fn signups_follow_the_hosts_policy() {
+        let (host, root) = crate::host::tests::test_host().await;
+        let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());
+        let signup = |name: &str, invite: Option<&str>| {
+            serde_json::json!({ "name": name, "email": format!("{name}@example.com"),
+                "password": "password9", "invite": invite })
+        };
+        let router = create_router(
+            Arc::new(AppState {
+                host: Arc::clone(&host),
+            }),
+            None,
+        );
+        let (status, _, _) = send(&router, post("/api/auth/signup"), Some(signup("a", None))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "closed");
+        drop(router);
+        host.close_all().await;
+
+        // By invite
+        std::fs::write(root.0.join("host.toml"), "signups = \"invite\"\n").unwrap();
+        let host = crate::host::Host::open(&root.0).await.unwrap();
+        let code = crate::host::signup::create_invite(&host.accounts, 1)
+            .await
+            .unwrap();
+        let router = create_router(
+            Arc::new(AppState {
+                host: Arc::clone(&host),
+            }),
+            None,
+        );
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/signup"),
+            Some(signup("b", Some("wrong"))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, headers, body) = send(
+            &router,
+            post("/api/auth/signup"),
+            Some(signup("b", Some(&code))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(headers.contains_key(axum::http::header::SET_COOKIE));
+        let new_id = body["user"]["id"].as_str().unwrap().to_string();
+        assert!(
+            root.0
+                .join("users")
+                .join(&new_id)
+                .join("collection.sqlite")
+                .is_file()
+        );
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/signup"),
+            Some(signup("c", Some(&code))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "used up");
+        drop(router);
+        host.close_all().await;
+
+        // Open, with email
+        let mail = root.0.join("mail.txt");
+        std::fs::write(
+            root.0.join("host.toml"),
+            format!(
+                "signups = \"open\"\n[email]\ncommand = \"cat > {}\"\nfrom = \"s@example.com\"\n",
+                mail.display()
+            ),
+        )
+        .unwrap();
+        let host = crate::host::Host::open(&root.0).await.unwrap();
+        let router = create_router(
+            Arc::new(AppState {
+                host: Arc::clone(&host),
+            }),
+            None,
+        );
+        let (status, _, body) =
+            send(&router, post("/api/auth/signup"), Some(signup("d", None))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verify"], true);
+        let login = serde_json::json!({ "user": "d", "password": "password9" });
+        let (status, _, _) = send(&router, post("/api/auth/login"), Some(login.clone())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "not verified yet");
+        let sent = std::fs::read_to_string(&mail).unwrap();
+        let link = sent
+            .lines()
+            .find(|line| line.contains("/api/auth/verify?token="))
+            .unwrap();
+        let path = &link[link.find("/api/").unwrap()..];
+        let (status, headers, _) = send(&router, Request::builder().uri(path), None).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(headers[axum::http::header::LOCATION], "/login?verified=1");
+        let (status, _, _) = send(&router, post("/api/auth/login"), Some(login)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // A forgotten password
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/reset-request"),
+            Some(serde_json::json!({ "email": "d@example.com" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let sent = std::fs::read_to_string(&mail).unwrap();
+        let link = sent
+            .lines()
+            .find(|line| line.contains("reset-password?token="))
+            .unwrap();
+        let token = &link[link.find("token=").unwrap() + "token=".len()..];
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/reset"),
+            Some(serde_json::json!({ "token": token, "password": "new password" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/login"),
+            Some(serde_json::json!({ "user": "d", "password": "new password" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        drop(router);
+        host.close_all().await;
     }
 }

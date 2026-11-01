@@ -109,13 +109,16 @@ pub enum HostCommand {
         #[arg(long)]
         yes: bool,
     },
-    /// Move a collection kept the way spares kept one before hosts into an account
+    /// Move a collection into an account: another host's export, or one kept the way spares kept
+    /// one before hosts
     ///
-    /// The data directory's database, notes repository, images, audio and image occlusions, the
-    /// config directory's config.toml and templates, and the rendered files move into
-    /// `users/<id>/`. See `spares_server::host::import`.
+    /// An export (`spares host export`, or a user's download) is unpacked into `users/<id>/`.
+    /// From before hosts, the data directory's database, notes repository, images, audio and
+    /// image occlusions, the config directory's config.toml and templates, and the rendered files
+    /// move into `users/<id>/`. See `spares_server::host::import` and `spares_server::host::export`.
     Import {
-        /// The old data directory (what `SPARES_DATA_DIR` was, by default ~/.local/share/spares)
+        /// An export (`.tar.gz`), or the old data directory (what `SPARES_DATA_DIR` was, by
+        /// default ~/.local/share/spares)
         data_dir: PathBuf,
         /// The account to import into (its id, name or email). Its collection must be empty.
         user: String,
@@ -143,6 +146,24 @@ pub enum HostCommand {
         #[arg(long)]
         copy: bool,
     },
+    /// Make an invite for `signups = "invite"`: a code that creates one account
+    Invite {
+        /// How many days it can be used for
+        #[arg(long, default_value_t = 7)]
+        days: i64,
+    },
+    /// Write an account's directory, collection and all, to a `.tar.gz` that another host
+    /// imports (`spares host import <archive> <user>`)
+    Export {
+        /// Its id, name or email
+        user: String,
+        /// Where to write it [default: `<id>.tar.gz` here]
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Export every account into a directory, with a copy of accounts.sqlite. It works while the
+    /// host runs.
+    Backup { dir: PathBuf },
     /// Show an account's limits and usage, or change its limits (`-1` for the host's)
     Limits {
         /// Its id, name or email
@@ -332,6 +353,16 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
             let _lock = HostLock::take(&root)?;
             let host = Host::open(&root).await?;
             let user = find(&host, &user).await?;
+            if data_dir.is_file() {
+                super::export::import_archive(&host, &user.id, &data_dir).await?;
+                host.close_all().await;
+                println!(
+                    "Unpacked {} into {}.",
+                    data_dir.display(),
+                    host.user_dir(&user.id).display()
+                );
+                return Ok(());
+            }
             let env_dir = |name: &str| std::env::var_os(name).map(PathBuf::from);
             let rendered_dirs = if rendered_dirs.is_empty() {
                 [
@@ -506,6 +537,27 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                 megabytes(usage.storage_bytes),
                 usage.requests
             );
+        }
+        HostCommand::Invite { days } => {
+            let host = Host::open(&root).await?;
+            let code = super::signup::create_invite(&host.accounts, days).await?;
+            if host.config.signups != super::Signups::Invite {
+                eprintln!("This host's signups are not `invite`, so the code does nothing yet.");
+            }
+            println!("{code}");
+        }
+        HostCommand::Export { user, out } => {
+            let host = Host::open(&root).await?;
+            let user = find(&host, &user).await?;
+            let out = out.unwrap_or_else(|| PathBuf::from(format!("{}.tar.gz", user.id)));
+            super::export::export(&host, &user.id, &out).await?;
+            println!("Wrote {}.", out.display());
+        }
+        HostCommand::Backup { dir } => {
+            let host = Host::open(&root).await?;
+            for path in super::export::backup(&host, &dir).await? {
+                println!("Wrote {}", path.display());
+            }
         }
         HostCommand::Migrate { all: _ } => {
             let _lock = HostLock::take(&root)?;

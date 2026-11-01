@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import AccountSettings from '../components/AccountSettings';
 import LocalCopySettings from '../components/LocalCopySettings';
 import VersionSettings from '../components/VersionSettings';
 import { useAuth } from '../hooks/useAuth';
@@ -290,6 +291,8 @@ export default function SettingsPage() {
           Type the closing bracket or quote along with the opening one
         </label>
       </fieldset>
+
+      <AccountSettings />
 
       <LocalCopySettings />
 

@@ -1068,3 +1068,76 @@ if (localStorage.getItem(RETIRED_OFFLINE_KEY) === null) {
     localStorage.setItem(RETIRED_OFFLINE_KEY, '1');
   })().catch(console.error);
 }
+
+/** Who can create an account on the host at `serverUrl`, and whether it sends email (for password resets). */
+export interface SignupPolicy {
+  signups: 'closed' | 'invite' | 'open';
+  email: boolean;
+}
+
+export async function getSignupPolicy(serverUrl: string): Promise<SignupPolicy> {
+  const label = 'Signup policy';
+  const res = await send(label, `${serverUrl}/api/auth/signups`);
+  await throwIfNotOk(res, label);
+  return res.json() as Promise<SignupPolicy>;
+}
+
+/**
+ * Creates an account. With an invite, it is logged in at once (the session's CSRF token is
+ * returned); with open signups, a link to verify the email address is sent first (`verify`).
+ */
+export async function signUp(serverUrl: string, request: { name: string; email: string; password: string; invite?: string }): Promise<{ csrfToken: string; user: string } | { verify: true; message: string }> {
+  const label = 'Sign up';
+  const res = await send(label, `${serverUrl}/api/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...request, email: request.email || null, invite: request.invite || null }),
+  });
+  await throwIfNotOk(res, label);
+  const body = await res.json() as { csrf_token?: string; user?: { name: string }; verify?: boolean; message?: string };
+  if (body.verify) return { verify: true, message: body.message ?? 'Check your email.' };
+  return { csrfToken: body.csrf_token!, user: body.user!.name };
+}
+
+/** Emails a link to reset the password of the account with this address, if there is one. */
+export async function requestPasswordReset(serverUrl: string, email: string): Promise<string> {
+  const label = 'Password reset';
+  const res = await send(label, `${serverUrl}/api/auth/reset-request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  await throwIfNotOk(res, label);
+  return ((await res.json()) as { message: string }).message;
+}
+
+/** Sets a new password with the token from a reset email. */
+export async function resetPassword(serverUrl: string, token: string, password: string): Promise<void> {
+  const label = 'Password reset';
+  const res = await send(label, `${serverUrl}/api/auth/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  });
+  await throwIfNotOk(res, label);
+}
+
+/** Changes the account's password; the account's other sessions end. */
+export async function changePassword(current: string, newPassword: string): Promise<void> {
+  await apiSend('Change password', '/api/auth/password', { method: 'POST', body: JSON.stringify({ current, new: newPassword }) });
+}
+
+/** The account's whole collection, as a `.tar.gz` another host imports. */
+export async function exportAccount(): Promise<Blob> {
+  const { serverUrl } = getCredentials();
+  const label = 'Export';
+  const res = await send(label, `${serverUrl}/api/account/export`, { headers: authHeaders() });
+  await throwIfNotOk(res, label);
+  return res.blob();
+}
+
+/** Deletes the account and its collection on the host. */
+export async function deleteAccount(password: string): Promise<void> {
+  await apiSend('Delete account', '/api/account', { method: 'DELETE', body: JSON.stringify({ password }) });
+  clearCredentials();
+}

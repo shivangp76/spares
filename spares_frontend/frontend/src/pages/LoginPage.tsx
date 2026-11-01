@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { NetworkError, getCredentials, getSchedulerNames, login, saveCredentials } from '../api/client';
+import { NetworkError, getCredentials, getSchedulerNames, getSignupPolicy, login, saveCredentials, type SignupPolicy } from '../api/client';
 import { LOGIN_DOCS, docUrl } from '../help/pages';
 import { errorMessage } from '../utils';
 
@@ -16,6 +16,8 @@ export default function LoginPage() {
   // Empty for the server's default scheduler
   const [schedulerName, setSchedulerName] = useState('');
   const [checking, setChecking] = useState(false);
+  const [policy, setPolicy] = useState<SignupPolicy | null>(null);
+  const verified = new URLSearchParams(window.location.search).has('verified');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +28,10 @@ export default function LoginPage() {
       // not logged in
     }
   }, [navigate]);
+
+  useEffect(() => {
+    getSignupPolicy(window.location.origin).then(setPolicy, () => setPolicy(null));
+  }, []);
 
   /** Logs in, then checks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
@@ -84,7 +90,10 @@ export default function LoginPage() {
         <button type="submit" disabled={checking} className="touch-target" style={{ padding: '8px 0', marginTop: 4 }}>
           {checking ? 'Checking…' : 'Login'}
         </button>
+        {verified && !error && <div role="status" style={{ fontSize: 13 }}>Your email address is verified. Log in.</div>}
         {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
+        {policy && policy.signups !== 'closed' && <Link to="/signup" style={{ fontSize: 13 }}>Create an account</Link>}
+        {policy?.email && <Link to="/reset-password" style={{ fontSize: 13 }}>Forgot your password?</Link>}
         <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</Link>
       </form>
     </div>

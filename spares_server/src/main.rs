@@ -186,7 +186,24 @@ enum Command {
 async fn main() {
     // Answers shell completion requests (COMPLETE=zsh) and exits.
     clap_complete::CompleteEnv::with_factory(Args::command).complete();
-    env_logger::init();
+    // With the user whose collection a line is about, if any. Note texts never go in the log.
+    env_logger::Builder::from_default_env()
+        .format(|buf, record| {
+            use std::io::Write;
+            let user = spares_core::collection::current_id()
+                .map(|id| format!(" user={id}"))
+                .unwrap_or_default();
+            let level_style = buf.default_level_style(record.level());
+            writeln!(
+                buf,
+                "[{} {level_style}{}{level_style:#} {}{user}] {}",
+                buf.timestamp(),
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
 
     let mut args = Args::parse();
     let res = match args.command.take() {

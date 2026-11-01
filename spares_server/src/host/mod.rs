@@ -45,9 +45,11 @@ pub mod accounts;
 pub mod admin;
 pub mod auth;
 pub mod config;
+pub mod export;
 pub mod import;
 pub mod limits;
 pub mod lock;
+pub mod signup;
 
 pub use config::HostConfig;
 pub use config::Signups;

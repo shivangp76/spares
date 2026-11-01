@@ -10,6 +10,8 @@ const GraphPage = lazy(() => import('./pages/GraphPage'))
 const ImageOcclusionPage = lazy(() => import('./pages/ImageOcclusionPage'))
 const KeywordsPage = lazy(() => import('./pages/KeywordsPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'))
+const SignupPage = lazy(() => import('./pages/SignupPage'))
 const ManualPage = lazy(() => import('./pages/ManualPage'))
 const NotesPage = lazy(() => import('./pages/NotesPage'))
 const ParsersPage = lazy(() => import('./pages/ParsersPage'))
@@ -30,6 +32,8 @@ export default function App() {
     <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<NavbarLayout />}>
           <Route path="/notes" element={<NotesPage />} />
           <Route path="/graph" element={<GraphPage />} />
