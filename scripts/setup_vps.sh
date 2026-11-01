@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# Sets up (or updates) a spares server on a Debian/Ubuntu VPS. Safe to re-run: it pulls, rebuilds
-# and restarts, keeping the API key and data.
+# Sets up (or updates) a spares host on a Debian/Ubuntu VPS. Safe to re-run: it pulls, rebuilds
+# and restarts, keeping the accounts and data.
 #
-#   sudo bash setup_vps.sh --data-dir <local data dir> [--local-home <local home>]
-#                          [--domain <domain> | --tailscale] [--user <name>]
-#                          [--bundle <dir>] [--no-latex] [--timezone <zone>]
+#   sudo bash setup_vps.sh --root <local host root> --account <name> [--account-id <id>]
+#                          [--local-home <local home>] [--domain <domain> | --tailscale]
+#                          [--user <name>] [--bundle <dir>] [--no-latex] [--timezone <zone>]
 #   sudo bash setup_vps.sh     # update, with the arguments of the last run
 #
 # Arguments are saved, and later runs start from them. `spares deploy` on your laptop runs
 # this for you with --bundle, and sets up the laptop's side.
 #
-# --data-dir    The data directory on the machine you sync from (`spares sync cloud` copies it to
-#               the same path on the server), e.g. /Users/you/.local/share/spares.
+# --root        The root of the spares host on the machine you sync from (its SPARES_ROOT, e.g.
+#               /Users/you/.local/share/spares-host). The host here gets the same path, so the paths
+#               notes name images by are the same on both. The first run creates the host there
+#               with your account, asking for its password, and moves into it a collection kept the
+#               way spares kept one before hosts (in the --data-dir of an earlier run).
+# --account     Your account's name on the host here, and --account-id its id: make it your
+#               account's id on the machine you sync from, so the directories match.
 # --local-home  Your home directory on the machine you sync from, e.g. /Users/you. It is made a
 #               symlink to the home directory here, where `spares sync cloud` copies the files your
 #               notes read, so absolute paths to them (e.g. to a preamble) work on the server too.
@@ -31,7 +36,8 @@
 #               (what is due today, new card limits, the review heatmap and its streaks) in the
 #               server's time zone, and VPSs default to UTC. `spares deploy` passes the laptop's.
 #
-# The server is the sync server (replica 1) for two-way sync with your laptop (`sync.url`).
+# The host here is the root of your collection's sync chain (replica 1): your laptop's host syncs
+# with it as one of your devices (`spares sync login`).
 #
 set -euo pipefail
 
@@ -39,6 +45,9 @@ REPO_URL="https://github.com/shivangp76/spares.git"
 # The arguments of the last run, for updating without them
 SETUP_CONF="/etc/spares/setup.conf"
 DATA_DIR=""
+ROOT=""
+ACCOUNT=""
+ACCOUNT_ID=""
 LOCAL_HOME=""
 DOMAIN=""
 TAILSCALE=false
@@ -56,6 +65,9 @@ fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
+    --root) ROOT="${2%/}"; shift 2 ;;
+    --account) ACCOUNT="$2"; shift 2 ;;
+    --account-id) ACCOUNT_ID="$2"; shift 2 ;;
     --local-home) LOCAL_HOME="${2%/}"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     --tailscale) TAILSCALE=true; shift ;;
@@ -67,7 +79,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$SPARES_USER" && "$SPARES_USER" != root ]] || { echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2; exit 1; }
-[[ "$DATA_DIR" == /* ]] || { echo "--data-dir must be an absolute path." >&2; exit 1; }
+# Before hosts, a server only had --data-dir; its host goes next to it.
+[[ -n "$ROOT" || -z "$DATA_DIR" ]] || ROOT="$(dirname "$DATA_DIR")/spares-host"
+[[ "$ROOT" == /* ]] || { echo "--root must be an absolute path." >&2; exit 1; }
+[[ -n "$ACCOUNT" ]] || { echo "Pass --account <name>: your account on this host." >&2; exit 1; }
+[[ -n "$ACCOUNT_ID" ]] || ACCOUNT_ID="$ACCOUNT"
 [[ -z "$LOCAL_HOME" || "$LOCAL_HOME" == /?* ]] || { echo "--local-home must be an absolute path." >&2; exit 1; }
 [[ -z "$DOMAIN" || "$TAILSCALE" == false ]] || { echo "Use --domain or --tailscale, not both." >&2; exit 1; }
 [[ -z "$TIMEZONE" || -f "/usr/share/zoneinfo/$TIMEZONE" ]] || { echo "Unknown time zone: $TIMEZONE" >&2; exit 1; }
@@ -95,6 +111,9 @@ fi
 mkdir -p /etc/spares
 {
   printf 'DATA_DIR=%q\n' "$DATA_DIR"
+  printf 'ROOT=%q\n' "$ROOT"
+  printf 'ACCOUNT=%q\n' "$ACCOUNT"
+  printf 'ACCOUNT_ID=%q\n' "$ACCOUNT_ID"
   printf 'LOCAL_HOME=%q\n' "$LOCAL_HOME"
   printf 'DOMAIN=%q\n' "$DOMAIN"
   printf 'TAILSCALE=%q\n' "$TAILSCALE"
@@ -116,11 +135,12 @@ if [[ -n "$LOCAL_HOME" && "$LOCAL_HOME" != "$USER_HOME" ]]; then
   fi
 fi
 SRC_DIR="$USER_HOME/spares"
+# Before hosts: the config and rendered files of a server set up by an earlier version, which the
+# first run of this version moves into the host
 CONFIG_DIR="$USER_HOME/.config/spares"
-# Rendered files. Only this directory is served under `/files`, so the database stays private.
-# `spares sync cloud` copies them to `sync.remote_rendered_dir` (default: ~/.cache/spares).
 RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
+USER_DIR="$ROOT/users/$ACCOUNT_ID"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
 
 # Before the server (re)starts, as it reads the time zone then
@@ -212,38 +232,45 @@ else
 fi
 
 echo "==> Configuring"
-as_user "mkdir -p '$CONFIG_DIR' '$RENDERED_DIR'"
 # Created as the user where it can be (in the home directory, also through --local-home), so the
 # directories on the way to it belong to the user too
-as_user "mkdir -p '$DATA_DIR'" 2>/dev/null || mkdir -p "$DATA_DIR"
-chown "$SPARES_USER": "$DATA_DIR"
-# Earlier versions created those directories as root, which stops `spares sync cloud` from
-# copying files into them
+as_user "mkdir -p '$(dirname "$ROOT")'" 2>/dev/null || mkdir -p "$(dirname "$ROOT")"
+chown "$SPARES_USER": "$(dirname "$ROOT")"
+# Earlier versions created directories as root, which stops `spares sync cloud` from copying files
+# into them
 find "$USER_HOME" -xdev -user root -exec chown -h "$SPARES_USER": {} +
-CONFIG_FILE="$CONFIG_DIR/config.toml"
+spares_host() { as_user "SPARES_ROOT='$ROOT' /usr/local/bin/spares_server host $1"; }
+if [[ ! -f "$ROOT/accounts.sqlite" ]]; then
+  echo "==> Creating the host in $ROOT, with the account $ACCOUNT"
+  systemctl stop spares 2>/dev/null || true
+  spares_host "init --user '$ACCOUNT' --user-id '$ACCOUNT_ID' --bind 127.0.0.1:8080" </dev/tty
+  if [[ -n "$DATA_DIR" && -f "$DATA_DIR/spares-main.sqlite" ]]; then
+    echo "==> Moving the collection in $DATA_DIR into the host"
+    spares_host "import '$DATA_DIR' '$ACCOUNT_ID' --config-dir '$CONFIG_DIR' --cache-dir '$RENDERED_DIR' --rendered-dir '$RENDERED_DIR' --replica 1"
+  fi
+fi
+HOST_TOML="$ROOT/host.toml"
+# The settings this script manages; the rest of host.toml is the admin's
+as_user "sed -i -E -e 's|^#? ?bind = .*|bind = \"127.0.0.1:8080\"|' -e 's|^#? ?frontend_dir = .*|frontend_dir = \"$FRONTEND_DIR\"|' '$HOST_TOML'"
+CONFIG_FILE="$USER_DIR/config/config.toml"
+as_user "mkdir -p '$USER_DIR/config'"
 if [[ -f "$CONFIG_FILE" ]] && grep -q '^render_browser_parsers' "$CONFIG_FILE"; then
   as_user "sed -i 's/^render_browser_parsers.*/render_browser_parsers = false/' '$CONFIG_FILE'"
 else
   # Top-level keys must come before the first table
   as_user "{ echo 'render_browser_parsers = false'; cat '$CONFIG_FILE' 2>/dev/null || true; } > '$CONFIG_FILE.new' && mv '$CONFIG_FILE.new' '$CONFIG_FILE'"
 fi
+# The token `spares-render` renders with
+if [[ ! -s /etc/spares/render.token ]]; then
+  install -m 600 /dev/null /etc/spares/render.token
+  spares_host "token '$ACCOUNT_ID' --name 'spares-render on this server'" > /etc/spares/render.token
+fi
 
-API_KEY="$(grep -s '^SPARES_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
-[[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
 install -m 600 /dev/null "$ENV_FILE"
 cat > "$ENV_FILE" <<EOF
-SPARES_API_KEY=$API_KEY
-SPARES_SOCKET_ADDRESS=127.0.0.1:8080
-SPARES_DATA_DIR=$DATA_DIR
-SPARES_CONFIG_DIR=$CONFIG_DIR
-SPARES_CACHE_DIR=$RENDERED_DIR
-SPARES_FILES_DIR=$RENDERED_DIR
-SPARES_FRONTEND_DIR=$FRONTEND_DIR
+SPARES_ROOT=$ROOT
 RAYON_NUM_THREADS=1
 RUST_LOG=info
-# Two-way sync: this is the sync server, replica 1 (the laptop is replica 0)
-SPARES_REPLICA=1
-SPARES_SYNC_ROLE=server
 EOF
 
 cat > /etc/systemd/system/spares.service <<EOF
@@ -271,10 +298,9 @@ cat > /usr/local/bin/spares-render <<'EOF'
 #!/usr/bin/env bash
 # Usage: sudo spares-render [--force]
 set -euo pipefail
-source /etc/spares/spares.env
 force=false; [[ "${1:-}" == --force ]] && force=true
-curl -fsS -X POST "http://$SPARES_SOCKET_ADDRESS/api/notes/generate_files" \
-  -H "Authorization: Bearer $SPARES_API_KEY" -H 'Content-Type: application/json' \
+curl -fsS -X POST "http://127.0.0.1:8080/api/notes/generate_files" \
+  -H "Authorization: Bearer $(cat /etc/spares/render.token)" -H 'Content-Type: application/json' \
   -d "{\"selector\":\"All\",\"immutable_note_ids\":null,\"overridden_output_raw_dir\":null,\"include_linked_notes\":true,\"include_cards\":true,\"generate_rendered\":true,\"force_generate_rendered\":$force}"
 echo "Rendered."
 EOF
@@ -325,6 +351,11 @@ else
   URL="http://localhost:8080 (after: ssh -L 8080:127.0.0.1:8080 $SPARES_USER@<this server>)"
 fi
 
+# Browsers may only call the API from the web app's own address.
+if [[ "$URL" == https://* ]]; then
+  as_user "sed -i -E 's|^#? ?public_url = .*|public_url = \"$URL\"|' '$HOST_TOML'"
+  systemctl restart spares
+fi
 sleep 1
 systemctl is-active --quiet spares || { journalctl -u spares -n 30 --no-pager; exit 1; }
 # For `spares deploy`, which reads where the server is from here
@@ -333,18 +364,16 @@ HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
 [[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"
 cat <<EOF
 
-Spares is running.  Web app: $URL
-API key: $API_KEY   (also in $ENV_FILE)
+Spares is running.  Web app: $URL  (log in as $ACCOUNT)
+Its host is in $ROOT; manage accounts with \`SPARES_ROOT=$ROOT spares_server host --help\`.
 
-Next, on the machine you sync from (replica 0):
-  1. Add to its config.toml:
+Next, on the machine you sync from, whose host's copy of your collection syncs with this one:
+  1. Log its host in to this one:  spares sync login $URL
+  2. Optionally, in its config.toml:
        [sync]
-       remote_host = "$SPARES_USER@$HOST"
-       url = "$URL"
-       interval_minutes = 15   # optional: sync in the background
-  2. Start its spares server with SPARES_REPLICA=0, SPARES_SYNC_ROLE=client and
-     SPARES_SYNC_API_KEY=$API_KEY
-  3. Render your notes there, then run once:  spares sync cloud --full-upload
+       remote_host = "$SPARES_USER@$HOST"   # for \`spares sync cloud\` to copy rendered files
+       interval_minutes = 15                # sync in the background
+  3. Run once:  spares sync cloud --full-upload
      After that, \`spares sync cloud\` syncs both ways and copies the rendered files, your
      templates and the files your notes read.
 
