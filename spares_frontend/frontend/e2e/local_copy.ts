@@ -663,6 +663,22 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       syncTitle ?? "",
     );
 
+    // A second tab sends its requests to the tab that has the copy, offline too, and both show
+    // the change it made
+    const second = await context.newPage();
+    await second.goto(`${ORIGIN}/notes`);
+    await context.setOffline(true);
+    await createNote(
+      second,
+      "markdown",
+      `From a second tab in ${engine}: {{ second }}`,
+    );
+    await see(page, /unsynced/);
+    await see(second, /unsynced/);
+    await second.close();
+    await context.setOffline(false);
+    check("a second tab uses the copy through the first", true);
+
     // 2. Offline
     await context.setOffline(true);
     check(

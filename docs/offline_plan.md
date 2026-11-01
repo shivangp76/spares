@@ -15,10 +15,6 @@ A browser can keep a copy of the collection and work offline as a sync replica o
 
 Delete this file once the items below are done.
 
-## Smaller
-
-- **Other tabs:** they say "Open in another tab". They could send their requests to the tab that has the copy, over a `BroadcastChannel`.
-
 ## Found in the iOS Simulator, not fixed yet
 
 - **pandoc's first card:** starting the pandoc worker takes 2–2.7 s in Safari (compiling `pandoc.wasm` is 0.2 s of it, the rest is starting pandoc), so the first Markdown card changed on a device takes that long to show its math (Chrome on a Mac: 165–180 ms). Later cards take 0.3–0.4 s, and an answer is ready in about 0.1 s once the front has shown for a moment. A review now prepares the next card during the one before (`src/nextCard.ts`), which starts the worker then, so this should be left only for a review's first card and after the worker stopped (`IDLE_MS` in `src/local/pandoc.ts`). Not measured since.
