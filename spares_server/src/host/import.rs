@@ -3,16 +3,19 @@
 //! `SPARES_CONFIG_DIR`, `SPARES_CACHE_DIR`, `SPARES_FILES_DIR` and the parsers' `*_OUT_DIR` put
 //! them) into a user's directory on a host.
 //!
-//! | Before | After, in `users/<id>/` |
-//! |---|---|
-//! | `<data>/spares-main.sqlite` | `collection.sqlite` |
-//! | `<data>/notes-spares` | `notes.git` |
-//! | `<data>/images`, `audio`, `image_occlusions` | `media/…` |
-//! | `<data>/notes`, `cards`, `render_assets`, `id-map.tsv`, … | the same, at the top |
-//! | `<config>/config.toml`, `<config>/<parser>/` | `config/…` |
-//! | pandoc's user data directory | `config/pandoc` (copied: pandoc's own) |
-//! | `<cache>/note-hashes` | `cache/note-hashes` |
-//! | `<cache>/image_occlusions`, rendered files in the `*_OUT_DIR`s | `files/…` |
+//! | Before | After, in `users/<id>/` | in the user's cache (see [`super::cache_root`]) |
+//! |---|---|---|
+//! | `<data>/spares-main.sqlite` | `collection.sqlite` | |
+//! | `<data>/notes-spares` | `notes.git` | |
+//! | `<data>/images`, `audio`, `image_occlusions` | `media/…` | |
+//! | `<data>/notes`, `render_assets`, `id-map.tsv`, … | the same, at the top | |
+//! | `<config>/config.toml`, `<config>/<parser>/` | `config/…` | |
+//! | pandoc's user data directory | `config/pandoc`, a link to it, which `[render] read_dirs` lets renders follow | |
+//! | `<data>/cards` | | `cards` |
+//! | `<cache>/note-hashes` | | `note-hashes` |
+//! | `<cache>/image_occlusions`, rendered files in the `*_OUT_DIR`s | | `files/…` |
+//!
+//! The old cache directory may be the host's cache root (`~/.cache/spares`): its `users/` stays.
 //!
 //! Notes name images, audio and image occlusions by their absolute path, so their text is
 //! rewritten to the new paths, as an ordinary change that syncs. So are `render_asset`'s paths. The
@@ -43,9 +46,8 @@ pub const OLD_DATABASE_FILE_NAME: &str = "spares-main.sqlite";
 pub const OLD_NOTES_REPO_DIR_NAME: &str = "notes-spares";
 
 /// Entries of the data directory that move to the top of the user's directory.
-const DATA_ENTRIES: [&str; 6] = [
+const DATA_ENTRIES: [&str; 5] = [
     "notes",
-    "cards",
     "render_assets",
     ID_MAP_FILE_NAME,
     ".notes-spares-init",
@@ -88,6 +90,8 @@ pub struct ImportReport {
     pub left: Vec<PathBuf>,
     pub notes_rewritten: u64,
     pub replica: Option<u8>,
+    /// What `config/pandoc` links to, and the directories added to `[render] read_dirs` for it
+    pub pandoc: Option<(PathBuf, Vec<PathBuf>)>,
 }
 
 /// Imports into user `user_id`'s directory, whose collection must be empty. The host must not be
@@ -121,7 +125,11 @@ pub async fn import(
 
     let mover = Mover {
         copy: options.copy,
-        follow_links: false,
+        // The host's own users, when an old directory is its root or its cache root
+        keep: vec![
+            host.root.join(super::USERS_DIR_NAME),
+            host.cache_root.join(super::USERS_DIR_NAME),
+        ],
     };
     let data = &options.data_dir;
     let old_repo = data.join(OLD_NOTES_REPO_DIR_NAME);
@@ -132,6 +140,7 @@ pub async fn import(
     for name in DATA_ENTRIES {
         mover.entry(&data.join(name), &paths.root.join(name), &mut report)?;
     }
+    mover.entry(&data.join("cards"), &paths.cards(), &mut report)?;
     for entry in list(data) {
         let name = entry
             .file_name()
@@ -162,12 +171,14 @@ pub async fn import(
         }
     }
     if let Some(pandoc) = &options.pandoc_dir {
-        // Its own files, even those it links to elsewhere, so the collection's directory is whole
-        let copier = Mover {
-            copy: true,
-            follow_links: true,
-        };
-        copier.entry(pandoc, &paths.config.join("pandoc"), &mut report)?;
+        let link = paths.config.join("pandoc");
+        if link.exists() || link.is_symlink() {
+            report.skipped.push(pandoc.clone());
+        } else {
+            let read_dirs = link_pandoc(pandoc, &link)?;
+            add_read_dirs(&host.root, &read_dirs)?;
+            report.pandoc = Some((pandoc.clone(), read_dirs));
+        }
     }
     if let Some(cache) = &options.cache_dir {
         mover.entry(
@@ -206,7 +217,18 @@ pub async fn import(
     .flatten()
     {
         for entry in list(dir) {
-            if !report.moved.iter().any(|(from, _)| from == &entry)
+            // The host's own files, when the old data directory is its root
+            let host_file = entry.parent() == Some(host.root.as_path())
+                && entry.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy();
+                    name == super::USERS_DIR_NAME
+                        || name == super::config::HOST_CONFIG_FILE_NAME
+                        || name == super::lock::LOCK_FILE_NAME
+                        || name.starts_with(super::accounts::ACCOUNTS_FILE_NAME)
+                });
+            if !host_file
+                && !mover.keep.contains(&entry)
+                && !report.moved.iter().any(|(from, _)| from == &entry)
                 && !report.merged.iter().any(|(from, _, _)| from == &entry)
                 && !report.skipped.contains(&entry)
                 && entry != old_database
@@ -252,9 +274,12 @@ pub(super) async fn ensure_empty_collection(
             )));
         }
     }
-    // Its database, notes repository and default config.toml go: the import's replace them.
-    if paths.root.exists() {
-        std::fs::remove_dir_all(&paths.root).map_err(|e| io(&paths.root, e))?;
+    // Its database, notes repository and default config.toml go: the import's replace them. So
+    // does what its cache has, which may be another collection's.
+    for dir in [&paths.root, &paths.cache] {
+        if dir.exists() {
+            std::fs::remove_dir_all(dir).map_err(|e| io(dir, e))?;
+        }
     }
     paths.create().map_err(|e| io(&paths.root, e))?;
     Ok(())
@@ -296,15 +321,15 @@ fn list(dir: &Path) -> Vec<PathBuf> {
 
 struct Mover {
     copy: bool,
-    /// Copy what symbolic links point to, rather than the links
-    follow_links: bool,
+    /// What is never moved, even from a directory that is
+    keep: Vec<PathBuf>,
 }
 
 impl Mover {
     /// Moves (or copies) `from` to `to`, which must not exist: a file or directory, merged into
     /// `to` if that is a directory already.
     fn entry(&self, from: &Path, to: &Path, report: &mut ImportReport) -> Result<(), Error> {
-        if !from.exists() {
+        if !from.exists() || self.keep.iter().any(|keep| keep == from) {
             return Ok(());
         }
         if to.is_dir() && from.is_dir() {
@@ -318,10 +343,10 @@ impl Mover {
             std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
         }
         if self.copy {
-            copy_recursively(from, to, self.follow_links)?;
+            copy_recursively(from, to)?;
         } else if std::fs::rename(from, to).is_err() {
             // Another file system
-            copy_recursively(from, to, self.follow_links)?;
+            copy_recursively(from, to)?;
             remove(from)?;
         }
         report.moved.push((from.to_path_buf(), to.to_path_buf()));
@@ -361,13 +386,8 @@ fn io(path: &Path, source: std::io::Error) -> Error {
     }
 }
 
-fn copy_recursively(from: &Path, to: &Path, follow_links: bool) -> Result<(), Error> {
-    let metadata = if follow_links {
-        std::fs::metadata(from)
-    } else {
-        std::fs::symlink_metadata(from)
-    }
-    .map_err(|e| io(from, e))?;
+fn copy_recursively(from: &Path, to: &Path) -> Result<(), Error> {
+    let metadata = std::fs::symlink_metadata(from).map_err(|e| io(from, e))?;
     if metadata.file_type().is_symlink() {
         let target = std::fs::read_link(from).map_err(|e| io(from, e))?;
         #[cfg(unix)]
@@ -377,7 +397,7 @@ fn copy_recursively(from: &Path, to: &Path, follow_links: bool) -> Result<(), Er
     } else if metadata.is_dir() {
         std::fs::create_dir_all(to).map_err(|e| io(to, e))?;
         for entry in std::fs::read_dir(from).map_err(|e| io(from, e))?.flatten() {
-            copy_recursively(&entry.path(), &to.join(entry.file_name()), follow_links)?;
+            copy_recursively(&entry.path(), &to.join(entry.file_name()))?;
         }
     } else {
         std::fs::copy(from, to).map_err(|e| io(from, e))?;
@@ -392,6 +412,62 @@ fn remove(path: &Path) -> Result<(), Error> {
         std::fs::remove_file(path)
     }
     .map_err(|e| io(path, e))
+}
+
+/// Makes `link` a link to pandoc's user data directory `pandoc`, so renders use the same defaults
+/// files and templates as pandoc does everywhere else, and returns the directories renders must
+/// read to follow it: `pandoc` itself and where the links in it lead.
+fn link_pandoc(pandoc: &Path, link: &Path) -> Result<Vec<PathBuf>, Error> {
+    let real = |path: &Path| path.canonicalize().map_err(|e| io(path, e));
+    let mut read_dirs = vec![real(pandoc)?];
+    for entry in list(pandoc) {
+        if entry.is_symlink()
+            && let Ok(target) = entry.canonicalize()
+        {
+            let dir = if target.is_dir() {
+                target
+            } else {
+                target.parent().map(Path::to_path_buf).unwrap_or(target)
+            };
+            if !read_dirs.iter().any(|known| dir.starts_with(known)) {
+                read_dirs.push(dir);
+            }
+        }
+    }
+    if let Some(parent) = link.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(pandoc, link).map_err(|e| io(link, e))?;
+    #[cfg(not(unix))]
+    return Err(invalid("linking pandoc's directory needs a Unix"));
+    Ok(read_dirs)
+}
+
+/// Adds `dirs` to `[render] read_dirs` in the host's `host.toml`, keeping the rest as written.
+pub fn add_read_dirs(root: &Path, dirs: &[PathBuf]) -> Result<(), Error> {
+    let path = root.join(super::config::HOST_CONFIG_FILE_NAME);
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = contents
+        .parse()
+        .map_err(|e: toml_edit::TomlError| invalid(format!("{}: {e}", path.display())))?;
+    let render = doc
+        .entry("render")
+        .or_insert_with(toml_edit::table)
+        .as_table_like_mut()
+        .ok_or_else(|| invalid("`render` in host.toml is not a table"))?;
+    let read_dirs = render
+        .entry("read_dirs")
+        .or_insert(toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .ok_or_else(|| invalid("`render.read_dirs` in host.toml is not a list"))?;
+    for dir in dirs {
+        let dir = dir.to_string_lossy();
+        if !read_dirs.iter().any(|known| known.as_str() == Some(&*dir)) {
+            read_dirs.push(dir.as_ref());
+        }
+    }
+    std::fs::write(&path, doc.to_string()).map_err(|e| io(&path, e))
 }
 
 /// Writes `[sync] replica` into the collection's config.toml.
@@ -496,5 +572,82 @@ fn point_clone_at(clone: &Path, old_repo: &Path, new_repo: &Path) {
     };
     if Path::new(origin.trim_end_matches('/')) == old_repo {
         let _ = git(&["remote", "set-url", "origin", &new_repo.to_string_lossy()]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::tests::TempRoot;
+    use crate::host::tests::temp_root;
+
+    /// A VPS's old cache directory is its new cache root: rendered files move into the user's
+    /// cache, and the cache root's `users/` stays.
+    #[tokio::test]
+    async fn an_import_from_the_cache_root_keeps_it() {
+        let temp = TempRoot(temp_root());
+        let root = temp.0.join("root");
+        let cache = temp.0.join("cache");
+        Host::create(&root, "127.0.0.1:0").await.unwrap();
+        std::fs::write(
+            root.join("host.toml"),
+            format!("cache_dir = \"{}\"\n", cache.display()),
+        )
+        .unwrap();
+        let host = Host::open(&root).await.unwrap();
+        host.create_user(crate::host::accounts::NewUser {
+            id: Some("me"),
+            name: "me",
+            email: None,
+            password: "password1",
+            admin: true,
+            email_verified: true,
+        })
+        .await
+        .unwrap();
+        host.close_all().await;
+
+        let data = temp.0.join("data");
+        std::fs::create_dir_all(data.join("cards/typst")).unwrap();
+        std::fs::write(data.join("cards/typst/a-1-front.typ"), "card").unwrap();
+        let options = SqliteConnectOptions::from_str(&format!(
+            "sqlite://{}",
+            data.join(OLD_DATABASE_FILE_NAME).display()
+        ))
+        .unwrap()
+        .create_if_missing(true);
+        let db = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("../spares_core/migrations")
+            .run(&db)
+            .await
+            .unwrap();
+        db.close().await;
+        std::fs::create_dir_all(cache.join("note-hashes")).unwrap();
+        std::fs::write(cache.join("a.pdf"), "pdf").unwrap();
+
+        import(
+            &host,
+            "me",
+            &ImportOptions {
+                data_dir: data.clone(),
+                cache_dir: Some(cache.clone()),
+                rendered_dirs: vec![cache.clone()],
+                ..ImportOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        host.close_all().await;
+        let paths = host.paths("me");
+        assert_eq!(paths.cache, cache.join("users/me"));
+        assert!(paths.files.join("a.pdf").is_file());
+        assert!(paths.cache.join("note-hashes").is_dir());
+        assert!(paths.cards().join("typst/a-1-front.typ").is_file());
+        assert!(!paths.files.join("users").exists());
+        assert!(paths.database().is_file());
+        assert!(!root.join("users/me/cards").exists());
     }
 }

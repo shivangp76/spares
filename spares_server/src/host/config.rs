@@ -18,6 +18,13 @@ pub const HOST_CONFIG_FILE_NAME: &str = "host.toml";
 pub struct HostConfig {
     /// The address the host listens on.
     pub bind: String,
+    /// Where users' caches are: their rendered files, raw card files, render hashes and sync's
+    /// snapshots, everything spares recreates, in `<cache_dir>/users/<user_id>`. Kept out of the
+    /// root, so that backing up the root (`~/.local/share`, say) leaves them out. By default
+    /// `$XDG_CACHE_HOME/spares` (`~/.cache/spares`) for a host in the default root
+    /// (`$XDG_DATA_HOME/spares`), and `cache` in the root for a host elsewhere, so a scratch host
+    /// never shares one with another host (see [`super::cache_root`]).
+    pub cache_dir: Option<PathBuf>,
     /// The web app's built files (`spares_frontend/frontend/dist`), served at `/`. Without it, only
     /// the API is served.
     pub frontend_dir: Option<PathBuf>,
@@ -51,6 +58,7 @@ impl Default for HostConfig {
     fn default() -> Self {
         Self {
             bind: "127.0.0.1:8080".to_string(),
+            cache_dir: None,
             frontend_dir: None,
             public_url: None,
             signups: Signups::Closed,
@@ -118,6 +126,30 @@ impl HostConfig {
                 "`public_url` must start with http:// or https://, not {url}"
             ));
         }
+        let parsers: Vec<&str> = spares_core::parsers::get_all_parsers()
+            .iter()
+            .map(|parser| parser().get_parser_name())
+            .collect();
+        for (parser, dir) in &config.render.copy_notes_to {
+            if !parsers.contains(&parser.as_str()) {
+                return Err(format!(
+                    "`render.copy_notes_to` names {parser}, which is not one of {}",
+                    parsers.join(", ")
+                ));
+            }
+            if !dir.is_absolute() {
+                return Err(format!(
+                    "`render.copy_notes_to.{parser}` must be an absolute path, not {}",
+                    dir.display()
+                ));
+            }
+        }
+        if !config.render.copy_notes_to.is_empty() && config.signups != Signups::Closed {
+            return Err(
+                "`render.copy_notes_to` is for a host with one user, so signups must be closed"
+                    .to_string(),
+            );
+        }
         Ok(config)
     }
 
@@ -139,6 +171,9 @@ impl HostConfig {
         format!(
             r#"# The settings of this spares host. See `HostConfig` in spares_server's docs.
 bind = "{bind}"
+# Users' caches, everything spares recreates. Default: ~/.cache/spares for a host in
+# ~/.local/share/spares, else `cache` in this directory.
+# cache_dir = "/path/to/cache"
 # frontend_dir = "/path/to/spares_frontend/frontend/dist"
 # public_url = "https://spares.example.com"
 # closed, invite or open
@@ -172,6 +207,10 @@ signups = "closed"
 # cpu_seconds = 120
 # memory_mb = 2048          # Linux only
 # renders_at_once = 4       # per user
+# Put each rendered note here too (a hard link), by parser, e.g. where an editor writes the PDFs
+# it compiles. For a host with one user.
+# [render.copy_notes_to]
+# typst = "/Users/me/.cache/typst"
 "#
         )
     }
@@ -201,6 +240,17 @@ mod tests {
             "open signups need email"
         );
         assert!(HostConfig::parse("nope = 1").is_err());
+        let copies = HostConfig::parse("[render.copy_notes_to]\ntypst = \"/home/a/.cache/typst\"")
+            .unwrap()
+            .render
+            .copy_notes_to;
+        assert_eq!(copies["typst"], Path::new("/home/a/.cache/typst"));
+        assert!(HostConfig::parse("[render.copy_notes_to]\ntypist = \"/a\"").is_err());
+        assert!(HostConfig::parse("[render.copy_notes_to]\ntypst = \"a\"").is_err());
+        assert!(
+            HostConfig::parse("signups = \"invite\"\n[render.copy_notes_to]\ntypst = \"/a\"")
+                .is_err()
+        );
         let template = HostConfig::parse(&HostConfig::template("0.0.0.0:9000")).unwrap();
         assert_eq!(template.bind, "0.0.0.0:9000");
     }

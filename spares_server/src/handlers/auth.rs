@@ -704,7 +704,9 @@ pub(crate) async fn export_account_handler(
     axum::Extension(auth): axum::Extension<Auth>,
 ) -> Result<Response, HandlerError> {
     let host = &state.host;
-    let out = host.user_dir(&auth.user.id).join("cache").join(format!(
+    let cache = host.user_cache_dir(&auth.user.id);
+    let _ = tokio::fs::create_dir_all(&cache).await;
+    let out = cache.join(format!(
         "export-{}.tar.gz",
         crate::host::accounts::random_string(8)
     ));

@@ -22,7 +22,7 @@ Spares ships with 3 main parsers: "markdown", "typst", and "latex-note". To crea
 
 ## Starting the server
 
-spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT`, by default `~/.local/share/spares-host`) that holds its settings (`host.toml`), its accounts, and each account's collection in `users/<id>/`. Your machine is a host with one account and signups closed. Create it once, with your account:
+spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT`, by default `~/.local/share/spares`) that holds its settings (`host.toml`), its accounts, and each account's collection in `users/<id>/`. Your machine is a host with one account and signups closed. Create it once, with your account:
 ```sh
 spares host init --user <your name>
 spares_server
@@ -37,7 +37,7 @@ Before hosts, spares kept its database and files where `SPARES_DATA_DIR`, `SPARE
 spares host init --user <your name>
 spares host import ~/.local/share/spares <your name> --replica 0   # 0 on the laptop, 1 on a server
 ```
-It moves the database, the notes repository, images, audio and image occlusions, `config.toml` and the templates, and the rendered files, and rewrites the paths notes name images by. Pass `--copy` to leave the old directories as they were. Then run `spares vcs init --repair-hooks` if you keep notes in a repository. None of those environment variables, nor `SPARES_API_KEY`, `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY`, are read any more.
+The host's root is the old data directory itself (both are `~/.local/share/spares` by default), so this moves the database, the notes repository, images, audio and image occlusions into `users/<id>/` there, along with `config.toml` and the templates, and the rendered files, and rewrites the paths notes name images by. Other files there (an Anki copy, say) stay where they are. Your pandoc user data directory isn't moved: `config/pandoc` becomes a link to it, and the directories it reads are added to `[render] read_dirs` in `host.toml`, so renders use your pandoc defaults as they are. Pass `--copy` to leave the old directories as they were. Then run `spares vcs init --repair-hooks` if you keep notes in a repository. None of those environment variables, nor `SPARES_API_KEY`, `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY`, are read any more.
 
 ### Running on a remote server (optional)
 

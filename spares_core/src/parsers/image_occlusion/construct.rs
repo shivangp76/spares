@@ -1093,9 +1093,10 @@ fn in_collection(path: &Path) -> bool {
         return false;
     };
     crate::collection::paths()
-        .enclosing_dir()
-        .canonicalize()
-        .is_ok_and(|dir| path.starts_with(dir))
+        .dirs()
+        .iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .any(|dir| path.starts_with(dir))
 }
 
 /// Always, on a device: it has only its own collection's files, which its notes name by the

@@ -208,11 +208,13 @@ pub(super) async fn init(
         .json()
         .await
         .into_diagnostic()?;
-    if status["sync_url"].as_str() == Some(url.as_str()) {
+    if status["sync_url"].as_str() == Some(url.as_str())
+        && status["sync_token_set"].as_bool() == Some(true)
+    {
         println!("This host's copy syncs with {url} already.");
     } else {
         println!("Log in as {account}, with the password you gave the server.");
-        crate::sync::upstream_login(&base_url, &client, &url, &account)
+        crate::sync::upstream_login(&base_url, &client, &url, &account, None)
             .await
             .map_err(|e| miette!("{e}"))?;
     }

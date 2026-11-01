@@ -169,7 +169,7 @@ async fn shutdown_signal(host: Arc<Host>) {
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// The host's root directory (default: `~/.local/share/spares-host`)
+    /// The host's root directory (default: `~/.local/share/spares`)
     #[arg(long, env = "SPARES_ROOT")]
     root: Option<PathBuf>,
     #[command(subcommand)]

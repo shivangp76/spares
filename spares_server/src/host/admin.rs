@@ -20,7 +20,7 @@ use super::lock::HostLock;
 
 #[derive(Args, Debug)]
 pub struct HostArgs {
-    /// The host's root directory (default: `SPARES_ROOT`, else `~/.local/share/spares-host`)
+    /// The host's root directory (default: `SPARES_ROOT`, else `~/.local/share/spares`)
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
     #[command(subcommand)]
@@ -135,7 +135,8 @@ pub enum HostCommand {
         /// `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, `TYPST_OUT_DIR` (the default: those that are set)
         #[arg(long = "rendered-dir")]
         rendered_dirs: Vec<PathBuf>,
-        /// Pandoc's user data directory, copied for rendering (default: ~/.local/share/pandoc)
+        /// Pandoc's user data directory, which the collection's `config/pandoc` links to, and
+        /// renders may read (default: ~/.local/share/pandoc)
         #[arg(long)]
         pandoc_dir: Option<PathBuf>,
         /// This host's replica number for the collection: what `SPARES_REPLICA` was (default:
@@ -236,8 +237,11 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                 return Err(invalid(format!("{} is a host already", root.display())));
             }
             let password = read_password(&password, "Password for the new account:")?;
+            // Checked before anything is created, so a refused password leaves no host behind
+            accounts::hash_password(&password)?;
+            let had_settings = root.join(super::config::HOST_CONFIG_FILE_NAME).exists();
             let host = Host::create(&root, &bind).await?;
-            let user = host
+            let created = host
                 .create_user(NewUser {
                     id: user_id.as_deref(),
                     name: &user,
@@ -246,7 +250,26 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                     admin: true,
                     email_verified: email.is_some(),
                 })
-                .await?;
+                .await;
+            let user = match created {
+                Ok(user) => user,
+                Err(e) => {
+                    // No host without its first account
+                    host.close_all().await;
+                    host.accounts.close().await;
+                    for suffix in ["", "-wal", "-shm"] {
+                        let _ = std::fs::remove_file(format!(
+                            "{}{suffix}",
+                            root.join(accounts::ACCOUNTS_FILE_NAME).display()
+                        ));
+                    }
+                    if !had_settings {
+                        let _ =
+                            std::fs::remove_file(root.join(super::config::HOST_CONFIG_FILE_NAME));
+                    }
+                    return Err(e);
+                }
+            };
             let (_, token) = super::auth::create_token(
                 &host.accounts,
                 &user.id,
@@ -410,6 +433,16 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
             }
             for path in &report.skipped {
                 println!("Kept what was already there instead of {}", path.display());
+            }
+            if let Some((pandoc, read_dirs)) = &report.pandoc {
+                let read_dirs: Vec<String> =
+                    read_dirs.iter().map(|d| d.display().to_string()).collect();
+                println!(
+                    "Linked config/pandoc to {}, and let renders read {} ([render] read_dirs in \
+                     host.toml).",
+                    pandoc.display(),
+                    read_dirs.join(", ")
+                );
             }
             if report.notes_rewritten > 0 {
                 println!(

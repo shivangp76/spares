@@ -910,8 +910,8 @@ mod tests {
         })
         .await
         .unwrap();
-        std::fs::write(root.0.join("users/me/files/mine.pdf"), "mine").unwrap();
-        std::fs::write(root.0.join("users/other/files/theirs.pdf"), "theirs").unwrap();
+        std::fs::write(root.0.join("cache/users/me/files/mine.pdf"), "mine").unwrap();
+        std::fs::write(root.0.join("cache/users/other/files/theirs.pdf"), "theirs").unwrap();
         let router = create_router(Arc::new(AppState { host }), None);
         let get = |uri: &str| Request::builder().uri(uri.to_string());
         let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());

@@ -21,6 +21,7 @@ use colored::Colorize;
 use inquire::Password;
 use inquire::PasswordDisplayMode;
 use miette::Error;
+use miette::IntoDiagnostic;
 use miette::miette;
 use progress::Progress;
 use shell::Ssh;
@@ -129,23 +130,37 @@ async fn update() -> Result<(), Error> {
     })?;
     let (root, account_id, account) = crate::local::account().await?;
     let ssh = Ssh::new();
-    // A server set up before hosts is moved into one by `init`, which asks for the password of
-    // the account it creates there.
+    let sudo_password = sudo_password(&ssh, &remote_host)?;
+    // A server set up before hosts is moved into one: setup_vps.sh creates your account there,
+    // with the password asked for here, and imports the server's collection into it.
+    // A host with your account; a host an earlier update left without it gets it now.
     let has_host = ssh.output(
         &remote_host,
         &format!(
-            "test -f {} && echo yes || true",
-            quote(&root.join("accounts.sqlite").to_string_lossy())
+            "sudo -n sqlite3 {} \"SELECT COUNT(*) FROM user WHERE id = '{}'\" 2>/dev/null || true",
+            quote(&root.join("accounts.sqlite").to_string_lossy()),
+            account_id.replace('\'', "")
         ),
-    )?;
-    if has_host != "yes" {
-        return Err(miette!(
-            "The server has no spares host in {} yet. Run `spares deploy init <server>` once, \
-             which moves it into one.",
-            root.display()
-        ));
-    }
-    let sudo_password = sudo_password(&ssh, &remote_host)?;
+    )? == "1";
+    let account_password = if has_host {
+        None
+    } else {
+        if sudo_password.is_some() {
+            return Err(miette!(
+                "The server has no spares host yet, and its sudo needs a password. Run `spares \
+                 deploy init <server>` once, which moves it into a host."
+            ));
+        }
+        println!(
+            "The server predates hosts: this update moves it into a host, with your account {account} \
+             there."
+        );
+        let password = Password::new(&format!("Password for {account} on the server:"))
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()
+            .into_diagnostic()?;
+        Some(password)
+    };
     let progress = Progress::start("update", &["Building", "Uploading", "Installing"]);
     let bundle = Bundle::build(&progress, &repo, &remote_host, || {
         let output = ssh.output(
@@ -167,10 +182,13 @@ async fn update() -> Result<(), Error> {
         .map(|zone| format!(" --timezone {}", quote(&zone)))
         .unwrap_or_default();
     progress.step("Installing", &format!("on {remote_host}"));
-    // With the password asked for at the start, on standard input, so this does not wait for it
-    let (sudo, input) = match &sudo_password {
-        Some(password) => ("sudo -S -p ''", Some(format!("{password}\n"))),
-        None => ("sudo -n", None),
+    // With the passwords asked for at the start, on standard input, so this does not wait for
+    // them: sudo's, or the account's for a server moving into a host (never both, see above)
+    let (sudo, input) = match (&sudo_password, &account_password) {
+        (Some(password), _) => ("sudo -S -p ''", Some(format!("{password}\n"))),
+        (None, Some(password)) => ("sudo -n", Some(format!("{password}\n"))),
+        // Closed, so the script never waits on this terminal
+        (None, None) => ("sudo -n", Some(String::new())),
     };
     let mut command = ssh.command();
     command.args([
@@ -185,11 +203,25 @@ async fn update() -> Result<(), Error> {
     ]);
     progress.run(command, input.as_deref())?;
     progress.end_step();
+    progress.finish();
+    // This host's copy needs a token there, after the server moved into a host, or after this
+    // machine did.
+    let url = match config.sync.url.clone() {
+        Some(url) => url,
+        None => ssh.output(&remote_host, "cat /etc/spares/url")?,
+    };
+    if account_password.is_some() || config.sync.token.is_none() {
+        let base_url = spares_core::config::host_client().base_url;
+        let client = crate::local_client()?;
+        println!("Logging this host in to {url}…");
+        crate::sync::upstream_login(&base_url, &client, &url, &account, account_password)
+            .await
+            .map_err(|e| miette!("{e}"))?;
+    }
     println!(
         "\n{}",
-        "Restart spares_serve here too, so both sides run the same version.".yellow()
+        "Restart spares_server here too, so both sides run the same version.".yellow()
     );
-    progress.finish();
     Ok(())
 }
 

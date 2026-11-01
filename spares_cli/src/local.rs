@@ -4,7 +4,7 @@
 //! work on the collection's files on this machine too: opening rendered files, live notes, the
 //! notes repository, `spares migrate ids`, `spares sync cloud` and `spares deploy`. They use the
 //! collection in the host's root on this machine (`SPARES_ROOT`, else
-//! `~/.local/share/spares-host`): the account `SPARES_USER` names, else the one the CLI is logged in
+//! `~/.local/share/spares`): the account `SPARES_USER` names, else the one the CLI is logged in
 //! as there, else its only account.
 
 use std::path::Path;
