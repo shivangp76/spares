@@ -175,31 +175,17 @@ impl TryFrom<u8> for Replica {
     }
 }
 
-/// Whether this instance answers sync requests or runs the client side, from `SPARES_SYNC_ROLE`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::Display)]
-#[strum(serialize_all = "lowercase")]
-pub enum SyncRole {
-    Server,
-    Client,
-}
-
-pub const SYNC_ROLE_ENV: &str = "SPARES_SYNC_ROLE";
-
 #[cfg(test)]
 tokio::task_local! {
     /// Lets a test act as another replica (for example the server in a sync test) for the code it
     /// runs inside [`with_test_replica`].
-    static TEST_REPLICA: (Replica, SyncRole);
+    static TEST_REPLICA: Replica;
 }
 
-/// Runs `f` as replica `replica` with sync role `role`. Tests only.
+/// Runs `f` as replica `replica`. Tests only.
 #[cfg(test)]
-pub(crate) async fn with_test_replica<F: std::future::Future>(
-    replica: Replica,
-    role: SyncRole,
-    f: F,
-) -> F::Output {
-    TEST_REPLICA.scope((replica, role), f).await
+pub(crate) async fn with_test_replica<F: std::future::Future>(replica: Replica, f: F) -> F::Output {
+    TEST_REPLICA.scope(replica, f).await
 }
 
 /// Sets this browser's replica, or clears it with `None`. A browser is always a sync client.
@@ -211,7 +197,7 @@ pub fn set_device_replica(replica: Option<Replica>) {
 /// The current collection's replica on this host. Tests that open no collection are replica `0`.
 pub fn get_replica() -> Result<Replica, Error> {
     #[cfg(test)]
-    if let Ok((replica, _)) = TEST_REPLICA.try_with(|test| *test) {
+    if let Ok(replica) = TEST_REPLICA.try_with(|test| *test) {
         return Ok(replica);
     }
     if let Some(replica) = collection::state().replica() {
@@ -225,30 +211,6 @@ pub fn get_replica() -> Result<Replica, Error> {
     } else {
         "this collection has no replica number (`[sync] replica` in its config.toml)".to_string()
     }))
-}
-
-/// This instance's sync role. Required, with no default, except under tests, which are clients.
-/// A browser is always a client.
-pub fn get_sync_role() -> Result<SyncRole, Error> {
-    if cfg!(target_family = "wasm") {
-        return Ok(SyncRole::Client);
-    }
-    #[cfg(test)]
-    if let Ok((_, role)) = TEST_REPLICA.try_with(|test| *test) {
-        return Ok(role);
-    }
-    match std::env::var(SYNC_ROLE_ENV) {
-        Ok(value) => value.trim().parse().map_err(|_| {
-            invalid_config(format!(
-                "{SYNC_ROLE_ENV}: expected `server` or `client`, got `{value}`"
-            ))
-        }),
-        Err(_) if is_test_mode() => Ok(SyncRole::Client),
-        Err(_) => Err(invalid_config(format!(
-            "{SYNC_ROLE_ENV} is not set. Set it to `client` on the laptop and `server` on the \
-             server."
-        ))),
-    }
 }
 
 fn invalid_config(message: String) -> Error {

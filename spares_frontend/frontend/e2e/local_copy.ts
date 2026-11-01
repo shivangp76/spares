@@ -36,7 +36,8 @@ const ROOT = join(import.meta.dir, '../../..');
 const DIST = join(import.meta.dir, '../dist');
 const PORT = Number(process.env.SPARES_E2E_PORT ?? 8796);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
-const KEY = 'e2e';
+const USER = 'e2e';
+const PASSWORD = 'e2e-password';
 const ENGINES = { chromium, webkit, firefox };
 const TIMEOUT = 120_000;
 
@@ -44,7 +45,8 @@ const engines = (process.argv.length > 2 ? process.argv.slice(2) : Object.keys(E
 for (const engine of engines) if (!(engine in ENGINES)) throw new Error(`Unknown browser ${engine}`);
 if (!existsSync(join(DIST, 'sw.js'))) throw new Error(`Build the frontend first (bun run build): there is no ${DIST}`);
 
-// The server: built, and run on directories of its own, as the sync server (replica 1)
+// The host: built, and run on a root of its own, with one account, whose collection is the root
+// of its sync chain (replica 1)
 
 const SERVER_BIN = process.env.SPARES_SERVER_BIN ?? join(ROOT, 'target/debug/spares_server');
 if (!process.env.SPARES_SERVER_BIN) {
@@ -52,32 +54,40 @@ if (!process.env.SPARES_SERVER_BIN) {
   if (build.status !== 0) throw new Error('Building spares_server failed');
 }
 const dir = mkdtempSync(join(tmpdir(), 'spares-e2e-'));
-for (const sub of ['config', 'data', 'files']) mkdirSync(join(dir, sub));
-// As on a VPS: Typst cards are compiled by browsers only
-writeFileSync(join(dir, 'config/config.toml'), 'render_browser_parsers = false\n');
 const env: Record<string, string | undefined> = { ...process.env };
-// Settings of the user's own spares, such as where the laptop writes its files
-for (const key of Object.keys(env)) if (key.startsWith('SPARES_') || key.endsWith('_OUT_DIR') || key === 'DATABASE_URL') delete env[key];
-Object.assign(env, {
-  SPARES_CONFIG_DIR: join(dir, 'config'),
-  SPARES_DATA_DIR: join(dir, 'data'),
-  // One directory, as on a VPS, so the notes the server renders are the files it serves
-  SPARES_CACHE_DIR: join(dir, 'files'),
-  SPARES_FILES_DIR: join(dir, 'files'),
-  DATABASE_URL: `sqlite://${join(dir, 'data/spares.sqlite')}`,
-  SPARES_SOCKET_ADDRESS: `127.0.0.1:${PORT}`,
-  SPARES_SYNC_ROLE: 'server',
-  SPARES_REPLICA: '1',
-  SPARES_API_KEY: KEY,
-  SPARES_FRONTEND_DIR: DIST,
-  RUST_LOG: process.env.RUST_LOG ?? 'warn',
-});
+// Settings of the user's own spares, such as its host's root
+for (const key of Object.keys(env)) if (key.startsWith('SPARES_') || key.endsWith('_OUT_DIR')) delete env[key];
+Object.assign(env, { SPARES_ROOT: join(dir, 'host'), RUST_LOG: process.env.RUST_LOG ?? 'warn' });
+// `host init` makes the account and prints a device token for this script's own requests.
+const init = spawnSync(SERVER_BIN, ['host', 'init', '--user', USER, '--user-id', USER, '--bind', `127.0.0.1:${PORT}`, '--password-stdin', '--print-token'],
+  { env, input: `${PASSWORD}\n`, encoding: 'utf8' });
+if (init.status !== 0) throw new Error(`spares_server host init failed: ${init.stderr}`);
+const KEY = init.stdout.trim();
+writeFileSync(join(dir, 'host/host.toml'), `bind = "127.0.0.1:${PORT}"\nfrontend_dir = ${JSON.stringify(DIST)}\n`);
+// As on a VPS: Typst cards are compiled by browsers only
+const userConfig = join(dir, `host/users/${USER}/config/config.toml`);
+mkdirSync(join(dir, `host/users/${USER}/config`), { recursive: true });
+writeFileSync(userConfig, 'render_browser_parsers = false\n');
 const server = spawn(SERVER_BIN, [], { env, stdio: 'inherit' });
+
+/** Logs `page`'s browser in, as the login page does: the session's cookie, and its CSRF token with the credentials. */
+async function logIn(page: Page): Promise<void> {
+  const res = await page.request.post(`${ORIGIN}/api/auth/login`, { data: { user: USER, password: PASSWORD } });
+  if (!res.ok()) throw new Error(`Logging in: ${res.status()} ${await res.text()}`);
+  const { csrf_token: csrfToken } = await res.json() as { csrf_token: string };
+  const schedulers = await api<string[]>('GET', '/api/schedulers');
+  await page.evaluate(creds => {
+    localStorage.setItem('spares_credentials', JSON.stringify(creds));
+    // Typed into the editor as into a plain one
+    localStorage.setItem('spares_vim_keybindings', 'false');
+  }, { serverUrl: ORIGIN, csrfToken, user: USER, schedulerName: schedulers[0] });
+}
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${ORIGIN}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    // Sync requests say which version of the protocol they speak (`spares_core::sync::protocol`).
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', 'X-Spares-Sync-Protocol': '2' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
@@ -343,12 +353,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
   try {
     await page.goto(`${ORIGIN}/login`);
     await page.getByRole('heading', { name: 'Spares' }).waitFor();
-    const schedulers = await api<string[]>('GET', '/api/schedulers');
-    await page.evaluate(creds => {
-      localStorage.setItem('spares_credentials', JSON.stringify(creds));
-      // Typed into the editor as into a plain one
-      localStorage.setItem('spares_vim_keybindings', 'false');
-    }, { serverUrl: ORIGIN, apiKey: KEY, schedulerName: schedulers[0] });
+    await logIn(page);
     // Controlled by the service worker from here on, so the app opens offline
     await page.evaluate(() => navigator.serviceWorker.ready);
     // A card's image occlusion without masks, from the server
@@ -568,7 +573,8 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     // Logging out keeps the copy and its files, and logging back in starts it again
     await page.getByRole('button', { name: 'Logout' }).click();
     await page.getByLabel('Server URL').fill(ORIGIN);
-    await page.getByLabel('API Key').fill(KEY);
+    await page.getByLabel('Name').fill(USER);
+    await page.getByLabel('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Login' }).click();
     await page.getByRole('button', { name: /^Sync/ }).click();
     await see(page, /Synced: received|Already in sync/);
@@ -645,8 +651,7 @@ async function privateWindow(): Promise<void> {
     const page = await browser.newPage();
     await page.goto(`${ORIGIN}/login`);
     await page.getByRole('heading', { name: 'Spares' }).waitFor();
-    const schedulers = await api<string[]>('GET', '/api/schedulers');
-    await page.evaluate(creds => localStorage.setItem('spares_credentials', JSON.stringify(creds)), { serverUrl: ORIGIN, apiKey: KEY, schedulerName: schedulers[0] });
+    await logIn(page);
     await page.goto(`${ORIGIN}/settings`);
     await see(page, /can't keep a copy of the collection here/);
     check('a window without storage says it can\'t keep a copy', await page.getByRole('button', { name: 'Keep a Copy on This Device' }).count() === 0);
