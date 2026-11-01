@@ -529,7 +529,8 @@ pub(crate) async fn create_notes_event(
 }
 
 /// Gives a recreated card back its reviews, unless another card has them since, and its filtered
-/// tags, those that still exist.
+/// tags, those that still exist. The reviews are sent at the next sync, since the other replicas
+/// unlinked them too if the delete reached them.
 async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Error> {
     execute_batched_query(
         db,
@@ -537,7 +538,7 @@ async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Er
         MAX_ROWS_IN_QUERY,
         async |db, chunk| {
             let query_str = format!(
-                "UPDATE review_log SET card_id = ? WHERE id IN ({}) AND card_id IS NULL",
+                "UPDATE review_log SET card_id = ?, usn = -1 WHERE id IN ({}) AND card_id IS NULL",
                 placeholders(chunk.len())
             );
             let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(links.card_id);

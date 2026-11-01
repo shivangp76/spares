@@ -439,7 +439,7 @@ pub(crate) async fn mark_dirty(
         let snapshot = match kind {
             SyncKind::Note => Some("sync_note_snapshot"),
             SyncKind::Card => Some("sync_card_snapshot"),
-            SyncKind::Parser | SyncKind::Tag | SyncKind::SavedSearch => None,
+            SyncKind::Parser | SyncKind::Tag | SyncKind::SavedSearch | SyncKind::ReviewLog => None,
         };
         if let Some(view) = snapshot {
             sqlx::query(AssertSqlSafe(format!(
@@ -564,6 +564,16 @@ pub(crate) async fn apply_changes(
     }
     for record in &changes.review_logs {
         upsert_review_log(conn, record, usn).await?;
+        remove_grave(conn, Grave::review_log(record.id)).await?;
+    }
+    // Reviews an undo took back
+    for grave in changes
+        .graves
+        .iter()
+        .filter(|g| g.kind == SyncKind::ReviewLog)
+    {
+        delete_row(conn, grave.kind, grave.oid).await?;
+        insert_grave(conn, *grave, usn).await?;
     }
     for kind in [SyncKind::Tag, SyncKind::Parser] {
         for grave in changes.graves.iter().filter(|g| g.kind == kind) {
@@ -591,6 +601,13 @@ impl Grave {
         Self {
             kind: SyncKind::Note,
             oid: id.packed(),
+        }
+    }
+
+    pub fn review_log(id: i64) -> Self {
+        Self {
+            kind: SyncKind::ReviewLog,
+            oid: id,
         }
     }
 }
