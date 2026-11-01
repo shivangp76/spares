@@ -232,7 +232,7 @@ pub async fn import(
 
 /// The account's collection may only be the empty one it got when it was created, which the
 /// import replaces.
-async fn ensure_empty_collection(
+pub(super) async fn ensure_empty_collection(
     host: &Host,
     user_id: &str,
     paths: &CollectionPaths,

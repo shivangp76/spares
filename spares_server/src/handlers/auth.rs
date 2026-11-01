@@ -223,6 +223,16 @@ async fn check_login(
     if user.is_none() {
         host.counters.failed_login(who);
     }
+    if let Some(user) = &user
+        && host.config.signups == crate::host::Signups::Open
+        && user.email.is_some()
+        && user.email_verified_at.is_none()
+        && !user.admin
+    {
+        return Err(forbidden_json(
+            "verify your email address first, with the link sent to it",
+        ));
+    }
     Ok(user)
 }
 
@@ -440,4 +450,339 @@ pub(crate) async fn password_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(json!({})))
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SignupsResponse {
+    signups: crate::host::Signups,
+    /// Whether the host sends email, which resetting a forgotten password needs
+    email: bool,
+}
+
+/// `GET /api/auth/signups`: who can create an account here, for the login page.
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn signups_handler(State(state): State<Arc<AppState>>) -> Json<SignupsResponse> {
+    Json(SignupsResponse {
+        signups: state.host.config.signups,
+        email: state.host.config.email.command.is_some(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SignupRequest {
+    name: String,
+    email: Option<String>,
+    password: String,
+    invite: Option<String>,
+}
+
+fn forbidden_json(message: &str) -> HandlerError {
+    (StatusCode::FORBIDDEN, Json(json!({ "message": message })))
+}
+
+/// `POST /api/auth/signup`: creates an account, as `signups` in `host.toml` allows (see
+/// [`crate::host::signup`]). With an invite, it logs the new account in; with open signups, it
+/// emails a link to verify the address first.
+pub(crate) async fn signup_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<SignupRequest>,
+) -> Result<Response, HandlerError> {
+    use crate::host::Signups;
+    use crate::host::signup;
+    let host = &state.host;
+    let email = request
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+    match host.config.signups {
+        Signups::Closed => return Err(forbidden_json("this host takes no new accounts")),
+        Signups::Invite => {
+            let valid = match &request.invite {
+                Some(code) => signup::invite_is_valid(&host.accounts, code)
+                    .await
+                    .map_err(error_to_response)?,
+                None => false,
+            };
+            if !valid {
+                return Err(forbidden_json(
+                    "this host takes new accounts by invite only",
+                ));
+            }
+        }
+        Signups::Open if email.is_none() => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "message": "an email address is needed, to verify" })),
+            ));
+        }
+        Signups::Open => {}
+    }
+    let user = host
+        .create_user(accounts::NewUser {
+            id: None,
+            name: &request.name,
+            email,
+            password: &request.password,
+            admin: false,
+            email_verified: false,
+        })
+        .await
+        .map_err(error_to_response)?;
+    if host.config.signups == Signups::Invite {
+        let code = request.invite.as_deref().unwrap_or_default();
+        if !signup::use_invite(&host.accounts, code, &user.id)
+            .await
+            .map_err(error_to_response)?
+        {
+            // Used by another signup at the same time
+            let _ = host.delete_user(&user.id).await;
+            return Err(forbidden_json("the invite has been used"));
+        }
+        return start_session(host, user, &headers).await;
+    }
+    let token = signup::create_email_token(&host.accounts, &user.id, signup::Purpose::Verify)
+        .await
+        .map_err(error_to_response)?;
+    let link = format!("{}/api/auth/verify?token={token}", host.config.web_origin());
+    let sent = signup::send_email(
+        &host.config.email,
+        email.unwrap_or_default(),
+        "Verify your email for spares",
+        &format!(
+            "Open this link to start using your account {}:\n\n{link}\n",
+            user.name
+        ),
+    );
+    if let Err(e) = sent {
+        let _ = host.delete_user(&user.id).await;
+        return Err(error_to_response(e));
+    }
+    Ok(
+        Json(json!({ "verify": true, "message": "Check your email for a link to verify it." }))
+            .into_response(),
+    )
+}
+
+async fn start_session(
+    host: &crate::host::Host,
+    user: User,
+    headers: &HeaderMap,
+) -> Result<Response, HandlerError> {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let session = auth::create_session(
+        &host.accounts,
+        &user.id,
+        user_agent,
+        host.config.session_days,
+    )
+    .await
+    .map_err(error_to_response)?;
+    let cookie = auth::session_cookie(
+        Some(&session.cookie),
+        host.config.session_days,
+        host.config.secure_cookies(),
+    );
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(SessionResponse {
+            user,
+            csrf_token: session.csrf_token,
+        }),
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TokenQuery {
+    token: String,
+}
+
+/// `GET /api/auth/verify?token=…`: the link a new account's email gets. Goes on to the login page.
+pub(crate) async fn verify_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(TokenQuery { token }): axum::extract::Query<TokenQuery>,
+) -> Result<Response, HandlerError> {
+    use crate::host::signup;
+    let db = &state.host.accounts;
+    let user = signup::use_email_token(db, &token, signup::Purpose::Verify)
+        .await
+        .map_err(error_to_response)?;
+    let Some(user) = user else {
+        return Err(forbidden_json("this link has expired or been used"));
+    };
+    signup::mark_verified(db, &user)
+        .await
+        .map_err(error_to_response)?;
+    Ok(axum::response::Redirect::to("/login?verified=1").into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResetRequest {
+    email: String,
+}
+
+/// `POST /api/auth/reset-request`: emails a link to reset the password of the account with this
+/// address, if there is one. The answer is the same either way.
+pub(crate) async fn reset_request_handler(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ResetRequest>,
+) -> Result<Json<serde_json::Value>, HandlerError> {
+    use crate::host::signup;
+    let host = &state.host;
+    let answer = Json(json!({ "message": "If an account has that address, it got an email." }));
+    let Some(user) = accounts::find_user(&host.accounts, &request.email)
+        .await
+        .map_err(error_to_response)?
+        .filter(|user| {
+            user.email
+                .as_deref()
+                .is_some_and(|email| email.eq_ignore_ascii_case(request.email.trim()))
+        })
+    else {
+        return Ok(answer);
+    };
+    let token = signup::create_email_token(&host.accounts, &user.id, signup::Purpose::Reset)
+        .await
+        .map_err(error_to_response)?;
+    let link = format!("{}/reset-password?token={token}", host.config.web_origin());
+    if let Err(e) = signup::send_email(
+        &host.config.email,
+        user.email.as_deref().unwrap_or_default(),
+        "Reset your spares password",
+        &format!(
+            "Open this link to choose a new password for {}:\n\n{link}\n\nIt works for a day.\n",
+            user.name
+        ),
+    ) {
+        log::warn!("Failed to send a password reset: {e}");
+    }
+    Ok(answer)
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResetPasswordRequest {
+    token: String,
+    password: String,
+}
+
+/// `POST /api/auth/reset`: a new password, with the token from the email. Ends every session.
+pub(crate) async fn reset_handler(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ResetPasswordRequest>,
+) -> Result<Json<serde_json::Value>, HandlerError> {
+    use crate::host::signup;
+    let db = &state.host.accounts;
+    // Checked before the token is used up
+    accounts::hash_password(&request.password).map_err(error_to_response)?;
+    let Some(user) = signup::use_email_token(db, &request.token, signup::Purpose::Reset)
+        .await
+        .map_err(error_to_response)?
+    else {
+        return Err(forbidden_json("this link has expired or been used"));
+    };
+    accounts::set_password(db, &user, &request.password)
+        .await
+        .map_err(error_to_response)?;
+    // The email reached its owner, so the address is theirs.
+    signup::mark_verified(db, &user)
+        .await
+        .map_err(error_to_response)?;
+    auth::delete_sessions(db, &user, None)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(json!({})))
+}
+
+/// `GET /api/account/export`: the user's whole directory, collection and all, as a `.tar.gz`
+/// that another host imports (see [`crate::host::export`]).
+pub(crate) async fn export_account_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<Auth>,
+) -> Result<Response, HandlerError> {
+    let host = &state.host;
+    let out = host.user_dir(&auth.user.id).join("cache").join(format!(
+        "export-{}.tar.gz",
+        crate::host::accounts::random_string(8)
+    ));
+    crate::host::export::export(host, &auth.user.id, &out)
+        .await
+        .map_err(error_to_response)?;
+    let bytes = tokio::fs::read(&out).await;
+    let _ = tokio::fs::remove_file(&out).await;
+    let bytes = bytes.map_err(|e| {
+        error_to_response(spares_core::Error::Io {
+            description: "Failed to read the export".to_string(),
+            source: e,
+        })
+    })?;
+    let name = format!(
+        "attachment; filename=\"spares-{}-{}.tar.gz\"",
+        auth.user.name,
+        chrono::Utc::now().format("%Y%m%d")
+    );
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/gzip".to_string()),
+            (header::CONTENT_DISPOSITION, name),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DeleteAccountRequest {
+    password: String,
+}
+
+/// `DELETE /api/account`: deletes the account and its directory, collection and all, given its
+/// password.
+pub(crate) async fn delete_account_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<Auth>,
+    Json(request): Json<DeleteAccountRequest>,
+) -> Result<Response, HandlerError> {
+    let host = &state.host;
+    if check_login(host, &auth.user.id, &request.password)
+        .await?
+        .is_none()
+    {
+        return Err(forbidden_json("the password is wrong"));
+    }
+    host.sync.stop(&auth.user.id);
+    host.delete_user(&auth.user.id)
+        .await
+        .map_err(error_to_response)?;
+    let cookie = auth::session_cookie(None, 0, host.config.secure_cookies());
+    Ok(([(header::SET_COOKIE, cookie)], Json(json!({}))).into_response())
+}
+
+/// `GET /api/metrics`: the host's numbers, in Prometheus' text format, for its admins.
+pub(crate) async fn metrics_handler(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<Auth>,
+) -> Result<Response, HandlerError> {
+    if !auth.user.admin {
+        return Err(forbidden_json("only the host's admins see its metrics"));
+    }
+    let host = &state.host;
+    let (accounts, requests, storage): (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM user), COALESCE((SELECT SUM(requests) FROM usage), 0),
+                COALESCE((SELECT SUM(storage_bytes) FROM usage), 0)",
+    )
+    .fetch_one(&host.accounts)
+    .await
+    .map_err(|e| error_to_response(spares_core::Error::Sqlx { source: e }))?;
+    let open = host.open_collections().await.len();
+    let body = format!(
+        "# TYPE spares_accounts gauge\nspares_accounts {accounts}\n\
+         # TYPE spares_open_collections gauge\nspares_open_collections {open}\n\
+         # TYPE spares_requests_total counter\nspares_requests_total {requests}\n\
+         # TYPE spares_storage_bytes gauge\nspares_storage_bytes {storage}\n"
+    );
+    Ok(([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body).into_response())
 }

@@ -55,7 +55,14 @@ mod tests {
         let lock = HostLock::take(&root).unwrap();
         assert!(HostLock::take(&root).is_err());
         drop(lock);
-        HostLock::take(&root).unwrap();
+        // A process another test starts may hold it for a moment, between forking and running.
+        let retaken = (0..50).any(|_| {
+            HostLock::take(&root).is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                false
+            }
+        });
+        assert!(retaken);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
