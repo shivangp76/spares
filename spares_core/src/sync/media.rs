@@ -1,9 +1,14 @@
 //! Files a device needs besides the database: rendered cards to show offline, and the images and
 //! audio it adds to notes offline.
 //!
-//! - **Rendered files** stay on the server, which renders every note. A device lists them with
-//!   `GET /api/sync/files` ([`rendered_files`]) and downloads the ones that changed into the
-//!   browser's Cache Storage, where the web app already keeps the files of its offline queue.
+//! - **Rendered files** stay on the server, which renders every note. A device asks which changed
+//!   with `POST /api/sync/files/changed` ([`changed_rendered_files`]) and downloads them into the
+//!   browser's Cache Storage. The answer has the files of the [buckets](FILE_BUCKETS) whose
+//!   digest differs from the one the device last saw, so a refresh after a sync that changed one
+//!   note sends a few files rather than every one, and still shows the device the files that
+//!   are gone. A digest is of each file's path, size and mtime, not of an mtime since the last
+//!   time, because `spares sync cloud` copies files with the mtimes they had on the laptop.
+//!   `GET /api/sync/files` ([`rendered_files`]) lists every file.
 //!   Typst cards compile in the browser instead, from render assets the device fetches by the
 //!   hashes in its own `render_asset` table, which follows the server's at each sync.
 //! - **Images and audio** added on a device are named as the server names them,
@@ -18,6 +23,7 @@
 //!   once a note names it: saving the note parses it, which writes card orders into the SVG, and
 //!   the server never replaces a file. Where a device keeps them: `spares_wasm`'s `media`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -44,6 +50,11 @@ const INTERNAL_DIRS: [&str; 1] = ["sync"];
 /// HTML for web clients, and rendered image occlusions. Others are by-products, such as LaTeX's.
 const RENDERED_EXTENSIONS: [&str; 8] = ["pdf", "html", "svg", "png", "jpg", "jpeg", "gif", "webp"];
 
+/// How many buckets [`changed_rendered_files`] sorts rendered files into, by the first byte of
+/// their path's blake3 hash. A digest per bucket is 16 hex digits, so the digests of every bucket
+/// are about 6 KB, while each holds a 256th of the files.
+pub const FILE_BUCKETS: usize = 256;
+
 /// `GET /api/sync/files`: a file in the files directory.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RenderedFile {
@@ -52,36 +63,79 @@ pub struct RenderedFile {
     pub size: u64,
     /// When it last changed, as Unix time
     pub mtime: i64,
+    /// Its bucket (see [`FILE_BUCKETS`]), as two hex digits
+    pub bucket: String,
 }
 
+/// `POST /api/sync/files/changed`: the digests of the buckets the device has seen.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct RenderedFilesQuery {
-    /// Only files changed after this Unix time. Without it, every file, so a device can also drop
-    /// the ones that are gone.
-    pub since: Option<i64>,
+pub struct ChangedFilesRequest {
+    /// By bucket. Empty the first time, which lists every file.
+    #[serde(default)]
+    pub buckets: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ChangedFilesResponse {
+    /// The digest of every bucket that has files. A bucket the device has seen and that is missing
+    /// here has none left.
+    pub buckets: BTreeMap<String, String>,
+    /// Every file of each bucket whose digest isn't the device's, by path
+    pub files: Vec<RenderedFile>,
 }
 
 /// The rendered files in the files directory, by path.
-pub fn rendered_files(query: &RenderedFilesQuery) -> Result<Vec<RenderedFile>, Error> {
+pub fn rendered_files() -> Result<Vec<RenderedFile>, Error> {
     let root = get_files_dir();
     let entries = std::fs::read_dir(&root).map_err(|e| Error::Io {
         description: format!("Failed to list {}", root.display()),
         source: e,
     })?;
     let mut files = Vec::new();
-    add_rendered_files(&root, entries, query.since, &mut files);
+    add_rendered_files(&root, entries, &mut files);
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
 
+/// The digest of every bucket, and the files of those whose digest isn't in `request`.
+pub fn changed_rendered_files(
+    request: &ChangedFilesRequest,
+) -> Result<ChangedFilesResponse, Error> {
+    let mut by_bucket: BTreeMap<String, Vec<RenderedFile>> = BTreeMap::new();
+    for file in rendered_files()? {
+        by_bucket.entry(file.bucket.clone()).or_default().push(file);
+    }
+    let mut response = ChangedFilesResponse::default();
+    for (bucket, files) in by_bucket {
+        let digest = bucket_digest(&files);
+        if request.buckets.get(&bucket) != Some(&digest) {
+            response.files.extend(files);
+        }
+        response.buckets.insert(bucket, digest);
+    }
+    Ok(response)
+}
+
+/// The bucket of a file at `path` (see [`FILE_BUCKETS`]).
+fn file_bucket(path: &str) -> String {
+    format!("{:02x}", blake3::hash(path.as_bytes()).as_bytes()[0])
+}
+
+/// Of the files of a bucket, sorted by path.
+fn bucket_digest(files: &[RenderedFile]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for file in files {
+        hasher.update(file.path.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&file.size.to_le_bytes());
+        hasher.update(&file.mtime.to_le_bytes());
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
 /// Adds the rendered files among `entries` and below them. A file or directory that goes away
 /// meanwhile, as rendering does to some, is left out.
-fn add_rendered_files(
-    root: &Path,
-    entries: std::fs::ReadDir,
-    since: Option<i64>,
-    files: &mut Vec<RenderedFile>,
-) {
+fn add_rendered_files(root: &Path, entries: std::fs::ReadDir, files: &mut Vec<RenderedFile>) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name();
@@ -95,7 +149,7 @@ fn add_rendered_files(
         if metadata.is_dir() {
             let internal = path.parent() == Some(root) && INTERNAL_DIRS.contains(&name);
             if let (false, Ok(entries)) = (internal, std::fs::read_dir(&path)) {
-                add_rendered_files(root, entries, since, files);
+                add_rendered_files(root, entries, files);
             }
             continue;
         }
@@ -106,15 +160,16 @@ fn add_rendered_files(
         if !rendered {
             continue;
         }
-        let mtime = mtime(&metadata);
-        if since.is_some_and(|since| mtime <= since) {
-            continue;
-        }
-        let relative = path.strip_prefix(root).unwrap_or(&path);
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
         files.push(RenderedFile {
-            path: relative.to_string_lossy().into_owned(),
+            bucket: file_bucket(&relative),
+            path: relative,
             size: metadata.len(),
-            mtime,
+            mtime: mtime(&metadata),
         });
     }
 }
@@ -426,10 +481,19 @@ mod tests {
         ] {
             std::fs::write(dir.join(file), "x").unwrap();
         }
-        let files = rendered_files(&RenderedFilesQuery::default());
-        let future = rendered_files(&RenderedFilesQuery {
-            since: Some(i64::MAX),
-        });
+        let files = rendered_files();
+        let first = changed_rendered_files(&ChangedFilesRequest::default()).unwrap();
+        let unchanged = changed_rendered_files(&ChangedFilesRequest {
+            buckets: first.buckets.clone(),
+        })
+        .unwrap();
+        // Rewritten with another size, and one gone: their buckets are listed again, whole
+        std::fs::write(dir.join("card-1-front.pdf"), "xy").unwrap();
+        std::fs::remove_file(dir.join("sub/occlusion.svg")).unwrap();
+        let changed = changed_rendered_files(&ChangedFilesRequest {
+            buckets: first.buckets.clone(),
+        })
+        .unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         let paths: Vec<String> = files
             .unwrap()
@@ -445,6 +509,36 @@ mod tests {
                 "spares-media-test/sub/occlusion.svg"
             ]
         );
-        assert_eq!(future.unwrap(), []);
+        assert!(
+            first
+                .files
+                .iter()
+                .any(|f| f.path == "spares-media-test/card-1-front.pdf")
+        );
+        assert!(
+            !unchanged
+                .files
+                .iter()
+                .any(|f| f.path.starts_with("spares-media-test")),
+            "unchanged buckets aren't listed"
+        );
+        let pdf = changed
+            .files
+            .iter()
+            .find(|f| f.path == "spares-media-test/card-1-front.pdf")
+            .unwrap();
+        assert_eq!(pdf.size, 2);
+        assert!(
+            changed
+                .files
+                .iter()
+                .all(|f| f.path != "spares-media-test/sub/occlusion.svg")
+        );
+        let gone = file_bucket("spares-media-test/sub/occlusion.svg");
+        assert_ne!(
+            changed.buckets.get(&gone),
+            first.buckets.get(&gone),
+            "the bucket of a file that is gone changes, or is gone"
+        );
     }
 }
