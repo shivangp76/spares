@@ -37,13 +37,18 @@ import {
   COPY_FILES_CACHE,
   COPY_RENDER_ASSETS_CACHE,
   getLocalCopy,
+  handleInCopyTab,
+  inCopyTab,
+  isCopyElsewhere,
   LocalError,
+  onCopyTab,
   onLocalWrite,
   openCopy,
   releaseCopy,
   resumeCopy,
   setLocalCopy,
   stopCopy,
+  tellOtherTabs,
   usesLocalCopy,
 } from './transport';
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from './pandoc';
@@ -119,6 +124,29 @@ const listeners = new Set<() => void>();
 function setStatus(update: Partial<LocalStatus>): void {
   status = { ...status, ...update };
   for (const listener of listeners) listener();
+  tellOtherTabs('status', status);
+}
+
+// Another tab, which has the copy, syncs it and downloads its files, so this one shows its status
+handleInCopyTab('status', () => status);
+onCopyTab('status', data => {
+  if (getLocalCopy() === null) {
+    // It stopped keeping the copy
+    if (status.active) {
+      clearCaches();
+      status = OFF;
+      for (const listener of listeners) listener();
+    }
+    return;
+  }
+  setStatus(otherTabStatus(data as LocalStatus));
+});
+
+/** The status of another tab's copy, as this one shows it: whether this tab uses it is its own */
+function otherTabStatus(other: LocalStatus): Partial<LocalStatus> {
+  const shown: Partial<LocalStatus> = { ...other };
+  delete shown.active;
+  return shown;
 }
 
 export function useLocalStatus(): LocalStatus {
@@ -193,7 +221,17 @@ let lastWriteAt = 0;
  * dropping its changes, and `full_upload` the server's with the copy, which makes every other
  * replica download it. One sync runs at a time.
  */
-export function syncLocalCopy(mode: 'normal' | 'full_download' | 'full_upload' = 'normal'): Promise<SyncReport> {
+export async function syncLocalCopy(mode: 'normal' | 'full_download' | 'full_upload' = 'normal'): Promise<SyncReport> {
+  const report = await inCopyTab<SyncReport>('sync', mode);
+  // The other tab cleared its own
+  if (isCopyElsewhere() && report.mode !== null) clearCaches();
+  return report;
+}
+
+handleInCopyTab('sync', syncHere);
+
+/** `syncLocalCopy` in the tab with the copy */
+function syncHere(mode: 'normal' | 'full_download' | 'full_upload'): Promise<SyncReport> {
   syncing ??= (async () => {
     // Inside the `try`, so a failure is never left in `syncing` for later syncs to return
     try {
@@ -204,7 +242,7 @@ export function syncLocalCopy(mode: 'normal' | 'full_download' | 'full_upload' =
       setStatus({ error: null, fullSyncRequired: false, notEnrolled: false });
       // Pages show what they fetch next from the copy as it is now
       if (report.mode !== null) clearCaches();
-      refreshFiles().catch(e => console.error('Downloading files', e));
+      refreshFilesHere().catch(e => console.error('Downloading files', e));
       return report;
     } catch (e) {
       const local = e instanceof LocalError ? e : null;
@@ -295,8 +333,12 @@ async function openLocalCopy(): Promise<boolean> {
   try {
     await openCopy();
     await refreshStatus();
+    // Whether it is syncing or downloading
+    if (isCopyElsewhere()) {
+      setStatus(otherTabStatus(await inCopyTab<LocalStatus>('status')));
+    }
   } catch (e) {
-    // E.g. another tab has it open, which `useCopyOwner` shows
+    // E.g. the tab that has it open isn't answering
     setStatus({ error: e instanceof Error ? e.message : String(e) });
     return false;
   }
@@ -385,6 +427,7 @@ async function dropCopy(): Promise<void> {
   clearCaches();
   status = OFF;
   for (const listener of listeners) listener();
+  tellOtherTabs('status', status);
 }
 
 /**
@@ -394,6 +437,13 @@ async function dropCopy(): Promise<void> {
  * server couldn't be told, e.g. offline.
  */
 export async function disableLocalCopy(discardChanges: boolean): Promise<string | null> {
+  return inCopyTab<string | null>('disable', discardChanges);
+}
+
+handleInCopyTab('disable', disableHere);
+
+/** `disableLocalCopy` in the tab with the copy */
+async function disableHere(discardChanges: boolean): Promise<string | null> {
   if (!discardChanges && !status.notEnrolled) await syncLocalCopy();
   const replica = getLocalCopy()?.replica ?? status.replica;
   let warning: string | null = null;
@@ -491,6 +541,13 @@ let downloading: Promise<void> | null = null;
  * service worker keeps.
  */
 export function refreshFiles(): Promise<void> {
+  return inCopyTab('refreshFiles');
+}
+
+handleInCopyTab('refreshFiles', refreshFilesHere);
+
+/** `refreshFiles` in the tab with the copy */
+function refreshFilesHere(): Promise<void> {
   downloading ??= (async () => {
     try {
       // Again when the copy paused meanwhile and started again, e.g. on logging back in

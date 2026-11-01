@@ -1,19 +1,14 @@
 import { Link } from 'react-router-dom';
 import { useServerReachable } from '../api/reachability';
 import { useLocalStatus } from '../local/copy';
-import { useCopyOwner } from '../local/transport';
 
 /**
  * Whether the server can be reached. On a device that keeps a copy of the collection, also its
- * changes not yet synced, the files it is downloading, and why the copy can't be used, if it can't.
+ * changes not yet synced, the files it is downloading, and whether it has to be set up again.
  */
 export default function OfflineIndicator() {
   const online = useServerReachable();
   const local = useLocalStatus();
-  const owner = useCopyOwner();
-  if (local.active && owner === 'elsewhere') {
-    return <span role="status" style={{ fontSize: 12, color: 'var(--warning)', alignSelf: 'center' }}>Open in another tab: close it to use this one</span>;
-  }
   if (local.active && local.notEnrolled) {
     return <Link to="/settings" role="status" style={{ fontSize: 12, color: 'var(--warning)', alignSelf: 'center' }}>Removed from the server: set the copy up again</Link>;
   }

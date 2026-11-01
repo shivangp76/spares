@@ -77,7 +77,7 @@ The copy syncs when the app opens, when it is hidden or closed, when the connect
 - Insert image occlusions from a note's editor: the device sends one to the server along with a note that has it, so the Image Occlusion page, for notes written elsewhere, isn't available on the device.
 - Images dragged from a web page by their address, and the notes repository need the server, so they work only online.
 - Logging out keeps the copy and its files: it stops syncing until you log in to its server again.
-- In a second tab, the app says the copy is open in another tab, and uses it once that tab is closed.
+- Other tabs use the copy through the tab that opened it, and one of them takes it over, by reloading, once that tab is closed. If the browser pauses that tab in the background, the others say so: switch to it, or close it.
 - If the copy and the server can no longer be merged, for example after `spares sync cloud --full-upload`, **Sync** asks which to keep: download the server's collection, dropping the changes made on the device, or upload the device's, which makes your machine and other devices download it.
 - Notes the device's syncs couldn't merge are on its **Conflicts** page, which the badge next to **Sync** opens.
 - **Stop Keeping a Copy**, in the same place, sends the device's changes, removes it from the server's devices, and deletes the copy. Offline, it can delete the copy without sending them; the device then stays on the server's list of devices, to remove there once online.
