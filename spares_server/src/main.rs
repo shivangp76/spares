@@ -122,6 +122,7 @@ fn spawn_idle_closer(host: Arc<Host>) {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             tick.tick().await;
+            host.record_usage().await;
             host.close_idle().await;
             host.clean_render_scratch().await;
             if let Err(e) = spares_server::host::auth::prune_sessions(&host.accounts).await {
