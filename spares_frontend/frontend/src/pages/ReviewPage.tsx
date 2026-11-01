@@ -28,26 +28,14 @@ import {
   postReview,
   redoEvent,
   searchNotes,
+  submitAction,
   tagNote,
   undoEvent,
   updateCards,
 } from "../api/client";
 import { usePendingRender } from "../local/copy";
 import { convertAhead } from "../local/pandoc";
-import { queueKey } from "../offline/db";
-import {
-  cancelPendingAction,
-  forgetQueuedCard,
-  getOfflineQueue,
-  nextOfflineCard,
-  nextOfflineCardAvailableAt,
-  performStudyAction,
-  precompileNextCard,
-  refreshQueue,
-  returnToQueue,
-  syncPendingActions,
-  type ActionResult,
-} from "../offline/review";
+import { prepareNextCard } from "../nextCard";
 import { withoutSpeech } from "../audio";
 import CardInfo from "../components/CardInfo";
 import CardRenderer from "../components/CardRenderer";
@@ -312,6 +300,41 @@ function queryHasLimit(query: string): boolean {
 /** How long typing in the filter pauses before the next card for it is compiled. */
 const PRECOMPILE_DELAY_MS = 500;
 
+/** Identifies a filter as the user entered it, e.g. `query:tag=a`, for the date to bury its cards until. */
+function filterKey(mode: FilterMode, input: string): string {
+  return `${mode}:${input.trim()}`;
+}
+
+/**
+ * The review filter for what is entered on the landing page, to compile its first card while the
+ * filter is picked. `undefined` for a query with a limit, which starting the review makes a
+ * snapshot of. A tag name is looked up.
+ */
+async function landingFilter(
+  mode: FilterMode,
+  rawInput: string,
+): Promise<ReviewFilter | null | undefined> {
+  const input = rawInput.trim();
+  if (!input) return null;
+  if (mode === "query")
+    return queryHasLimit(input) ? undefined : { Query: input };
+  if (mode === "tagName")
+    return { FilteredTag: { tag_id: (await getTagByName(input)).id } };
+  const id = Number(input);
+  return Number.isInteger(id) ? { FilteredTag: { tag_id: id } } : undefined;
+}
+
+/** Prepares the next card in the background: a failure only means it isn't ready ahead of time. */
+function prepareNextCardQuietly(
+  filter: ReviewFilter | null,
+  shownCardId?: number,
+): void {
+  prepareNextCard(filter, shownCardId).catch((e) => {
+    // E.g. a query still being typed, or no server
+    if (!isNetworkError(e) && !(e instanceof ApiError)) console.error(e);
+  });
+}
+
 /** Border, padding and line heights of a due count card on the landing page. */
 const DUE_CARD_HEIGHT = 2 + 12 + 26 + 16;
 
@@ -470,18 +493,9 @@ export default function ReviewPage() {
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
-  // The filter as entered, which identifies the queue downloaded for it (see src/offline)
-  const sessionKey = useRef(queueKey("query", ""));
-  // The same key, as state so the date to bury cards until is read again for each session
-  const [sessionKeyShown, setSessionKeyShown] = useState(sessionKey.current);
-  const [buryUntil, setBuryUntil] = useBuryUntilDate(sessionKeyShown);
-  // Whether the current card came from the downloaded queue because the server could not be reached
-  const [offline, setOffline] = useState(false);
-  // The last rating or bury if it is yet to be sent, so Undo can take it back before it is
-  const lastPendingAction = useRef<{
-    clientId: string;
-    card: GetReviewCardResponse;
-  } | null>(null);
+  // The filter as entered, so the date to bury cards until is read again for each session
+  const [sessionKey, setSessionKey] = useState(() => filterKey("query", ""));
+  const [buryUntil, setBuryUntil] = useBuryUntilDate(sessionKey);
   // The undo event that Redo reverses, and whether it undid a rating. Any new action clears it.
   const [lastUndo, setLastUndo] = useState<{
     eventId: number;
@@ -513,48 +527,14 @@ export default function ReviewPage() {
       setDueDatePicker(null);
       setBuryUntilPicker(null);
       try {
-        let next: GetReviewCardResponse | null;
-        try {
-          // Actions taken offline go first, so the server does not show those cards again
-          const synced = await syncPendingActions();
-          const pending = lastPendingAction.current;
-          if (pending && synced.applied.has(pending.clientId)) {
-            // Undo now undoes it on the server
-            lastEventId.current = synced.applied.get(pending.clientId) ?? null;
-            lastPendingAction.current = null;
-          }
-          next = await postReview(filter);
-          setOffline(false);
-          if (!next) {
-            const availableAt = await nextReviewAvailableAt(filter);
-            if (availableAt) {
-              setCard(null);
-              setWaitingUntil(Date.parse(availableAt));
-              setPhase("waiting");
-              return;
-            }
-          }
-        } catch (e) {
-          if (!isNetworkError(e)) throw e;
-          const key = sessionKey.current;
-          if (!(await getOfflineQueue(key))) {
-            setError(
-              `${errorMessage(e)}. No cards were downloaded for this filter to review offline.`,
-            );
-            setPhase("error");
+        const next = await postReview(filter);
+        if (!next) {
+          const availableAt = await nextReviewAvailableAt(filter);
+          if (availableAt) {
+            setCard(null);
+            setWaitingUntil(Date.parse(availableAt));
+            setPhase("waiting");
             return;
-          }
-          next = await nextOfflineCard(key);
-          setOffline(true);
-          if (!next) {
-            // Waits like an online review, trying the server again once the time comes
-            const availableAt = await nextOfflineCardAvailableAt(key);
-            if (availableAt) {
-              setCard(null);
-              setWaitingUntil(availableAt.getTime());
-              setPhase("waiting");
-              return;
-            }
           }
         }
         if (!next) {
@@ -652,37 +632,25 @@ export default function ReviewPage() {
     setQueryError(null);
     setSessionInfo(null);
     const input = rawInput.trim();
-    const key = queueKey(mode, input);
     let filter: ReviewFilter | undefined;
     let info: string | null = null;
     try {
-      try {
-        if (mode === "query" && input) {
-          if (queryHasLimit(input)) {
-            const snapshot = await createReviewSnapshot(input);
-            filter = { FilteredTag: { tag_id: snapshot.tag_id } };
-            info = `Reviewing \`${input}\` as filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? "built for today" : "resumed from earlier today"}, ${snapshot.card_count} cards left)`;
-          } else {
-            filter = { Query: input };
-          }
-        } else if (mode === "tagName" && input) {
-          const tag = await getTagByName(input);
-          filter = { FilteredTag: { tag_id: tag.id } };
-          info = `Reviewing filtered tag \`${tag.name}\``;
-        } else if (mode === "tagId" && input) {
-          const id = Number(input);
-          if (!Number.isInteger(id))
-            throw new Error(`Invalid tag id: ${input}`);
-          filter = { FilteredTag: { tag_id: id } };
+      if (mode === "query" && input) {
+        if (queryHasLimit(input)) {
+          const snapshot = await createReviewSnapshot(input);
+          filter = { FilteredTag: { tag_id: snapshot.tag_id } };
+          info = `Reviewing \`${input}\` as filtered tag \`${snapshot.tag_name}\` (${snapshot.rebuilt ? "built for today" : "resumed from earlier today"}, ${snapshot.card_count} cards left)`;
+        } else {
+          filter = { Query: input };
         }
-        // Download the session's cards in case the connection drops
-        refreshQueue(key, filter ?? null, info);
-      } catch (e) {
-        // Offline, use what the filter resolved to when its cards were downloaded
-        const queue = isNetworkError(e) ? await getOfflineQueue(key) : null;
-        if (!queue) throw e;
-        filter = queue.filter ?? undefined;
-        info = queue.sessionInfo;
+      } else if (mode === "tagName" && input) {
+        const tag = await getTagByName(input);
+        filter = { FilteredTag: { tag_id: tag.id } };
+        info = `Reviewing filtered tag \`${tag.name}\``;
+      } else if (mode === "tagId" && input) {
+        const id = Number(input);
+        if (!Number.isInteger(id)) throw new Error(`Invalid tag id: ${input}`);
+        filter = { FilteredTag: { tag_id: id } };
       }
     } catch (e) {
       setError(errorMessage(e));
@@ -695,8 +663,7 @@ export default function ReviewPage() {
       return;
     }
     setSessionInfo(info ?? describeFilter(mode, input));
-    sessionKey.current = key;
-    setSessionKeyShown(key);
+    setSessionKey(filterKey(mode, input));
     if (input) recentFilters.save({ mode, input });
     setSearchParams(
       (prev) => {
@@ -717,7 +684,6 @@ export default function ReviewPage() {
     setSessionShowedCard(false);
     lastEventId.current = null;
     lastActionWasRating.current = false;
-    lastPendingAction.current = null;
     setLastUndo(null);
     loadCard(filter);
   }
@@ -755,20 +721,22 @@ export default function ReviewPage() {
     const recallSeconds = msToSeconds(recallDuration.current);
     const rateSeconds = msToSeconds(rateMs);
     try {
-      const res = await performStudyAction(credentials.schedulerName, {
-        Rate: {
-          card_id: card.card_id,
-          rating: ratingId,
-          recall_duration: recallSeconds,
-          rate_duration: rateSeconds,
-          tag_id: tagId,
+      const res = await submitAction({
+        scheduler_name: credentials.schedulerName,
+        action: {
+          Rate: {
+            card_id: card.card_id,
+            rating: ratingId,
+            recall_duration: recallSeconds,
+            rate_duration: rateSeconds,
+            tag_id: tagId,
+          },
         },
       });
       setSessionRateMs((ms) => ms + rateMs);
       setReviewedCount((c) => c + 1);
-      lastEventId.current = res.eventId;
+      lastEventId.current = res.event_id;
       lastActionWasRating.current = true;
-      lastPendingAction.current = pendingAction(res, card);
       setLastUndo(null);
       const ratedCardId = card.card_id;
       setPreviousCard((prev) => ({
@@ -778,8 +746,8 @@ export default function ReviewPage() {
       // Shortened on phones, where it sits above the card
       setStatus(
         isNarrow
-          ? `Previous card: Recall ${formatDuration(recallSeconds)} · Rate ${formatDuration(rateSeconds)}${res.sent ? "" : " · Saved offline"}`
-          : `Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}${res.sent ? "" : " · Saved offline, sent once the server can be reached"}`,
+          ? `Previous card: Recall ${formatDuration(recallSeconds)} · Rate ${formatDuration(rateSeconds)}`
+          : `Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`,
       );
       loadCard(activeFilter);
     } catch (e) {
@@ -794,36 +762,27 @@ export default function ReviewPage() {
     message?: string,
   ) {
     if (!card) return;
-    const cardId = card.card_id;
     try {
-      lastPendingAction.current = null;
       lastEventId.current = await action();
       lastActionWasRating.current = false;
       setLastUndo(null);
       setStatus(message ?? null);
-      // Not to be shown again from the downloaded queue if the connection drops
-      await forgetQueuedCard(cardId);
       loadCard(activeFilter);
     } catch (e) {
       setStatus(errorMessage(e));
     }
   }
 
-  /** The record of an action that is yet to be sent, for Undo to take back. */
-  function pendingAction(res: ActionResult, actedOn: GetReviewCardResponse) {
-    return res.sent ? null : { clientId: res.clientId, card: actedOn };
-  }
-
   function buryCard() {
     if (!card || !credentials) return;
     const { schedulerName } = credentials;
-    const buried = card;
+    const cardId = card.card_id;
     runCardAction(async () => {
-      const res = await performStudyAction(schedulerName, {
-        Bury: { card_id: buried.card_id },
+      const res = await submitAction({
+        scheduler_name: schedulerName,
+        action: { Bury: { card_id: cardId } },
       });
-      lastPendingAction.current = pendingAction(res, buried);
-      return res.eventId;
+      return res.event_id;
     }, "Card buried.");
   }
 
@@ -982,26 +941,6 @@ export default function ReviewPage() {
       setPhase("front");
       return;
     }
-    const pending = lastPendingAction.current;
-    if (pending) {
-      lastPendingAction.current = null;
-      // Sent since, e.g. when the connection came back. Its event is unknown here.
-      if (!(await cancelPendingAction(pending.clientId))) {
-        setStatus(
-          "It was already sent to the server. Use Undo last change to undo it there.",
-        );
-        return;
-      }
-      await returnToQueue(sessionKey.current, pending.card);
-      setStatus("Undone before it was sent.");
-      if (lastActionWasRating.current) {
-        setReviewedCount((c) => Math.max(0, c - 1));
-        setPreviousCard(null);
-      }
-      lastActionWasRating.current = false;
-      loadCard(activeFilter);
-      return;
-    }
     try {
       // Use the tracked event id so syncs from elsewhere don't cause the wrong event to be undone
       const res = await undoEvent(lastEventId.current);
@@ -1109,8 +1048,7 @@ export default function ReviewPage() {
   }, [panelNoteId, isWide]);
 
   // Load the Typst compiler, its fonts and the renderer while the filter is picked, so the first
-  // Typst card isn't delayed by them.
-  // Also download today's cards, so a review can start, or continue, without a connection.
+  // Typst card isn't delayed by them
   const onLanding = phase === "landing";
   useEffect(() => {
     if (!onLanding) return;
@@ -1119,34 +1057,41 @@ export default function ReviewPage() {
       .catch((e) => {
         if (!isNetworkError(e)) console.error(e);
       });
-    refreshQueue(queueKey("query", ""), null, null);
   }, [onLanding]);
 
-  // Compile the next card downloaded for the filter entered, so that it shows at once if the review
-  // starts with it. After a pause in typing, so each key does not start a compile.
-  const landingQueueKey = onLanding ? queueKey(filterMode, filterInput) : null;
+  // Prepare the first card of the filter entered, so that it shows at once if the review starts
+  // with it. After a pause in typing, so each key does not ask for one.
   useEffect(() => {
-    if (landingQueueKey === null) return;
+    if (!onLanding) return;
+    let cancelled = false;
     const timer = setTimeout(() => {
-      precompileNextCard(landingQueueKey).catch((e) => {
-        if (!isNetworkError(e)) console.error(e);
-      });
+      landingFilter(filterMode, filterInput).then(
+        (filter) => {
+          if (!cancelled && filter !== undefined)
+            prepareNextCardQuietly(filter);
+        },
+        () => {
+          // A tag that doesn't exist (yet), or no server
+        },
+      );
     }, PRECOMPILE_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [landingQueueKey]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [onLanding, filterMode, filterInput]);
 
-  // Likewise compile the card likely to come next while this one is shown, once its back has had
-  // time to compile first, so rating it shows the next card at once
+  // Likewise the card likely to come next while this one is shown, once its back has had time to
+  // compile first, so rating it shows the next card at once
   const shownCardId = frontRendered ? card?.card_id : undefined;
   useEffect(() => {
     if (shownCardId === undefined) return;
-    const timer = setTimeout(() => {
-      precompileNextCard(sessionKey.current, shownCardId).catch((e) => {
-        if (!isNetworkError(e)) console.error(e);
-      });
-    }, PRECOMPILE_DELAY_MS);
+    const timer = setTimeout(
+      () => prepareNextCardQuietly(activeFilter ?? null, shownCardId),
+      PRECOMPILE_DELAY_MS,
+    );
     return () => clearTimeout(timer);
-  }, [shownCardId]);
+  }, [shownCardId, activeFilter]);
 
   // A Markdown card of a note changed on this device: its back is converted with pandoc while the
   // front is shown, so showing the answer doesn't wait for it (see src/local/pandoc.ts)
@@ -1241,7 +1186,7 @@ export default function ReviewPage() {
   // is current.
   const checkingNote = useRef(false);
   useEffect(() => {
-    if (!reviewing || !card || offline) return;
+    if (!reviewing || !card) return;
     const shown = card;
     async function checkNote() {
       if (document.visibilityState !== "visible" || checkingNote.current)
@@ -1872,10 +1817,7 @@ export default function ReviewPage() {
             color: "var(--text-secondary)",
           }}
         >
-          <p>
-            Nothing left to review
-            {offline ? " of the cards downloaded for offline review" : ""}.
-          </p>
+          <p>Nothing left to review.</p>
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
           {summary && <div style={{ marginTop: 24 }}>{summary}</div>}
           <p
@@ -2020,14 +1962,6 @@ export default function ReviewPage() {
               Note {formatNoteId(card.note_id)} · Card {card.card_id} (#
               {card.card_order}) · {card.parser_name}
             </span>
-            {offline && (
-              <span
-                style={{ color: "var(--warning)" }}
-                title="The server cannot be reached. Ratings are saved and sent once it can."
-              >
-                Offline
-              </span>
-            )}
             {cardCounts && (
               <span style={{ color: "var(--text-secondary)" }}>
                 {cardCounts}

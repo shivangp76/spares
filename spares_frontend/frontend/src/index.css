@@ -734,7 +734,7 @@ html:has(.review-answer-bar) {
   }
 
   /* The buttons also stay on one row and scroll sideways, so a status appearing beside them
-     (`Downloading cards 3/40`) can't squeeze them onto two lines and push the page down */
+     (`Downloading files 3/40`) can't squeeze them onto two lines and push the page down */
   .navbar-actions {
     min-width: 0;
     max-width: 100%;

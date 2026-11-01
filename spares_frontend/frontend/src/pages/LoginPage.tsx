@@ -1,18 +1,30 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { NetworkError, getCredentials, getSchedulerNames, saveCredentials } from '../api/client';
-import { LOGIN_DOCS, docUrl } from '../help/pages';
-import { errorMessage } from '../utils';
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  NetworkError,
+  getCredentials,
+  getSchedulerNames,
+  saveCredentials,
+} from "../api/client";
+import { LOGIN_DOCS, docUrl } from "../help/pages";
+import { errorMessage } from "../utils";
 
-const hint: React.CSSProperties = { display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 };
+const hint: React.CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  color: "var(--text-secondary)",
+  marginTop: 4,
+};
 
 export default function LoginPage() {
   const navigate = useNavigate();
   // A built app is served by the server it talks to
-  const [serverUrl, setServerUrl] = useState(import.meta.env.PROD ? window.location.origin : '');
-  const [apiKey, setApiKey] = useState('');
+  const [serverUrl, setServerUrl] = useState(
+    import.meta.env.PROD ? window.location.origin : "",
+  );
+  const [apiKey, setApiKey] = useState("");
   // Empty for the server's default scheduler
-  const [schedulerName, setSchedulerName] = useState('');
+  const [schedulerName, setSchedulerName] = useState("");
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Offline, the server can't check them, so they can be saved as they are
@@ -21,15 +33,19 @@ export default function LoginPage() {
   useEffect(() => {
     try {
       getCredentials();
-      navigate('/review');
+      navigate("/review");
     } catch {
       // not logged in
     }
   }, [navigate]);
 
   function save(schedulerName: string) {
-    saveCredentials({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey, schedulerName });
-    navigate('/review');
+    saveCredentials({
+      serverUrl: serverUrl.replace(/\/$/, ""),
+      apiKey,
+      schedulerName,
+    });
+    navigate("/review");
   }
 
   /** Checks the key and the scheduler with the server before saving them. */
@@ -41,52 +57,117 @@ export default function LoginPage() {
     setUnreachable(false);
     try {
       // The server lists its default first
-      const schedulers = await getSchedulerNames({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey });
+      const schedulers = await getSchedulerNames({
+        serverUrl: serverUrl.replace(/\/$/, ""),
+        apiKey,
+      });
       const name = schedulerName.trim() || schedulers[0];
       if (schedulers.includes(name)) save(name);
-      else setError(`The server has no scheduler named “${name}”. Its schedulers are ${schedulers.join(', ')}.`);
+      else
+        setError(
+          `The server has no scheduler named “${name}”. Its schedulers are ${schedulers.join(", ")}.`,
+        );
     } catch (e) {
       setUnreachable(e instanceof NetworkError);
-      setError(e instanceof NetworkError ? 'The server could not be reached. Check its URL, or log in anyway to review offline.' : errorMessage(e));
+      setError(
+        e instanceof NetworkError
+          ? "The server could not be reached. Check its URL, or log in anyway to use this device’s copy of its collection offline."
+          : errorMessage(e),
+      );
     } finally {
       setChecking(false);
     }
   }
 
-  const field: React.CSSProperties = { display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', boxSizing: 'border-box' };
+  const field: React.CSSProperties = {
+    display: "block",
+    width: "100%",
+    marginTop: 4,
+    padding: "6px 8px",
+    boxSizing: "border-box",
+  };
 
   return (
-    <div className="login" style={{ maxWidth: 400, margin: '80px auto', padding: 24 }}>
+    <div
+      className="login"
+      style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}
+    >
       <h2 style={{ marginBottom: 24 }}>Spares</h2>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: 14 }}
+      >
         <label>
           Server URL
-          <input type="url" value={serverUrl} onChange={e => setServerUrl(e.target.value)}
-            placeholder="https://your-server.example.com" required style={field} />
-          <span style={hint}>The address of <code>spares_server</code>, which is this page's when it serves the page.</span>
+          <input
+            type="url"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="https://your-server.example.com"
+            required
+            style={field}
+          />
+          <span style={hint}>
+            The address of <code>spares_server</code>, which is this page's when
+            it serves the page.
+          </span>
         </label>
         <label>
           API Key
-          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-            required style={field} />
-          <span style={hint}>The server's <code>SPARES_API_KEY</code>.</span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            required
+            style={field}
+          />
+          <span style={hint}>
+            The server's <code>SPARES_API_KEY</code>.
+          </span>
         </label>
         <label>
           Scheduler
-          <input type="text" value={schedulerName} onChange={e => setSchedulerName(e.target.value)}
-            placeholder="The server's default" style={field} />
-          <span style={hint}>What schedules the cards you rate. The server's are checked when you log in.</span>
+          <input
+            type="text"
+            value={schedulerName}
+            onChange={(e) => setSchedulerName(e.target.value)}
+            placeholder="The server's default"
+            style={field}
+          />
+          <span style={hint}>
+            What schedules the cards you rate. The server's are checked when you
+            log in.
+          </span>
         </label>
-        <button type="submit" disabled={checking} className="touch-target" style={{ padding: '8px 0', marginTop: 4 }}>
-          {checking ? 'Checking…' : 'Login'}
+        <button
+          type="submit"
+          disabled={checking}
+          className="touch-target"
+          style={{ padding: "8px 0", marginTop: 4 }}
+        >
+          {checking ? "Checking…" : "Login"}
         </button>
-        {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
-        {unreachable && (
-          <button type="button" onClick={() => save(schedulerName.trim())} disabled={!schedulerName.trim()}
-            title={schedulerName.trim() ? undefined : 'Enter a scheduler, since the server cannot say which is its default'}
-            className="touch-target">Log in anyway</button>
+        {error && (
+          <div style={{ color: "var(--error)", fontSize: 13 }}>{error}</div>
         )}
-        <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</Link>
+        {unreachable && (
+          <button
+            type="button"
+            onClick={() => save(schedulerName.trim())}
+            disabled={!schedulerName.trim()}
+            title={
+              schedulerName.trim()
+                ? undefined
+                : "Enter a scheduler, since the server cannot say which is its default"
+            }
+            className="touch-target"
+          >
+            Log in anyway
+          </button>
+        )}
+        <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>
+          {LOGIN_DOCS.label}
+        </Link>
       </form>
     </div>
   );

@@ -7,6 +7,7 @@ import {
   removeSyncDevice,
   type SyncDevice,
 } from "../api/client";
+import { useServerReachable } from "../api/reachability";
 import {
   disableLocalCopy,
   enableLocalCopy,
@@ -14,7 +15,6 @@ import {
   type SetupStep,
 } from "../local/copy";
 import { canKeepCopy, getLocalCopy } from "../local/transport";
-import { useOfflineStatus } from "../offline/review";
 import { errorMessage, sectionLabel } from "../utils";
 
 /** What the device is called in the server's list of devices, e.g. `iPhone (Firefox)`. */
@@ -74,7 +74,7 @@ function DeviceList({ active, own }: { active: boolean; own: number | null }) {
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   // Listed again once the server can be reached, e.g. after the page loaded offline
-  const { online } = useOfflineStatus();
+  const online = useServerReachable();
   const { lastSyncAt } = useLocalStatus();
 
   useEffect(() => {

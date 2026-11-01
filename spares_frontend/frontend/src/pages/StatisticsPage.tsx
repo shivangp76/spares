@@ -7,9 +7,9 @@ import {
   getStatistics,
   getStatisticsGraphs,
   getStepsStats,
-  isNetworkError,
   postponeCards,
 } from "../api/client";
+import { useServerReachable } from "../api/reachability";
 import ActionResult, { type ActionOutcome } from "../components/ActionResult";
 import BarChart from "../components/charts/BarChart";
 import {
@@ -29,18 +29,6 @@ import { useAuth } from "../hooks/useAuth";
 import { useCardStates } from "../hooks/useCardStates";
 import { useRecentSearches } from "../hooks/useRecentSearches";
 import { useLocalStatus } from "../local/copy";
-import { useOfflineStatus } from "../offline/review";
-import {
-  cachedViews,
-  describeView,
-  indexedDbStatisticsCache,
-  offlineBanner,
-  recallStatistics,
-  rememberStatistics,
-  statisticsKey,
-  type CachedStatistics,
-  type StatisticsView,
-} from "../offline/statistics";
 import {
   type AnswerGroup,
   type PassFail,
@@ -89,9 +77,16 @@ const numeric: React.CSSProperties = {
   textAlign: "right",
   fontVariantNumeric: "tabular-nums",
 };
-// The server's message when offline review is used, as `OfflineIndicator` shows it
 const OFFLINE_HINT =
-  "The server cannot be reached. Downloaded cards can still be reviewed, and ratings are sent once it can.";
+  "The server cannot be reached, and advancing and postponing need it.";
+
+/** What the page was asked to show, apart from the date. */
+interface StatisticsView {
+  query: string;
+  /** `null` for all time. */
+  periodDays: number | null;
+  forecastDays: number;
+}
 
 const PERIODS: { label: string; days: number | null }[] = [
   { label: "1 month", days: 30 },
@@ -901,7 +896,10 @@ function StepsSection({
     };
   }, [preset, periodDays, enabled]);
 
-  if (!enabled && !stats) return <p style={note}>{OFFLINE_HINT}</p>;
+  if (!enabled && !stats)
+    return (
+      <p style={note}>The server cannot be reached, and the steps need it.</p>
+    );
   const retention = stats ? formatPercent(stats.desired_retention) : "";
   const r = stats?.recommended;
   return (
@@ -1008,7 +1006,7 @@ function StepsSection({
 export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
-  const { online, pending } = useOfflineStatus();
+  const online = useServerReachable();
   const local = useLocalStatus();
   const {
     recent,
@@ -1032,12 +1030,6 @@ export default function StatisticsPage() {
   const requestKey = JSON.stringify([view, date]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Shown in place of the server's responses when it cannot be reached
-  const [offlineEntry, setOfflineEntry] = useState<CachedStatistics | null>(
-    null,
-  );
-  // The views kept offline, offered when the current one is not among them
-  const [otherViews, setOtherViews] = useState<CachedStatistics[] | null>(null);
   const loading = loadedKey !== requestKey;
   // Bumped to refetch after an action changes the schedule
   const [reloadCount, setReloadCount] = useState(0);
@@ -1086,9 +1078,8 @@ export default function StatisticsPage() {
       })
       .catch(() => {});
     Promise.allSettled([statisticsFetch, graphsFetch, historyFetch]).then(
-      async ([s, g, h]) => {
+      ([s, g, h]) => {
         if (cancelled) return;
-        const cacheKey = statisticsKey(credentials.serverUrl, view);
         const failed = [g, h].find((r) => r.status === "rejected") as
           PromiseRejectedResult | undefined;
         setQueryError(
@@ -1098,54 +1089,13 @@ export default function StatisticsPage() {
         );
         if (s.status === "fulfilled" && g.status === "fulfilled") {
           setError(null);
-          setOfflineEntry(null);
-          setOtherViews(null);
-          // Only today's statistics are kept, so a look at a past day does not replace them
-          if (isToday) {
-            const now = Date.now();
-            rememberStatistics(indexedDbStatisticsCache, {
-              key: cacheKey,
-              serverUrl: credentials.serverUrl,
-              view,
-              statistics: s.value,
-              graphs: g.value,
-              history: h.status === "fulfilled" ? h.value : null,
-              fetchedAt: now,
-              usedAt: now,
-            }).catch(console.error);
-          }
         } else {
           const failure = [s, g, h].find(
             (r) => r.status === "rejected",
           ) as PromiseRejectedResult;
-          const cached =
-            isNetworkError(failure.reason) || !navigator.onLine
-              ? await recallStatistics(
-                  indexedDbStatisticsCache,
-                  cacheKey,
-                ).catch(() => undefined)
-              : undefined;
-          if (cancelled) return;
-          if (cached) {
-            setStatistics(cached.statistics);
-            setGraphs(cached.graphs);
-            if (cached.history) setHistory(cached.history);
-            setOfflineEntry(cached);
-            setOtherViews(null);
-            setError(null);
-          } else {
-            setOfflineEntry(null);
-            setError(errorMessage(failure.reason));
-            setStatistics(null);
-            setGraphs(null);
-            const views = isNetworkError(failure.reason)
-              ? await cachedViews(
-                  indexedDbStatisticsCache,
-                  credentials.serverUrl,
-                ).catch(() => [])
-              : [];
-            if (!cancelled) setOtherViews(views);
-          }
+          setError(errorMessage(failure.reason));
+          setStatistics(null);
+          setGraphs(null);
         }
         setLoadedKey(key);
       },
@@ -1153,7 +1103,7 @@ export default function StatisticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, navigate, date, view, isToday, reloadCount]);
+  }, [credentials, navigate, date, view, reloadCount]);
 
   function applyQuery(query = queryInput) {
     const q = query.trim();
@@ -1162,17 +1112,9 @@ export default function StatisticsPage() {
     setView((v) => ({ ...v, query: q }));
   }
 
-  // While offline, a view kept from before today shows its own date rather than "Today"
-  const todayTitle =
-    offlineEntry &&
-    new Date(offlineEntry.fetchedAt).toDateString() !==
-      new Date().toDateString()
-      ? `Studied on ${new Date(offlineEntry.fetchedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}`
-      : isToday
-        ? "Today"
-        : `Studied on ${date}`;
+  const todayTitle = isToday ? "Today" : `Studied on ${date}`;
   // A device's copy schedules cards itself, offline too
-  const canSchedule = local.active || (online && !offlineEntry);
+  const canSchedule = local.active || online;
 
   return (
     <div className="page">
@@ -1272,23 +1214,6 @@ export default function StatisticsPage() {
         )}
       </div>
 
-      {offlineEntry && (
-        <div
-          role="status"
-          style={{
-            marginTop: 16,
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "1px solid var(--tone-orange-border)",
-            background: "var(--tone-orange-bg)",
-            color: "var(--tone-orange-fg)",
-            fontSize: 14,
-          }}
-        >
-          {offlineBanner(offlineEntry.fetchedAt, pending)}
-        </div>
-      )}
-
       {error && !loading && (
         <div
           style={{
@@ -1301,44 +1226,6 @@ export default function StatisticsPage() {
           {error}
         </div>
       )}
-      {otherViews &&
-        !loading &&
-        (otherViews.length > 0 ? (
-          <div style={{ marginTop: 12, fontSize: 14 }}>
-            <p style={{ margin: "0 0 8px" }}>
-              These statistics were not kept for offline use. Kept views:
-            </p>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                alignItems: "flex-start",
-              }}
-            >
-              {otherViews.map((entry) => (
-                <button
-                  key={entry.key}
-                  onClick={() => {
-                    setQueryInput(entry.view.query);
-                    setView(entry.view);
-                    setDate(toDateInputValue(new Date()));
-                  }}
-                >
-                  {describeView(entry.view)}{" "}
-                  <span style={{ color: "var(--text-muted)" }}>
-                    ({new Date(entry.fetchedAt).toLocaleString()})
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p style={{ ...note, marginTop: 12 }}>
-            No statistics were kept for offline use yet. They are kept each time
-            this page loads them.
-          </p>
-        ))}
 
       {(statistics || graphs) && (
         <div style={{ opacity: loading ? 0.5 : 1 }}>
@@ -1401,10 +1288,7 @@ export default function StatisticsPage() {
           )}
 
           <div style={sectionTitle}>Learning steps</div>
-          <StepsSection
-            periodDays={view.periodDays}
-            enabled={serverReachable}
-          />
+          <StepsSection periodDays={view.periodDays} enabled={canSchedule} />
 
           {statistics && (
             <>
