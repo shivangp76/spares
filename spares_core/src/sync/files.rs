@@ -17,6 +17,8 @@ use sqlx::SqlitePool;
 use super::bump_notes_version;
 use super::http::HttpRemote;
 use super::http::RemoteAuth;
+use super::media;
+use super::media::MediaKind;
 use super::run::SyncMode;
 use super::run::SyncReport;
 use super::run::sync;
@@ -49,6 +51,14 @@ pub async fn sync_now(
         .ok_or_else(|| Error::Sync("`sync.url` is not set in config.toml".to_string()))?;
     let remote = HttpRemote::new(&url, RemoteAuth::token(upstream.token))?;
     let report = sync(db, &remote, mode, temp_dir).await?;
+    // Before the files of changed notes are regenerated, which may name them
+    match exchange_media(&remote).await {
+        Ok((sent, received)) if sent + received > 0 => {
+            log::info!("Sent {sent} and received {received} images, clips and image occlusions");
+        }
+        Ok(_) => {}
+        Err(e) => error!("Failed to exchange images and audio with {url}: {e}"),
+    }
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;
     // Automatic sync sends local changes within a minute, so a sync that only sent is routine.
     let level = if report.pulled > 0 || !report.conflicts.is_empty() {
@@ -64,6 +74,52 @@ pub async fn sync_now(
         report.conflicts.len()
     );
     Ok(report)
+}
+
+/// Exchanges images, audio and image occlusions with the upstream, after a sync: each side gets
+/// the files it lacks. A file's name ends in its contents' hash (see [`super::media`]), so a name
+/// never stands for two files, and neither side's are replaced. Returns how many were sent and
+/// received.
+pub async fn exchange_media(remote: &HttpRemote) -> Result<(usize, usize), Error> {
+    let (mut sent, mut received) = (0, 0);
+    for kind in [
+        MediaKind::Image,
+        MediaKind::Audio,
+        MediaKind::ImageOcclusion,
+    ] {
+        let theirs: BTreeSet<String> = remote
+            .list_media(kind)
+            .await?
+            .into_iter()
+            .map(|file| file.name)
+            .collect();
+        let ours: BTreeSet<String> = media::list_media(kind)?
+            .into_iter()
+            .map(|file| file.name)
+            .collect();
+        for name in ours.difference(&theirs) {
+            let path = kind.directory().join(name);
+            let contents = std::fs::read(&path).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            })?;
+            match remote.upload_media(kind, name, contents).await {
+                Ok(()) => sent += 1,
+                Err(e) => log::warn!("Failed to send {name}: {e}"),
+            }
+        }
+        for name in theirs.difference(&ours) {
+            let stored = async {
+                let contents = remote.download_media(kind, name).await?;
+                media::store_media_from_host(kind, name, &contents)
+            };
+            match stored.await {
+                Ok(_) => received += 1,
+                Err(e) => log::warn!("Failed to receive {name}: {e}"),
+            }
+        }
+    }
+    Ok((sent, received))
 }
 
 /// Every note id, for telling afterwards which notes a full sync removed.

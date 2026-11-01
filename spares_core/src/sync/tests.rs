@@ -47,7 +47,6 @@ use crate::api::note::update_notes;
 use crate::api::parser::create_parser;
 use crate::api::review::submit_study_action;
 use crate::config::Replica;
-use crate::config::SyncRole;
 use crate::config::with_test_replica;
 use crate::model::CardId;
 use crate::model::NoteId;
@@ -70,7 +69,15 @@ const SERVER: Replica = Replica::new_unchecked(1);
 
 /// Runs `f` as the server.
 async fn on_server<F: std::future::Future>(f: F) -> F::Output {
-    with_test_replica(SERVER, SyncRole::Server, f).await
+    with_test_replica(SERVER, f).await
+}
+
+/// Enrolls a device with the server, which gives out numbers as the root.
+async fn on_server_enroll(
+    server: &SqlitePool,
+    request: super::devices::EnrollRequest,
+) -> Result<super::devices::EnrollResponse, Error> {
+    on_server(super::devices::enroll(server, request)).await
 }
 
 struct Replicas {
@@ -105,6 +112,17 @@ impl Replicas {
         std::fs::create_dir_all(&dir).unwrap();
         let laptop = open_db(&dir.join("laptop.sqlite")).await;
         let server = open_db(&dir.join("server.sqlite")).await;
+        // The laptop's host enrolled with the root, keeping its number.
+        on_server_enroll(
+            &server,
+            super::devices::EnrollRequest {
+                name: "laptop".to_string(),
+                host: true,
+                replica: Some(0),
+            },
+        )
+        .await
+        .unwrap();
         Self {
             remote: InProcess {
                 pool: server.clone(),
@@ -1277,16 +1295,17 @@ const DEVICE: Replica = Replica::new_unchecked(2);
 
 /// Runs `f` as the device.
 async fn on_device<F: std::future::Future>(f: F) -> F::Output {
-    with_test_replica(DEVICE, SyncRole::Client, f).await
+    with_test_replica(DEVICE, f).await
 }
 
 impl Replicas {
     /// A third database, enrolled as replica 2, with a full download of the server's.
     async fn device(&self) -> SqlitePool {
-        let enrolled = super::devices::enroll(
+        let enrolled = on_server_enroll(
             &self.server,
             super::devices::EnrollRequest {
                 name: "phone".to_string(),
+                ..Default::default()
             },
         )
         .await
@@ -1389,10 +1408,10 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines, reason = "one scenario")]
 async fn a_device_has_to_enroll_and_its_number_is_its_own() {
     use super::devices::EnrollRequest;
     use super::devices::UnenrollRequest;
-    use super::devices::enroll;
     use super::devices::list;
     use super::devices::unenroll;
     let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
@@ -1405,17 +1424,18 @@ async fn a_device_has_to_enroll_and_its_number_is_its_own() {
 
     let name = |name: &str| EnrollRequest {
         name: name.to_string(),
+        ..Default::default()
     };
-    assert!(enroll(&replicas.server, name(" ")).await.is_err());
+    assert!(on_server_enroll(&replicas.server, name(" ")).await.is_err());
     assert_eq!(
-        enroll(&replicas.server, name("phone"))
+        on_server_enroll(&replicas.server, name("phone"))
             .await
             .unwrap()
             .replica,
         2
     );
     assert_eq!(
-        enroll(&replicas.server, name("tablet"))
+        on_server_enroll(&replicas.server, name("tablet"))
             .await
             .unwrap()
             .replica,
@@ -1435,8 +1455,25 @@ async fn a_device_has_to_enroll_and_its_number_is_its_own() {
             .iter()
             .map(|d| (d.replica, d.name.as_str()))
             .collect::<Vec<_>>(),
-        [(2, "phone"), (3, "tablet")]
+        [(0, "laptop"), (2, "phone"), (3, "tablet")]
     );
+    let devices: Vec<_> = devices.into_iter().filter(|d| d.replica != 0).collect();
+
+    // A host claims the number it has, unless another device has it, and gets a device's number
+    // when the laptop's is taken.
+    let host = |name: &str, replica: Option<u8>| EnrollRequest {
+        name: name.to_string(),
+        host: true,
+        replica,
+    };
+    for taken in [0, 1, 2, 8] {
+        assert!(
+            on_server_enroll(&replicas.server, host("another host", Some(taken)))
+                .await
+                .is_err(),
+            "{taken}"
+        );
+    }
 
     // A laptop full upload keeps the numbers taken, and when each device last synced, but the
     // device has to full sync.
@@ -1446,14 +1483,20 @@ async fn a_device_has_to_enroll_and_its_number_is_its_own() {
     let before = last_sync_at(&devices);
     assert!(before[0].is_some() && before[1].is_none(), "{before:?}");
     replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
-    assert_eq!(last_sync_at(&list(&replicas.server).await.unwrap()), before);
+    let after: Vec<_> = list(&replicas.server)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.replica != 0)
+        .collect();
+    assert_eq!(last_sync_at(&after), before);
     let err = replicas
         .sync_device(&device, SyncMode::Normal)
         .await
         .unwrap_err();
     assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
     assert_eq!(
-        enroll(&replicas.server, name("laptop 2"))
+        on_server_enroll(&replicas.server, host("laptop 2", None))
             .await
             .unwrap()
             .replica,
@@ -1472,11 +1515,22 @@ async fn a_device_has_to_enroll_and_its_number_is_its_own() {
         .unwrap_err();
     assert!(matches!(err, Error::NotEnrolled(2)), "{err}");
     assert_eq!(
-        enroll(&replicas.server, name("new phone"))
+        on_server_enroll(&replicas.server, name("new phone"))
             .await
             .unwrap()
             .replica,
         2
+    );
+    // Unenrolled, the laptop's number goes to the next host that asks.
+    unenroll(&replicas.server, UnenrollRequest { replica: 0 })
+        .await
+        .unwrap();
+    assert_eq!(
+        on_server_enroll(&replicas.server, host("new laptop", None))
+            .await
+            .unwrap()
+            .replica,
+        0
     );
 }
 
@@ -1507,6 +1561,7 @@ async fn a_device_under_a_freed_number_never_hands_out_its_ids_again() {
         &replicas.server,
         EnrollRequest {
             name: "new phone".to_string(),
+            ..Default::default()
         },
     )
     .await

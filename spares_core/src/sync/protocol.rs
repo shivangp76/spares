@@ -5,9 +5,9 @@
 //! sync:
 //!
 //! 1. **`meta`**. The client refuses to sync if the clocks differ by more than 5 minutes, the
-//!    schema versions differ, both sides have the same replica number, or the roles aren't one
-//!    `client` and one `server`. The server refuses a replica from 2 up that isn't enrolled
-//!    ([`super::devices`]). It requires a full sync (412, with the reason) if it has never
+//!    schema versions differ, both sides have the same replica number, or the server speaks
+//!    another [protocol version](SYNC_PROTOCOL_VERSION). The server refuses a replica that isn't
+//!    enrolled ([`super::devices`]). It requires a full sync (412, with the reason) if it has never
 //!    synced, `needs_full_sync` is set, the server's epoch changed (another full upload replaced
 //!    it), its last usn is ahead of the server's (server restored from a backup), or behind what
 //!    `sync_client` recorded for it (client restored from a backup).
@@ -29,7 +29,44 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::records::Changes;
-use crate::config::SyncRole;
+
+/// The version of this protocol. Every request sends it in [`SYNC_PROTOCOL_HEADER`], and the host
+/// refuses another, so a device and a host of different spares versions say so instead of
+/// misreading each other.
+///
+/// - `1`: a server and clients by `SPARES_SYNC_ROLE`, with `SPARES_SYNC_API_KEY`.
+/// - `2`: hosts and their devices, with device tokens or sessions; every replica but the root's is
+///   enrolled, and a host with an upstream relays its devices' requests to it.
+pub const SYNC_PROTOCOL_VERSION: u32 = 2;
+/// The header that carries [`SYNC_PROTOCOL_VERSION`].
+pub const SYNC_PROTOCOL_HEADER: &str = "x-spares-sync-protocol";
+/// The header listing the hosts a sync request has come through, as their [`host_id`]s separated
+/// by commas. A host refuses a request that names it: its upstream leads back to itself (a root
+/// whose `[sync] url` is its own address, say), and relaying it on would loop until it ran out of
+/// connections.
+pub const SYNC_VIA_HEADER: &str = "x-spares-sync-via";
+
+/// The id in [`SYNC_VIA_HEADER`] of the current collection's copy here: random for each run of
+/// the process, and different for each collection it has open, so two hosts in one process (as
+/// in tests) are told apart.
+#[cfg(not(target_family = "wasm"))]
+pub fn host_id() -> String {
+    use rand::RngExt;
+    static RUN: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut rng = rand::rng();
+        (0..16)
+            .map(|_| char::from(b'a' + rng.random_range(0..26u8)))
+            .collect()
+    });
+    let copy = crate::collection::current().map_or(0, |collection| {
+        std::sync::Arc::as_ptr(&collection.state).addr()
+    });
+    format!("{}-{copy:x}", *RUN)
+}
+
+fn version_1() -> u32 {
+    1
+}
 
 /// `GET /api/sync/meta?replica=N`: what the client needs to decide how to sync.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,17 +81,13 @@ pub struct MetaResponse {
     /// The newest database migration the server has run.
     pub schema_version: i64,
     pub replica: u8,
-    pub role: String,
+    /// The server's [`SYNC_PROTOCOL_VERSION`]. Version 1 had none.
+    #[serde(default = "version_1")]
+    pub protocol_version: u32,
     /// Whether the server has no notes, as on the first sync.
     pub empty: bool,
     /// The usn the asking replica last synced at, as the server recorded it.
     pub client_last_usn: Option<i64>,
-}
-
-impl MetaResponse {
-    pub fn is_server(&self) -> bool {
-        self.role == SyncRole::Server.to_string()
-    }
 }
 
 /// `POST /api/sync/pull`

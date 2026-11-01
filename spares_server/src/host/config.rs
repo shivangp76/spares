@@ -36,6 +36,8 @@ pub struct HostConfig {
     pub max_connections_per_collection: u32,
     /// How long a web app's session lasts without being used, in days. Each use extends it.
     pub session_days: u64,
+    /// How many collections sync with their upstreams at once (see [`crate::auto_sync`]).
+    pub sync_at_once: usize,
     /// How notes are rendered (see [`spares_core::render`]).
     pub render: spares_core::render::RenderConfig,
 }
@@ -51,6 +53,7 @@ impl Default for HostConfig {
             idle_minutes: 30,
             max_connections_per_collection: 8,
             session_days: 365,
+            sync_at_once: 4,
             render: spares_core::render::RenderConfig::default(),
         }
     }

@@ -13,6 +13,8 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 use spares_core::collection::Collection;
 
+#[cfg(not(target_family = "wasm"))]
+pub mod auto_sync;
 mod handlers;
 #[cfg(not(target_family = "wasm"))]
 pub mod host;

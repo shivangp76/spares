@@ -40,7 +40,6 @@ use super::set_state;
 use super::stamp_dirty;
 use crate::Error;
 use crate::config::get_replica;
-use crate::config::get_sync_role;
 use crate::model::NoteId;
 
 fn sqlx_error(e: sqlx::Error) -> Error {
@@ -92,7 +91,7 @@ pub async fn meta(db: &SqlitePool, client_replica: Option<u8>) -> Result<MetaRes
         server_time: Utc::now().timestamp(),
         schema_version: schema_version(&mut conn).await?,
         replica: get_replica()?.number(),
-        role: get_sync_role()?.to_string(),
+        protocol_version: super::protocol::SYNC_PROTOCOL_VERSION,
         empty,
         client_last_usn,
     })

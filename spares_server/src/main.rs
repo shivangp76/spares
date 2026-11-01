@@ -1,5 +1,3 @@
-mod auto_sync;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,8 +28,15 @@ async fn start_server(args: Args) -> Result<(), String> {
     let users = accounts::users(&host.accounts)
         .await
         .map_err(|e| e.to_string())?;
-    // Opens (and migrates) each collection before serving, so a problem shows at startup.
-    for user in &users {
+    info!("{} accounts", users.len());
+    // Collections open when they are first used, except those that sync with an upstream
+    // automatically, which stay open. A host with one account opens it now, so a problem with it
+    // shows at once.
+    let only = users.len() == 1;
+    for user in users
+        .iter()
+        .filter(|user| only || spares_server::auto_sync::syncs_automatically(&host.paths(&user.id)))
+    {
         let collection = host
             .collection(&user.id)
             .await
@@ -61,7 +66,7 @@ async fn start_server(args: Args) -> Result<(), String> {
                 }
             })
             .await;
-        auto_sync::spawn(Arc::clone(&collection)).await;
+        host.sync.start(Arc::clone(&collection)).await;
     }
 
     // Only the web app's own origin may call the API from a browser.
@@ -106,6 +111,7 @@ async fn start_server(args: Args) -> Result<(), String> {
         .with_graceful_shutdown(shutdown_signal(Arc::clone(&host)))
         .await
         .map_err(|e| format!("Server error: {}", e))?;
+    host.sync.stop_all();
     host.close_all().await;
     Ok(())
 }

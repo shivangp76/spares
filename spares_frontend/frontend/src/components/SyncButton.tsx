@@ -91,7 +91,7 @@ function ServerSyncButton({ onStatus }: { onStatus: OnStatus }) {
     getSyncStatus().then(setStatus, () => setStatus(null));
   }, []);
 
-  if (!status || status.role !== "client" || !status.sync_url) return null;
+  if (!status?.sync_url) return null;
 
   async function sync() {
     setSyncing(true);

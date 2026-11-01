@@ -1,5 +1,5 @@
-//! `spares sync cloud` with two-way sync (`sync.url` set), and `spares sync conflicts`. The local
-//! server does the syncing (`POST /api/sync/run`); see `spares_core::sync`.
+//! `spares sync cloud`, which syncs the collection with its upstream (`sync.url`), and `spares sync
+//! conflicts`. The host does the syncing (`POST /api/sync/run`); see `spares_core::sync`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -20,7 +20,6 @@ use spares_core::sync::run::SyncMode;
 use spares_core::sync::run::SyncReport;
 
 use super::cloud::push_files;
-use super::cloud::push_to_remote_host;
 
 /// Syncs with the server, asking which way to go if only a full sync is possible, then copies the
 /// files the server cannot generate itself to `sync.remote_host`.
@@ -31,11 +30,11 @@ pub(crate) async fn sync_cloud(
 ) -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;
     if config.sync.url.is_none() {
-        println!(
-            "{}",
-            "`sync.url` is not set, so this replaces the server's database (one-way).".yellow()
+        return Err(
+            "This collection has no upstream to sync with. Give it one with `spares sync login \
+             <url>`."
+                .to_string(),
         );
-        return push_to_remote_host().await;
     }
     if !notes_vcs::enabled() {
         println!(

@@ -1,6 +1,7 @@
-//! Two-way sync. A `server` (`SPARES_SYNC_ROLE=server`) answers `meta`, `pull`, `push` and
-//! `full`; a `client` runs a sync against its `sync.url` when asked (`run`). See
-//! `spares_core::sync`.
+//! Two-way sync (see `spares_core::sync`). Every host answers `meta`, `pull`, `push` and `full`
+//! for its users' devices, or relays them to the collection's upstream if it has one (see
+//! [`super::relay`]). A collection with an upstream also syncs with it, when asked (`run`) and
+//! automatically (`crate::auto_sync`).
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
@@ -18,10 +19,8 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use spares_core::Error;
-use spares_core::config::SyncRole;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_replica;
-use spares_core::config::get_sync_role;
 use spares_core::config::read_external_config;
 #[cfg(not(target_family = "wasm"))]
 use spares_core::notes_vcs::WRITER_WAIT;
@@ -57,19 +56,6 @@ pub(crate) const MEDIA_BODY_LIMIT: usize = 128 * 1024 * 1024;
 
 type HandlerError = (StatusCode, Json<Value>);
 
-fn require_role(role: SyncRole) -> Result<(), HandlerError> {
-    let actual = get_sync_role().map_err(error_to_response)?;
-    if actual == role {
-        return Ok(());
-    }
-    Err((
-        StatusCode::FORBIDDEN,
-        Json(json!({
-            "message": format!("this server is a sync {actual}, not a {role} (SPARES_SYNC_ROLE)")
-        })),
-    ))
-}
-
 /// Where sync keeps database snapshots while sending them.
 fn temp_dir() -> Result<PathBuf, HandlerError> {
     let dir = get_cache_dir().join("sync");
@@ -99,7 +85,6 @@ pub(crate) async fn sync_meta_handler(
     Coll(data): Coll,
     Query(ReplicaQuery { replica }): Query<ReplicaQuery>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let meta = server::meta(&data.db, replica)
         .await
         .map_err(error_to_response)?;
@@ -110,7 +95,6 @@ pub(crate) async fn sync_pull_handler(
     Coll(data): Coll,
     Json(body): Json<PullRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let response = server::pull(&data.db, body)
         .await
         .map_err(error_to_response)?;
@@ -121,7 +105,6 @@ pub(crate) async fn sync_push_handler(
     Coll(data): Coll,
     Json(body): Json<PushRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let db = data.db.clone();
     let response = run_exclusive(async move {
         let (response, applied) = server::push(&db, body).await?;
@@ -136,7 +119,6 @@ pub(crate) async fn sync_push_handler(
 pub(crate) async fn sync_full_download_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let path = temp_file("download")?;
     let result = server::full_download(&data.db, &path).await;
     let bytes = result.and_then(|()| {
@@ -157,7 +139,6 @@ pub(crate) async fn sync_full_upload_handler(
     Query(ReplicaQuery { replica }): Query<ReplicaQuery>,
     body: Bytes,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let replica = replica.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -205,15 +186,28 @@ pub(crate) async fn sync_full_upload_handler(
     Ok(Json(result.map_err(error_to_response)?))
 }
 
-/// Gives a browser that keeps a copy of the collection a replica number of its own.
+/// Gives a device a replica number of its own: a browser that keeps a copy of the collection, or
+/// another host's copy. A host's number is recorded on its device token too, so revoking the token
+/// frees it.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_enroll_handler(
     Coll(data): Coll,
+    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
+    host: Option<axum::Extension<std::sync::Arc<crate::host::Host>>>,
     Json(body): Json<EnrollRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
+    let is_host = body.host;
     let response = devices::enroll(&data.db, body)
         .await
         .map_err(error_to_response)?;
+    if is_host
+        && let (Some(auth), Some(host)) = (auth, host)
+        && let Some(device) = &auth.device
+    {
+        crate::host::auth::set_token_replica(&host.accounts, device.id, Some(response.replica))
+            .await
+            .map_err(error_to_response)?;
+    }
     Ok(Json(response))
 }
 
@@ -221,7 +215,6 @@ pub(crate) async fn sync_unenroll_handler(
     Coll(data): Coll,
     Json(body): Json<UnenrollRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let removed = devices::unenroll(&data.db, body)
         .await
         .map_err(error_to_response)?;
@@ -231,14 +224,12 @@ pub(crate) async fn sync_unenroll_handler(
 /// What a device needs from the server's config directory (`spares_core::sync::devices`).
 #[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn sync_config_handler() -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     Ok(Json(devices::device_config().map_err(error_to_response)?))
 }
 
 /// Every rendered file a device can show offline (`spares_core::sync::media`).
 #[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn sync_files_handler() -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     Ok(Json(media::rendered_files().map_err(error_to_response)?))
 }
 
@@ -248,7 +239,6 @@ pub(crate) async fn sync_files_handler() -> Result<impl IntoResponse, HandlerErr
 pub(crate) async fn sync_changed_files_handler(
     Json(request): Json<ChangedFilesRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     Ok(Json(
         media::changed_rendered_files(&request).map_err(error_to_response)?,
     ))
@@ -259,7 +249,6 @@ pub(crate) async fn sync_changed_files_handler(
 pub(crate) async fn sync_media_list_handler(
     Path(kind): Path<MediaKind>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     Ok(Json(media::list_media(kind).map_err(error_to_response)?))
 }
 
@@ -268,7 +257,6 @@ pub(crate) async fn sync_media_list_handler(
 pub(crate) async fn sync_media_download_handler(
     Path((kind, name)): Path<(MediaKind, String)>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     media::read_media(kind, &name)
         .map_err(error_to_response)?
         .ok_or_else(|| {
@@ -280,20 +268,42 @@ pub(crate) async fn sync_media_download_handler(
 }
 
 /// A file a device added offline, before the push whose notes name it.
-#[allow(clippy::unused_async, reason = "an axum handler")]
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_media_handler(
     Path((kind, name)): Path<(MediaKind, String)>,
+    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
     body: Bytes,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
-    let path = media::store_media(kind, &name, &body).map_err(error_to_response)?;
+    // Another host's copy, with its sync-only token
+    let from_host = auth.is_some_and(|auth| {
+        auth.device
+            .as_ref()
+            .is_some_and(|device| device.scope == crate::host::auth::Scope::Sync)
+    });
+    let path = if from_host {
+        media::store_media_from_host(kind, &name, &body)
+    } else {
+        media::store_media(kind, &name, &body)
+    }
+    .map_err(error_to_response)?;
+    // The upstream renders the notes that name it too, once the device's push reaches it.
+    #[cfg(not(target_family = "wasm"))]
+    if let Some((url, token)) = crate::handlers::relay::upstream() {
+        let remote = spares_core::sync::http::HttpRemote::new(
+            &url,
+            spares_core::sync::http::RemoteAuth::token(token),
+        )
+        .map_err(error_to_response)?;
+        if let Err(e) = remote.upload_media(kind, &name, body.to_vec()).await {
+            log::warn!("Failed to send {name} on to {url}: {e}");
+        }
+    }
     Ok(Json(json!({ "path": path })))
 }
 
 pub(crate) async fn sync_devices_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Server)?;
     let devices = devices::list(&data.db).await.map_err(error_to_response)?;
     Ok(Json(devices))
 }
@@ -327,7 +337,6 @@ pub(crate) async fn sync_run_handler(
     Coll(data): Coll,
     Json(SyncRunRequest { mode }): Json<SyncRunRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    require_role(SyncRole::Client)?;
     let db = data.db.clone();
     let temp_dir = temp_dir()?;
     let report = run_exclusive(async move { files::sync_now(&db, mode, &temp_dir).await })
@@ -338,8 +347,8 @@ pub(crate) async fn sync_run_handler(
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SyncStatusResponse {
-    role: String,
     replica: u8,
+    /// The collection's upstream, if this copy has one. Without one, it is the root.
     sync_url: Option<String>,
     /// Whether this host has a device token for `sync_url`, which it needs to reach it.
     sync_token_set: bool,
@@ -353,7 +362,6 @@ pub(crate) async fn sync_status_handler(
     let state = local_state(&data.db).await.map_err(error_to_response)?;
     let config = read_external_config().ok();
     Ok(Json(SyncStatusResponse {
-        role: get_sync_role().map_err(error_to_response)?.to_string(),
         replica: get_replica().map_err(error_to_response)?.number(),
         sync_url: config.as_ref().and_then(|c| c.sync.url.clone()),
         sync_token_set: config.as_ref().is_some_and(|c| c.sync.token.is_some()),
@@ -382,4 +390,83 @@ pub(crate) async fn resolve_sync_conflict_handler(
     .await
     .map_err(error_to_response)?;
     Ok(Json(json!({})))
+}
+
+/// `PUT /api/sync/upstream`: what `spares sync login` set up on the upstream.
+#[cfg(not(target_family = "wasm"))]
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpstreamRequest {
+    url: String,
+    /// The sync-only device token this host got there
+    token: String,
+    /// The replica the upstream gave this host's copy
+    replica: u8,
+}
+
+/// `PUT /api/sync/upstream`: makes the collection's copy here a device of an upstream, with the
+/// token and replica it got there, and starts syncing with it automatically if its config says
+/// to. `DELETE` makes it the root of its sync chain again, replica 1.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn set_upstream_handler(
+    Coll(collection): Coll,
+    axum::Extension(host): axum::Extension<std::sync::Arc<crate::host::Host>>,
+    Json(request): Json<UpstreamRequest>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let replica = spares_core::config::Replica::try_from(request.replica)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "message": e }))))?;
+    let url = request.url.trim_end_matches('/').to_string();
+    write_sync_values(
+        &collection,
+        [
+            ("url", url.clone().into()),
+            ("token", request.token.into()),
+            ("replica", i64::from(replica.number()).into()),
+        ],
+        &[],
+    )?;
+    collection.set_replica(Some(replica));
+    host.sync.start(std::sync::Arc::clone(&collection)).await;
+    Ok(Json(json!({ "url": url, "replica": replica.number() })))
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn remove_upstream_handler(
+    Coll(collection): Coll,
+    axum::Extension(host): axum::Extension<std::sync::Arc<crate::host::Host>>,
+) -> Result<impl IntoResponse, HandlerError> {
+    write_sync_values(&collection, [], &["url", "token", "replica"])?;
+    collection.set_replica(Some(spares_core::config::Replica::ROOT));
+    host.sync.start(std::sync::Arc::clone(&collection)).await;
+    Ok(Json(
+        json!({ "replica": spares_core::config::Replica::ROOT.number() }),
+    ))
+}
+
+/// Sets and removes keys of `[sync]` in the collection's config.toml, keeping the rest as written.
+#[cfg(not(target_family = "wasm"))]
+fn write_sync_values<const N: usize>(
+    collection: &spares_core::collection::Collection,
+    set: [(&'static str, toml_edit::Value); N],
+    remove: &[&str],
+) -> Result<(), HandlerError> {
+    let path = collection.paths.config_file();
+    let io = |e: std::io::Error| {
+        error_to_response(Error::Io {
+            description: format!("Failed to update {}", path.display()),
+            source: e,
+        })
+    };
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let contents =
+        spares_core::config::set_sync_values(&contents, set).map_err(error_to_response)?;
+    let mut doc: toml_edit::DocumentMut = contents
+        .parse()
+        .map_err(|e: toml_edit::TomlError| error_to_response(Error::Sync(e.to_string())))?;
+    if let Some(sync) = doc.get_mut("sync").and_then(|s| s.as_table_like_mut()) {
+        for key in remove {
+            sync.remove(key);
+        }
+    }
+    std::fs::create_dir_all(&collection.paths.config).map_err(io)?;
+    std::fs::write(&path, doc.to_string()).map_err(io)
 }

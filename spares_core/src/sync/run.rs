@@ -62,6 +62,7 @@ use super::protocol::PullResponse;
 use super::protocol::PushRequest;
 use super::protocol::PushResponse;
 use super::protocol::RenderAssets;
+use super::protocol::SYNC_PROTOCOL_VERSION;
 use super::prune_received;
 use super::read_counts;
 use super::records::Changes;
@@ -72,9 +73,7 @@ use super::schema_version;
 use super::set_applying;
 use super::set_state;
 use crate::Error;
-use crate::config::SyncRole;
 use crate::config::get_replica;
-use crate::config::get_sync_role;
 use crate::model::NoteId;
 
 /// The clocks may differ by this much. Merges break some ties by time.
@@ -153,20 +152,16 @@ pub async fn local_state(db: &SqlitePool) -> Result<LocalSyncState, Error> {
 /// Checks that the two sides can sync at all.
 async fn check_meta(db: &SqlitePool, meta: &MetaResponse) -> Result<(), Error> {
     let replica = get_replica()?.number();
-    if get_sync_role()? != SyncRole::Client {
-        return Err(Error::Sync(
-            "this instance is not a sync client (`SPARES_SYNC_ROLE=client`)".to_string(),
-        ));
-    }
-    if !meta.is_server() {
+    if meta.protocol_version != SYNC_PROTOCOL_VERSION {
         return Err(Error::Sync(format!(
-            "the other side is a `{}`, not a sync server",
-            meta.role
+            "the host speaks sync protocol {}, and this device {SYNC_PROTOCOL_VERSION}. Update \
+             spares on the older side.",
+            meta.protocol_version
         )));
     }
     if meta.replica == replica {
         return Err(Error::Sync(format!(
-            "both sides are replica {replica}. Each needs its own `SPARES_REPLICA`."
+            "both sides are replica {replica}. Enroll this copy with the host again."
         )));
     }
     let skew = meta.server_time - Utc::now().timestamp();

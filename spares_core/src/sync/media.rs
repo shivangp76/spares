@@ -247,7 +247,12 @@ fn has_suffix(stem: &str) -> bool {
 /// blake3 hash. Image occlusions are named `<stem>-<suffix>.<ext>` and
 /// `<stem>-<suffix>_clozes.svg` by the device that made them, with a suffix that is unique rather
 /// than a hash, since card orders are written into the SVG while a note is parsed.
-fn check_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<(), Error> {
+fn check_media(
+    kind: MediaKind,
+    name: &str,
+    contents: &[u8],
+    legacy_names: bool,
+) -> Result<(), Error> {
     let stem = Path::new(name)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -274,7 +279,15 @@ fn check_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<(), Error
                     stem
                 }
             };
-            if !has_suffix(stem) {
+            // Image occlusions made before their names ended in a hash keep their names: a host
+            // sends them to its upstream as they are. Stored files are never replaced, so such a
+            // name still never stands for two files on one side.
+            let legacy = legacy_names
+                && !stem.is_empty()
+                && stem
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
+            if !has_suffix(stem) && !legacy {
                 return Err(invalid(format!(
                     "`{name}` isn't named as image occlusions are stored"
                 )));
@@ -296,6 +309,25 @@ fn check_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<(), Error
 /// its path there. `name` is as the device named it (see `check_media`). A file that is already
 /// there is kept: the server never replaces one.
 pub fn store_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<PathBuf, Error> {
+    store(kind, name, contents, false)
+}
+
+/// [`store_media`] for another host's copy of the collection, which may also send image
+/// occlusions named before their names ended in a hash.
+pub fn store_media_from_host(
+    kind: MediaKind,
+    name: &str,
+    contents: &[u8],
+) -> Result<PathBuf, Error> {
+    store(kind, name, contents, true)
+}
+
+fn store(
+    kind: MediaKind,
+    name: &str,
+    contents: &[u8],
+    legacy_names: bool,
+) -> Result<PathBuf, Error> {
     if contents.len() > kind.max_size() {
         return Err(invalid(format!(
             "{name} is larger than {} MB",
@@ -305,7 +337,7 @@ pub fn store_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<PathB
     if !is_plain(name) {
         return Err(invalid(format!("`{name}` is not a file name")));
     }
-    check_media(kind, name, contents)?;
+    check_media(kind, name, contents, legacy_names)?;
     let directory = kind.directory();
     std::fs::create_dir_all(&directory).map_err(|e| Error::Io {
         description: format!("Failed to create {}", directory.display()),

@@ -1,30 +1,34 @@
-//! `spares sync devices`: the browsers (and other laptops) enrolled with the server as replicas
-//! `2` to `4` (see `spares_core::sync::devices`).
+//! `spares sync devices`: the copies of the collection enrolled with the root of its sync chain
+//! (see `spares_core::sync::devices`), through the host the CLI uses, which asks its upstream if
+//! it has one.
 
 use chrono::DateTime;
 use chrono::Local;
 use clap::Subcommand;
-use spares_core::config::read_external_config;
-use spares_core::sync::http::HttpRemote;
-use spares_core::sync::http::RemoteAuth;
+use reqwest::Client;
+use serde_json::Value;
+use serde_json::json;
+use spares_core::sync::devices::Device;
 
 #[derive(Debug, Clone, Subcommand)]
 pub(crate) enum DevicesAction {
-    /// Enroll another laptop, and print the `SPARES_REPLICA` to set on it. A browser enrolls
-    /// itself when it starts keeping a copy (Settings → This Device).
-    Add {
-        /// What it is called in the list, e.g. "work laptop"
-        name: String,
-    },
     /// Free a device's number, e.g. one whose browser deleted its copy. It can no longer sync,
-    /// and what it hasn't synced yet never reaches the server.
+    /// and what it hasn't synced yet never reaches the host. A host's copy is removed by revoking
+    /// its token instead (`spares host revoke`, or Settings on the upstream).
     Remove { replica: u8 },
 }
 
-fn remote() -> Result<HttpRemote, String> {
-    let sync = read_external_config().map_err(|e| e.to_string())?.sync;
-    let url = sync.url.ok_or("`sync.url` is not set in config.toml")?;
-    HttpRemote::new(&url, RemoteAuth::token(sync.token)).map_err(|e| e.to_string())
+async fn answer(response: reqwest::Result<reqwest::Response>) -> Result<Value, String> {
+    let response = response.map_err(|e| format!("Is the spares host running? {e}"))?;
+    let status = response.status();
+    let body: Value = response.json().await.unwrap_or_default();
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["message"]
+            .as_str()
+            .map_or_else(|| status.to_string(), str::to_string))
+    }
 }
 
 fn local_time(unix: i64) -> String {
@@ -38,11 +42,23 @@ fn local_time(unix: i64) -> String {
     )
 }
 
-pub(crate) async fn devices(action: Option<DevicesAction>) -> Result<(), String> {
-    let remote = remote()?;
+pub(crate) async fn devices(
+    base_url: &str,
+    client: &Client,
+    action: Option<DevicesAction>,
+) -> Result<(), String> {
     match action {
         None => {
-            let devices = remote.devices().await.map_err(|e| e.to_string())?;
+            let devices: Vec<Device> = serde_json::from_value(
+                answer(
+                    client
+                        .get(format!("{base_url}/api/sync/devices"))
+                        .send()
+                        .await,
+                )
+                .await?,
+            )
+            .map_err(|e| e.to_string())?;
             if devices.is_empty() {
                 println!("No devices are enrolled.");
             }
@@ -58,16 +74,15 @@ pub(crate) async fn devices(action: Option<DevicesAction>) -> Result<(), String>
                 );
             }
         }
-        Some(DevicesAction::Add { name }) => {
-            let enrolled = remote.enroll(&name).await.map_err(|e| e.to_string())?;
-            println!(
-                "Enrolled as replica {0}. On that laptop, set SPARES_REPLICA={0} and do a full \
-                 download (`spares sync cloud --full-download`).",
-                enrolled.replica
-            );
-        }
         Some(DevicesAction::Remove { replica }) => {
-            remote.unenroll(replica).await.map_err(|e| e.to_string())?;
+            answer(
+                client
+                    .post(format!("{base_url}/api/sync/unenroll"))
+                    .json(&json!({ "replica": replica }))
+                    .send()
+                    .await,
+            )
+            .await?;
             println!("Removed replica {replica}.");
         }
     }

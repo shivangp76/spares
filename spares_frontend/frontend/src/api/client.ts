@@ -745,10 +745,10 @@ export async function removeSavedCopies(paths: string[]): Promise<void> {
   });
 }
 
-/** This server's two-way sync state (`GET /api/sync/status`). */
+/** This host's two-way sync state (`GET /api/sync/status`). */
 export interface SyncStatus {
-  role: "client" | "server";
   replica: number;
+  /** The collection's upstream, which this host's copy syncs with; `null` on the root */
   sync_url: string | null;
   sync_token_set: boolean;
   usn: number | null;

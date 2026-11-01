@@ -249,11 +249,16 @@ fn notes_vcs_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         )
 }
 
-/// Two-way sync (`spares_core::sync`), the server's side and a client server's own sync. A browser
-/// syncs its copy through `spares_wasm` instead.
+/// Two-way sync (`spares_core::sync`): the host's side for its users' devices, and a collection's
+/// own sync with its upstream (`run`). A browser syncs its copy through `spares_wasm` instead.
 #[cfg(not(target_family = "wasm"))]
 fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    Router::new()
+    use crate::handlers::relay::relay_to_upstream;
+    use crate::handlers::relay::require_protocol;
+    // What the root of the collection's sync chain answers, which a host with an upstream relays
+    // there (see `handlers::relay`). A device must speak the host's version of the protocol
+    // itself, which is checked before relaying.
+    let protocol = Router::new()
         .route("/api/sync/meta", get(sync_meta_handler))
         .route("/api/sync/pull", post(sync_pull_handler))
         .route(
@@ -267,8 +272,21 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 .layer(DefaultBodyLimit::max(SYNC_BODY_LIMIT)),
         )
         .route("/api/sync/enroll", post(sync_enroll_handler))
+        .layer(middleware::from_fn(relay_to_upstream))
+        .layer(middleware::from_fn(require_protocol));
+    // The web app asks for these too.
+    let devices = Router::new()
         .route("/api/sync/unenroll", post(sync_unenroll_handler))
         .route("/api/sync/devices", get(sync_devices_handler))
+        .layer(middleware::from_fn(relay_to_upstream));
+    let relayed = protocol.merge(devices);
+    Router::new()
+        .merge(relayed)
+        .route(
+            "/api/sync/upstream",
+            put(crate::handlers::sync::set_upstream_handler)
+                .delete(crate::handlers::sync::remove_upstream_handler),
+        )
         .route("/api/sync/config", get(sync_config_handler))
         .route("/api/sync/files", get(sync_files_handler))
         .route("/api/sync/files/changed", post(sync_changed_files_handler))
@@ -280,6 +298,7 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT)),
         )
         .route("/api/sync/run", post(sync_run_handler))
+        .layer(middleware::from_fn(crate::handlers::relay::refuse_loops))
 }
 
 /// The routes that need the server's files, processes or role: the rest of the API besides

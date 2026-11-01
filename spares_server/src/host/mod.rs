@@ -96,6 +96,8 @@ pub struct Host {
     open: Mutex<HashMap<String, OpenCollection>>,
     /// One per user, held while their collection opens (and migrates)
     opening: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// The automatic syncs of collections with an upstream
+    pub sync: crate::auto_sync::Scheduler,
 }
 
 impl std::fmt::Debug for Host {
@@ -122,6 +124,7 @@ impl Host {
         let accounts = accounts::open(&accounts_path).await?;
         Ok(Arc::new(Self {
             root: root.to_path_buf(),
+            sync: crate::auto_sync::Scheduler::new(config.sync_at_once),
             config,
             accounts,
             open: Mutex::default(),

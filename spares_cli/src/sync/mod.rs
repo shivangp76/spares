@@ -1,6 +1,7 @@
 mod cloud;
 mod devices;
 mod two_way;
+mod upstream;
 
 use clap::Args;
 use clap::Subcommand;
@@ -35,11 +36,19 @@ pub(crate) enum SyncSubcommand {
     },
     /// Resolve the notes a sync could not merge (tagged `sync-conflict`), one at a time
     Conflicts,
-    /// List the devices that keep a copy of the collection (replicas 2 to 4), or add or remove one
+    /// List the copies of the collection enrolled with the root of its sync chain, or remove one
     Devices {
         #[command(subcommand)]
         action: Option<devices::DevicesAction>,
     },
+    /// Sync this host's copy of the collection with an upstream host, as one of its devices
+    ///
+    /// Logs in there with a sync-only token, enrolls this copy (keeping its replica number, the
+    /// laptop's `0` say, if it has one), and tells this host, which then syncs with it as
+    /// `[sync]` in config.toml says.
+    Login(upstream::UpstreamLoginArgs),
+    /// Stop syncing with the upstream, freeing this copy's number there
+    Logout,
 }
 
 pub(crate) async fn sync_notes(
@@ -62,6 +71,8 @@ pub(crate) async fn sync_notes(
             two_way::sync_cloud(base_url, client, mode).await
         }
         SyncSubcommand::Conflicts => two_way::resolve_conflicts(base_url, client).await,
-        SyncSubcommand::Devices { action } => devices::devices(action).await,
+        SyncSubcommand::Devices { action } => devices::devices(base_url, client, action).await,
+        SyncSubcommand::Login(args) => upstream::login(base_url, client, args).await,
+        SyncSubcommand::Logout => upstream::logout(base_url, client).await,
     }
 }
