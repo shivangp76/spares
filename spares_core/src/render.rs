@@ -3,10 +3,10 @@
 //!
 //! - **The sandbox** ([`Sandbox`]): `sandbox-exec` on macOS (deprecated, but still the only one
 //!   built in), bubblewrap (`bwrap`) on Linux. A render has no network, reads only the system's
-//!   directories, its collection's directory and the host's [`RenderConfig::read_dirs`], and
-//!   writes only its collection's files directory (where rendered files go) and its scratch
-//!   directory (`render/` in the collection's directory: temporary files, TeX's font cache).
-//!   It is the only limit on what a render reads: Typst's `--root` is `/`.
+//!   directories, its collection's directory and cache and the host's
+//!   [`RenderConfig::read_dirs`], and writes only its collection's files directory (where rendered
+//!   files go) and its scratch directory (`render/` in the collection's cache: temporary files,
+//!   TeX's font cache). It is the only limit on what a render reads: Typst's `--root` is `/`.
 //!   A host without its sandbox doesn't render, unless `host.toml` says `sandbox = "none"`.
 //! - **Limits**: a render is stopped after `timeout_seconds`, gets `cpu_seconds` of CPU and, on
 //!   Linux, `memory_mb` of memory. A user's renders wait their turn beyond `renders_at_once`.
@@ -16,6 +16,7 @@
 //! - **Engines** can be turned off: a host with `engines = ["typst"]` renders only Typst, and
 //!   browsers render the rest.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -51,6 +52,23 @@ pub struct RenderConfig {
     pub memory_mb: u64,
     /// A user's renders at once; the others wait.
     pub renders_at_once: usize,
+    /// Directories that each note's rendered file is also in, by parser (`typst`, `latex-note`,
+    /// `markdown`), with the same name: `<note id>.pdf`. This is where editors on this machine
+    /// write the PDFs of the files they compile, so that one PDF viewer shows a note whether the
+    /// editor or spares rendered it, as with tinymist's `outputPath = $TYPST_OUT_DIR/$name`:
+    ///
+    /// ```toml
+    /// [render.copy_notes_to]
+    /// typst = "/Users/me/.cache/typst"
+    /// ```
+    ///
+    /// The file there is a hard link to the one in the collection's files directory, not a copy,
+    /// so a render writes it there as it writes it, and an editor compiling the note into it may
+    /// write the collection's until spares renders the note again. It is a copy when the
+    /// directory is on another filesystem. Only cards' files stay in the collection alone. Notes
+    /// of different users with the same id would replace each other's, so this is for a host
+    /// with one user, such as a laptop's. The link is made outside the sandbox, by the host.
+    pub copy_notes_to: BTreeMap<String, PathBuf>,
 }
 
 impl Default for RenderConfig {
@@ -63,6 +81,7 @@ impl Default for RenderConfig {
             cpu_seconds: 120,
             memory_mb: 2048,
             renders_at_once: 4,
+            copy_notes_to: BTreeMap::new(),
         }
     }
 }
@@ -136,7 +155,7 @@ pub fn config() -> RenderConfig {
 /// What a render of the current collection may read: its directories and the host's
 /// [`RenderConfig::read_dirs`].
 pub fn readable_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![crate::collection::paths().enclosing_dir()];
+    let mut dirs = crate::collection::paths().dirs();
     dirs.extend(config().read_dirs);
     dirs
 }

@@ -1,24 +1,28 @@
 //! A collection: one user's database, files and settings, and the state spares keeps for it while
 //! it is open.
 //!
-//! A host (`spares_server`) serves many collections from one process, each in a directory of its
-//! own (see `spares_server::host`):
+//! A host (`spares_server`) serves many collections from one process. Each has a directory of
+//! what can't be recreated, which is what to back up, and a directory of what spares recreates
+//! (see `spares_server::host`):
 //!
 //! ```text
-//! users/<user_id>/
+//! <root>/users/<user_id>/      CollectionPaths::root
 //!   collection.sqlite   the database
 //!   config/             config.toml and the parser templates (`<parser>/templates`)
-//!   files/              rendered notes and cards, served at /files
 //!   media/              images, audio and image occlusions that notes name
-//!   render/             scratch directories of renders
-//!   cache/              sync's snapshots and the hashes that tell a note needs rendering again
 //!   notes.git/          the notes repository (see `crate::notes_vcs`)
-//!   notes/, cards/      raw note and card files, without the notes repository
+//!   notes/              raw note files, a clone of the notes repository
 //!   render_assets/, id-map.tsv, …
+//! <cache>/users/<user_id>/     CollectionPaths::cache
+//!   files/              rendered notes and cards, served at /files
+//!   cards/              raw card files, which renders write from notes
+//!   render/             scratch directories of renders
+//!   note-hashes/        what tells a note needs rendering again
+//!   sync/               sync's snapshots
 //! ```
 //!
 //! [`CollectionPaths`] names them. The same shape on every host makes a collection portable:
-//! moving one between hosts is copying its directory.
+//! moving one between hosts is copying its directory. Its cache is recreated by rendering again.
 //!
 //! # The current collection
 //!
@@ -56,36 +60,46 @@ pub const NOTES_REPO_DIR_NAME: &str = "notes.git";
 /// The directories of a collection (see the [module docs](self)).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionPaths {
-    /// The collection's own directory, `users/<user_id>` on a host. Raw note and card files and
-    /// the other files that were in the data directory are under it.
+    /// The collection's own directory, `users/<user_id>` on a host: what can't be recreated. Raw
+    /// note files and the other files that were in the data directory are under it.
     pub root: PathBuf,
     /// `config.toml` and parser templates
     pub config: PathBuf,
-    /// Rendered files, served at `/files`. API responses name files relative to it.
+    /// Rendered files, served at `/files`, in [`Self::cache`]. API responses name files relative
+    /// to it.
     pub files: PathBuf,
     /// Images, audio and image occlusions that notes name
     pub media: PathBuf,
-    /// Renders' scratch directories
+    /// Renders' scratch directories, in [`Self::cache`]
     pub render: PathBuf,
-    /// Files spares can recreate, and sync's snapshots
+    /// What spares recreates: rendered files, raw card files, render hashes and sync's snapshots.
+    /// Outside [`Self::root`] on a host, so that backing up the root leaves it out.
     pub cache: PathBuf,
     /// The notes repository, whether or not it exists
     pub notes_repo: PathBuf,
 }
 
 impl CollectionPaths {
-    /// The directories of the collection in `root`.
-    pub fn in_dir(root: impl Into<PathBuf>) -> Self {
+    /// The directories of the collection in `root`, whose cache is in `cache`.
+    pub fn new(root: impl Into<PathBuf>, cache: impl Into<PathBuf>) -> Self {
         let root = root.into();
+        let cache = cache.into();
         Self {
             config: root.join("config"),
-            files: root.join("files"),
+            files: cache.join("files"),
             media: root.join("media"),
-            render: root.join("render"),
-            cache: root.join("cache"),
+            render: cache.join("render"),
             notes_repo: root.join(NOTES_REPO_DIR_NAME),
+            cache,
             root,
         }
+    }
+
+    /// The directories of a collection that keeps its cache in `root/cache`.
+    pub fn in_dir(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        let cache = root.join("cache");
+        Self::new(root, cache)
     }
 
     pub fn database(&self) -> PathBuf {
@@ -97,18 +111,35 @@ impl CollectionPaths {
         format!("sqlite://{}", self.database().display())
     }
 
-    /// The directory every one of these is in: [`Self::root`] for a collection's directory. What
-    /// Typst may read files from.
-    pub fn enclosing_dir(&self) -> PathBuf {
-        let mut dir = self.root.clone();
-        for other in [&self.config, &self.files, &self.media] {
-            while !other.starts_with(&dir) {
-                if !dir.pop() {
-                    break;
-                }
+    /// Raw card files, which renders write from notes
+    pub fn cards(&self) -> PathBuf {
+        self.cache.join("cards")
+    }
+
+    /// The fewest directories that hold every one of these: [`Self::root`] and [`Self::cache`] on
+    /// a host. What renders may read.
+    pub fn dirs(&self) -> Vec<PathBuf> {
+        let all = [
+            &self.root,
+            &self.cache,
+            &self.config,
+            &self.files,
+            &self.media,
+            &self.render,
+        ];
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for dir in all {
+            if all
+                .iter()
+                .any(|other| *other != dir && dir.starts_with(other))
+            {
+                continue;
+            }
+            if !dirs.contains(dir) {
+                dirs.push(dir.clone());
             }
         }
-        dir
+        dirs
     }
 
     pub fn config_file(&self) -> PathBuf {
@@ -136,7 +167,7 @@ impl CollectionPaths {
     /// request names are checked with it before they are read (see [`Self::resolve_request_path`]).
     pub fn contains(&self, path: &Path) -> bool {
         path.is_absolute()
-            && path.starts_with(&self.root)
+            && self.dirs().iter().any(|dir| path.starts_with(dir))
             && !path
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -456,7 +487,7 @@ mod tests {
             assert_eq!(paths().root, Path::new("/srv/spares/users/a"));
             b.scope(async { assert_eq!(current_id().as_deref(), Some("u1")) })
                 .await;
-            assert_eq!(paths().files, Path::new("/srv/spares/users/a/files"));
+            assert_eq!(paths().files, Path::new("/srv/spares/users/a/cache/files"));
             let spawned = spawn(async { paths().root.clone() }).await.unwrap();
             assert_eq!(spawned, Path::new("/srv/spares/users/a"));
             let blocking = run_blocking(|| paths().root.clone()).await;
@@ -498,10 +529,29 @@ mod tests {
                 "{bad}"
             );
         }
-        let paths = CollectionPaths::in_dir("/srv/spares/users/a");
-        assert_eq!(paths.enclosing_dir(), Path::new("/srv/spares/users/a"));
-        assert_eq!(test_paths().enclosing_dir(), Path::new("/tmp/spares"));
+        let paths = CollectionPaths::new("/srv/spares/users/a", "/var/cache/spares/users/a");
+        assert_eq!(
+            paths.dirs(),
+            [
+                PathBuf::from("/srv/spares/users/a"),
+                PathBuf::from("/var/cache/spares/users/a")
+            ]
+        );
+        assert_eq!(
+            CollectionPaths::in_dir("/srv/spares/users/a").dirs(),
+            [PathBuf::from("/srv/spares/users/a")]
+        );
+        assert_eq!(
+            test_paths().dirs(),
+            [
+                PathBuf::from("/tmp/spares/data"),
+                PathBuf::from("/tmp/spares/cache"),
+                PathBuf::from("/tmp/spares/config")
+            ]
+        );
         assert!(paths.contains(Path::new("/srv/spares/users/a/media/images/x.png")));
+        assert!(paths.contains(Path::new("/var/cache/spares/users/a/files/x.pdf")));
+        assert!(!paths.contains(Path::new("/var/cache/spares/users/b/files/x.pdf")));
         assert!(!paths.contains(Path::new("/srv/spares/users/b/media/images/x.png")));
         assert!(!paths.contains(Path::new("/srv/spares/users/a/../b/x.png")));
         assert!(!paths.contains(Path::new("users/a/x.png")));

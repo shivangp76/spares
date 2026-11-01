@@ -24,16 +24,14 @@ pub fn get_output_raw_dir(
     output_type: RenderOutputType,
     overridden_base_dir: Option<&Path>,
 ) -> PathBuf {
-    let mut output_raw_dir = match overridden_base_dir {
-        Some(base_dir) => base_dir.to_path_buf(),
-        _ => get_data_dir(),
-    };
     // Note/card is split before parser since everything in the `cards` subdirectory will never have to be edited. Only its rendered file will be viewed. This is not true for notes. Notes will have both their raw file and rendered file viewed. Thus, this will make it easier to just search through notes, instead of notes and cards.
-    let sub_dir = match output_type {
-        RenderOutputType::Note => "notes",
-        RenderOutputType::Card(..) => "cards",
+    // Card files are written from their notes on every render, so they are in the cache.
+    let mut output_raw_dir = match (overridden_base_dir, output_type) {
+        (Some(base_dir), RenderOutputType::Note) => base_dir.join("notes"),
+        (Some(base_dir), RenderOutputType::Card(..)) => base_dir.join("cards"),
+        (None, RenderOutputType::Note) => get_data_dir().join("notes"),
+        (None, RenderOutputType::Card(..)) => crate::collection::paths().cards(),
     };
-    output_raw_dir.push(sub_dir);
     // SAFETY: The parser is validated so that its name is a valid directory name.
     output_raw_dir.push(parser_name);
     output_raw_dir
