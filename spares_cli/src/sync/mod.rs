@@ -7,6 +7,7 @@ use clap::Args;
 use clap::Subcommand;
 use reqwest::Client;
 pub(crate) use two_way::sync_cloud;
+pub(crate) use upstream::login_with as upstream_login;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct SyncArgs {

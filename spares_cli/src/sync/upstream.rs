@@ -172,3 +172,23 @@ pub(crate) async fn logout(base_url: &str, client: &Client) -> Result<(), String
     println!("This host's copy no longer syncs with {url}.");
     Ok(())
 }
+
+/// [`login`] with a password prompt, as `spares deploy init` does.
+pub(crate) async fn login_with(
+    base_url: &str,
+    client: &Client,
+    url: &str,
+    user: &str,
+) -> Result<(), String> {
+    login(
+        base_url,
+        client,
+        UpstreamLoginArgs {
+            url: url.to_string(),
+            user: Some(user.to_string()),
+            password_stdin: false,
+            token: None,
+        },
+    )
+    .await
+}

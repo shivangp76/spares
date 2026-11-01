@@ -137,6 +137,23 @@ impl LocalEnv {
     }
 }
 
+/// The collection on this machine's host: the host's root, and the id and name of its account.
+pub(crate) async fn account() -> Result<(std::path::PathBuf, String, String), miette::Error> {
+    let collection = spares_core::collection::current().ok_or_else(|| {
+        miette::miette!("No spares host on this machine. Create one with `spares host init`.")
+    })?;
+    let root = spares_server::host::default_root();
+    let host = Host::open(&root)
+        .await
+        .map_err(|e| miette::miette!("{e}"))?;
+    let user = accounts::user(&host.accounts, &collection.id)
+        .await
+        .map_err(|e| miette::miette!("{e}"))?
+        .ok_or_else(|| miette::miette!("The host has no account {}", collection.id))?;
+    host.accounts.close().await;
+    Ok((root, user.id, user.name))
+}
+
 /// Turns the panic of code that needs the collection on this machine, when it couldn't be opened,
 /// into an error that says why.
 pub(crate) fn explain_missing_collection(reason: String) {

@@ -1,6 +1,7 @@
-//! `spares deploy`: deploys spares to a VPS as the two-way sync server, and sets up this machine
-//! (the laptop, replica 0) to sync with it. `scripts/setup_vps.sh` does the server's side; this
-//! uploads it and runs it there.
+//! `spares deploy`: deploys spares to a VPS as a host with your account, the root of your
+//! collection's sync chain, and makes this machine's host's copy (the laptop, replica 0) sync with
+//! it as one of your devices. `scripts/setup_vps.sh` does the server's side; this uploads it and
+//! runs it there.
 
 mod bundle;
 mod init;
@@ -50,11 +51,12 @@ pub(crate) enum DeployCommands {
     ///    user (with sudo there without a password) and, if needed, prints a link to join your
     ///    tailnet;
     ///
-    /// 3. stores the server's API key in the Keychain, and sets `remote_host`, `url` and
-    ///    `interval_minutes` in the [sync] table of config.toml;
+    /// 3. creates the host there, at the same root as this machine's, with your account (asking
+    ///    for its password there), or moves a server set up before hosts into one;
     ///
-    /// 4. has you restart the local server, uploads the database (`spares sync cloud
-    ///    --full-upload`) and checks that both sides have the same notes;
+    /// 4. sets `remote_host` and `interval_minutes` in the [sync] table of config.toml, logs this
+    ///    host's copy of your collection in to the server's (`spares sync login`), uploads it
+    ///    (`spares sync cloud --full-upload`) and checks that both sides have the same notes;
     ///
     /// 5. closes the server's public ports, leaving only Tailscale (not with --domain).
     ///
@@ -125,7 +127,24 @@ async fn update() -> Result<(), Error> {
     let remote_host = config.sync.remote_host.ok_or_else(|| {
         miette!("sync.remote_host is not set in config.toml. Run `spares deploy init` first.")
     })?;
+    let (root, account_id, account) = crate::local::account().await?;
     let ssh = Ssh::new();
+    // A server set up before hosts is moved into one by `init`, which asks for the password of
+    // the account it creates there.
+    let has_host = ssh.output(
+        &remote_host,
+        &format!(
+            "test -f {} && echo yes || true",
+            quote(&root.join("accounts.sqlite").to_string_lossy())
+        ),
+    )?;
+    if has_host != "yes" {
+        return Err(miette!(
+            "The server has no spares host in {} yet. Run `spares deploy init <server>` once, \
+             which moves it into one.",
+            root.display()
+        ));
+    }
     let sudo_password = sudo_password(&ssh, &remote_host)?;
     let progress = Progress::start("update", &["Building", "Uploading", "Installing"]);
     let bundle = Bundle::build(&progress, &repo, &remote_host, || {
@@ -156,7 +175,13 @@ async fn update() -> Result<(), Error> {
     let mut command = ssh.command();
     command.args([
         &remote_host,
-        &format!("{sudo} bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone}"),
+        &format!(
+            "{sudo} bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone} \
+             --root {} --account {} --account-id {}",
+            quote(&root.to_string_lossy()),
+            quote(&account),
+            quote(&account_id)
+        ),
     ]);
     progress.run(command, input.as_deref())?;
     progress.end_step();
