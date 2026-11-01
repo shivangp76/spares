@@ -128,6 +128,8 @@ use crate::handlers::sync::SYNC_BODY_LIMIT;
 use crate::handlers::sync::list_sync_conflicts_handler;
 use crate::handlers::sync::resolve_sync_conflict_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::sync::sync_changed_files_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_config_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::sync_devices_handler;
@@ -271,6 +273,7 @@ fn sync_routes() -> Router<Arc<AppState>> {
         .route("/api/sync/devices", get(sync_devices_handler))
         .route("/api/sync/config", get(sync_config_handler))
         .route("/api/sync/files", get(sync_files_handler))
+        .route("/api/sync/files/changed", post(sync_changed_files_handler))
         .route("/api/sync/media/{kind}", get(sync_media_list_handler))
         .route(
             "/api/sync/media/{kind}/{name}",
