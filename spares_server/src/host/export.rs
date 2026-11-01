@@ -1,7 +1,8 @@
 //! Moving a collection between hosts, and backing a host up.
 //!
 //! - **Export** ([`export`]): a `.tar.gz` of the user's directory, with a consistent copy of the
-//!   database, and without what spares recreates (`render/`, `cache/`). A user downloads their own
+//!   database. What spares recreates is in the user's cache, outside it (see
+//!   [`super::cache_root`]), so it isn't exported: the importing host renders again. A user downloads their own
 //!   (`GET /api/account/export`); the admin runs `spares host export`.
 //! - **Import** ([`import_archive`]): another host's export, into an account whose collection is
 //!   empty (`spares host import <archive> <user>`). A user's directory has the same shape on every
@@ -214,6 +215,8 @@ mod tests {
             .execute(&collection.db)
             .await
             .unwrap();
+        std::fs::create_dir_all(collection.paths.media.join("images")).unwrap();
+        std::fs::write(collection.paths.media.join("images/a.png"), "png").unwrap();
         std::fs::write(collection.paths.files.join("a.pdf"), "pdf").unwrap();
         std::fs::write(collection.paths.render.join("scratch"), "x").unwrap();
         drop(collection);
@@ -238,7 +241,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value, "yes");
-        assert!(moved.paths.files.join("a.pdf").is_file());
+        assert!(moved.paths.media.join("images/a.png").is_file());
+        // Its cache isn't moved.
+        assert!(!moved.paths.files.join("a.pdf").exists());
         assert!(!moved.paths.render.join("scratch").exists());
         // Not into a collection with notes, nor from an archive that isn't one
         assert!(

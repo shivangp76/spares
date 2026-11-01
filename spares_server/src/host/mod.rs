@@ -6,11 +6,16 @@
 //! ever holds its owner's collection.
 //!
 //! ```text
-//! <SPARES_ROOT>/
+//! <SPARES_ROOT>/               ~/.local/share/spares: what can't be recreated
 //!   host.toml          bind address, signup policy, frontend directory, limits
 //!   accounts.sqlite    users, sessions, device tokens (see [`accounts`])
 //!   users/<user_id>/   a collection (see `spares_core::collection`)
+//! <cache_dir>/                 ~/.cache/spares: what spares recreates (see [`cache_root`])
+//!   users/<user_id>/   the collection's rendered files, raw card files and other caches
 //! ```
+//!
+//! Backing up the root is enough to recreate the rest: a collection's cache is filled again by
+//! rendering its notes.
 //!
 //! Whoever can read the root is the host's admin: `spares host` commands work on these files
 //! directly, without logging in.
@@ -59,26 +64,55 @@ use self::accounts::sqlx_error;
 
 /// The environment variable naming a host's root.
 pub const ROOT_ENV: &str = "SPARES_ROOT";
-/// Where users' directories are, in the root.
+/// Where users' directories are, in the root and in the cache root.
 pub const USERS_DIR_NAME: &str = "users";
+/// The cache root's name in the root, for a host outside the default root (see [`cache_root`]).
+pub const CACHE_DIR_NAME: &str = "cache";
 
-/// The host's root: `SPARES_ROOT`, else `$XDG_DATA_HOME/spares-host`
-/// (`~/.local/share/spares-host`).
+/// The host's root: `SPARES_ROOT`, else `$XDG_DATA_HOME/spares`
+/// (`~/.local/share/spares`).
 pub fn default_root() -> PathBuf {
     if let Some(root) = std::env::var_os(ROOT_ENV).filter(|root| !root.is_empty()) {
         return PathBuf::from(root);
     }
-    let data_home = std::env::var_os("XDG_DATA_HOME")
+    xdg_dir("XDG_DATA_HOME", ".local/share").join("spares")
+}
+
+/// `$<var>`, else `~/<fallback>`.
+fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(var)
         .filter(|dir| !dir.is_empty())
         .map_or_else(
-            || {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                    .join(".local")
-                    .join("share")
-            },
+            || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback),
             PathBuf::from,
+        )
+}
+
+/// Where the host at `root` keeps users' caches: `host.toml`'s `cache_dir`, else
+/// `$XDG_CACHE_HOME/spares` (`~/.cache/spares`) if `root` is `$XDG_DATA_HOME/spares`, else
+/// `<root>/cache`. Only the host in the default root gets the default cache, so a scratch host in
+/// another root never shares (or clears) its caches.
+pub fn cache_root(root: &Path, config: &HostConfig) -> PathBuf {
+    if let Some(dir) = &config.cache_dir {
+        return dir.clone();
+    }
+    let data_root = xdg_dir("XDG_DATA_HOME", ".local/share").join("spares");
+    // A VPS names its root by the laptop's path, a link to the same directory.
+    let same = root == data_root
+        || matches!(
+            (root.canonicalize(), data_root.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
         );
-    data_home.join("spares-host")
+    if same {
+        xdg_dir("XDG_CACHE_HOME", ".cache").join("spares")
+    } else {
+        root.join(CACHE_DIR_NAME)
+    }
+}
+
+/// The cache of user `id` in the cache root `cache_root`.
+pub fn user_cache_dir(cache_root: &Path, id: &str) -> PathBuf {
+    cache_root.join(USERS_DIR_NAME).join(id)
 }
 
 /// The directory of user `id` in the host at `root`.
@@ -94,6 +128,8 @@ struct OpenCollection {
 /// A running host.
 pub struct Host {
     pub root: PathBuf,
+    /// Where users' caches are (see [`cache_root`])
+    pub cache_root: PathBuf,
     pub config: HostConfig,
     pub accounts: SqlitePool,
     open: Mutex<HashMap<String, OpenCollection>>,
@@ -109,6 +145,7 @@ impl std::fmt::Debug for Host {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Host")
             .field("root", &self.root)
+            .field("cache_root", &self.cache_root)
             .finish_non_exhaustive()
     }
 }
@@ -129,6 +166,7 @@ impl Host {
         let accounts = accounts::open(&accounts_path).await?;
         Ok(Arc::new(Self {
             root: root.to_path_buf(),
+            cache_root: cache_root(root, &config),
             sync: crate::auto_sync::Scheduler::new(config.sync_at_once),
             counters: limits::Counters::default(),
             config,
@@ -162,8 +200,13 @@ impl Host {
         user_dir(&self.root, id)
     }
 
+    /// User `id`'s cache
+    pub fn user_cache_dir(&self, id: &str) -> PathBuf {
+        user_cache_dir(&self.cache_root, id)
+    }
+
     pub fn paths(&self, id: &str) -> CollectionPaths {
-        CollectionPaths::in_dir(self.user_dir(id))
+        CollectionPaths::new(self.user_dir(id), self.user_cache_dir(id))
     }
 
     /// Adds an account, with an empty collection: its directory, database and notes repository.
@@ -207,21 +250,23 @@ impl Host {
             self.close(&user.id).await;
             let _ = accounts::delete_user(&self.accounts, &user.id).await;
             let _ = std::fs::remove_dir_all(self.user_dir(&user.id));
+            let _ = std::fs::remove_dir_all(self.user_cache_dir(&user.id));
             return Err(e);
         }
         Ok(user)
     }
 
-    /// Deletes an account and its directory.
+    /// Deletes an account, its directory and its cache.
     pub async fn delete_user(&self, id: &str) -> Result<(), Error> {
         self.close(id).await;
         accounts::delete_user(&self.accounts, id).await?;
-        let dir = self.user_dir(id);
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir).map_err(|e| Error::Io {
-                description: format!("Failed to remove {}", dir.display()),
-                source: e,
-            })?;
+        for dir in [self.user_dir(id), self.user_cache_dir(id)] {
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| Error::Io {
+                    description: format!("Failed to remove {}", dir.display()),
+                    source: e,
+                })?;
+            }
         }
         Ok(())
     }
@@ -245,12 +290,10 @@ impl Host {
             open.last_used = Instant::now();
             return Ok(Arc::clone(&open.collection));
         }
-        let collection = open_collection(
-            id,
-            self.paths(id),
-            self.config.max_connections_per_collection,
-        )
-        .await?;
+        let paths = self.paths(id);
+        move_cache_out(&paths);
+        let collection =
+            open_collection(id, paths, self.config.max_connections_per_collection).await?;
         let mut open = self.open.lock().await;
         if open.len() >= self.config.max_open_collections {
             evict_least_recently_used(&mut open).await;
@@ -312,10 +355,12 @@ impl Host {
     /// to `usage`.
     pub async fn record_usage(&self) {
         for collection in self.open_collections().await {
-            let root = collection.paths.root.clone();
-            let bytes = tokio::task::spawn_blocking(move || limits::directory_size(&root))
-                .await
-                .unwrap_or_default();
+            let dirs = collection.paths.dirs();
+            let bytes = tokio::task::spawn_blocking(move || {
+                dirs.iter().map(|dir| limits::directory_size(dir)).sum()
+            })
+            .await
+            .unwrap_or_default();
             if let Err(e) = limits::record_storage(&self.accounts, &collection.id, bytes).await {
                 warn!("Failed to record the storage of {}: {e}", collection.id);
             }
@@ -395,6 +440,55 @@ async fn evict_least_recently_used(open: &mut HashMap<String, OpenCollection>) {
             open.len()
         ),
     }
+}
+
+/// Moves what spares kept in a user's directory before caches had a directory of their own
+/// (`cache/`, `files/`, `cards/`) into their cache, and removes renders' scratch directories
+/// (`render/`). Entries already in the cache are kept, and the old ones left where they were.
+pub fn move_cache_out(paths: &CollectionPaths) {
+    let root = &paths.root;
+    let render = root.join("render");
+    if render != paths.render && render.is_dir() {
+        let _ = std::fs::remove_dir_all(&render);
+    }
+    for (from, to) in [
+        (root.join(CACHE_DIR_NAME), paths.cache.clone()),
+        (root.join("files"), paths.files.clone()),
+        (root.join("cards"), paths.cards()),
+    ] {
+        if from == to || to.starts_with(&from) || !from.is_dir() {
+            continue;
+        }
+        if let Err(e) = move_into(&from, &to) {
+            warn!(
+                "Failed to move {} to {}: {e}. Move it yourself, or delete it: spares recreates it.",
+                from.display(),
+                to.display()
+            );
+        } else {
+            info!("Moved {} to {}", from.display(), to.display());
+        }
+    }
+}
+
+/// Moves directory `from` to `to`, or its entries into `to` if it exists, keeping `to`'s.
+fn move_into(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if !to.exists() {
+        return std::fs::rename(from, to);
+    }
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if !dest.exists() && !dest.is_symlink() {
+            std::fs::rename(entry.path(), dest)?;
+        }
+    }
+    // Only if everything moved
+    let _ = std::fs::remove_dir(from);
+    Ok(())
 }
 
 /// Opens the collection in `paths`, creating its directories and an empty database if it has
@@ -558,7 +652,7 @@ pub(crate) mod tests {
             .scope(async {
                 assert_eq!(
                     spares_core::config::get_files_dir(),
-                    root.join("users/alice/files")
+                    root.join("cache/users/alice/files")
                 );
             })
             .await;
@@ -569,7 +663,67 @@ pub(crate) mod tests {
         assert_eq!(who(alice).await.as_deref(), Some("alice"));
         host.delete_user("bob").await.unwrap();
         assert!(!root.join("users/bob").exists());
+        assert!(!root.join("cache/users/bob").exists());
         host.close_all().await;
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The default root's caches are in the default cache, and another root's in itself.
+    #[test]
+    fn caches_are_out_of_the_default_root() {
+        let config = HostConfig::default();
+        assert_eq!(
+            cache_root(Path::new("/tmp/scratch-host"), &config),
+            Path::new("/tmp/scratch-host/cache")
+        );
+        assert_eq!(
+            cache_root(
+                &xdg_dir("XDG_DATA_HOME", ".local/share").join("spares"),
+                &config
+            ),
+            xdg_dir("XDG_CACHE_HOME", ".cache").join("spares")
+        );
+        let config = HostConfig {
+            cache_dir: Some(PathBuf::from("/var/cache/spares")),
+            ..HostConfig::default()
+        };
+        assert_eq!(
+            cache_root(Path::new("/tmp/scratch-host"), &config),
+            Path::new("/var/cache/spares")
+        );
+    }
+
+    /// Caches that were in a user's directory move to their cache when the collection opens.
+    #[test]
+    fn caches_move_out_of_a_users_directory() {
+        let root = temp_root();
+        let user = root.join("users/me");
+        let paths = CollectionPaths::new(&user, root.join("cache/users/me"));
+        for dir in [
+            "files/typst",
+            "cards/typst",
+            "cache/note-hashes",
+            "render/tmp",
+        ] {
+            std::fs::create_dir_all(user.join(dir)).unwrap();
+        }
+        std::fs::write(user.join("files/typst/a.pdf"), "old").unwrap();
+        std::fs::write(user.join("files/b.pdf"), "b").unwrap();
+        std::fs::write(user.join("cards/typst/a-1-front.typ"), "card").unwrap();
+        // Rendered again since: the newer one stays.
+        std::fs::create_dir_all(paths.files.join("typst")).unwrap();
+        std::fs::write(paths.files.join("typst/a.pdf"), "new").unwrap();
+        move_cache_out(&paths);
+        let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
+        assert_eq!(read(paths.files.join("typst/a.pdf")), "new");
+        assert_eq!(read(paths.files.join("b.pdf")), "b");
+        assert_eq!(read(paths.cards().join("typst/a-1-front.typ")), "card");
+        assert!(paths.cache.join("note-hashes").is_dir());
+        assert!(!user.join("cards").exists());
+        assert!(!user.join("cache").exists());
+        assert!(!user.join("render").exists());
+        // What didn't move stays.
+        assert!(user.join("files/typst/a.pdf").is_file());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

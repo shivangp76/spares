@@ -5,7 +5,7 @@ spares runs as a host (`spares_server::host`): one root with `host.toml`, `accou
 ## Not checked on a real machine
 
 - **bubblewrap**: renders on Linux run in `bwrap` with the arguments of `Renderer::bubblewrap_args`, which are unit-tested but have not run on Linux. Render a LaTeX, Markdown and Typst note on the VPS, and try the attacks `spares_core/tests/kill_running_renders.rs` tries with `sandbox-exec` (reading another user's file, writing outside `files/` and `render/`, the network).
-- **`spares deploy` and `setup_vps.sh`** with hosts: a fresh deploy, and moving a server set up before hosts into a host (`init` once; `setup_vps.sh` runs `host import --replica 1`), have not been run against a VPS. After it, the laptop logs in with `spares sync login`, keeping replica `0`, and syncs normally (its `sync_client` row survives the import).
+- **`spares deploy` and `setup_vps.sh`** with hosts: a fresh deploy, and moving a server set up before hosts into a host (`deploy update`, or `init`; `setup_vps.sh` runs `host import --replica 1`), have not been run against a VPS. After it, the laptop logs in with `spares sync login`, keeping replica `0`, and syncs normally (its `sync_client` row survives the import).
 
 ## Still to build
 

@@ -669,6 +669,9 @@ fn create_raw_and_rendered_file(
         }
 
         add_audio_dependencies(parser, note_id, file_contents, &output_rendered_filepath);
+        if matches!(render_output_type, RenderOutputType::Note) {
+            copy_rendered_note(parser, note_id, &output_rendered_filepath);
+        }
 
         if parser.has_web_render() {
             create_web_render_file(
@@ -682,6 +685,64 @@ fn create_raw_and_rendered_file(
     }
 
     Ok(output_text_filepath)
+}
+
+/// Puts a note's rendered file into the parser's directory in
+/// [`crate::render::RenderConfig::copy_notes_to`], if it has one, as a hard link to it rather than
+/// a copy, so that each later render writes the PDF there as it writes it here. It is linked beside
+/// its destination and renamed into place, replacing what an editor wrote there. On another
+/// filesystem, where it can't be linked, it is copied. Never fails the render.
+fn copy_rendered_note(parser: &dyn Parseable, note_id: NoteId, rendered: &Path) {
+    let config = crate::render::config();
+    let Some(dir) = config.copy_notes_to.get(parser.get_parser_name()) else {
+        return;
+    };
+    if let Err(e) = link_into(rendered, dir) {
+        warn!(
+            "[Note Id: {}] Failed to put {} into {}: {e}",
+            note_id.letters(),
+            rendered.display(),
+            dir.display()
+        );
+    }
+}
+
+fn link_into(file: &Path, dir: &Path) -> std::io::Result<()> {
+    let name = file
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("no file name"))?;
+    let destination = dir.join(name);
+    if is_same_file(file, &destination) {
+        return Ok(());
+    }
+    let tmp = dir.join(format!(".{}.spares-tmp", name.to_string_lossy()));
+    let _ = remove_file(&tmp);
+    let result = create_dir_all(dir)
+        .and_then(|()| {
+            std::fs::hard_link(file, &tmp).or_else(|_| std::fs::copy(file, &tmp).map(|_| ()))
+        })
+        .and_then(|()| rename(&tmp, &destination));
+    if result.is_err() {
+        let _ = remove_file(&tmp);
+    }
+    result
+}
+
+/// Whether `a` and `b` are links to one file.
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (a, b);
+        false
+    }
 }
 
 /// Adds the audio clips `file_contents` links to the dependencies of its rendered file, since
@@ -761,6 +822,7 @@ fn create_web_render_file(
 mod tests {
     use std::fs::metadata;
     use std::fs::read_to_string;
+    use std::fs::remove_file;
     use std::fs::write;
     use std::path::Path;
 
@@ -772,6 +834,7 @@ mod tests {
     use super::create_web_render_file;
     use super::generates_render_files;
     use super::image_occlusion_sources_hash;
+    use super::link_into;
     use super::render_key;
     use crate::config::SparesExternalConfig;
     use crate::parsers::CustomData;
@@ -986,6 +1049,30 @@ mod tests {
             first.lines().count(),
             "only the key changes"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn link_into_puts_the_rendered_file_there_whole() {
+        let dir = std::env::temp_dir().join(format!("spares-link-into-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rendered = dir.join("abc.pdf");
+        let out = dir.join("out/typst");
+        write(&rendered, "new").unwrap();
+        link_into(&rendered, &out).unwrap();
+        assert_eq!(read_to_string(out.join("abc.pdf")).unwrap(), "new");
+        // A render writing the file in place writes it there too.
+        write(&rendered, "newer").unwrap();
+        assert_eq!(read_to_string(out.join("abc.pdf")).unwrap(), "newer");
+        link_into(&rendered, &out).unwrap();
+        // One replacing it is linked again, over what an editor wrote.
+        remove_file(&rendered).unwrap();
+        write(&rendered, "newest").unwrap();
+        write(out.join("abc.pdf"), "editor's").unwrap();
+        link_into(&rendered, &out).unwrap();
+        assert_eq!(read_to_string(out.join("abc.pdf")).unwrap(), "newest");
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
