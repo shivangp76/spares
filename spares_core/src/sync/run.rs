@@ -9,8 +9,7 @@
 //!
 //! 1. Pull. Then, in one transaction: merge, move the cursor (`sync_usn`) to the pull, make the
 //!    pulled version the base of each merged row still dirty (it is now the common ancestor), and
-//!    mark the dirty rows and graves as being pushed (`usn = -2`, never sent anywhere). Read them,
-//!    and record the newest event as synced, so what is done during the push can still be undone.
+//!    mark the dirty rows and graves as being pushed (`usn = -2`, never sent anywhere). Read them.
 //! 2. Push. Writes go on meanwhile. Changing a row being pushed fires its trigger as for a synced
 //!    row (`OLD.usn != -1`), so it is dirty (`-1`) again.
 //! 3. In a second transaction: stamp the rows still at `-2` with the push's usn and drop their
@@ -55,7 +54,6 @@ use super::devices::DEVICE_REPLICAS;
 use super::full;
 use super::get_state;
 use super::get_state_i64;
-use super::guard_undo;
 use super::protocol::FullUploadResponse;
 use super::protocol::IdCounterRecord;
 use super::protocol::MetaResponse;
@@ -64,6 +62,7 @@ use super::protocol::PullResponse;
 use super::protocol::PushRequest;
 use super::protocol::PushResponse;
 use super::protocol::RenderAssets;
+use super::prune_received;
 use super::read_counts;
 use super::records::Changes;
 use super::records::Selection;
@@ -348,8 +347,7 @@ async fn normal_sync(
         };
         let id_counters = read_id_counters(&mut tx, replica).await?;
         let counts = read_counts(&mut tx).await?;
-        // Here, so what is done during the push can still be undone
-        guard_undo(&mut tx).await?;
+        prune_received(&mut tx).await?;
         set_applying(&mut tx, false).await?;
         tx.commit().await.map_err(sqlx_error)?;
         report.add_pulled(pulled.changes.len(), outcome);
@@ -676,7 +674,7 @@ async fn full_upload(
     set_state(&mut conn, SYNC_EPOCH_KEY, &response.epoch).await?;
     set_state(&mut conn, LAST_SYNC_AT_KEY, Utc::now().timestamp()).await?;
     remove_state(&mut conn, NEEDS_FULL_SYNC_KEY).await?;
-    guard_undo(&mut conn).await?;
+    prune_received(&mut conn).await?;
     let counts = read_counts(&mut conn).await?;
     Ok(SyncReport {
         mode: Some(SyncMode::FullUpload),

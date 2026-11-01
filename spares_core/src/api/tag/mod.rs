@@ -219,7 +219,8 @@ pub(crate) async fn review_ids_with_tag(db: &SqlitePool, tag_id: TagId) -> Resul
         .map_err(|e| Error::Sqlx { source: e })
 }
 
-/// Gives `review_log_ids` back the tag `tag_id`, which deleting it cleared, if the tag exists
+/// Gives `review_log_ids` back the tag `tag_id`, which deleting it cleared, if the tag exists, to
+/// be sent at the next sync, as with a card's reviews (see `restore_card_links`)
 pub(crate) async fn restore_review_tags(
     db: &SqlitePool,
     tag_id: TagId,
@@ -227,7 +228,7 @@ pub(crate) async fn restore_review_tags(
 ) -> Result<(), Error> {
     execute_batched_query(db, review_log_ids, MAX_ROWS_IN_QUERY, async |db, chunk| {
         let query_str = format!(
-            "UPDATE review_log SET tag_id = ?1 WHERE id IN ({}) AND tag_id IS NULL
+            "UPDATE review_log SET tag_id = ?1, usn = -1 WHERE id IN ({}) AND tag_id IS NULL
             AND EXISTS (SELECT 1 FROM tag WHERE id = ?1)",
             (0..chunk.len())
                 .map(|i| format!("?{}", i + 2))

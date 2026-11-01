@@ -24,7 +24,7 @@
 //! | Note tags, non-embedded keywords, card tags | Set merge: additions and removals from either side applied. |
 //! | Note and card `custom_data` | Key by key. A key both sides changed: local for notes, the newer change for cards. |
 //! | Note `parser_id`, `created_at` | Three-way; local wins a conflict. |
-//! | review_log | Union. A log keeps its card and tag where either side still has them. |
+//! | review_log | Union. A log keeps its card and tag where either side still has them. One an undo took back on either side (its grave) is deleted on both. |
 //! | Card scheduling (`due`, `stability`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs. |
 //! | Card `special_state`, `desired_retention` | Three-way; the newer change wins a conflict. |
 //! | Card `order`, `back_type`, `note_id` | Follow the note text ([`reconcile_cards`]). |
@@ -193,7 +193,18 @@ pub async fn merge_pulled(
         merger.merge_card(record).await?;
     }
     for record in &pulled.review_logs {
-        upsert_review_log(merger.conn, record, usn).await?;
+        // One an undo here took back stays gone, and its grave is pushed
+        if !has_grave(merger.conn, SyncKind::ReviewLog, record.id).await? {
+            upsert_review_log(merger.conn, record, usn).await?;
+        }
+    }
+    // One an undo there took back, before the cards' memory states are replayed from their logs
+    for grave in pulled
+        .graves
+        .iter()
+        .filter(|g| g.kind == SyncKind::ReviewLog)
+    {
+        delete_row(merger.conn, grave.kind, grave.oid).await?;
     }
     merger.replay_cards().await?;
     for grave in pulled.graves.iter().filter(|g| g.kind == SyncKind::Card) {

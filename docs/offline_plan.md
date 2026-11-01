@@ -18,7 +18,6 @@ Delete this file once the items below are done.
 ## Smaller
 
 - **Other tabs:** they say "Open in another tab". They could send their requests to the tab that has the copy, over a `BroadcastChannel`.
-- **Undo past a sync:** undo stops at the last sync, which is why a device doesn't sync after each action.
 
 ## Found in the iOS Simulator, not fixed yet
 

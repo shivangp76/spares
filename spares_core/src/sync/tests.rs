@@ -1005,37 +1005,174 @@ async fn a_schema_mismatch_is_refused() {
     );
 }
 
+async fn undo(pool: &SqlitePool) -> Result<(), Error> {
+    crate::api::undo::undo_event(
+        pool,
+        crate::schema::undo::UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .map(|undone| assert!(undone.is_some(), "nothing to undo"))
+}
+
+async fn redo(pool: &SqlitePool) -> Result<(), Error> {
+    crate::api::undo::redo_event(
+        pool,
+        crate::schema::undo::RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .map(|redone| assert!(redone.is_some(), "nothing to redo"))
+}
+
+async fn review_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
-async fn undo_stops_at_the_last_sync() {
-    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
-    edit(&replicas.laptop, ids[0], "A {{ one }} before").await;
+async fn an_edit_can_be_undone_after_a_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} edited").await;
     replicas.sync().await;
-    let undo = || {
-        crate::api::undo::undo_event(
-            &replicas.laptop,
-            crate::schema::undo::UndoEventRequest {
-                event_id: None,
-                undo_group: false,
-            },
-        )
-    };
-    let err = undo().await.unwrap_err();
+    // The server changing another note doesn't stop it
+    on_server(edit(&replicas.server, ids[1], "B {{ two }} there")).await;
+    replicas.sync().await;
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
+    );
+    replicas.assert_converged().await;
+    redo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }} edited"
+    );
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn the_server_can_undo_its_own_edit_after_a_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    on_server(rate(&replicas.server, card, 3, Utc::now())).await;
+    on_server(edit(&replicas.server, ids[0], "A {{ one }} there")).await;
+    // The pull stamps both with its usn, which isn't a change from the laptop
+    replicas.sync().await;
+    on_server(undo(&replicas.server)).await.unwrap();
+    on_server(undo(&replicas.server)).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
+    );
+    assert_eq!(review_count(&replicas.laptop).await, 0);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn undo_stops_at_a_sync_that_changed_the_same_note() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}\n\nLine two\n"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} here\n\nLine two\n").await;
+    replicas.sync().await;
+    on_server(edit(
+        &replicas.server,
+        ids[0],
+        "A {{ one }} here\n\nLine two there\n",
+    ))
+    .await;
+    replicas.sync().await;
+    let err = undo(&replicas.laptop).await.unwrap_err();
     assert!(
         err.to_string().contains(&format!(
-            "\"Edit note {}\" was before the last sync, so it can no longer be undone",
+            "\"Edit note {}\" can no longer be undone, since a sync has changed the same notes or \
+             cards since",
             ids[0].letters()
         )),
         "{err}"
     );
-    // A change made after the sync can be undone.
-    edit(&replicas.laptop, ids[0], "A {{ one }} after").await;
-    undo().await.unwrap().unwrap();
-    assert!(
-        data(&replicas.laptop, ids[0])
-            .await
-            .unwrap()
-            .ends_with("before")
+    // A change made after that sync can be undone.
+    edit(
+        &replicas.laptop,
+        ids[0],
+        "A {{ one }} after\n\nLine two there\n",
+    )
+    .await;
+    undo(&replicas.laptop).await.unwrap();
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        "A {{[o:1] one }} here\n\nLine two there\n"
     );
+}
+
+#[tokio::test]
+async fn undoing_a_synced_review_deletes_it_everywhere() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    rate(&replicas.laptop, card, 3, Utc::now()).await;
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 1);
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 0);
+    let state: i64 = sqlx::query_scalar("SELECT state FROM card WHERE id = ?")
+        .bind(card)
+        .fetch_one(&replicas.server)
+        .await
+        .unwrap();
+    assert_eq!(state, 0, "the card is new again");
+    replicas.assert_converged().await;
+    // And redone: the review comes back under its id
+    redo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 1);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn a_review_undone_on_the_server_goes_on_the_laptop() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    on_server(rate(&replicas.server, card, 3, Utc::now())).await;
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.laptop).await, 1);
+    on_server(undo(&replicas.server)).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.laptop).await, 0);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn a_synced_delete_undone_brings_the_note_back_with_its_reviews() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    rate(&replicas.laptop, card, 3, Utc::now()).await;
+    replicas.sync().await;
+    delete(&replicas.laptop, ids[0]).await;
+    replicas.sync().await;
+    assert_eq!(data(&replicas.server, ids[0]).await, None);
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
+    );
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+        .bind(card)
+        .fetch_one(&replicas.server)
+        .await
+        .unwrap();
+    assert_eq!(linked, 1, "the review has its card again");
+    replicas.assert_converged().await;
 }
 
 #[tokio::test]
