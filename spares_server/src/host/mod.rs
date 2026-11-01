@@ -294,6 +294,32 @@ impl Host {
         }
     }
 
+    /// Removes what renders of the open collections left in their scratch directories over an
+    /// hour ago (see `spares_core::render`).
+    pub async fn clean_render_scratch(&self) {
+        let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        for collection in self.open_collections().await {
+            let tmp = collection.paths.render.join("tmp");
+            let Ok(entries) = std::fs::read_dir(&tmp) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let old = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|modified| modified < hour_ago);
+                if old {
+                    let path = entry.path();
+                    let _ = if path.is_dir() {
+                        std::fs::remove_dir_all(&path)
+                    } else {
+                        std::fs::remove_file(&path)
+                    };
+                }
+            }
+        }
+    }
+
     /// Closes every collection, e.g. when the host stops.
     pub async fn close_all(&self) {
         let all: Vec<OpenCollection> = self.open.lock().await.drain().map(|(_, o)| o).collect();

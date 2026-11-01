@@ -446,9 +446,10 @@ impl Parseable for TypstParser {
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
     ) -> Result<std::process::Output, Error> {
-        // The collection's directory (its notes, templates and media) and what the host lets
-        // renders read, and nothing else of the host's.
-        let typst_root_dir = crate::render::common_ancestor(&crate::render::readable_dirs());
+        // Notes import and include files by their absolute paths, which Typst resolves in its
+        // root, so the root is `/`. What a render may read is the sandbox's to limit (see
+        // `crate::render`).
+        let typst_root_dir = Path::new("/");
         let to_absolute = |path: &Path| {
             std::path::absolute(path).map_err(|e| Error::Io {
                 description: format!("Failed to make {} absolute", path.display()),
