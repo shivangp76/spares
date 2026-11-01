@@ -38,7 +38,8 @@
 //! In the web app, clicking an audio link inside the card also plays it. If the browser blocks
 //! autoplay before the page has been used, a Play button appears instead. Clips are fetched from
 //! the server's render assets: rendering a note records its clips, and `spares sync cloud` sends
-//! them, like the other files notes read. Clips are downloaded with the cards for offline review.
+//! them, like the other files notes read. A device that keeps a copy of the collection downloads
+//! them with its other files.
 //! `spares card review` plays clips with
 //! [`audio_player`](crate::config::SparesExternalConfig::audio_player).
 //!

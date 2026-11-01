@@ -103,14 +103,12 @@ use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
 use crate::handlers::review::get_review_config_handler;
 use crate::handlers::review::get_review_history_handler;
-use crate::handlers::review::get_review_queue_handler;
 use crate::handlers::review::get_statistics_graphs_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::get_steps_stats_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::queue_positions_handler;
 use crate::handlers::review::submit_study_action_handler;
-use crate::handlers::review::sync_offline_actions_handler;
 use crate::handlers::saved_search::delete_saved_search_handler;
 use crate::handlers::saved_search::get_saved_search_handler;
 use crate::handlers::saved_search::list_saved_searches_handler;
@@ -328,13 +326,6 @@ fn review_routes() -> Router<Arc<AppState>> {
         .route("/api/review/config", get(get_review_config_handler))
 }
 
-/// Offline review on web clients
-fn offline_review_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/api/review/queue", post(get_review_queue_handler))
-        .route("/api/review/sync", post(sync_offline_actions_handler))
-}
-
 /// The routes that only need the database (and the files of `spares_core::platform`: config,
 /// parser templates, images, audio and image occlusions): what a browser can answer from its own
 /// copy.
@@ -436,7 +427,6 @@ fn shared_routes() -> Router<Arc<AppState>> {
             "/api/render-assets/sources",
             get(list_render_sources_handler),
         )
-        .merge(offline_review_routes())
         // A client's sync status and conflicts are its own.
         .route("/api/sync/status", get(sync_status_handler))
         .route("/api/sync/conflicts", get(list_sync_conflicts_handler))

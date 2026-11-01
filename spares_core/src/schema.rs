@@ -1089,45 +1089,6 @@ pub mod review {
         pub event_id: Option<i64>,
     }
 
-    /// The cards a review would show next, for a web client to review offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueRequest {
-        pub filter: Option<GetReviewCardFilterRequest>,
-        /// The most cards to return.
-        pub limit: u32,
-        /// Also include cards that become due on the next `days_ahead` days, so a client that
-        /// stays offline past midnight still has cards. New cards are only included up to today's
-        /// remaining limit.
-        #[serde(default)]
-        pub days_ahead: u32,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueResponse {
-        /// In the order a review would show them.
-        pub cards: Vec<ReviewQueueCard>,
-        /// New cards that can still be studied today, before any of `cards` are.
-        pub new_cards_left_today: u32,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueCard {
-        /// When the card becomes due, so a client knows which cards to show on which day.
-        pub due: DateTime<Utc>,
-        /// The earliest a client may show the card, for a learning or relearning card held back
-        /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit):
-        /// its `due` minus the limit. `None` for other cards, and for every card of a filtered
-        /// tag, which holds nothing back.
-        ///
-        /// For example, with the default limit of 20 minutes, a card rated at 12:00 onto a 1
-        /// hour step is due at 13:00 and has `shown_from` 12:40. Offline review shows it once
-        /// nothing else is left and it is 12:40, as online review does, rather than at once.
-        pub shown_from: Option<DateTime<Utc>>,
-        /// `cards_left_by_state` and `time_estimate` are for the whole queue as it was fetched.
-        #[serde(flatten)]
-        pub card: GetReviewCardResponse,
-    }
-
     /// Where the cards matching `match_query` are in the queue of the review with `filter` (see
     /// [`queue_positions`](crate::api::queue_position::queue_positions)).
     #[derive(Debug, Default, Deserialize, Serialize)]
@@ -1223,54 +1184,6 @@ pub mod review {
         ReviewLimit {
             preset: Option<String>,
         },
-    }
-
-    /// Study actions a client performed while offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct SyncOfflineActionsRequest {
-        pub scheduler_name: String,
-        pub actions: Vec<OfflineStudyAction>,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct OfflineStudyAction {
-        /// Chosen by the client, unique per action. An action that was already received is not
-        /// applied again, so a client can resend a batch whose response it did not get.
-        pub client_id: String,
-        /// When the action was performed. A time after the server's clock is taken as the
-        /// server's current time.
-        pub performed_at: DateTime<Utc>,
-        pub action: OfflineStudyActionKind,
-    }
-
-    /// The [`StudyAction`]s that can be performed offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub enum OfflineStudyActionKind {
-        Rate(RatingSubmission),
-        Bury { card_id: CardId },
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct SyncOfflineActionsResponse {
-        /// One per action, in the order they were submitted.
-        pub results: Vec<OfflineActionResult>,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct OfflineActionResult {
-        pub client_id: String,
-        pub outcome: OfflineActionOutcome,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub enum OfflineActionOutcome {
-        /// `event_id` is the event to undo it with, if it can be undone.
-        Applied { event_id: Option<i64> },
-        /// It was received before.
-        Duplicate,
-        /// It cannot be applied, e.g. because the card was deleted or is suspended. It will not
-        /// be applied if resent.
-        Rejected { message: String },
     }
 
     #[derive(Debug, Deserialize, Serialize)]

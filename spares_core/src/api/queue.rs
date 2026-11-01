@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Datelike;
-use chrono::Duration;
 use chrono::Local;
 use chrono::Utc;
 use indoc::formatdoc;
@@ -475,13 +474,10 @@ pub(crate) struct OrderedQueue {
     pub(crate) rows: Vec<QueueRow>,
     /// The cards left out because a limit was used up by the cards before them, in order.
     pub(crate) skipped: Vec<(CardId, UsedUpLimit)>,
-    /// What [`get_cards_left_by_state_and_time_estimate`] counts for the review.
-    pub(crate) cards_left_by_state: HashMap<StateId, u32>,
-    pub(crate) time_estimate: Duration,
 }
 
 /// The cards matching `filter` and due by `due_limit`, in the order review shows them as of
-/// `requested_date`, at most `limit` of them.
+/// `requested_date`.
 ///
 /// New and review cards are kept while what is left of today's limits, and of their
 /// [preset](QueuePreset)'s, lets them through, in turn: with 5 new cards left today, the first 5
@@ -495,10 +491,8 @@ pub(crate) async fn ordered_queue(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
     due_limit: DateTime<Utc>,
-    limit: Option<usize>,
 ) -> Result<OrderedQueue, Error> {
-    let (cards_left_by_state, time_estimate) =
-        get_cards_left_by_state_and_time_estimate(db, filter).await?;
+    let (cards_left_by_state, _) = get_cards_left_by_state_and_time_estimate(db, filter).await?;
     // Ordered like `get_review_card`. There is no `LIMIT` since cards beyond today's limits are
     // skipped below.
     let order_by = queue_order_by(
@@ -533,9 +527,6 @@ pub(crate) async fn ordered_queue(
     let mut rows = Vec::new();
     let mut skipped = Vec::new();
     for row in all_rows {
-        if limit.is_some_and(|limit| rows.len() >= limit) {
-            break;
-        }
         // Filtered tags have no limits, and learning cards are never held back
         let state = row.card.card_state;
         let preset = preset_index(row.preset);
@@ -569,12 +560,7 @@ pub(crate) async fn ordered_queue(
         }
         rows.push(row);
     }
-    Ok(OrderedQueue {
-        rows,
-        skipped,
-        cards_left_by_state,
-        time_estimate,
-    })
+    Ok(OrderedQueue { rows, skipped })
 }
 
 #[cfg(test)]
@@ -1264,13 +1250,11 @@ mod learn_ahead_tests {
     use super::tests::create_cards;
     use super::tests::set_card;
     use super::*;
-    use crate::api::offline_review::get_review_queue;
     use crate::api::review::get_review_card;
     use crate::api::review::next_review_card_available_at;
     use crate::parsers::get_all_parsers;
     use crate::schema::review::GetReviewCardFilterRequest;
     use crate::schema::review::GetReviewCardRequest;
-    use crate::schema::review::ReviewQueueRequest;
 
     /// The default learn ahead limit
     const LIMIT: Duration = Duration::minutes(20);
@@ -1340,38 +1324,6 @@ mod learn_ahead_tests {
         assert_eq!(next_card(&pool, now).await, None);
         assert_eq!(available_at(&pool, now).await, Some(due - LIMIT));
         assert_eq!(next_card(&pool, due - LIMIT).await, Some(card));
-
-        // The offline queue has it anyway, with when the limit lets its client show it
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 10,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(queue.cards.len(), 1);
-        assert_eq!(queue.cards[0].shown_from, Some(due - LIMIT));
-
-        // A review card is never held back
-        set_card(&pool, card, REVIEW, now - Duration::days(1), 1.0, 5.0).await;
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 10,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(queue.cards[0].shown_from, None);
 
         // Due tomorrow: done for today
         set_card(&pool, card, LEARNING, now + Duration::days(1), 1.0, 5.0).await;
