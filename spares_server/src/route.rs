@@ -6,7 +6,6 @@ use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-#[cfg(not(target_family = "wasm"))]
 use axum::middleware;
 use axum::routing::delete;
 use axum::routing::get;
@@ -18,6 +17,7 @@ use tower_http::services::ServeDir;
 #[cfg(not(target_family = "wasm"))]
 use tower_http::services::ServeFile;
 
+#[cfg(not(target_family = "wasm"))]
 use crate::AppState;
 use crate::handlers::audio::AUDIO_BODY_LIMIT;
 use crate::handlers::audio::create_audio_handler;
@@ -173,7 +173,7 @@ use crate::handlers::undo::undo_event_handler;
 
 /// Files on the server that a browser's copy doesn't have
 #[cfg(not(target_family = "wasm"))]
-fn media_routes() -> Router<Arc<AppState>> {
+fn media_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         // Images dragged from a web page, which the server downloads
         .route("/api/images/url", post(create_image_from_url_handler))
@@ -184,7 +184,7 @@ fn media_routes() -> Router<Arc<AppState>> {
 /// Images and audio added to notes, and image occlusions. A browser's copy stores the files it
 /// adds through `spares_core::platform`, and uploads them before the push whose notes name them
 /// (see `spares_core::sync::media`).
-fn shared_media_routes() -> Router<Arc<AppState>> {
+fn shared_media_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         // Images pasted or dropped into a note
         .route(
@@ -222,7 +222,7 @@ fn shared_media_routes() -> Router<Arc<AppState>> {
 /// Notes repository (`spares vcs init`, its push hooks, and the web UI's notice of saved
 /// copies)
 #[cfg(not(target_family = "wasm"))]
-fn notes_vcs_routes() -> Router<Arc<AppState>> {
+fn notes_vcs_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/api/notes/vcs/status", get(notes_vcs_status_handler))
         .route("/api/notes/vcs/receive", post(notes_vcs_receive_handler))
@@ -254,7 +254,7 @@ fn notes_vcs_routes() -> Router<Arc<AppState>> {
 /// Two-way sync (`spares_core::sync`), the server's side and a client server's own sync. A browser
 /// syncs its copy through `spares_wasm` instead.
 #[cfg(not(target_family = "wasm"))]
-fn sync_routes() -> Router<Arc<AppState>> {
+fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/api/sync/meta", get(sync_meta_handler))
         .route("/api/sync/pull", post(sync_pull_handler))
@@ -287,7 +287,7 @@ fn sync_routes() -> Router<Arc<AppState>> {
 /// The routes that need the server's files, processes or role: the rest of the API besides
 /// [`shared_routes`].
 #[cfg(not(target_family = "wasm"))]
-fn native_routes() -> Router<Arc<AppState>> {
+fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route(
             "/api/notes/generate_files",
@@ -309,7 +309,7 @@ fn native_routes() -> Router<Arc<AppState>> {
 }
 
 /// Review
-fn review_routes() -> Router<Arc<AppState>> {
+fn review_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/api/review", post(get_review_card_handler))
         .route(
@@ -338,7 +338,7 @@ fn review_routes() -> Router<Arc<AppState>> {
 /// parser templates, images, audio and image occlusions): what a browser can answer from its own
 /// copy.
 #[allow(clippy::too_many_lines, reason = "one line per route")]
-fn shared_routes() -> Router<Arc<AppState>> {
+fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         // Parser
         .route("/api/parsers", post(create_parser_handler))
@@ -444,21 +444,17 @@ fn shared_routes() -> Router<Arc<AppState>> {
         )
 }
 
-/// The server's router: every route, rendered files at `/files`, and the web app from
-/// `frontend_dir`.
+/// The host's router: every route, the request's collection's rendered files at `/files`, and the
+/// web app from `frontend_dir`.
 #[cfg(not(target_family = "wasm"))]
-pub fn create_router(
-    app_state: Arc<AppState>,
-    files_dir: PathBuf,
-    frontend_dir: Option<PathBuf>,
-) -> Router {
+pub fn create_router(app_state: Arc<AppState>, frontend_dir: Option<PathBuf>) -> Router {
     crate::version::init();
     let served_frontend = frontend_dir.clone();
     let protected = shared_routes()
         .merge(native_routes())
         .layer(middleware::map_response(not_stored))
         // Rendered notes and cards
-        .nest_service("/files", ServeDir::new(files_dir))
+        .nest_service("/files", tower::service_fn(serve_collection_file))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
@@ -492,6 +488,27 @@ pub fn create_router(
     router
 }
 
+/// A file in the files directory of the request's collection (see `spares_core::collection`).
+/// `ServeDir` refuses `..` and absolute paths, so another collection's files are out of reach.
+#[cfg(not(target_family = "wasm"))]
+async fn serve_collection_file(
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, std::convert::Infallible> {
+    use axum::response::IntoResponse;
+    use tower::ServiceExt;
+    let Some(collection) = request
+        .extensions()
+        .get::<Arc<spares_core::collection::Collection>>()
+        .cloned()
+    else {
+        return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    };
+    let response = ServeDir::new(&collection.paths.files)
+        .oneshot(request)
+        .await?;
+    Ok(response.into_response())
+}
+
 /// `Cache-Control: no-store` for an API response that doesn't say otherwise. Without it, Firefox
 /// keeps responses such as `GET /api/sync/meta` and answers later requests with them, so a
 /// browser's copy would sync against the server as it was.
@@ -513,8 +530,8 @@ async fn not_stored(mut response: axum::response::Response) -> axum::response::R
 /// changes the server's database behind the copy's back. Of those, rendering, live notes and
 /// optimizing a scheduler (which writes `config.toml` and reschedules the server's cards) stay on
 /// the server.
-pub fn create_local_router(app_state: Arc<AppState>) -> Router {
-    Router::new()
+pub fn create_local_router(collection: Arc<spares_core::collection::Collection>) -> Router {
+    Router::<()>::new()
         .route("/api/healthcheck", get(health_check_handler))
         .merge(shared_routes())
         .route("/api/images/url", post(needs_server))
@@ -527,7 +544,23 @@ pub fn create_local_router(app_state: Arc<AppState>) -> Router {
         // Also when a route has the path for another method: `POST /api/notes/live` matches
         // `GET /api/notes/{id}`.
         .method_not_allowed_fallback(not_on_device)
-        .with_state(app_state)
+        .layer(middleware::from_fn(in_collection))
+        .layer(axum::Extension(collection))
+}
+
+/// Runs the request in the collection the router's `Extension` gives it.
+async fn in_collection(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let collection = request
+        .extensions()
+        .get::<Arc<spares_core::collection::Collection>>()
+        .cloned();
+    match collection {
+        Some(collection) => collection.scope(next.run(request)).await,
+        None => next.run(request).await,
+    }
 }
 
 /// `503 {"needs_server": true}`: a request for the server's files or devices, which a browser's
@@ -597,10 +630,13 @@ mod tests {
     /// files and devices to the server, and refuses the rest.
     #[sqlx::test(migrations = "../spares_core/migrations")]
     async fn the_local_router_answers_what_it_can(pool: SqlitePool) {
-        let router = create_local_router(Arc::new(AppState {
-            db: pool,
-            api_key: Some("unused".to_string()),
-        }));
+        let root = std::env::temp_dir().join(format!("spares-local-router-{}", std::process::id()));
+        let collection = Arc::new(spares_core::collection::Collection::new(
+            "device",
+            pool,
+            spares_core::collection::CollectionPaths::in_dir(&root),
+        ));
+        let router = create_local_router(collection);
         // No API key: requests never leave the browser.
         let (status, parsers) = call(&router, "GET", "/api/parsers").await;
         assert_eq!(status, StatusCode::OK, "{parsers}");
@@ -670,16 +706,119 @@ mod tests {
         }
     }
 
-    /// Browsers don't keep API responses, which would answer later requests with old data.
+    /// A card's image occlusion without masks is revalidated by its hash, and found only by its
+    /// note and card.
     #[sqlx::test(migrations = "../spares_core/migrations")]
-    async fn api_responses_are_not_stored(pool: SqlitePool) {
-        let files = std::env::temp_dir();
+    async fn unmasked_image_occlusions_are_revalidated(pool: SqlitePool) {
+        use axum::http::header::ETAG;
+        use axum::http::header::IF_NONE_MATCH;
+
+        let root = std::env::temp_dir().join(format!("spares-unmask-route-{}", std::process::id()));
+        let collection = Arc::new(spares_core::collection::Collection::new(
+            "device",
+            pool,
+            spares_core::collection::CollectionPaths::in_dir(&root),
+        ));
+        collection.set_replica(Some(spares_core::config::Replica::ROOT));
+        let router = create_local_router(collection.clone());
+        let (status, parser) = call_json(
+            &router,
+            "POST",
+            "/api/parsers",
+            serde_json::json!({ "name": "markdown" }),
+        )
+        .await;
+        let parser_id = parser["id"]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{status} {parser}"));
+        // A transparent 1×1 PNG
+        let image: Vec<u8> = [
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489",
+            "0000000d49444154789c63000100000500010d0a2db40000000049454e44ae426082",
+        ]
+        .concat()
+        .as_bytes()
+        .chunks(2)
+        .map(|hex| u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
+        .collect();
+        let clozes = r#"<svg width="1" height="1" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title><rect x="0" y="0" width="1" height="1"/><rect x="0" y="0" width="1" height="1"/></g></svg>"#;
+        let db = collection.db.clone();
+        let snippet = collection
+            .scope(spares_core::api::image_occlusion::create_image_occlusion(
+                &db,
+                parser_id,
+                &image,
+                "route.png",
+                clozes,
+                &spares_core::parsers::get_all_parsers(),
+            ))
+            .await
+            .unwrap()
+            .snippet;
+        let (status, created) = call_json(
+            &router,
+            "POST",
+            "/api/notes",
+            serde_json::json!({
+                "parser_id": parser_id,
+                "requests": [{ "data": snippet, "keywords": [], "tags": [], "is_suspended": false, "custom_data": {} }],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let note_id = created["notes"][0]["id"].as_i64().unwrap();
+        let uri = |order: usize, part: &str| {
+            format!(
+                "/api/review/unmasked-image-occlusion?note_id={note_id}&card_order=1&order={order}&part={part}"
+            )
+        };
+        let get = |uri: String, etag: Option<String>| {
+            let router = router.clone();
+            async move {
+                let mut request = Request::builder().uri(uri);
+                if let Some(etag) = etag {
+                    request = request.header(IF_NONE_MATCH, etag);
+                }
+                let response = router
+                    .oneshot(request.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let headers = response.headers().clone();
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                (status, headers, body)
+            }
+        };
+
+        let (status, headers, body) = get(uri(1, "image"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), image.as_slice());
+        assert_eq!(headers[axum::http::header::CONTENT_TYPE], "image/png");
+        assert_eq!(
+            headers[axum::http::header::CACHE_CONTROL],
+            "private, no-cache"
+        );
+        let etag = headers[ETAG].to_str().unwrap().to_string();
+        let (status, _, body) = get(uri(1, "image"), Some(etag)).await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED);
+        assert!(body.is_empty());
+        let (status, _, _) = get(uri(1, "image"), Some("\"other\"".to_string())).await;
+        assert_eq!(status, StatusCode::OK);
+        // No markup
+        assert_eq!(get(uri(1, "markup"), None).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(get(uri(2, "image"), None).await.0, StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Browsers don't keep API responses, which would answer later requests with old data.
+    #[tokio::test]
+    async fn api_responses_are_not_stored() {
+        let (host, _root) = crate::host::tests::test_host().await;
         let router = create_router(
             Arc::new(AppState {
-                db: pool,
+                host,
                 api_key: None,
             }),
-            files,
             None,
         );
         let request = Request::builder()

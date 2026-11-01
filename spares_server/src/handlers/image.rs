@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
@@ -11,7 +9,7 @@ use spares_core::api::image::create_image;
 use spares_core::api::image::create_image_from_url;
 use spares_core::parsers::get_all_parsers;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 /// Pasted screenshots and dropped photos can be large. Room is left for the multipart framing.
@@ -23,7 +21,7 @@ fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 /// Multipart fields: `parser_id` and `image` (with a file name).
 pub(crate) async fn create_image_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let mut parser_id: Option<i64> = None;
@@ -79,7 +77,7 @@ pub(crate) struct CreateImageFromUrlRequest {
 
 /// For images dragged from a web page, which browsers hand over by URL only.
 pub(crate) async fn create_image_from_url_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<CreateImageFromUrlRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = create_image_from_url(&data.db, body.parser_id, &body.url, &get_all_parsers())

@@ -20,13 +20,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rsqlite_vfs::VfsFilesManager;
+use spares_core::collection::Collection;
 use spares_core::config::Replica;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_files_dir;
 use spares_core::config::set_device_replica;
 use spares_core::platform::MediaDirs;
 use spares_core::sync::devices::DeviceConfig;
-use spares_server::AppState;
 use spares_server::route::create_local_router;
 use sqlite_wasm_vfs::sahpool::OpfsSAHPoolCfgBuilder;
 use sqlite_wasm_vfs::sahpool::OpfsSAHPoolUtil;
@@ -132,15 +132,19 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
         .run(&db)
         .await
         .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;
+    // The device's one collection, current everywhere in the worker
+    let collection = Arc::new(Collection::new(
+        "device",
+        db.clone(),
+        spares_core::collection::device_paths(),
+    ));
+    spares_core::collection::set_default(Some(Arc::clone(&collection)));
     set_device_replica(load_replica(&device).await?);
     load_config(&device).await?;
     load_media_dirs(&device).await?;
     load_web_renders(&device).await?;
     crate::media::load(&device).await?;
-    let router = create_local_router(Arc::new(AppState {
-        db: db.clone(),
-        api_key: None,
-    }));
+    let router = create_local_router(collection);
     let opened = Opened {
         vfs,
         db,
@@ -322,6 +326,7 @@ pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     opened.device.close().await;
     OPENED.with(|o| *o.borrow_mut() = None);
     set_device_replica(None);
+    spares_core::collection::set_default(None);
     spares_core::platform::clear();
     spares_core::platform::set_media_dirs(None);
     spares_core::platform::load_web_renders(BTreeSet::new());

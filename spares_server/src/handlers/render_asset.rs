@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Query;
 use axum::http::HeaderMap;
@@ -12,7 +10,7 @@ use spares_core::api::browser_render::get_render_asset;
 use spares_core::api::browser_render::list_render_packages;
 use spares_core::api::browser_render::list_render_sources;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 #[derive(Deserialize)]
@@ -23,7 +21,7 @@ pub(crate) struct RenderAssetQuery {
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) async fn get_render_asset_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Query(RenderAssetQuery { path }): Query<RenderAssetQuery>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -56,7 +54,7 @@ pub(crate) async fn get_render_asset_handler(
 }
 
 pub(crate) async fn list_render_packages_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let packages = list_render_packages(&data.db)
         .await
@@ -65,7 +63,7 @@ pub(crate) async fn list_render_packages_handler(
 }
 
 pub(crate) async fn list_render_sources_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let paths = list_render_sources(&data.db)
         .await

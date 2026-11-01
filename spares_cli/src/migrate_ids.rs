@@ -10,7 +10,6 @@ use std::time::Duration;
 use chrono::Local;
 use miette::Error;
 use miette::miette;
-use spares_core::config::REPLICA_ENV;
 use spares_core::config::get_data_dir;
 use spares_core::ids::migrate::IdMapping;
 use spares_core::ids::migrate::MigrationPlan;
@@ -37,12 +36,13 @@ pub(crate) async fn migrate_ids(
     socket_address: &str,
     dry_run: bool,
 ) -> Result<(), Error> {
-    if let Ok(replica) = std::env::var(REPLICA_ENV)
-        && replica.trim() != "0"
+    if let Ok(replica) = spares_core::config::get_replica()
+        && replica.number() != 0
     {
         return Err(miette!(
-            "{REPLICA_ENV} is {replica}. Migrate on the laptop (replica 0), before a second \
-             replica exists."
+            "This collection is replica {} on this host. Migrate on the laptop (replica 0), \
+             before a second replica exists.",
+            replica.number()
         ));
     }
     let options = SqliteConnectOptions::from_str(database_url)
@@ -291,8 +291,7 @@ async fn finish(db: &SqlitePool, mapping: &[IdMapping]) -> Result<(), Error> {
     }
     update_clone()?;
     println!(
-        "\nDone. Set {REPLICA_ENV}=0 and SPARES_SYNC_ROLE=client for the server, and open the web \
-         app once online so it drops offline copies with old file names."
+        "\nDone. Open the web app once online so it drops offline copies with old file names."
     );
     Ok(())
 }

@@ -46,9 +46,7 @@ use serde::Serialize;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
-use crate::config::is_test_mode;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
@@ -61,7 +59,6 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::WebRenderMode;
 use crate::parsers::audio::AudioRef;
@@ -403,17 +400,6 @@ impl Parseable for MarkdownParser {
         Some(format!("[{keyword}][li]"))
     }
 
-    fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if is_test_mode() {
-            return get_cache_dir();
-        }
-        std::env::var("MARKDOWN_OUT_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|dir| dir.exists())
-            .unwrap_or_else(get_cache_dir)
-    }
-
     fn file_extension(&self) -> &'static str {
         "md"
     }
@@ -443,7 +429,7 @@ impl Parseable for MarkdownParser {
             description: format!("Failed to read {}", output_text_filepath.display()),
             source,
         })?;
-        let mut base_command = Command::new("pandoc");
+        let mut base_command = pandoc_command();
         let mut command = base_command
             .arg("-o")
             .arg(output_rendered_filepath)
@@ -501,7 +487,7 @@ impl Parseable for MarkdownParser {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let mut command = Command::new("pandoc");
+        let mut command = pandoc_command();
         command
             .arg(input.path())
             .arg("-o")
@@ -792,28 +778,38 @@ fn loaded_resources_of(messages: &[PandocLogMessage]) -> Vec<PathBuf> {
 }
 
 /// The path of a defaults file given to `pandoc --defaults`. Like pandoc, looks relative to the
-/// working directory, then in the `defaults` directory of pandoc's user data directory.
+/// working directory, which is the config directory (see [`pandoc_command`]), then in the
+/// `defaults` directory of pandoc's user data directory.
 fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
     let defaults_file = if defaults_file.extension().is_none() {
         defaults_file.with_extension("yaml")
     } else {
         defaults_file.to_path_buf()
     };
-    if defaults_file.is_file() {
-        return std::path::absolute(defaults_file).ok();
+    let in_config_dir = get_config_dir().join(&defaults_file);
+    if in_config_dir.is_file() {
+        return Some(in_config_dir);
     }
-    let path = pandoc_user_data_dir()?.join("defaults").join(defaults_file);
+    let path = pandoc_user_data_dir().join("defaults").join(defaults_file);
     path.is_file().then_some(path)
 }
 
-fn pandoc_user_data_dir() -> Option<&'static Path> {
-    static DIR: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
-        pandoc_version_output()?
-            .lines()
-            .find_map(|line| line.strip_prefix("User data directory: "))
-            .map(|dir| PathBuf::from(dir.trim()))
-    });
-    DIR.as_deref()
+/// The collection's pandoc user data directory, `pandoc` in its config directory, which renders
+/// read defaults files, templates and the like from instead of the host's own. Each collection has
+/// its own, so users never read each other's.
+pub fn pandoc_user_data_dir() -> PathBuf {
+    get_config_dir().join("pandoc")
+}
+
+/// `pandoc`, run in the collection's config directory with its own user data directory, so a
+/// relative defaults file is the collection's.
+fn pandoc_command() -> Command {
+    let mut command = Command::new("pandoc");
+    command
+        .arg("--data-dir")
+        .arg(pandoc_user_data_dir())
+        .current_dir(get_config_dir());
+    command
 }
 
 /// The version of the pandoc that renders notes, e.g. `3.12.1`, if it runs.

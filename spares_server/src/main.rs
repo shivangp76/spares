@@ -1,9 +1,9 @@
 mod auto_sync;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::header::AUTHORIZATION;
 use axum::http::header::CONTENT_TYPE;
@@ -11,120 +11,116 @@ use clap::CommandFactory;
 use clap::Parser;
 use log::info;
 use log::warn;
-use spares_core::config::Environment;
-use spares_core::config::get_data_dir;
-use spares_core::config::get_env_config;
-use spares_core::config::get_files_dir;
-use spares_core::config::get_replica;
-use spares_core::config::get_sync_role;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
-use spares_core::parsers::kill_running_renders;
 use spares_server::AppState;
+use spares_server::host::Host;
+use spares_server::host::accounts;
+use spares_server::host::lock::HostLock;
 use spares_server::route::create_router;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::sqlite::SqlitePoolOptions;
 use tokio::net::TcpListener;
-use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 
 async fn start_server(args: Args) -> Result<(), String> {
-    // Which replica this is decides the ids it hands out, so it is required (see `ids`).
-    let replica = get_replica().map_err(|e| e.to_string())?;
-    let sync_role = get_sync_role().map_err(|e| e.to_string())?;
-    info!("Replica {}, sync role `{sync_role}`", replica.number());
-    // Ensure default data directory exists (no-op when DATABASE_URL is set explicitly)
-    let _ = get_data_dir();
+    let root = args.root.unwrap_or_else(spares_server::host::default_root);
+    let _lock = HostLock::take(&root).map_err(|e| e.to_string())?;
+    let host = Host::open(&root).await.map_err(|e| e.to_string())?;
+    info!("Serving the host in {}", root.display());
+    spares_core::render::set_config(host.config.render.clone());
     let api_key = std::env::var("SPARES_API_KEY").ok();
-    let files_dir = get_files_dir();
-    let frontend_dir: Option<PathBuf> =
-        std::env::var("SPARES_FRONTEND_DIR").ok().map(PathBuf::from);
-
-    let env_config = get_env_config(args.environment);
-
-    let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
-        .map_err(|e| format!("{:?}", e))?
-        .create_if_missing(true)
-        .with_regexp()
-        // Reads go through memory shared by every connection, rather than through each
-        // connection's own page cache of 2 MB, so the statistics' queries over the whole review
-        // log run at the same speed on whichever connection they get.
-        .pragma("mmap_size", "268435456");
-    let pool = SqlitePoolOptions::new()
-        .max_lifetime(None)
-        .idle_timeout(None)
-        .connect_with(connect_options)
-        .await
-        .map_err(|e| format!("Failed to connect to the database: {:?}", e))?;
-    info!("Connected to database: {}", env_config.database_url);
-
-    sqlx::migrate!("../spares_core/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| format!("Failed to migrate the database: {:?}", e))?;
-    info!("Migration successful.");
-    spares_core::ids::ensure_note_ids_migrated(&pool)
+    let users = accounts::users(&host.accounts)
         .await
         .map_err(|e| e.to_string())?;
-    // Before serving: settle a push the server stopped in the middle of, and commit or revert note
-    // files left uncommitted.
-    spares_core::notes_vcs::startup(&pool).await;
-    if spares_core::notes_vcs::enabled() {
-        info!(
-            "Notes are kept in the git repository {}",
-            spares_core::notes_vcs::server_repo_dir().display()
-        );
-    }
-    for parser in get_all_parsers().iter().map(|p| p()) {
-        info!(
-            "Parser `{}` renders to {}",
-            parser.get_parser_name(),
-            parser
-                .get_output_rendered_dir(RenderOutputDirectoryType::Note)
-                .display()
-        );
+    // Opens (and migrates) each collection before serving, so a problem shows at startup.
+    for user in &users {
+        let collection = host
+            .collection(&user.id)
+            .await
+            .map_err(|e| format!("Failed to open the collection of {}: {e}", user.id))?;
+        collection
+            .scope(async {
+                info!(
+                    "User {} ({}): replica {}",
+                    user.name,
+                    user.id,
+                    collection.replica().map_or(0, |r| r.number())
+                );
+                if spares_core::notes_vcs::enabled() {
+                    info!(
+                        "Notes are kept in the git repository {}",
+                        spares_core::notes_vcs::server_repo_dir().display()
+                    );
+                }
+                for parser in get_all_parsers().iter().map(|p| p()) {
+                    info!(
+                        "Parser `{}` renders to {}",
+                        parser.get_parser_name(),
+                        parser
+                            .get_output_rendered_dir(RenderOutputDirectoryType::Note)
+                            .display()
+                    );
+                }
+            })
+            .await;
+        auto_sync::spawn(Arc::clone(&collection)).await;
     }
 
+    // Only the web app's own origin may call the API from a browser.
+    let origin = HeaderValue::from_str(&host.config.web_origin()).map_err(|e| e.to_string())?;
     let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-        .allow_origin(Any)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::PUT,
+            Method::DELETE,
+        ])
+        .allow_origin(origin)
         .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+    let bind = host.config.bind.clone();
+    let frontend_dir: Option<PathBuf> = host.config.frontend_dir.clone();
     let app = create_router(
         Arc::new(AppState {
-            db: pool.clone(),
+            host: Arc::clone(&host),
             api_key,
         }),
-        files_dir,
         frontend_dir,
     )
     .layer(cors);
-    let listener = match TcpListener::bind(&env_config.socket_address).await {
+    let listener = match TcpListener::bind(&bind).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            warn!(
-                "Server is already running at {:?}. Exiting.",
-                env_config.socket_address
-            );
+            warn!("Server is already running at {bind:?}. Exiting.");
             return Ok(());
         }
         Err(e) => {
-            return Err(format!(
-                "Failed to bind to {}: {}",
-                env_config.socket_address, e
-            ));
+            return Err(format!("Failed to bind to {bind}: {e}"));
         }
     };
-    info!("Starting server at {:?}", env_config.socket_address);
-    auto_sync::spawn(pool.clone());
+    info!("Starting server at {bind:?}");
+    spawn_idle_closer(Arc::clone(&host));
     axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(Arc::clone(&host)))
         .await
         .map_err(|e| format!("Server error: {}", e))?;
+    host.close_all().await;
     Ok(())
 }
 
-/// Waits for Ctrl+C or SIGTERM, then stops running renders so in-flight requests finish quickly.
-async fn shutdown_signal() {
+/// Closes collections nothing has used for a while.
+fn spawn_idle_closer(host: Arc<Host>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            tick.tick().await;
+            host.close_idle().await;
+        }
+    });
+}
+
+/// Waits for Ctrl+C or SIGTERM, then stops every collection's running renders so in-flight requests
+/// finish quickly.
+async fn shutdown_signal(host: Arc<Host>) {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {
             warn!("Failed to listen for Ctrl+C: {}", e);
@@ -150,15 +146,26 @@ async fn shutdown_signal() {
         () = terminate => {},
     }
     info!("Shutting down server");
-    kill_running_renders();
+    for collection in host.open_collections().await {
+        spares_core::parsers::kill_renders_of(&collection.state);
+    }
 }
 
-/// Spares Web Server
+/// Spares Web Server: serves the host in a root directory that `spares host init` created
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, default_value_t = Environment::Production)]
-    environment: Environment,
+    /// The host's root directory (default: `~/.local/share/spares-host`)
+    #[arg(long, env = "SPARES_ROOT")]
+    root: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// The admin's commands, as `spares host` (for a machine with only the server)
+    Host(spares_server::host::admin::HostArgs),
 }
 
 #[tokio::main(worker_threads = 5)]
@@ -167,8 +174,16 @@ async fn main() {
     clap_complete::CompleteEnv::with_factory(Args::command).complete();
     env_logger::init();
 
-    let args = Args::parse();
-    let res = start_server(args).await;
+    let mut args = Args::parse();
+    let res = match args.command.take() {
+        Some(Command::Host(mut host_args)) => {
+            host_args.root = host_args.root.or(args.root);
+            spares_server::host::admin::run(host_args)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        None => start_server(args).await,
+    };
     if let Err(e) = res {
         eprintln!("{}", e);
         std::process::exit(1);

@@ -9,7 +9,6 @@ use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
 use spares_core::api::tag::DEFAULT_TAG_AUTO_DELETE;
-use spares_core::config::Environment;
 use spares_core::model::CardId;
 use spares_core::model::NoteId;
 use spares_core::model::Score;
@@ -37,8 +36,10 @@ pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 pub(crate) struct Cli {
-    #[arg(short, long, default_value_t = Environment::Production)]
-    pub(crate) environment: Environment,
+    /// The spares host to talk to, such as `https://spares.example.com` (default: the one `spares
+    /// login` last logged in to, else the host in `SPARES_ROOT` on this machine)
+    #[arg(long, global = true, env = "SPARES_HOST")]
+    pub(crate) host: Option<String>,
 
     #[command(subcommand)]
     pub(crate) command: Commands,
@@ -89,6 +90,12 @@ pub(crate) enum Commands {
     /// Keep notes in a git (or jj) repository synced with spares by push and fetch
     #[command(arg_required_else_help = true)]
     Vcs(VcsArgs),
+    /// Run a spares host: create one, add accounts, import a collection
+    ///
+    /// These work on the host's root directory directly, so they need no login: whoever can read
+    /// it is the host's admin.
+    #[command(arg_required_else_help = true)]
+    Host(spares_server::host::admin::HostArgs),
 }
 
 #[derive(Args, Debug)]

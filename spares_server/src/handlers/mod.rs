@@ -19,6 +19,7 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::TagErrorKind;
 
+#[cfg(not(target_family = "wasm"))]
 use crate::AppState;
 
 pub(crate) mod audio;
@@ -100,12 +101,15 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
     )
 }
 
+/// Lets a request in with the host's API key, and runs it in the collection of the host's account.
+/// A host has a single account until accounts and sessions replace the key.
 #[cfg(not(target_family = "wasm"))]
+#[allow(clippy::result_large_err, reason = "axum middleware returns responses")]
 pub(crate) async fn require_api_key(
     State(state): State<Arc<AppState>>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, Response> {
     if let Some(expected) = &state.api_key {
         let token = request
             .headers()
@@ -113,10 +117,26 @@ pub(crate) async fn require_api_key(
             .and_then(|v| v.to_str().ok())
             .and_then(|v: &str| v.strip_prefix("Bearer "));
         if token != Some(expected.as_str()) {
-            return Err(StatusCode::UNAUTHORIZED);
+            return Err(StatusCode::UNAUTHORIZED.into_response());
         }
     }
-    Ok(next.run(request).await)
+    let users = crate::host::accounts::users(&state.host.accounts)
+        .await
+        .map_err(|e| error_to_response(e).into_response())?;
+    let [user] = users.as_slice() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("this host has {} accounts, not one", users.len()) })),
+        )
+            .into_response());
+    };
+    let collection = state
+        .host
+        .collection(&user.id)
+        .await
+        .map_err(|e| error_to_response(e).into_response())?;
+    request.extensions_mut().insert(Arc::clone(&collection));
+    Ok(collection.scope(next.run(request)).await)
 }
 
 pub(crate) async fn health_check_handler() -> impl IntoResponse {
