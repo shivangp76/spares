@@ -128,7 +128,6 @@ pub async fn queue_positions(
         &config,
         requested_date,
         review_filter.card_due_limit,
-        None,
     )
     .await?;
     let limit = limit.map_or(usize::MAX, |limit| limit as usize);
@@ -444,7 +443,6 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::api::offline_review::get_review_queue;
     use crate::api::preset::cards_with_preset;
     use crate::api::queue::QueueCaps;
     use crate::api::queue::tests::LEARNING;
@@ -460,7 +458,6 @@ mod tests {
     use crate::model::NEW_CARD_STATE;
     use crate::parsers::get_all_parsers;
     use crate::schema::review::GetReviewCardRequest;
-    use crate::schema::review::ReviewQueueRequest;
 
     async fn positions(
         pool: &SqlitePool,
@@ -522,27 +519,12 @@ mod tests {
         ids
     }
 
-    /// The whole queue is the cards `get_review_queue` downloads, in the same order, and review
-    /// shows the first of them next.
+    /// The whole queue is listed, in order, and review shows the first of it next.
     #[sqlx::test]
-    async fn positions_agree_with_the_review_queue(pool: SqlitePool) {
+    async fn positions_list_the_queue_review_shows(pool: SqlitePool) {
         let now = Utc::now();
         setup(&pool, now).await;
         let response = positions(&pool, None, None, now).await;
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 100,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        let queue_ids: Vec<CardId> = queue.cards.iter().map(|card| card.card.card_id).collect();
-        assert_eq!(card_ids(&response.positions), queue_ids);
         assert_eq!(response.total, 24);
         assert_eq!(response.matching, 24);
         let card = &response.positions[0].card;

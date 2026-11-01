@@ -79,9 +79,9 @@
 //!   table whose row is never committed.
 //!
 //! `note_link` and embedded keywords are derived from the text, so they aren't tracked or sent;
-//! they are rebuilt wherever a note is applied. `event`, `offline_action` and `app_state` aren't
-//! synced. `render_asset` and `render_package` rows are sent in full on every push, since assets
-//! are only added on the laptop, and the server keeps a row's newer file. A device sends none, and
+//! they are rebuilt wherever a note is applied. `event` and `app_state` aren't synced.
+//! `render_asset` and `render_package` rows are sent in full on every push, since assets are only
+//! added on the laptop, and the server keeps a row's newer file. A device sends none, and
 //! gets the server's in a pull whenever they differ from its own (`render_assets_digest`), so it
 //! has the laptop's latest templates, and never puts its older rows back on the server.
 //!

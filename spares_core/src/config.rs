@@ -396,8 +396,7 @@ impl Default for EasyDaysConfig {
 
 /// The `[queue]` table of `config.toml`: the order review shows the cards it can show today.
 ///
-/// `spares card review`, the web app, and the queue the web app downloads for offline review all
-/// use this order. Which cards can be shown at all (what is due, and the daily limits) is set
+/// `spares card review` and the web app, on the server or a device's copy, all use this order. Which cards can be shown at all (what is due, and the daily limits) is set
 /// elsewhere, such as [`SparesExternalConfig::new_cards_daily_limit`].
 ///
 /// Cards come in these groups, one group after another:
@@ -492,9 +491,7 @@ pub struct QueueConfig {
     /// learning card due today as soon as nothing else is left, as spares did before this
     /// setting.
     ///
-    /// Filtered tags are not affected: they show every card in them, whenever it is due. Offline
-    /// review (see [`crate::api::offline_review`]) applies the limit the server had when the
-    /// cards were downloaded.
+    /// Filtered tags are not affected: they show every card in them, whenever it is due.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
@@ -543,8 +540,7 @@ pub struct QueueConfig {
     /// notes are rendered with linked notes, so a new note holds nothing back until then. They
     /// are not synced and a sync does not match them, so each machine holds cards back by its
     /// own links: the sync server's change only when notes are rendered with linked notes there.
-    /// The count of new cards can go up during a session, as the notes they wait for are learned,
-    /// and offline review only gets the cards let through with its next download.
+    /// The count of new cards can go up during a session, as the notes they wait for are learned.
     ///
     /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
     /// back before studying with it, turn it on and run one.
@@ -688,8 +684,8 @@ pub struct QueuePreset {
     /// [`SparesExternalConfig::learning_steps`]. The same rules apply.
     ///
     /// They are used when a card is rated, and when its history is replayed, as by `spares card
-    /// reschedule`, by a sync, or by an offline review inserted into the history. A card that
-    /// changes preset in the middle of its steps continues on the new preset's steps.
+    /// reschedule` or by a sync. A card that changes preset in the middle of its steps continues
+    /// on the new preset's steps.
     #[serde_as(as = "Option<Vec<serde_with::DurationSeconds<i64>>>")]
     pub learning_steps: Option<Vec<Duration>>,
     /// This preset's relearning steps, in seconds, in place of
@@ -833,9 +829,7 @@ pub struct LeechConfig {
     ///
     /// It is done on the lapse that reaches [`Self::lapses_threshold`], and again every half of
     /// it after (every 4 lapses with the default of 8), in case the card was let back in without
-    /// being fixed. Undoing the rating undoes it too. An offline rating placed before a later
-    /// review of the card, which cannot be undone, gets it as an undo event of its own (see
-    /// [`crate::api::offline_review`]).
+    /// being fixed. Undoing the rating undoes it too.
     pub action: LeechAction,
     /// The tag [`LeechAction::Tag`] and [`LeechAction::Suspend`] add to a leech's note, so you can
     /// find the notes to fix with `tag=leech`. Tags belong to notes, so the note's other cards

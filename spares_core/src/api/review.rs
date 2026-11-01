@@ -391,13 +391,6 @@ pub(crate) struct DailyLimitsLeft {
     pub(crate) presets: Vec<PresetLimitsLeft>,
 }
 
-pub(crate) async fn daily_limits_left(
-    db: &SqlitePool,
-    requested_date: DateTime<Utc>,
-) -> Result<DailyLimitsLeft, Error> {
-    daily_limits_left_with(db, &read_external_config()?, requested_date).await
-}
-
 /// See [`DailyLimitsLeft`].
 ///
 /// A preset's limits work like the top-level ones, on its own cards: with
@@ -1559,10 +1552,9 @@ pub(crate) async fn rate_card_with_config(
 /// logged as a [`ReviewLogKind::Cram`].
 ///
 /// The cram row is what makes the rating count in statistics and the review heatmap. Every replay
-/// of the card's history (rating, `spares card reschedule`, the optimizer, sync, offline reviews
-/// inserted into the history) skips it, so the card keeps its memory state and due date, as if
-/// the rating had never happened. The undo event records the row in
-/// [`RateCardPayload::review_log_id`], so undo deletes it.
+/// of the card's history (rating, `spares card reschedule`, the optimizer, sync) skips it, so the
+/// card keeps its memory state and due date, as if the rating had never happened. The undo event
+/// records the row in [`RateCardPayload::review_log_id`], so undo deletes it.
 ///
 /// For example, rating a card Good in an `exam-cram` tag while its next review is in 10 days
 /// leaves it due in 10 days, writes a cram with rating Good, `previous_state` the card's state
@@ -1657,9 +1649,8 @@ async fn rate_card_without_rescheduling(
 }
 
 /// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech, recording an
-/// undo event if `log`. With `group_with`, the event that made it one (the rating, or the
-/// suspension of a card an inserted offline review made a leech), the tag's events join that
-/// event's group, so undoing it untags the note too.
+/// undo event if `log`. With `group_with`, the event that made it one (the rating), the tag's
+/// events join that event's group, so undoing it untags the note too.
 pub(crate) async fn tag_leech(
     db: &SqlitePool,
     leech: &LeechConfig,
