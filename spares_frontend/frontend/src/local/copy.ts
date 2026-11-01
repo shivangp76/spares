@@ -178,7 +178,7 @@ export function usePendingRender(noteId: number | undefined): boolean {
 export const OCCLUSIONS_FROM_NOTES =
   "On a device that keeps a copy of the collection, insert image occlusions from a note's editor: the device sends them to the server with the note, at the next sync.";
 
-function currentServer(): { serverUrl: string; apiKey: string } | null {
+function currentServer(): { serverUrl: string; csrfToken: string } | null {
   try {
     return getCredentials();
   } catch {
@@ -187,24 +187,24 @@ function currentServer(): { serverUrl: string; apiKey: string } | null {
 }
 
 /** The copy's server, with the API key when logged in to it. Everything the copy sends goes there. */
-function copyServer(): { serverUrl: string; apiKey: string | null } | null {
+function copyServer(): { serverUrl: string; csrfToken: string | null } | null {
   const copy = getLocalCopy();
   if (!copy) return null;
   const server = currentServer();
   return {
     serverUrl: copy.serverUrl,
-    apiKey: server?.serverUrl === copy.serverUrl ? server.apiKey : null,
+    csrfToken: server?.serverUrl === copy.serverUrl ? server.csrfToken : null,
   };
 }
 
 /** `copyServer()`, throwing unless logged in to it. */
-function copyCredentials(): { serverUrl: string; apiKey: string } {
+function copyCredentials(): { serverUrl: string; csrfToken: string } {
   const server = copyServer();
   if (!server) throw new Error("This device doesn't keep a copy.");
-  const { serverUrl, apiKey } = server;
-  if (apiKey === null)
+  const { serverUrl, csrfToken } = server;
+  if (csrfToken === null)
     throw new Error(`Log in to ${serverUrl} to sync this device's copy.`);
-  return { serverUrl, apiKey };
+  return { serverUrl, csrfToken };
 }
 
 async function refreshStatus(): Promise<void> {
@@ -284,7 +284,7 @@ function syncHere(
  * meanwhile.
  */
 async function syncWhileBusy(
-  server: { serverUrl: string; apiKey: string },
+  server: { serverUrl: string; csrfToken: string },
   mode: "normal" | "full_download" | "full_upload",
 ): Promise<SyncReport> {
   const started = Date.now();
@@ -293,7 +293,7 @@ async function syncWhileBusy(
       return await call<SyncReport>(
         "sync",
         server.serverUrl,
-        server.apiKey,
+        server.csrfToken,
         mode,
       );
     } catch (e) {
@@ -313,7 +313,7 @@ function syncInBackground(): void {
     !status.active ||
     status.fullSyncRequired ||
     status.notEnrolled ||
-    !copyServer()?.apiKey
+    !copyServer()?.csrfToken
   )
     return;
   syncLocalCopy().catch(() => {
@@ -438,7 +438,7 @@ export async function enableLocalCopy(
     );
   const server = currentServer();
   if (!server) throw new Error("Log in first.");
-  const { serverUrl, apiKey } = server;
+  const { serverUrl, csrfToken } = server;
   const existing = getLocalCopy();
   if (existing && existing.serverUrl !== serverUrl) {
     throw new Error(
@@ -457,10 +457,10 @@ export async function enableLocalCopy(
   }
   // Already enrolled when an earlier attempt stopped after it
   const replica =
-    state.replica ?? (await call<number>("enroll", serverUrl, apiKey, name));
+    state.replica ?? (await call<number>("enroll", serverUrl, csrfToken, name));
   setLocalCopy({ serverUrl, replica, ready: false });
   onStep("Downloading the collection");
-  await call<SyncReport>("sync", serverUrl, apiKey, "full_download");
+  await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
   setLocalCopy({ serverUrl, replica, ready: true });
   clearCaches();
   await globalThis.caches
@@ -518,9 +518,9 @@ async function disableHere(discardChanges: boolean): Promise<string | null> {
   let warning: string | null = null;
   if (!status.notEnrolled) {
     try {
-      const { serverUrl, apiKey } = copyCredentials();
+      const { serverUrl, csrfToken } = copyCredentials();
       // Which deletes the copy too
-      await call("unenroll", serverUrl, apiKey);
+      await call("unenroll", serverUrl, csrfToken);
       await dropCopy();
       return null;
     } catch (e) {
@@ -647,8 +647,8 @@ function refreshFilesHere(): Promise<void> {
 async function downloadFiles(): Promise<void> {
   if (typeof caches === "undefined") return;
   const started = session;
-  const { serverUrl, apiKey } = copyCredentials();
-  const headers = { Authorization: `Bearer ${apiKey}` };
+  const { serverUrl, csrfToken } = copyCredentials();
+  const headers = { "X-CSRF-Token": csrfToken };
   const { listing, changed } = await listFiles(serverUrl, headers);
   const files = Object.values(listing.files);
   const assets = await call<{ path: string; hash: string }[]>("render_assets");

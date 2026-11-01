@@ -96,8 +96,6 @@ use crate::handlers::parser::update_parser_handler;
 use crate::handlers::render_asset::get_render_asset_handler;
 use crate::handlers::render_asset::list_render_packages_handler;
 use crate::handlers::render_asset::list_render_sources_handler;
-#[cfg(not(target_family = "wasm"))]
-use crate::handlers::require_api_key;
 use crate::handlers::review::create_review_snapshot_handler;
 use crate::handlers::review::get_review_card_by_id_handler;
 use crate::handlers::review::get_review_card_handler;
@@ -448,25 +446,40 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
 /// web app from `frontend_dir`.
 #[cfg(not(target_family = "wasm"))]
 pub fn create_router(app_state: Arc<AppState>, frontend_dir: Option<PathBuf>) -> Router {
+    use crate::handlers::auth;
     crate::version::init();
     let served_frontend = frontend_dir.clone();
     let protected = shared_routes()
         .merge(native_routes())
-        .layer(middleware::map_response(not_stored))
+        .route("/api/me", get(auth::me_handler))
+        .route("/api/auth/devices", get(auth::list_devices_handler))
+        .route(
+            "/api/auth/devices/{id}",
+            delete(auth::revoke_device_handler),
+        )
+        .route("/api/auth/password", post(auth::password_handler))
         // Rendered notes and cards
         .nest_service("/files", tower::service_fn(serve_collection_file))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
-            require_api_key,
+            auth::authenticate,
         ));
-
-    let mut router = Router::new()
+    // Before logging in
+    let public = Router::new()
         .route("/api/healthcheck", get(health_check_handler))
         .route(
             "/api/version",
             get(move || crate::version::version_handler(served_frontend)),
         )
+        .route("/api/auth/login", post(auth::login_handler))
+        .route("/api/auth/logout", post(auth::logout_handler))
+        .route("/api/auth/session", get(auth::session_handler))
+        .route("/api/auth/token", post(auth::token_handler));
+
+    let mut router = Router::new()
+        .merge(public)
         .merge(protected)
+        .layer(middleware::map_response(not_stored))
         .with_state(app_state);
 
     if let Some(dir) = frontend_dir {
@@ -814,22 +827,213 @@ mod tests {
     #[tokio::test]
     async fn api_responses_are_not_stored() {
         let (host, _root) = crate::host::tests::test_host().await;
-        let router = create_router(
-            Arc::new(AppState {
-                host,
-                api_key: None,
-            }),
-            None,
-        );
+        let router = create_router(Arc::new(AppState { host }), None);
         let request = Request::builder()
             .uri("/api/parsers")
             .body(Body::empty())
             .unwrap();
         let response = router.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             response.headers()[axum::http::header::CACHE_CONTROL],
             "no-store"
         );
+    }
+
+    async fn send(
+        router: &Router,
+        request: axum::http::request::Builder,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+        let request = match body {
+            Some(body) => request
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string())),
+            None => request.body(Body::empty()),
+        }
+        .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            headers,
+            serde_json::from_slice(&body).unwrap_or_default(),
+        )
+    }
+
+    /// Sessions need their CSRF token to change anything, tokens can be revoked and limited to
+    /// sync, and each user only ever reaches their own collection.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one scenario")]
+    async fn requests_reach_only_their_users_collection() {
+        use axum::http::header::AUTHORIZATION;
+        use axum::http::header::COOKIE;
+        use axum::http::header::SET_COOKIE;
+
+        let (host, root) = crate::host::tests::test_host().await;
+        host.create_user(crate::host::accounts::NewUser {
+            id: Some("other"),
+            name: "other",
+            email: None,
+            password: "password2",
+            admin: false,
+            email_verified: false,
+        })
+        .await
+        .unwrap();
+        std::fs::write(root.0.join("users/me/files/mine.pdf"), "mine").unwrap();
+        std::fs::write(root.0.join("users/other/files/theirs.pdf"), "theirs").unwrap();
+        let router = create_router(Arc::new(AppState { host }), None);
+        let get = |uri: &str| Request::builder().uri(uri.to_string());
+        let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());
+
+        // Wrong passwords
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/login"),
+            Some(serde_json::json!({ "user": "me", "password": "password2" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // A session
+        let (status, headers, body) = send(
+            &router,
+            post("/api/auth/login"),
+            Some(serde_json::json!({ "user": "me", "password": "password1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let set_cookie = headers[SET_COOKIE].to_str().unwrap().to_string();
+        assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
+        let cookie = set_cookie.split(';').next().unwrap().to_string();
+        let csrf = body["csrf_token"].as_str().unwrap().to_string();
+        let (status, _, me) = send(&router, get("/api/me").header(COOKIE, &cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(me["user"]["id"], "me");
+        let (status, _, _) = send(
+            &router,
+            get("/files/mine.pdf").header(COOKIE, &cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        for path in ["/files/theirs.pdf", "/files/../../other/files/theirs.pdf"] {
+            let (status, _, _) = send(&router, get(path).header(COOKIE, &cookie), None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        }
+        // Changing something needs the CSRF token.
+        let tag = serde_json::json!({ "name": "mine", "description": "", "parent_id": null,
+            "query": null, "auto_delete": false });
+        let (status, _, _) = send(
+            &router,
+            post("/api/tags").header(COOKIE, &cookie),
+            Some(tag.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _, body) = send(
+            &router,
+            post("/api/tags")
+                .header(COOKIE, &cookie)
+                .header("x-csrf-token", &csrf),
+            Some(tag),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        // A device token, for the other user
+        let (status, _, body) = send(
+            &router,
+            post("/api/auth/token"),
+            Some(
+                serde_json::json!({ "user": "other", "password": "password2",
+                "name": "a CLI" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let token = format!("Bearer {}", body["token"].as_str().unwrap());
+        let device_id = body["device"]["id"].as_i64().unwrap();
+        let (status, _, tags) = send(
+            &router,
+            get("/api/tags").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            tags,
+            serde_json::json!([]),
+            "the other user sees no tag of mine"
+        );
+        let (_, _, tags) = send(&router, get("/api/tags").header(COOKIE, &cookie), None).await;
+        assert_eq!(tags.as_array().unwrap().len(), 1);
+        let (status, _, _) = send(
+            &router,
+            get("/files/theirs.pdf").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Revoked
+        let (status, _, _) = send(
+            &router,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/auth/devices/{device_id}"))
+                .header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = send(
+            &router,
+            get("/api/tags").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // A sync token only syncs.
+        let (_, _, body) = send(
+            &router,
+            post("/api/auth/token"),
+            Some(
+                serde_json::json!({ "user": "other", "password": "password2",
+                "name": "a host", "scope": "sync" }),
+            ),
+        )
+        .await;
+        let token = format!("Bearer {}", body["token"].as_str().unwrap());
+        let (status, _, _) = send(
+            &router,
+            get("/api/tags").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _, body) = send(
+            &router,
+            get("/api/sync/meta").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_ne!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+        // Logging out ends the session.
+        let (status, _, _) = send(
+            &router,
+            post("/api/auth/logout").header(COOKIE, &cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = send(&router, get("/api/me").header(COOKIE, &cookie), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }

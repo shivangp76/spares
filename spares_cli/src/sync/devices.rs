@@ -6,7 +6,7 @@ use chrono::Local;
 use clap::Subcommand;
 use spares_core::config::read_external_config;
 use spares_core::sync::http::HttpRemote;
-use spares_core::sync::http::SYNC_API_KEY_ENV;
+use spares_core::sync::http::RemoteAuth;
 
 #[derive(Debug, Clone, Subcommand)]
 pub(crate) enum DevicesAction {
@@ -22,12 +22,9 @@ pub(crate) enum DevicesAction {
 }
 
 fn remote() -> Result<HttpRemote, String> {
-    let url = read_external_config()
-        .map_err(|e| e.to_string())?
-        .sync
-        .url
-        .ok_or("`sync.url` is not set in config.toml")?;
-    HttpRemote::new(&url, std::env::var(SYNC_API_KEY_ENV).ok()).map_err(|e| e.to_string())
+    let sync = read_external_config().map_err(|e| e.to_string())?.sync;
+    let url = sync.url.ok_or("`sync.url` is not set in config.toml")?;
+    HttpRemote::new(&url, RemoteAuth::token(sync.token)).map_err(|e| e.to_string())
 }
 
 fn local_time(unix: i64) -> String {

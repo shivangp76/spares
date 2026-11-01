@@ -272,6 +272,17 @@ export default defineConfig({
   server: {
     open: process.env.SPARES_OPEN ?? "/",
     port: 5173,
+    // The host's API and files, from this page's origin, so its session cookie works here too.
+    // `SPARES_HOST` is the host to use, by default the one on this machine.
+    proxy: Object.fromEntries(
+      ["/api", "/files"].map((path) => [
+        path,
+        {
+          target: process.env.SPARES_HOST ?? "http://127.0.0.1:8080",
+          changeOrigin: true,
+        },
+      ]),
+    ),
   },
   plugins: [
     react(),

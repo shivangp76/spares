@@ -10,6 +10,7 @@ mod import;
 mod keyword;
 mod link;
 mod local;
+mod login;
 mod migrate;
 mod migrate_ids;
 mod note;
@@ -94,11 +95,26 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         command => command,
     };
     let root = spares_server::host::default_root();
-    set_host_client(local::host_client(host, &root));
+    let credentials = login::Credentials::read();
+    let explicit_host = host.is_some();
+    set_host_client(local::host_client(host, &root, &credentials).map_err(|e| miette!("{e}"))?);
+    let command = match command {
+        Commands::Login(args) => {
+            let local = if args.host.is_some() || explicit_host {
+                host_client().base_url
+            } else {
+                local::local_host(&root).map_err(|e| miette!("{e}"))?
+            };
+            return login::login(args, &local).await;
+        }
+        Commands::Logout(args) => return login::logout(args, &host_client().base_url).await,
+        command => command,
+    };
     // The collection on this machine, for the commands that work on its files
-    let collection = local::collection(&root).await;
-    if let Ok(collection) = &collection {
-        spares_core::collection::set_default(Some(Arc::clone(collection)));
+    let collection = local::collection(&root, &credentials).await;
+    match &collection {
+        Ok(collection) => spares_core::collection::set_default(Some(Arc::clone(collection))),
+        Err(reason) => local::explain_missing_collection(reason.clone()),
     }
     let local_collection = || collection.clone().map_err(|e| miette!("{e}"));
     let base_url = host_client().base_url;
@@ -117,7 +133,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
         Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &local_env()?).await,
         Commands::Vcs(vcs_args) => notes_vcs::handle(vcs_args, &base_url, &client).await,
-        Commands::Host(_) => unreachable!("handled above"),
+        Commands::Host(_) | Commands::Login(_) | Commands::Logout(_) => {
+            unreachable!("handled above")
+        }
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)
                 .await

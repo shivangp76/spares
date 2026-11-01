@@ -35,7 +35,6 @@ use spares_core::sync::devices;
 use spares_core::sync::devices::EnrollRequest;
 use spares_core::sync::devices::UnenrollRequest;
 use spares_core::sync::files;
-use spares_core::sync::http::SYNC_API_KEY_ENV;
 use spares_core::sync::media;
 use spares_core::sync::media::ChangedFilesRequest;
 use spares_core::sync::media::MediaKind;
@@ -299,6 +298,19 @@ pub(crate) async fn sync_devices_handler(
     Ok(Json(devices))
 }
 
+/// Frees a replica number of `collection` that a revoked device enrolled as.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn free_replica(
+    collection: &std::sync::Arc<spares_core::collection::Collection>,
+    replica: u8,
+) -> Result<(), Error> {
+    let db = collection.db.clone();
+    collection
+        .scope(async move { devices::unenroll(&db, UnenrollRequest { replica }).await })
+        .await?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct SyncRunRequest {
     #[serde(default = "normal")]
@@ -329,8 +341,8 @@ pub(crate) struct SyncStatusResponse {
     role: String,
     replica: u8,
     sync_url: Option<String>,
-    /// Whether `SPARES_SYNC_API_KEY` is set, which a client needs to reach the server.
-    sync_api_key_set: bool,
+    /// Whether this host has a device token for `sync_url`, which it needs to reach it.
+    sync_token_set: bool,
     #[serde(flatten)]
     state: LocalSyncState,
 }
@@ -339,11 +351,12 @@ pub(crate) async fn sync_status_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
     let state = local_state(&data.db).await.map_err(error_to_response)?;
+    let config = read_external_config().ok();
     Ok(Json(SyncStatusResponse {
         role: get_sync_role().map_err(error_to_response)?.to_string(),
         replica: get_replica().map_err(error_to_response)?.number(),
-        sync_url: read_external_config().ok().and_then(|c| c.sync.url),
-        sync_api_key_set: std::env::var_os(SYNC_API_KEY_ENV).is_some(),
+        sync_url: config.as_ref().and_then(|c| c.sync.url.clone()),
+        sync_token_set: config.as_ref().is_some_and(|c| c.sync.token.is_some()),
         state,
     }))
 }

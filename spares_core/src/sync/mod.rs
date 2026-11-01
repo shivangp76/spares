@@ -171,8 +171,9 @@ mod tracking_tests;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SyncConfig {
-    /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
-    /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
+    /// The collection's upstream: the host its copy here syncs with, as one of its user's
+    /// devices, such as `https://spares.tail1234.ts.net`. Without it, this copy is the root of its
+    /// sync chain, and two-way sync with an upstream is off.
     pub url: Option<String>,
     /// With `url`, the local server syncs on startup, on waking from sleep and then every this many
     /// minutes. `0` turns automatic syncing off, including after changes.
@@ -191,6 +192,10 @@ pub struct SyncConfig {
     /// collection without `url` is the root of its sync chain, replica `1`, unless this says
     /// otherwise. With `url`, it is set when this host enrolls with the upstream.
     pub replica: Option<u8>,
+    /// The device token for `url`, which this host got when it enrolled with it (`spares sync
+    /// login`). Never sent to devices: the whole `[sync]` table is left out of the config they get
+    /// (see [`crate::config::server_config`]).
+    pub token: Option<String>,
 }
 
 impl Default for SyncConfig {
@@ -202,6 +207,7 @@ impl Default for SyncConfig {
             remote_host: None,
             remote_rendered_dir: ".cache/spares".to_string(),
             replica: None,
+            token: None,
         }
     }
 }

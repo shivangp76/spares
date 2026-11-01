@@ -25,9 +25,6 @@ mod version;
 pub struct AppState {
     #[cfg(not(target_family = "wasm"))]
     pub host: Arc<host::Host>,
-    /// The key requests must send (`SPARES_API_KEY`). `None` lets every request in.
-    #[cfg(not(target_family = "wasm"))]
-    pub api_key: Option<String>,
 }
 
 /// The request's collection, which middleware put in its extensions: on a host, its user's; in a

@@ -43,6 +43,7 @@ use tokio::sync::Mutex;
 
 pub mod accounts;
 pub mod admin;
+pub mod auth;
 pub mod config;
 pub mod import;
 pub mod lock;

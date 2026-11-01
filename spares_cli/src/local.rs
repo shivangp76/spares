@@ -19,28 +19,70 @@ use spares_server::host::accounts;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 
-/// The host to talk to: `--host`, else the host on this machine, at its `host.toml`'s address.
-pub(crate) fn host_client(host: Option<String>, root: &Path) -> HostClient {
-    let base_url = host.unwrap_or_else(|| {
-        let bind = HostConfig::read(root).map_or_else(|_| HostConfig::default().bind, |c| c.bind);
-        format!("http://{}", bind.replace("0.0.0.0", "127.0.0.1"))
-    });
-    HostClient {
-        base_url: base_url.trim_end_matches('/').to_string(),
-        token: std::env::var("SPARES_API_KEY")
-            .ok()
-            .filter(|key| !key.is_empty()),
+use crate::login::Credentials;
+use crate::login::normalize_host;
+
+/// The address of the host on this machine, from its `host.toml`: the default address when there
+/// is no host here, unless `SPARES_ROOT` names one. Never another host's when this one's settings
+/// can't be read.
+pub(crate) fn local_host(root: &Path) -> Result<String, String> {
+    let has_settings = root
+        .join(spares_server::host::config::HOST_CONFIG_FILE_NAME)
+        .is_file();
+    if !has_settings && std::env::var_os(spares_server::host::ROOT_ENV).is_some() {
+        return Err(format!(
+            "SPARES_ROOT is {}, which is no spares host (it has no host.toml). Create one with \
+             `spares host init`.",
+            root.display()
+        ));
     }
+    let config = HostConfig::read(root).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "http://{}",
+        config.bind.replace("0.0.0.0", "127.0.0.1")
+    ))
+}
+
+/// The host to talk to and its token (see [`crate::login`]): `--host`, else the one last logged in
+/// to, else the host on this machine.
+pub(crate) fn host_client(
+    host: Option<String>,
+    root: &Path,
+    credentials: &Credentials,
+) -> Result<HostClient, String> {
+    let base_url = match host
+        .map(|host| normalize_host(&host))
+        .or_else(|| credentials.default.clone())
+    {
+        Some(url) => url,
+        None => local_host(root)?,
+    };
+    let token = std::env::var("SPARES_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+        .or_else(|| credentials.hosts.get(&base_url).map(|c| c.token.clone()));
+    Ok(HostClient { base_url, token })
 }
 
 /// The collection on this machine (see the [module docs](self)), without migrating it or touching
 /// its files: the host may be serving it.
-pub(crate) async fn collection(root: &Path) -> Result<Arc<Collection>, String> {
+pub(crate) async fn collection(
+    root: &Path,
+    credentials: &Credentials,
+) -> Result<Arc<Collection>, String> {
     let host = Host::open(root).await.map_err(|e| e.to_string())?;
     let users = accounts::users(&host.accounts)
         .await
         .map_err(|e| e.to_string())?;
-    let wanted = std::env::var("SPARES_USER").ok().filter(|u| !u.is_empty());
+    // The account the CLI is logged in as on this machine's host
+    let logged_in = local_host(root)
+        .ok()
+        .and_then(|host| credentials.hosts.get(&host))
+        .map(|c| c.user.clone());
+    let wanted = std::env::var("SPARES_USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .or(logged_in);
     let user = match (&wanted, users.as_slice()) {
         (Some(who), _) => accounts::find_user(&host.accounts, who)
             .await
@@ -93,4 +135,26 @@ impl LocalEnv {
                 .to_string(),
         }
     }
+}
+
+/// Turns the panic of code that needs the collection on this machine, when it couldn't be opened,
+/// into an error that says why.
+pub(crate) fn explain_missing_collection(reason: String) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if message.starts_with("no collection is current") {
+            eprintln!(
+                "Error: this command works on the collection of the host on this machine, which \
+                 couldn't be opened: {reason}"
+            );
+            std::process::exit(1);
+        }
+        default(info);
+    }));
 }
