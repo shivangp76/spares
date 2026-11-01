@@ -38,6 +38,9 @@ pub struct HostConfig {
     pub session_days: u64,
     /// How many collections sync with their upstreams at once (see [`crate::auto_sync`]).
     pub sync_at_once: usize,
+    /// How the host sends email: verifying addresses and resetting passwords (see
+    /// [`super::signup`]).
+    pub email: super::signup::EmailConfig,
     /// What each user may use, unless their account says otherwise (see [`super::limits`]).
     pub limits: super::limits::Limits,
     /// How notes are rendered (see [`spares_core::render`]).
@@ -56,6 +59,7 @@ impl Default for HostConfig {
             max_connections_per_collection: 8,
             session_days: 365,
             sync_at_once: 4,
+            email: super::signup::EmailConfig::default(),
             limits: super::limits::Limits::default(),
             render: spares_core::render::RenderConfig::default(),
         }
@@ -102,6 +106,11 @@ impl HostConfig {
         if config.max_open_collections == 0 {
             return Err("`max_open_collections` must be at least 1".to_string());
         }
+        if config.signups == Signups::Open && config.email.command.is_none() {
+            return Err(
+                "open signups need email to verify addresses: set `[email] command`".to_string(),
+            );
+        }
         if let Some(url) = &config.public_url
             && !(url.starts_with("http://") || url.starts_with("https://"))
         {
@@ -136,6 +145,12 @@ bind = "{bind}"
 signups = "closed"
 # max_open_collections = 64
 # idle_minutes = 30
+
+[email]
+# A command that sends the message on its standard input, e.g. "sendmail -t". Open signups and
+# password resets need it.
+# command = "sendmail -t"
+# from = "spares@example.com"
 
 [limits]
 # Sized for one trusted user, as before hosts. Lower them before opening signups.
@@ -173,13 +188,18 @@ mod tests {
         assert_eq!(config.signups, Signups::Closed);
         assert_eq!(config.web_origin(), "http://127.0.0.1:8080");
         assert!(!config.secure_cookies());
-        let config =
-            HostConfig::parse("public_url = \"https://spares.example.com/\"\nsignups = \"open\"")
-                .unwrap();
+        let config = HostConfig::parse(
+            "public_url = \"https://spares.example.com/\"\nsignups = \"open\"\n[email]\ncommand = \"sendmail -t\"",
+        )
+        .unwrap();
         assert_eq!(config.web_origin(), "https://spares.example.com");
         assert!(config.secure_cookies());
         assert_eq!(config.signups, Signups::Open);
         assert!(HostConfig::parse("max_open_collections = 0").is_err());
+        assert!(
+            HostConfig::parse("signups = \"open\"").is_err(),
+            "open signups need email"
+        );
         assert!(HostConfig::parse("nope = 1").is_err());
         let template = HostConfig::parse(&HostConfig::template("0.0.0.0:9000")).unwrap();
         assert_eq!(template.bind, "0.0.0.0:9000");
