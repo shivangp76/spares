@@ -44,6 +44,7 @@ use spares_core::api::browser_render::IMAGE_OCCLUSION_ASSET_PREFIX;
 use spares_core::config::get_replica;
 use spares_core::parsers::read_device_card;
 use spares_core::sync::http::HttpRemote;
+use spares_core::sync::http::RemoteAuth;
 use spares_core::sync::run::SyncMode;
 use tower::ServiceExt;
 use wasm_bindgen::prelude::*;
@@ -83,7 +84,13 @@ fn to_js(value: &impl serde::Serialize) -> Result<JsValue, JsValue> {
 
 fn remote(server: &str, key: Option<String>) -> Result<DeviceRemote, JsValue> {
     Ok(DeviceRemote(
-        HttpRemote::new(server, key).map_err(|e| core_error(&e))?,
+        HttpRemote::new(
+            server,
+            key.map_or(RemoteAuth::None, |csrf_token| RemoteAuth::Session {
+                csrf_token,
+            }),
+        )
+        .map_err(|e| core_error(&e))?,
     ))
 }
 

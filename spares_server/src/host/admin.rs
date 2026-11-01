@@ -53,6 +53,32 @@ pub enum HostCommand {
         bind: String,
         #[command(flatten)]
         password: PasswordArgs,
+        /// Print only a device token for the account, for a test or a script to use
+        #[arg(long)]
+        print_token: bool,
+    },
+    /// Create a device token for an account, as `spares login` does, without its password
+    Token {
+        /// Its id, name or email
+        user: String,
+        /// What the device is called in the account's list of devices
+        #[arg(long, default_value = "spares CLI")]
+        name: String,
+        /// `all`, or `sync` for another host that only syncs
+        #[arg(long, default_value = "all")]
+        scope: super::auth::Scope,
+    },
+    /// Revoke a device token
+    Revoke {
+        /// The account's id, name or email
+        user: String,
+        /// The device's id, from `spares host devices`
+        device: i64,
+    },
+    /// List an account's devices
+    Devices {
+        /// Its id, name or email
+        user: String,
     },
     /// Add an account, whatever the signup policy
     AddUser {
@@ -164,6 +190,7 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
             email,
             bind,
             password,
+            print_token,
         } => {
             if root.join(accounts::ACCOUNTS_FILE_NAME).exists() {
                 return Err(invalid(format!("{} is a host already", root.display())));
@@ -180,7 +207,18 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                     email_verified: email.is_some(),
                 })
                 .await?;
+            let (_, token) = super::auth::create_token(
+                &host.accounts,
+                &user.id,
+                "spares CLI",
+                super::auth::Scope::All,
+            )
+            .await?;
             host.close_all().await;
+            if print_token {
+                println!("{token}");
+                return Ok(());
+            }
             println!(
                 "Created the host {} with the account {} ({}).",
                 root.display(),
@@ -188,6 +226,11 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                 user.id
             );
             println!("Its settings are in {}.", root.join("host.toml").display());
+            println!(
+                "\nA device token for the CLI on this machine:\n\n    {token}\n\nOnce the host runs \
+                 (`spares_server`), save it with `spares login http://{bind} --token <token>`, or \
+                 log in with the password: `spares login http://{bind}`."
+            );
         }
         HostCommand::AddUser {
             name,
@@ -337,6 +380,51 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                 report.replica.unwrap_or(1),
                 host.paths(&user.id).files.display()
             );
+        }
+        HostCommand::Token { user, name, scope } => {
+            let host = Host::open(&root).await?;
+            let user = find(&host, &user).await?;
+            let (device, token) =
+                super::auth::create_token(&host.accounts, &user.id, &name, scope).await?;
+            eprintln!("Device {} of {} ({}):", device.id, user.name, user.id);
+            println!("{token}");
+        }
+        HostCommand::Revoke { user, device } => {
+            let host = Host::open(&root).await?;
+            let user = find(&host, &user).await?;
+            let Some(revoked) = super::auth::revoke_token(&host.accounts, &user.id, device).await?
+            else {
+                return Err(invalid(format!("{} has no device {device}", user.name)));
+            };
+            if let Some(replica) = revoked.replica {
+                let collection = host.collection(&user.id).await?;
+                let db = collection.db.clone();
+                collection
+                    .scope(spares_core::sync::devices::unenroll(
+                        &db,
+                        spares_core::sync::devices::UnenrollRequest { replica },
+                    ))
+                    .await?;
+                host.close_all().await;
+            }
+            println!("Revoked {} ({}).", revoked.name, revoked.id);
+        }
+        HostCommand::Devices { user } => {
+            let host = Host::open(&root).await?;
+            let user = find(&host, &user).await?;
+            for device in super::auth::devices(&host.accounts, &user.id).await? {
+                let last_used = device.last_used_at.map_or("never".to_string(), |at| {
+                    chrono::DateTime::from_timestamp(at, 0)
+                        .map_or_else(|| at.to_string(), |at| at.to_rfc3339())
+                });
+                println!(
+                    "{}\t{}\t{}\treplica {}\tlast used {last_used}",
+                    device.id,
+                    device.name,
+                    device.scope,
+                    device.replica.map_or("-".to_string(), |r| r.to_string()),
+                );
+            }
         }
         HostCommand::Migrate { all: _ } => {
             let _lock = HostLock::take(&root)?;

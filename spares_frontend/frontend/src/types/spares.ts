@@ -1,6 +1,12 @@
 export interface Credentials {
   serverUrl: string;
-  apiKey: string;
+  /**
+   * The session's CSRF token, which every request sends in `X-CSRF-Token`. The session itself is
+   * a cookie the page can't read (see `spares_server::host::auth`).
+   */
+  csrfToken: string;
+  /** The account's name */
+  user: string;
   schedulerName: string;
 }
 

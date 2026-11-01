@@ -96,6 +96,10 @@ pub(crate) enum Commands {
     /// it is the host's admin.
     #[command(arg_required_else_help = true)]
     Host(spares_server::host::admin::HostArgs),
+    /// Log in to a host, keeping a device token for it (see `spares logout`)
+    Login(crate::login::LoginArgs),
+    /// Forget and revoke this machine's token for a host
+    Logout(crate::login::LogoutArgs),
 }
 
 #[derive(Args, Debug)]

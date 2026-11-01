@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { NetworkError, getCredentials, getSchedulerNames, saveCredentials } from '../api/client';
+import { NetworkError, getCredentials, getSchedulerNames, login, saveCredentials } from '../api/client';
 import { LOGIN_DOCS, docUrl } from '../help/pages';
 import { errorMessage } from '../utils';
 
@@ -9,14 +9,14 @@ const hint: React.CSSProperties = { display: 'block', fontSize: 12, color: 'var(
 export default function LoginPage() {
   const navigate = useNavigate();
   // A built app is served by the server it talks to
-  const [serverUrl, setServerUrl] = useState(import.meta.env.PROD ? window.location.origin : '');
-  const [apiKey, setApiKey] = useState('');
+  // The dev server sends the API to the host (see vite.config.ts)
+  const [serverUrl, setServerUrl] = useState(window.location.origin);
+  const [user, setUser] = useState('');
+  const [password, setPassword] = useState('');
   // Empty for the server's default scheduler
   const [schedulerName, setSchedulerName] = useState('');
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Offline, the server can't check them, so they can be saved as they are
-  const [unreachable, setUnreachable] = useState(false);
 
   useEffect(() => {
     try {
@@ -27,27 +27,26 @@ export default function LoginPage() {
     }
   }, [navigate]);
 
-  function save(schedulerName: string) {
-    saveCredentials({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey, schedulerName });
-    navigate('/review');
-  }
-
-  /** Checks the key and the scheduler with the server before saving them. */
+  /** Logs in, then checks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!serverUrl || !apiKey) return;
+    if (!serverUrl || !user || !password) return;
+    const url = serverUrl.replace(/\/$/, '');
     setChecking(true);
     setError(null);
-    setUnreachable(false);
     try {
-      // The server lists its default first
-      const schedulers = await getSchedulerNames({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey });
+      const session = await login(url, user.trim(), password);
+      // The host lists its default first
+      const schedulers = await getSchedulerNames(url);
       const name = schedulerName.trim() || schedulers[0];
-      if (schedulers.includes(name)) save(name);
-      else setError(`The server has no scheduler named “${name}”. Its schedulers are ${schedulers.join(', ')}.`);
+      if (schedulers.includes(name)) {
+        saveCredentials({ serverUrl: url, csrfToken: session.csrfToken, user: session.user, schedulerName: name });
+        navigate('/review');
+      } else {
+        setError(`The host has no scheduler named “${name}”. Its schedulers are ${schedulers.join(', ')}.`);
+      }
     } catch (e) {
-      setUnreachable(e instanceof NetworkError);
-      setError(e instanceof NetworkError ? 'The server could not be reached. Check its URL, or log in anyway to use this device’s copy of its collection offline.' : errorMessage(e));
+      setError(e instanceof NetworkError ? 'The host could not be reached. Check its URL. A device that keeps a copy of the collection works offline once logged in.' : errorMessage(e));
     } finally {
       setChecking(false);
     }
@@ -63,13 +62,18 @@ export default function LoginPage() {
           Server URL
           <input type="url" value={serverUrl} onChange={e => setServerUrl(e.target.value)}
             placeholder="https://your-server.example.com" required style={field} />
-          <span style={hint}>The address of <code>spares_server</code>, which is this page's when it serves the page.</span>
+          <span style={hint}>The address of the spares host, which is this page's when it serves the page.</span>
         </label>
         <label>
-          API Key
-          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-            required style={field} />
-          <span style={hint}>The server's <code>SPARES_API_KEY</code>.</span>
+          Name
+          <input type="text" value={user} onChange={e => setUser(e.target.value)} autoComplete="username"
+            autoCapitalize="none" required style={field} />
+          <span style={hint}>Your account on the host, or its email address.</span>
+        </label>
+        <label>
+          Password
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+            autoComplete="current-password" required style={field} />
         </label>
         <label>
           Scheduler
@@ -81,11 +85,6 @@ export default function LoginPage() {
           {checking ? 'Checking…' : 'Login'}
         </button>
         {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
-        {unreachable && (
-          <button type="button" onClick={() => save(schedulerName.trim())} disabled={!schedulerName.trim()}
-            title={schedulerName.trim() ? undefined : 'Enter a scheduler, since the server cannot say which is its default'}
-            className="touch-target">Log in anyway</button>
-        )}
         <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>{LOGIN_DOCS.label}</Link>
       </form>
     </div>

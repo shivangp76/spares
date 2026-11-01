@@ -27,7 +27,6 @@ async fn start_server(args: Args) -> Result<(), String> {
     let host = Host::open(&root).await.map_err(|e| e.to_string())?;
     info!("Serving the host in {}", root.display());
     spares_core::render::set_config(host.config.render.clone());
-    let api_key = std::env::var("SPARES_API_KEY").ok();
     let users = accounts::users(&host.accounts)
         .await
         .map_err(|e| e.to_string())?;
@@ -76,13 +75,17 @@ async fn start_server(args: Args) -> Result<(), String> {
             Method::DELETE,
         ])
         .allow_origin(origin)
-        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+        .allow_credentials(true)
+        .allow_headers([
+            CONTENT_TYPE,
+            AUTHORIZATION,
+            axum::http::HeaderName::from_static(spares_server::host::auth::CSRF_HEADER),
+        ]);
     let bind = host.config.bind.clone();
     let frontend_dir: Option<PathBuf> = host.config.frontend_dir.clone();
     let app = create_router(
         Arc::new(AppState {
             host: Arc::clone(&host),
-            api_key,
         }),
         frontend_dir,
     )
@@ -114,6 +117,9 @@ fn spawn_idle_closer(host: Arc<Host>) {
         loop {
             tick.tick().await;
             host.close_idle().await;
+            if let Err(e) = spares_server::host::auth::prune_sessions(&host.accounts).await {
+                warn!("Failed to remove expired sessions: {e}");
+            }
         }
     });
 }

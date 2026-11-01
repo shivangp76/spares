@@ -24,9 +24,6 @@ use super::protocol::PushResponse;
 use super::run::SyncRemote;
 use crate::Error;
 
-/// The environment variable with the server's API key (its `SPARES_API_KEY`).
-pub const SYNC_API_KEY_ENV: &str = "SPARES_SYNC_API_KEY";
-
 /// How long a request may take, set per request, which reqwest also does in a browser (through an
 /// `AbortController`), so a hung request never leaves a device syncing forever. A push that times
 /// out after the server applied it is finished by the next sync (see [`super::run`]).
@@ -36,23 +33,41 @@ const QUICK_TIMEOUT: Duration = Duration::from_secs(30);
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(300);
 const FULL_SYNC_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// How requests to the host say who they are from.
+#[derive(Clone, Debug)]
+pub enum RemoteAuth {
+    /// A device token: the CLI's, or another host's copy of the collection
+    Token(String),
+    /// A browser's session, whose cookie the browser sends, with its CSRF token
+    Session {
+        csrf_token: String,
+    },
+    None,
+}
+
 pub struct HttpRemote {
     base_url: String,
-    api_key: Option<String>,
+    auth: RemoteAuth,
     client: reqwest::Client,
 }
 
+impl RemoteAuth {
+    /// A device token, if there is one.
+    pub fn token(token: Option<String>) -> Self {
+        token.map_or(Self::None, Self::Token)
+    }
+}
+
 impl HttpRemote {
-    /// `base_url` is the server's address, such as `https://spares.tail1234.ts.net`, and
-    /// `api_key` its `SPARES_API_KEY` (a client's `SPARES_SYNC_API_KEY`).
-    pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, Error> {
+    /// `base_url` is the host's address, such as `https://spares.tail1234.ts.net`.
+    pub fn new(base_url: &str, auth: RemoteAuth) -> Result<Self, Error> {
         let client = reqwest::Client::builder();
         // A browser's `fetch` has no connect timeout.
         #[cfg(not(target_family = "wasm"))]
         let client = client.connect_timeout(Duration::from_secs(10));
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key,
+            auth,
             client: client.build()?,
         })
     }
@@ -98,9 +113,10 @@ impl HttpRemote {
             .client
             .request(method, format!("{}{path}", self.base_url))
             .timeout(timeout);
-        match &self.api_key {
-            Some(key) => request.bearer_auth(key),
-            None => request,
+        match &self.auth {
+            RemoteAuth::Token(token) => request.bearer_auth(token),
+            RemoteAuth::Session { csrf_token } => request.header("X-CSRF-Token", csrf_token),
+            RemoteAuth::None => request,
         }
     }
 
@@ -145,8 +161,8 @@ impl HttpRemote {
                     .to_string(),
             ),
             StatusCode::UNAUTHORIZED => Error::Sync(format!(
-                "the sync server refused the API key. Set {SYNC_API_KEY_ENV} to its \
-                 SPARES_API_KEY."
+                "{} refused this device's token. Log in to it again.",
+                self.base_url
             )),
             _ => Error::Sync(format!("the sync server answered {status}: {message}")),
         })

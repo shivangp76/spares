@@ -88,11 +88,10 @@ test('the fields whose descriptions explain values exist', () => {
 });
 
 test('the environment variables the pages name are ones the server reads', () => {
-  const rust = ['spares_core/src/config.rs', 'spares_server/src/main.rs'].map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
+  const rust = ['spares_core/src/config.rs', 'spares_server/src/main.rs', 'spares_server/src/host/mod.rs'].map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
   const sources = readdirSync(join(import.meta.dir, '..'), { recursive: true, encoding: 'utf8' }).filter(f => f.endsWith('.tsx'));
   const named = sources.flatMap(file =>
     [...readFileSync(join(import.meta.dir, '..', file), 'utf8').matchAll(/<code>(SPARES_[A-Z_]+)<\/code>/g)].map(m => m[1]));
-  expect(named).toContain('SPARES_API_KEY');
   for (const name of named) expect(rust).toContain(`"${name}"`);
 });
 
