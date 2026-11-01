@@ -1055,4 +1055,82 @@ mod tests {
         let (status, _, _) = send(&router, get("/api/me").header(COOKIE, &cookie), None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
+
+    /// A user's limits refuse requests past them: too many a minute, too large a body, past the
+    /// storage quota, and too many failed logins.
+    #[tokio::test]
+    async fn limits_refuse_requests_past_them() {
+        use axum::http::header::AUTHORIZATION;
+        use axum::http::header::CONTENT_LENGTH;
+
+        use crate::host::limits::LimitOverrides;
+
+        let (host, _root) = crate::host::tests::test_host().await;
+        crate::host::limits::set_overrides(
+            &host.accounts,
+            "me",
+            &LimitOverrides {
+                requests_per_minute: Some(5),
+                media_body_mb: Some(1),
+                storage_mb: Some(1),
+                ..LimitOverrides::default()
+            },
+        )
+        .await
+        .unwrap();
+        crate::host::limits::record_storage(&host.accounts, "me", 900 * 1024)
+            .await
+            .unwrap();
+        let (_, token) = crate::host::auth::create_token(
+            &host.accounts,
+            "me",
+            "test",
+            crate::host::auth::Scope::All,
+        )
+        .await
+        .unwrap();
+        let bearer = format!("Bearer {token}");
+        let router = create_router(Arc::new(AppState { host }), None);
+        let put = |length: usize| {
+            Request::builder()
+                .method("PUT")
+                .uri("/api/sync/media/image/a-0123456789ab.png")
+                .header(AUTHORIZATION, &bearer)
+                .header(CONTENT_LENGTH, length.to_string())
+        };
+        let (status, _, _) = send(&router, put(2 * 1024 * 1024), None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let (status, _, _) = send(&router, put(200 * 1024), None).await;
+        assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+        let get = || {
+            Request::builder()
+                .uri("/api/tags")
+                .header(AUTHORIZATION, &bearer)
+        };
+        for _ in 0..3 {
+            assert_eq!(send(&router, get(), None).await.0, StatusCode::OK);
+        }
+        assert_eq!(
+            send(&router, get(), None).await.0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+
+        for _ in 0..10 {
+            let (status, _, _) = send(
+                &router,
+                Request::builder().method("POST").uri("/api/auth/login"),
+                Some(serde_json::json!({ "user": "me", "password": "wrong password" })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        // Even the right password, for a while
+        let (status, _, _) = send(
+            &router,
+            Request::builder().method("POST").uri("/api/auth/login"),
+            Some(serde_json::json!({ "user": "me", "password": "password1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
 }
