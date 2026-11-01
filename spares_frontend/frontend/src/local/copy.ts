@@ -26,9 +26,9 @@ import {
   listRenderPackages,
   onCredentialsChange,
   renderAssetUrl,
-  reportServerReachable,
   type SyncReport,
 } from "../api/client";
+import { reportServerReachable } from "../api/reachability";
 import {
   call,
   canKeepCopy,
@@ -128,6 +128,11 @@ export function useLocalStatus(): LocalStatus {
 }
 
 /** Whether the server hasn't rendered the note's latest change yet, made on this device. */
+export function isPendingRender(noteId: number): boolean {
+  return status.pendingNotes.has(noteId);
+}
+
+/** `isPendingRender`, kept up to date. */
 export function usePendingRender(noteId: number | undefined): boolean {
   const { pendingNotes } = useLocalStatus();
   return noteId !== undefined && pendingNotes.has(noteId);

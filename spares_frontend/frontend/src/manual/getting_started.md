@@ -85,10 +85,6 @@ The copy syncs when the app opens, when it is hidden or closed, when the connect
 
 Notes created on the device get ids that follow your machine's newest note, with a letter of the device's own: after `hbp`, the first device's next note is `hbph`. How it works is documented on `spares_core::sync` (More replicas) and `spares_wasm`.
 
-#### Reviewing offline without a copy
-
-A browser that doesn't keep a copy can still review without a connection once the web app is installed as an app (e.g. "Add to Home Screen"). It downloads the next cards while online, and sends ratings once it is back. What works is described on `spares_core::api::offline_review`.
-
 ### Migration (optional)
 
 Spares ships with a script to migrate data from Anki. See `spares migrate --help`.
