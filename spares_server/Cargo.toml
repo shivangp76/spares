@@ -27,6 +27,7 @@ sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "chrono", "js
 tokio = { version = "1.54.1", features = ["full"] }
 tower-http = { version = "0.7.1", features = ["cors", "fs"] }
 argon2 = "0.6.0"
+strum = { version = "0.28.0", features = ["derive"] }
 inquire = "0.9.4"
 blake3 = "1.8.7"
 rand = "0.10.3"

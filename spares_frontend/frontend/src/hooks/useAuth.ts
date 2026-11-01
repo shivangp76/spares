@@ -1,9 +1,12 @@
-import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { clearCredentials, getCredentials } from '../api/client';
-import type { Credentials } from '../types/spares';
+import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { getCredentials, logout as endSession } from "../api/client";
+import type { Credentials } from "../types/spares";
 
-export function useAuth(): { credentials: Credentials | null; logout: () => void } {
+export function useAuth(): {
+  credentials: Credentials | null;
+  logout: () => void;
+} {
   const navigate = useNavigate();
   const credentials = useMemo<Credentials | null>(() => {
     try {
@@ -14,8 +17,7 @@ export function useAuth(): { credentials: Credentials | null; logout: () => void
   }, []);
 
   function logout() {
-    clearCredentials();
-    navigate('/login');
+    void endSession().then(() => navigate("/login"));
   }
 
   return { credentials, logout };

@@ -92,6 +92,7 @@ pub struct ImportReport {
 
 /// Imports into user `user_id`'s directory, whose collection must be empty. The host must not be
 /// running (the CLI checks with [`super::lock::HostLock`]).
+#[allow(clippy::too_many_lines, reason = "one step after another")]
 pub async fn import(
     host: &Host,
     user_id: &str,

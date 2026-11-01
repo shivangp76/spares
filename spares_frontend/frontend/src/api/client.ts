@@ -63,24 +63,59 @@ const STORAGE_KEY = "spares_credentials";
 export function getCredentials(): Credentials {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) throw new Error("Not authenticated");
-  return JSON.parse(raw) as Credentials;
+  const credentials = JSON.parse(raw) as Partial<Credentials>;
+  // Saved before accounts, with an API key instead of a session
+  if (!credentials.serverUrl || !credentials.csrfToken)
+    throw new Error("Not authenticated");
+  return credentials as Credentials;
 }
 
 /**
- * The schedulers of the server at `serverUrl`, asked for with `apiKey`, to check both before they
- * are saved. Throws `NetworkError` if the server can't be reached, and an `ApiError` saying so if it
- * rejects the key.
+ * Logs in to the host at `serverUrl`, which sets the session's cookie, and returns the session's
+ * CSRF token and the account's name. Throws `NetworkError` if the host can't be reached, and an
+ * `ApiError` if it refuses the name or password.
  */
-export async function getSchedulerNames({
-  serverUrl,
-  apiKey,
-}: Omit<Credentials, "schedulerName">): Promise<string[]> {
+export async function login(
+  serverUrl: string,
+  user: string,
+  password: string,
+): Promise<{ csrfToken: string; user: string }> {
   const label = "Log in";
-  const res = await send(label, `${serverUrl}/api/schedulers`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
+  const res = await send(label, `${serverUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user, password }),
   });
-  if (res.status === 401)
-    throw new ApiError("The server rejected this API key.");
+  if (res.status === 401) throw new ApiError("Wrong name or password.");
+  await throwIfNotOk(res, label);
+  const body = (await res.json()) as {
+    csrf_token: string;
+    user: { name: string };
+  };
+  return { csrfToken: body.csrf_token, user: body.user.name };
+}
+
+/** Ends the session on the host, then forgets the credentials. */
+export async function logout(): Promise<void> {
+  try {
+    const { serverUrl } = getCredentials();
+    await send("Log out", `${serverUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+  } catch {
+    // Offline, or logged out already: the credentials go anyway.
+  }
+  clearCredentials();
+}
+
+/**
+ * The schedulers of the host at `serverUrl`, asked for in the session just started, to check the
+ * scheduler before it is saved. Throws `NetworkError` if the host can't be reached.
+ */
+export async function getSchedulerNames(serverUrl: string): Promise<string[]> {
+  const label = "Log in";
+  const res = await send(label, `${serverUrl}/api/schedulers`);
   await throwIfNotOk(res, label);
   return res.json() as Promise<string[]>;
 }
@@ -152,10 +187,10 @@ async function cacheListPage<T>(
 
 /** For a `FormData` body, without `Content-Type`, which the browser sets with the multipart boundary. */
 function authHeaders(body?: RequestInit["body"]): HeadersInit {
-  const { apiKey } = getCredentials();
-  if (body instanceof FormData) return { Authorization: `Bearer ${apiKey}` };
+  const { csrfToken } = getCredentials();
+  if (body instanceof FormData) return { "X-CSRF-Token": csrfToken };
   return {
-    Authorization: `Bearer ${apiKey}`,
+    "X-CSRF-Token": csrfToken,
     "Content-Type": "application/json",
   };
 }
@@ -217,7 +252,7 @@ async function copyFile(
   }
 }
 
-/** A file from the server that the API key is needed for. Revalidated, so a newer render is shown. */
+/** A file from the server, which needs the session. Revalidated, so a newer render is shown. */
 function sendForFile(label: string, url: string): Promise<Response> {
   return send(label, url, { headers: authHeaders(), cache: "no-cache" });
 }
@@ -266,6 +301,18 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
       body.span.every((n) => typeof n === "number")
     ) {
       span = body.span as [number, number];
+    }
+    // The session ended: log in again.
+    if (
+      res.status === 401 &&
+      (body as { unauthorized?: unknown }).unauthorized === true
+    ) {
+      clearCredentials();
+      if (
+        typeof window !== "undefined" &&
+        window.location.pathname !== "/login"
+      )
+        window.location.assign("/login");
     }
   } catch {
     // Not JSON, e.g. a request the server rejected before reaching a handler
@@ -330,7 +377,7 @@ export function fileUrl(
 }
 
 /**
- * Downloads a rendered file, which needs the API key like every other request. A device that keeps
+ * Downloads a rendered file, which needs the session like every other request. A device that keeps
  * a copy of the collection asks the server only for a file the copy hasn't downloaded.
  */
 export async function fetchFile(relativePath: string): Promise<Blob> {
@@ -703,7 +750,7 @@ export interface SyncStatus {
   role: "client" | "server";
   replica: number;
   sync_url: string | null;
-  sync_api_key_set: boolean;
+  sync_token_set: boolean;
   usn: number | null;
   last_sync_at: number | null;
   needs_full_sync: string | null;

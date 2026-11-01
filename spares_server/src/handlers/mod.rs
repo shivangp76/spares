@@ -1,17 +1,9 @@
 // Some handlers have routes only on the server (`route::native_routes`), not in a browser.
 #![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 
-use std::sync::Arc;
-
 use axum::Json;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::Request;
 use axum::http::StatusCode;
-use axum::http::header::AUTHORIZATION;
-use axum::middleware::Next;
 use axum::response::IntoResponse;
-use axum::response::Response;
 use serde_json::Value;
 use serde_json::json;
 use spares_core::Error;
@@ -19,10 +11,9 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::TagErrorKind;
 
-#[cfg(not(target_family = "wasm"))]
-use crate::AppState;
-
 pub(crate) mod audio;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod auth;
 pub(crate) mod card;
 pub(crate) mod image;
 pub(crate) mod image_occlusion;
@@ -99,44 +90,6 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({ "message": e.to_string() })),
     )
-}
-
-/// Lets a request in with the host's API key, and runs it in the collection of the host's account.
-/// A host has a single account until accounts and sessions replace the key.
-#[cfg(not(target_family = "wasm"))]
-#[allow(clippy::result_large_err, reason = "axum middleware returns responses")]
-pub(crate) async fn require_api_key(
-    State(state): State<Arc<AppState>>,
-    mut request: Request<Body>,
-    next: Next,
-) -> Result<Response, Response> {
-    if let Some(expected) = &state.api_key {
-        let token = request
-            .headers()
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v: &str| v.strip_prefix("Bearer "));
-        if token != Some(expected.as_str()) {
-            return Err(StatusCode::UNAUTHORIZED.into_response());
-        }
-    }
-    let users = crate::host::accounts::users(&state.host.accounts)
-        .await
-        .map_err(|e| error_to_response(e).into_response())?;
-    let [user] = users.as_slice() else {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "message": format!("this host has {} accounts, not one", users.len()) })),
-        )
-            .into_response());
-    };
-    let collection = state
-        .host
-        .collection(&user.id)
-        .await
-        .map_err(|e| error_to_response(e).into_response())?;
-    request.extensions_mut().insert(Arc::clone(&collection));
-    Ok(collection.scope(next.run(request)).await)
 }
 
 pub(crate) async fn health_check_handler() -> impl IntoResponse {
