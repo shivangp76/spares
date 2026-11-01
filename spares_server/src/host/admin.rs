@@ -157,7 +157,7 @@ pub enum HostCommand {
     Export {
         /// Its id, name or email
         user: String,
-        /// Where to write it [default: `<id>.tar.gz` here]
+        /// Where to write it (default: `<id>.tar.gz` here)
         #[arg(short, long)]
         out: Option<PathBuf>,
     },

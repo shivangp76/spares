@@ -46,7 +46,20 @@ cargo xtask build-wasm
 
 It writes the wasm module and its JS bindings to `spares_frontend/frontend/src/local/pkg`. The `wasm` profile builds it small (LTO, `opt-level = "z"`): about 7.6 MB, 1.75 MB with brotli. Its JS bindings come from `wasm-bindgen-cli-support`, at the version of the `wasm-bindgen` crate, so there is no `wasm-bindgen` CLI to install. When upgrading `wasm-bindgen`, upgrade both (in `spares_wasm/Cargo.toml` and `xtask/Cargo.toml`).
 
-An end-to-end test runs a device's copy in headless Chromium, WebKit and Firefox, against a server of its own on an empty collection: setting it up, using it offline, syncing, resolving a conflict, and removing it (see `e2e/local_copy.ts`):
+### A scratch host
+
+A host keeps everything in its root directory and reads nothing else of yours, so a scratch host for testing is a temporary root:
+
+```sh
+export SPARES_ROOT=$(mktemp -d)
+TOKEN=$(echo password1 | spares host init --user test --bind 127.0.0.1:8090 --password-stdin --print-token)
+spares_server &                     # serves $SPARES_ROOT on 127.0.0.1:8090
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/parsers
+```
+
+Sync between hosts is tested with two of them, one the other's upstream (`spares_server/tests/two_hosts.rs`).
+
+An end-to-end test runs a device's copy in headless Chromium, WebKit and Firefox, against a host of its own on an empty collection: setting it up, using it offline, syncing, resolving a conflict, and removing it (see `e2e/local_copy.ts`):
 
 ```sh
 cd spares_frontend/frontend

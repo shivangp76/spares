@@ -16,8 +16,8 @@
 // changed since the last time (`listFiles`). So is pandoc.wasm, from the app's own
 // build, which converts the Markdown cards of notes changed here (see pandoc.ts).
 //
-// **Logging in and out.** Everything the copy sends goes to its own server, with the API key only
-// when the credentials are for that server. On every change of credentials, the copy pauses: no
+// **Logging in and out.** Everything the copy sends goes to its own server, with the session's CSRF
+// token only when the credentials are for that server. On every change of credentials, the copy pauses: no
 // syncs or downloads in the background, while the copy and its files stay. It starts again once
 // logged in to its server.
 import { useSyncExternalStore } from "react";
@@ -186,7 +186,7 @@ function currentServer(): { serverUrl: string; csrfToken: string } | null {
   }
 }
 
-/** The copy's server, with the API key when logged in to it. Everything the copy sends goes there. */
+/** The copy's server, with the session's CSRF token when logged in to it. Everything the copy sends goes there. */
 function copyServer(): { serverUrl: string; csrfToken: string | null } | null {
   const copy = getLocalCopy();
   if (!copy) return null;

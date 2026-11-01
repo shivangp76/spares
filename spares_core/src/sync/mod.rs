@@ -30,22 +30,17 @@
 //! 4. **An edit beats a delete**, the opposite of Anki.
 //! 5. **Live notes are read-only on the web**, because their source file is on the laptop. Their
 //!    tags and keywords stay editable.
-//! 6. **A replica's identity comes from the environment, never the database.** A full download
-//!    replaces the database, and the laptop must not take on the server's identity. There are two
-//!    settings, both required with no default (tests default to replica `0`, role `client`):
-//!    - `SPARES_REPLICA`, `0`–`7` ([`crate::config::Replica`]): which id form the replica writes
-//!      and its residue for the other tables (see [`crate::ids`]). `0` is the laptop, `1` the
-//!      server. Any other has to be enrolled with the server first (`spares sync devices add`),
-//!      which only hands out `2` to `4` ([`devices`]).
-//!    - `SPARES_SYNC_ROLE`, `server` or `client` ([`crate::config::SyncRole`]): whether this
-//!      instance answers `/api/sync/*` or runs the client side, including the merge.
+//! 6. **A replica's identity is kept outside its database.** A full download replaces the
+//!    database, and the laptop must not take on the server's identity. Its number, `0`–`7`
+//!    ([`crate::config::Replica`]), decides which id form it writes and its residue for the other
+//!    tables (see [`crate::ids`]). The root of the collection's sync chain, the host whose copy has
+//!    no upstream, is `1` and gives out every other number when a copy enrolls ([`devices`]): the
+//!    laptop's host gets `0`, browsers `2` to `4`. A host keeps its number in the collection's
+//!    `config.toml` (`[sync] replica`), a browser in its own storage next to the database.
 //!
-//!    Keeping them apart means a new replica only takes a new number, and code never infers the
-//!    role from the number.
-//!
-//!    A browser has no environment. Its number comes from the server when it enrolls, and it keeps
-//!    it in its own storage next to the database, so a full download doesn't change it either. A
-//!    browser is always a client ([`devices`]).
+//!    **There are no roles.** Every host answers `/api/sync/*` for its users' devices (relaying to
+//!    the upstream if the collection has one), and a collection with an upstream (`[sync] url`)
+//!    also runs the client side, including the merge, against it.
 //!
 //! # Change tracking
 //!
@@ -90,8 +85,8 @@
 //!
 //! # More replicas
 //!
-//! The laptop (`0`) and the server (`1`) were the first replicas. Browsers that keep a copy of the
-//! collection are replicas `2` to `4`, clients like the laptop:
+//! The laptop (`0`) and the server (`1`, the root) were the first replicas. Browsers that keep a
+//! copy of the collection are replicas `2` to `4`, clients like the laptop:
 //!
 //! - **Enrolling** gives one a number ([`devices`]), then it does a full download. Its note ids are
 //!   its own letter after the laptop note they follow ([`crate::ids`]), and its other ids take its

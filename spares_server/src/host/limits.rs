@@ -4,7 +4,7 @@
 //! user in `accounts.sqlite` (`spares host limits`). The laptop's are as high as before hosts:
 //! request bodies sized for one trusted user, no storage quota, no rate limit.
 //!
-//! [`crate::handlers::auth::authenticate`] enforces them on every request: too many requests a
+//! The middleware that authenticates requests (`handlers::auth::authenticate`) enforces them on every request: too many requests a
 //! minute get `429`, a body larger than the user's limit `413`, an upload past the storage quota
 //! `507`, and a search that takes too long `503`. Usage (requests, and the size of each open
 //! collection's directory, measured every few minutes) is counted in `accounts.sqlite`.

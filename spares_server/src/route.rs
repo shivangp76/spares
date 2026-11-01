@@ -562,7 +562,7 @@ async fn not_stored(mut response: axum::response::Response) -> axum::response::R
 }
 
 /// The router a browser runs on its own copy of the collection (`spares_wasm`): [`shared_routes`],
-/// with no API key, since requests never leave the browser.
+/// with no login, since requests never leave the browser.
 ///
 /// A few requests act on the server's files or devices rather than on the collection. They are
 /// answered with [`needs_server`], so the web app sends them to the server instead. Every other
@@ -677,7 +677,7 @@ mod tests {
             spares_core::collection::CollectionPaths::in_dir(&root),
         ));
         let router = create_local_router(collection);
-        // No API key: requests never leave the browser.
+        // No login: requests never leave the browser.
         let (status, parsers) = call(&router, "GET", "/api/parsers").await;
         assert_eq!(status, StatusCode::OK, "{parsers}");
         assert_eq!(parsers, serde_json::json!([]));

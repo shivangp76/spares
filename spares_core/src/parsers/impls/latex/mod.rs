@@ -23,17 +23,21 @@
 //!   return os.getenv("LATEX_OUT_DIR") .. "/aux/" .. vim.fn.expand("%:t:r")
 //! end }
 //! ```
-//! where `$LATEX_OUT_DIR` is set in your shell to the appropriate directory.
+//! where `$LATEX_OUT_DIR` is set in your shell to the files directory of your collection on your
+//! host, `<SPARES_ROOT>/users/<your id>/files`, where spares renders notes too (spares itself reads
+//! no such variable).
 //!
 //! With notes in a git or jj repository (see "Notes as a git or jj repository" in the manual's
 //! Workflows page):
-//! - spares compiles notes from its own copy (`notes-spares/`), while vimtex compiles the file in
+//! - spares compiles notes from its own copy (`notes.git/`), while vimtex compiles the file in
 //!   your clone. Both write the same PDF in `$LATEX_OUT_DIR`, so after compiling an unpushed change
 //!   (for example on an LLM's branch), reviews show that version until spares renders the note
 //!   again (`spares note generate`).
-//! - Inverse search from a PDF spares compiled opens the file in `notes-spares/`. Edit the note in
-//!   your clone instead: spares overwrites edits made in `notes-spares/`, saving them to
-//!   `notes-spares/.git/spares-overwritten/`.
+//! - Inverse search from a PDF spares compiled opens the file in `notes.git/`. Edit the note in
+//!   your clone instead: spares overwrites edits made in `notes.git/`, saving them to
+//!   `notes.git/.git/spares-overwritten/`.
+//! - spares renders in a sandbox without shell escape (see [`crate::render`]): a note that needs
+//!   it (for the `svg` package, say) renders only in your own vimtex.
 
 mod data_parser;
 

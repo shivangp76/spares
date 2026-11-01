@@ -69,7 +69,7 @@ fn local_client() -> Result<Client, Error> {
     client_with_key(host_client().token.as_deref())
 }
 
-/// A client sending this API key, if any.
+/// A client sending this device token, if any.
 fn client_with_key(key: Option<&str>) -> Result<Client, Error> {
     let mut headers = HeaderMap::new();
     if let Some(key) = key {
