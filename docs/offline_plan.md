@@ -19,7 +19,6 @@ Delete this file once the items below are done.
 
 - **Other tabs:** they say "Open in another tab". They could send their requests to the tab that has the copy, over a `BroadcastChannel`.
 - **Undo past a sync:** undo stops at the last sync, which is why a device doesn't sync after each action.
-- **Files:** each refresh lists every file (`GET /api/sync/files` without `since=`), so it also sees deletions. Fine for the files a VPS has, since Typst cards aren't rendered there.
 
 ## Found in the iOS Simulator, not fixed yet
 

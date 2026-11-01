@@ -11,7 +11,8 @@
 //
 // **Files.** The server renders notes, and the device keeps every rendered file and every file
 // Typst cards read (`render_asset`) in Cache Storage, where the API client looks first. They are
-// downloaded again when they change, after each sync. So is pandoc.wasm, from the app's own
+// downloaded again when they change, after each sync, which lists only the server's files that
+// changed since the last time (`listFiles`). So is pandoc.wasm, from the app's own
 // build, which converts the Markdown cards of notes changed here (see pandoc.ts).
 //
 // **Logging in and out.** Everything the copy sends goes to its own server, with the API key only
@@ -61,6 +62,8 @@ const DOWNLOAD_CONCURRENCY = 4;
 // `dropCopy` removes them, along with the caches they describe.
 const FILES_KEY = 'spares_copy_files';
 const ASSETS_KEY = 'spares_copy_assets';
+// The server's rendered files as last listed (`FileListing`)
+const LISTING_KEY = 'spares_copy_file_listing';
 // Tells the service worker to keep spares_wasm and the Typst compiler offline too (see service-worker.js)
 const SERVICE_WORKER_MARKER = 'spares-local-copy';
 
@@ -374,6 +377,7 @@ async function dropCopy(): Promise<void> {
   session += 1;
   localStorage.removeItem(FILES_KEY);
   localStorage.removeItem(ASSETS_KEY);
+  localStorage.removeItem(LISTING_KEY);
   for (const name of [SERVICE_WORKER_MARKER, COPY_FILES_CACHE, COPY_RENDER_ASSETS_CACHE, COPY_PANDOC_CACHE]) {
     await globalThis.caches?.delete(name).catch(console.error);
   }
@@ -414,11 +418,54 @@ export async function disableLocalCopy(discardChanges: boolean): Promise<string 
 
 // Files
 
-/** `GET /api/sync/files` */
+/** A file of `POST /api/sync/files/changed` (see `spares_core::sync::media`) */
 interface RenderedFile {
   path: string;
   size: number;
   mtime: number;
+  bucket: string;
+}
+
+/**
+ * The server's rendered files as last listed, and the digest of each bucket they're sorted into,
+ * for buckets whose files have all been downloaded. The server sends again only the files of
+ * buckets whose digest is another, so a refresh lists only the few files a sync changed, and still
+ * sees the ones that are gone.
+ */
+interface FileListing {
+  buckets: Record<string, string>;
+  files: Record<string, RenderedFile>;
+}
+
+function readListing(): FileListing {
+  try {
+    const listing = JSON.parse(localStorage.getItem(LISTING_KEY) ?? 'null') as FileListing | null;
+    if (listing?.buckets && listing.files) return listing;
+  } catch {
+    // Listed again
+  }
+  return { buckets: {}, files: {} };
+}
+
+/** The server's rendered files, from the listing here and what changed on the server since. */
+async function listFiles(serverUrl: string, headers: Record<string, string>): Promise<{ listing: FileListing; changed: Record<string, string> }> {
+  const listing = readListing();
+  const res = await fetch(`${serverUrl}/api/sync/files/changed`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ buckets: listing.buckets }),
+  });
+  if (!res.ok) throw new Error(`Listing the server's files failed: ${res.status}`);
+  const { buckets, files } = await res.json() as { buckets: Record<string, string>; files: RenderedFile[] };
+  // Those listed again, and those that have no files left
+  const changed: Record<string, string> = {};
+  for (const [bucket, digest] of Object.entries(buckets)) if (listing.buckets[bucket] !== digest) changed[bucket] = digest;
+  for (const bucket of Object.keys(listing.buckets)) if (!(bucket in buckets)) changed[bucket] = '';
+  for (const [path, file] of Object.entries(listing.files)) {
+    if (file.bucket in changed) delete listing.files[path];
+  }
+  for (const file of files) listing.files[file.path] = file;
+  return { listing, changed };
 }
 
 function readMap(key: string): Record<string, string | number> {
@@ -464,9 +511,8 @@ async function downloadFiles(): Promise<void> {
   const started = session;
   const { serverUrl, apiKey } = copyCredentials();
   const headers = { Authorization: `Bearer ${apiKey}` };
-  const res = await fetch(`${serverUrl}/api/sync/files`, { headers });
-  if (!res.ok) throw new Error(`Listing the server's files failed: ${res.status}`);
-  const files = await res.json() as RenderedFile[];
+  const { listing, changed } = await listFiles(serverUrl, headers);
+  const files = Object.values(listing.files);
   const assets = await call<{ path: string; hash: string }[]>('render_assets');
 
   const [filesCache, assetsCache, pandocCache] = await Promise.all([caches.open(COPY_FILES_CACHE), caches.open(COPY_RENDER_ASSETS_CACHE), caches.open(COPY_PANDOC_CACHE)]);
@@ -491,6 +537,13 @@ async function downloadFiles(): Promise<void> {
   const save = () => {
     localStorage.setItem(FILES_KEY, JSON.stringify(knownFiles));
     localStorage.setItem(ASSETS_KEY, JSON.stringify(knownAssets));
+    // A bucket counts as seen once each of its files is here, so one that failed is listed again
+    const missing = new Set(files.filter(file => knownFiles[file.path] !== file.mtime).map(file => file.bucket));
+    for (const [bucket, digest] of Object.entries(changed)) {
+      if (!digest) delete listing.buckets[bucket];
+      else if (!missing.has(bucket)) listing.buckets[bucket] = digest;
+    }
+    localStorage.setItem(LISTING_KEY, JSON.stringify(listing));
   };
   save();
 
