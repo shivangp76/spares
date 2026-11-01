@@ -34,7 +34,7 @@ use super::records::Changes;
 /// refuses another, so a device and a host of different spares versions say so instead of
 /// misreading each other.
 ///
-/// - `1`: a server and clients by `SPARES_SYNC_ROLE`, with `SPARES_SYNC_API_KEY`.
+/// - `1`: a server and clients, set by environment variables, with API keys.
 /// - `2`: hosts and their devices, with device tokens or sessions; every replica but the root's is
 ///   enrolled, and a host with an upstream relays its devices' requests to it.
 pub const SYNC_PROTOCOL_VERSION: u32 = 2;

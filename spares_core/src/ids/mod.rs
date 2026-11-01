@@ -142,7 +142,7 @@
 //!
 //! Cards, review logs, tags and parsers have no human-facing requirement, but still need ids
 //! unique across replicas. New rows take the smallest id above `max(high-water marks, MAX(id))`
-//! that is congruent to `SPARES_REPLICA` mod [`ID_STEP`] ([`next_ids`]).
+//! that is congruent to the replica's number mod [`ID_STEP`] ([`next_ids`]).
 //!
 //! - The modulus is fixed at 8, not the current replica count, so adding a replica never changes
 //!   the rule for existing ones. Wasting 7/8 of the numbers costs nothing, since these ids are
