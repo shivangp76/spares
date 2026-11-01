@@ -58,7 +58,10 @@
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
-//!   of a delete) removes the grave.
+//!   of a delete) removes the grave. Since `20261101130000_undo_after_sync`, review logs have
+//!   graves too, as an undo deletes the review it takes back; nothing else deletes one.
+//! - **`sync_received(kind, oid, event_id)`**: each note, card, tag and parser sync wrote with
+//!   a change, and the newest event then, which undo checks (see [`crate::api::undo`]).
 //! - **`sync_base(kind, oid, snapshot)`**: a row's last synced version, saved on its first change
 //!   or delete after a sync, for the three-way merge. For a note: its data, custom data, parser,
 //!   tag ids and non-embedded keywords; for a card: its fields and tag ids. The views
@@ -110,11 +113,12 @@
 //!   nothing; the server does that after each push ([`files::after_sync`]). Images, audio and image
 //!   occlusions added on a browser are uploaded before its push, and it downloads the server's
 //!   image occlusions, which notes are parsed with ([`media`]).
-//! - **When a browser syncs.** Undo stops at the last sync ([`LAST_SYNC_EVENT_ID_KEY`]), as in Anki.
-//!   A browser that synced after every action would lose undo within seconds. So it syncs when the
-//!   app opens, when it is hidden or closed, from the Sync button, after reconnecting, and after
-//!   5 minutes idle, never right after an action (`src/local/copy.ts` in the web app). Undo past
-//!   a sync could come later.
+//! - **When a browser syncs**: when the app opens, when it is hidden or closed, from the Sync
+//!   button, after reconnecting, and 30 seconds after its last change, so a review is one sync
+//!   (`src/local/copy.ts` in the web app). Unlike in Anki, a sync doesn't end undo: undoing a
+//!   change after it is a change like any other, which the next sync sends. Only a change whose
+//!   rows a sync wrote since can't be undone ([`crate::api::undo`]), since the undo would write
+//!   over the other side's change.
 //! - **API responses are `Cache-Control: no-store`.** Firefox otherwise answers a sync's
 //!   `GET /api/sync/meta` from its HTTP cache, with a usn from before, and the sync takes the
 //!   server for one restored from a backup.
@@ -124,8 +128,7 @@
 //! - Note and other ids that are unique across replicas: [`crate::ids`].
 //! - Merge rules: [`client`] and [`merge`]; card orders in merged text: `orders`.
 //! - The protocol: [`protocol`]; the server's side: [`server`]; a full sync: [`full`].
-//! - Files after a sync: [`files`]; undo and the change number after a sync:
-//!   [`LAST_SYNC_EVENT_ID_KEY`] and [`NOTES_VERSION_OFFSET_KEY`].
+//! - Files after a sync: [`files`]; the change number after a sync: [`NOTES_VERSION_OFFSET_KEY`].
 //!
 //! # Sources
 //!
@@ -204,10 +207,6 @@ pub const SYNC_USN_KEY: &str = "sync_usn";
 /// sync.
 pub const SYNC_EPOCH_KEY: &str = "sync_epoch";
 pub const LAST_SYNC_AT_KEY: &str = "last_sync_at";
-/// The newest event at the last sync. `/api/undo` refuses events at or below it, since what they
-/// did has reached the other replica, as Anki clears undo on sync. The server sets it when it
-/// answers a pull or push, the client when it commits.
-pub const LAST_SYNC_EVENT_ID_KEY: &str = "last_sync_event_id";
 /// Set (to the reason) when only a full sync can bring the replicas back in step.
 pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
 /// Added to the newest note event id by [`crate::api::undo::get_latest_note_event_id`], so the
@@ -277,13 +276,14 @@ pub(crate) async fn remove_state(conn: &mut SqliteConnection, key: &str) -> Resu
     Ok(())
 }
 
-/// Records the newest event as synced, so undo cannot reach past it.
-pub(crate) async fn guard_undo(conn: &mut SqliteConnection) -> Result<(), Error> {
-    let latest: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
-        .fetch_one(&mut *conn)
+/// Drops the rows of `sync_received` older than every event, which can't stop an undo any more
+/// (see [`crate::api::undo`]).
+pub(crate) async fn prune_received(conn: &mut SqliteConnection) -> Result<(), Error> {
+    sqlx::query("DELETE FROM sync_received WHERE event_id < (SELECT MIN(id) FROM event)")
+        .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
-    set_state(conn, LAST_SYNC_EVENT_ID_KEY, latest).await
+    Ok(())
 }
 
 /// Moves the note change number on after a sync changed notes. Call it before clearing `event`
@@ -385,6 +385,8 @@ pub enum SyncKind {
     Note,
     Card,
     SavedSearch,
+    /// Only graves: review logs are only ever added, apart from the ones an undo deletes
+    ReviewLog,
 }
 
 impl SyncKind {
@@ -395,6 +397,7 @@ impl SyncKind {
             "note" => Ok(Self::Note),
             "card" => Ok(Self::Card),
             "saved_search" => Ok(Self::SavedSearch),
+            "review_log" => Ok(Self::ReviewLog),
             _ => Err(Error::Sync(format!("unknown row kind `{name}`"))),
         }
     }
@@ -406,6 +409,7 @@ impl SyncKind {
             Self::Note => "note",
             Self::Card => "card",
             Self::SavedSearch => "saved_search",
+            Self::ReviewLog => "review_log",
         }
     }
 }

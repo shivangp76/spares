@@ -4,10 +4,11 @@
 // The copy is a sync replica of its own, like the laptop (see `spares_core::sync`): every page
 // works on it, offline too, and a sync sends its changes to the server and brings the server's.
 //
-// **When it syncs.** An undo can't reach back past the last sync, so the copy doesn't sync right
-// after each action. It syncs when the app opens, when it is hidden or the connection comes back,
-// after `IDLE_MS` without changes, and with the Sync button. Syncing when hidden only happens if
-// something changed or the last sync is `PULL_EVERY_MS` old.
+// **When it syncs.** When the app opens, when it is hidden or the connection comes back, once
+// nothing changed for `IDLE_MS`, and with the Sync button, so a burst of changes, such as a
+// review, is one sync. Syncing when hidden only happens if something changed or the last sync is
+// `PULL_EVERY_MS` old. A change can still be undone after a sync, unless the sync changed the same
+// notes or cards (see `spares_core::api::undo`).
 //
 // **Files.** The server renders notes, and the device keeps every rendered file and every file
 // Typst cards read (`render_asset`) in Cache Storage, where the API client looks first. They are
@@ -48,10 +49,10 @@ import {
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from './pandoc';
 
 /** Syncs once nothing changed for this long */
-const IDLE_MS = 5 * 60 * 1000;
+const IDLE_MS = 30 * 1000;
 /** Syncs even without changes of its own when the last sync is this old, to get the server's */
 const PULL_EVERY_MS = 15 * 60 * 1000;
-const CHECK_EVERY_MS = 60 * 1000;
+const CHECK_EVERY_MS = 10 * 1000;
 /** How long a sync keeps trying while the server is busy, e.g. with a full upload's files */
 const BUSY_RETRY_MS = 10 * 60 * 1000;
 const BUSY_WAIT_MS = 15 * 1000;

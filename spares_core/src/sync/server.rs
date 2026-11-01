@@ -21,7 +21,6 @@ use super::devices::check_enrolled;
 use super::full;
 use super::get_state;
 use super::get_state_i64;
-use super::guard_undo;
 use super::has_dirty;
 use super::protocol::FullUploadResponse;
 use super::protocol::MetaResponse;
@@ -29,6 +28,7 @@ use super::protocol::PullRequest;
 use super::protocol::PullResponse;
 use super::protocol::PushRequest;
 use super::protocol::PushResponse;
+use super::prune_received;
 use super::read_counts;
 use super::records::Selection;
 use super::records::read_cards_of_notes;
@@ -136,7 +136,7 @@ pub async fn pull(db: &SqlitePool, request: PullRequest) -> Result<PullResponse,
         }
         None => None,
     };
-    guard_undo(&mut tx).await?;
+    prune_received(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
     Ok(PullResponse {
@@ -214,7 +214,7 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
     .execute(&mut *tx)
     .await
     .map_err(sqlx_error)?;
-    guard_undo(&mut tx).await?;
+    prune_received(&mut tx).await?;
     let counts = read_counts(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
