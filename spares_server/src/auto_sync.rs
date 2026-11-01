@@ -1,8 +1,13 @@
-//! Automatic sync: a sync client with `sync.url` and `sync.interval_minutes` set syncs on startup,
-//! on waking from sleep, every that many minutes, and `sync.push_delay_seconds` after local
-//! changes stop (see [`SyncConfig`]). A failed attempt (the server being unreachable, for one) is
-//! logged and tried again a minute later if it was for local changes or a wake.
+//! Automatic sync, the host's one scheduler for it: a collection with an upstream (`[sync] url`)
+//! and `sync.interval_minutes` syncs with it when the host starts, on waking from sleep, every
+//! that many minutes, and `sync.push_delay_seconds` after local changes stop (see [`SyncConfig`]).
+//! A failed attempt (the upstream being unreachable, for one) is logged and tried again a minute
+//! later if it was for local changes or a wake.
+//!
+//! At most `sync_at_once` collections (in `host.toml`) sync at once; the others wait their turn.
+//! A collection that syncs automatically stays open.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -13,9 +18,7 @@ use log::info;
 use log::warn;
 use spares_core::Error;
 use spares_core::collection::Collection;
-use spares_core::config::SyncRole;
 use spares_core::config::get_cache_dir;
-use spares_core::config::get_sync_role;
 use spares_core::config::read_external_config;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::sync::SyncConfig;
@@ -23,6 +26,8 @@ use spares_core::sync::dirty_count;
 use spares_core::sync::files::sync_now;
 use spares_core::sync::run::SyncMode;
 use sqlx::SqlitePool;
+use tokio::sync::Semaphore;
+use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 /// How often to look for local changes and for having slept.
@@ -35,19 +40,71 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// to count as a wake.
 const MIN_SLEEP: Duration = Duration::from_secs(60);
 
-/// Starts syncing `collection` automatically, if its config says to.
-pub(crate) async fn spawn(collection: Arc<Collection>) {
-    let inner = Arc::clone(&collection);
-    collection.scope(async { spawn_current(inner) }).await;
+/// The host's automatic syncs, by user.
+#[derive(Debug)]
+pub struct Scheduler {
+    at_once: Arc<Semaphore>,
+    running: std::sync::Mutex<HashMap<String, JoinHandle<()>>>,
 }
 
-fn spawn_current(collection: Arc<Collection>) {
-    if !matches!(get_sync_role(), Ok(SyncRole::Client)) {
-        return;
+impl Scheduler {
+    pub fn new(at_once: usize) -> Self {
+        Self {
+            at_once: Arc::new(Semaphore::new(at_once.max(1))),
+            running: std::sync::Mutex::default(),
+        }
     }
-    let Ok(config) = read_external_config() else {
-        return;
+
+    /// (Re)starts syncing `collection` automatically, as its config now says, or stops it if its
+    /// config says not to.
+    pub async fn start(&self, collection: Arc<Collection>) {
+        let id = collection.id.clone();
+        let inner = Arc::clone(&collection);
+        let at_once = Arc::clone(&self.at_once);
+        let handle = collection
+            .scope(async move { spawn_current(inner, at_once) })
+            .await;
+        let previous = {
+            let mut running = self
+                .running
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match handle {
+                Some(handle) => running.insert(id, handle),
+                None => running.remove(&id),
+            }
+        };
+        if let Some(previous) = previous {
+            previous.abort();
+        }
+    }
+
+    /// Stops every automatic sync, e.g. when the host stops.
+    pub fn stop_all(&self) {
+        let running = std::mem::take(
+            &mut *self
+                .running
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for handle in running.into_values() {
+            handle.abort();
+        }
+    }
+}
+
+/// Whether the collection in `paths` syncs automatically, from its config file, without opening
+/// it.
+pub fn syncs_automatically(paths: &spares_core::collection::CollectionPaths) -> bool {
+    let Ok(contents) = std::fs::read_to_string(paths.config_file()) else {
+        return false;
     };
+    toml_edit::de::from_str::<spares_core::config::SparesExternalConfig>(&contents)
+        .is_ok_and(|config| config.sync.url.is_some() && config.sync.interval_minutes > 0)
+}
+
+fn spawn_current(collection: Arc<Collection>, at_once: Arc<Semaphore>) -> Option<JoinHandle<()>> {
+    let config = read_external_config().ok()?;
     let SyncConfig {
         url: Some(url),
         interval_minutes,
@@ -55,30 +112,36 @@ fn spawn_current(collection: Arc<Collection>) {
         ..
     } = config.sync
     else {
-        return;
+        return None;
     };
     if interval_minutes == 0 {
-        return;
+        return None;
     }
+    let who = &collection.id;
     if push_delay_seconds == 0 {
-        info!("Syncing with {url} on startup, on wake and every {interval_minutes} minutes");
+        info!("{who} syncs with {url} on startup, on wake and every {interval_minutes} minutes");
     } else {
         info!(
-            "Syncing with {url} on startup, on wake, every {interval_minutes} minutes and \
+            "{who} syncs with {url} on startup, on wake, every {interval_minutes} minutes and \
              {push_delay_seconds} seconds after local changes"
         );
     }
     let interval = Duration::from_secs(interval_minutes * 60);
     let push_delay = (push_delay_seconds > 0).then(|| Duration::from_secs(push_delay_seconds));
     let db = collection.db.clone();
-    spares_core::collection::spawn(async move {
+    Some(spares_core::collection::spawn(async move {
         // Held, so the collection stays open while it syncs automatically
         let _collection = collection;
-        run(db, interval, push_delay).await;
-    });
+        run(db, interval, push_delay, at_once).await;
+    }))
 }
 
-async fn run(db: SqlitePool, interval: Duration, push_delay: Option<Duration>) {
+async fn run(
+    db: SqlitePool,
+    interval: Duration,
+    push_delay: Option<Duration>,
+    at_once: Arc<Semaphore>,
+) {
     let mut check = tokio::time::interval(CHECK_EVERY);
     check.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut changes = Changes::default();
@@ -115,6 +178,9 @@ async fn run(db: SqlitePool, interval: Duration, push_delay: Option<Duration>) {
         }
 
         last_attempt = Some(now);
+        let Ok(_turn) = at_once.acquire().await else {
+            return;
+        };
         match sync(&db).await {
             Ok(()) => {
                 if failing {

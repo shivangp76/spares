@@ -112,7 +112,14 @@ impl HttpRemote {
         let request = self
             .client
             .request(method, format!("{}{path}", self.base_url))
+            .header(
+                super::protocol::SYNC_PROTOCOL_HEADER,
+                super::protocol::SYNC_PROTOCOL_VERSION.to_string(),
+            )
             .timeout(timeout);
+        // So a host whose upstream leads back to it refuses its own requests
+        #[cfg(not(target_family = "wasm"))]
+        let request = request.header(super::protocol::SYNC_VIA_HEADER, super::protocol::host_id());
         match &self.auth {
             RemoteAuth::Token(token) => request.bearer_auth(token),
             RemoteAuth::Session { csrf_token } => request.header("X-CSRF-Token", csrf_token),
@@ -168,16 +175,18 @@ impl HttpRemote {
         })
     }
 
-    /// Asks the server for a replica number for this browser (see [`super::devices`]).
+    /// Asks the host for a replica number for this browser (see [`super::devices`]).
     pub async fn enroll(&self, name: &str) -> Result<EnrollResponse, Error> {
-        self.post(
-            "/api/sync/enroll",
-            &EnrollRequest {
-                name: name.to_string(),
-            },
-            QUICK_TIMEOUT,
-        )
+        self.enroll_with(&EnrollRequest {
+            name: name.to_string(),
+            ..EnrollRequest::default()
+        })
         .await
+    }
+
+    /// Asks the host for a replica number: for this host's copy, or one it relays the request for.
+    pub async fn enroll_with(&self, request: &EnrollRequest) -> Result<EnrollResponse, Error> {
+        self.post("/api/sync/enroll", request, QUICK_TIMEOUT).await
     }
 
     /// Frees a device's replica number: this browser's, or that of one that lost its copy.

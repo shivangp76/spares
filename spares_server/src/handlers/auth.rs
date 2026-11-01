@@ -115,6 +115,7 @@ pub(crate) async fn authenticate(
         Err(e) => return error_to_response(e).into_response(),
     };
     request.extensions_mut().insert(Arc::clone(&collection));
+    request.extensions_mut().insert(Arc::clone(host));
     request.extensions_mut().insert(auth);
     collection.scope(next.run(request)).await
 }

@@ -21,6 +21,8 @@ pub(crate) mod note;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod notes_vcs;
 pub(crate) mod parser;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod relay;
 pub(crate) mod render_asset;
 pub(crate) mod review;
 pub(crate) mod saved_search;
