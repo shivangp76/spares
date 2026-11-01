@@ -6,9 +6,6 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use chrono::DateTime;
@@ -17,7 +14,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::commit::NEEDS_RECONCILE;
 use super::commit::commit_index;
 use super::commit::commit_message;
 use super::commit::git_index_lock;
@@ -171,20 +167,27 @@ struct Journal {
     state: JournalState,
 }
 
-struct Session {
+/// A push being imported, in the collection's state (`VcsState`).
+pub(crate) struct Session {
     journal: Journal,
     _guard: NotesGuard,
 }
 
-static SESSION: Mutex<Option<Session>> = Mutex::new(None);
-static LAST_INCIDENT: Mutex<Option<String>> = Mutex::new(None);
-
-fn session() -> MutexGuard<'static, Option<Session>> {
-    SESSION.lock().unwrap_or_else(|e| e.into_inner())
+/// Runs `f` on the collection's push session.
+fn with_session<T>(f: impl FnOnce(&mut Option<Session>) -> T) -> T {
+    let state = crate::collection::state();
+    let mut session = crate::collection::lock(&state.vcs.receive_session);
+    f(&mut session)
 }
 
 fn set_incident(incident: Option<String>) {
-    *LAST_INCIDENT.lock().unwrap_or_else(|e| e.into_inner()) = incident;
+    let state = crate::collection::state();
+    *crate::collection::lock(&state.vcs.last_incident) = incident;
+}
+
+fn last_incident() -> Option<String> {
+    let state = crate::collection::state();
+    crate::collection::lock(&state.vcs.last_incident).clone()
 }
 
 fn journal_path() -> PathBuf {
@@ -223,12 +226,9 @@ pub fn status() -> StatusResponse {
         notes_dir: enabled
             .then(|| server_repo_dir().canonicalize().ok())
             .flatten(),
-        needs_reconcile: NEEDS_RECONCILE.load(Ordering::SeqCst),
-        receive_in_progress: session().is_some(),
-        last_incident: LAST_INCIDENT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone(),
+        needs_reconcile: super::needs_reconcile(),
+        receive_in_progress: with_session(|session| session.is_some()),
+        last_incident: last_incident(),
         overwritten_dir: enabled.then(overwritten_dir),
         saved_copies: if enabled { saved_copies() } else { Vec::new() },
     }
@@ -244,7 +244,7 @@ enum Outcome {
 pub async fn receive(db: SqlitePool, request: ReceiveRequest) -> Result<ReceiveResponse, Error> {
     let guard = exclusive_guard(None).await?;
     // Its own task, so a hook killed mid-request cannot stop the import halfway.
-    let handle = tokio::spawn(async move {
+    let handle = crate::collection::spawn(async move {
         set_incident(None);
         let outcome = receive_locked(&db, &request).await.unwrap_or_else(|e| {
             Outcome::Rejected(format!("spares failed to process the push: {e}"))
@@ -259,12 +259,14 @@ pub async fn receive(db: SqlitePool, request: ReceiveRequest) -> Result<ReceiveR
             Outcome::Accepted { journal, message } => {
                 let session_id = journal.session.clone();
                 let imported = imported_ids(&journal);
-                *session() = Some(Session {
-                    journal,
-                    _guard: guard,
+                with_session(|session| {
+                    *session = Some(Session {
+                        journal,
+                        _guard: guard,
+                    });
                 });
                 let watchdog_session = session_id.clone();
-                tokio::spawn(async move {
+                crate::collection::spawn(async move {
                     tokio::time::sleep(WATCHDOG_DELAY).await;
                     if let Some(session) = take_session(Some(&watchdog_session)) {
                         log::warn!(
@@ -299,18 +301,19 @@ pub async fn finish(db: SqlitePool, request: FinishRequest) -> Result<FinishResp
             anki_links: Vec::new(),
         });
     };
-    let handle = tokio::spawn(async move { settle(&db, session).await });
+    let handle = crate::collection::spawn(async move { settle(&db, session).await });
     handle
         .await
         .map_err(|e| Error::NotesVcs(format!("Settling the push failed: {e}")))?
 }
 
 fn take_session(id: Option<&str>) -> Option<Session> {
-    let mut session = session();
-    if id.is_some_and(|id| session.as_ref().is_some_and(|s| s.journal.session != id)) {
-        return None;
-    }
-    session.take()
+    with_session(|session| {
+        if id.is_some_and(|id| session.as_ref().is_some_and(|s| s.journal.session != id)) {
+            return None;
+        }
+        session.take()
+    })
 }
 
 /// Settles a push from a journal left by a server that stopped mid-receive. Called at startup.
@@ -470,7 +473,7 @@ async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
         None => {
             let result = reconcile(db, ReconcileScope::Notes(journal.ids.clone()), None).await;
             if let Err(e) = result {
-                NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+                super::set_needs_reconcile(true);
                 log::error!("Failed to regenerate notes after rolling back: {e}");
             }
             "it was rolled back, so nothing was imported".to_string()
@@ -488,7 +491,7 @@ async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
             )
             .await;
             if let Err(e) = result {
-                NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+                super::set_needs_reconcile(true);
                 log::error!("Failed to commit a partial import: {e}");
             }
             format!(

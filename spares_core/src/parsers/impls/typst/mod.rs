@@ -14,9 +14,6 @@ use serde::Deserialize;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::ParserErrorKind;
-use crate::config::get_cache_dir;
-use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
@@ -28,7 +25,6 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
@@ -435,17 +431,6 @@ impl Parseable for TypstParser {
         Some(format!("#{KEYWORD_FUNC_NAME}[{keyword}]"))
     }
 
-    fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if is_test_mode() {
-            return get_cache_dir();
-        }
-        std::env::var("TYPST_OUT_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|dir| dir.exists())
-            .unwrap_or_else(get_cache_dir)
-    }
-
     fn file_extension(&self) -> &'static str {
         "typ"
     }
@@ -461,11 +446,9 @@ impl Parseable for TypstParser {
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
     ) -> Result<std::process::Output, Error> {
-        let typst_root_dir = std::env::var("TYPST_ROOT").map_err(|_| {
-            Error::Library(LibraryError::Parser(ParserErrorKind::NotFound(
-                "TYPST_ROOT environment variable is not set".to_string(),
-            )))
-        })?;
+        // The collection's directory (its notes, templates and media) and what the host lets
+        // renders read, and nothing else of the host's.
+        let typst_root_dir = crate::render::common_ancestor(&crate::render::readable_dirs());
         let to_absolute = |path: &Path| {
             std::path::absolute(path).map_err(|e| Error::Io {
                 description: format!("Failed to make {} absolute", path.display()),

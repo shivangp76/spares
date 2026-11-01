@@ -25,10 +25,8 @@ use crate::api::note::render_notes;
 use crate::api::note::update_notes;
 use crate::api::parser::list_parsers;
 use crate::api::undo::group_events;
-use crate::config::Environment;
-use crate::config::get_env_config;
+use crate::config::host_client;
 use crate::config::is_test_mode;
-use crate::config::local_api_key;
 use crate::config::read_external_config;
 use crate::model::CustomData;
 use crate::model::NoteId;
@@ -81,7 +79,7 @@ pub enum SparesRequestProcessor {
     },
 }
 
-/// Sends the local server's API key, which it requires when it has one.
+/// Sends the device token for the host (see [`host_client`]).
 fn authed(request: RequestBuilder, api_key: Option<&str>) -> RequestBuilder {
     match api_key {
         Some(key) => request.bearer_auth(key),
@@ -105,12 +103,11 @@ impl SparesAdapter {
     pub fn new(request_processor: SparesRequestProcessor) -> Self {
         let internal = match request_processor {
             SparesRequestProcessor::Server => {
-                let env_config = get_env_config(Environment::Production);
-                let base_url = format!("http://{}", env_config.socket_address);
+                let host = host_client();
                 SparesRequestProcessorInternal::Server {
-                    base_url,
+                    base_url: host.base_url,
                     client: Client::new(),
-                    api_key: local_api_key(),
+                    api_key: host.token,
                 }
             }
             SparesRequestProcessor::Database { pool } => {

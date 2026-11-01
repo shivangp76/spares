@@ -287,17 +287,25 @@ impl ImageOcclusionSources {
             clozes_filepaths.insert(data.clozes_filepath.as_path());
             original_image_filepaths.insert(data.original_image_filepath.as_path());
         }
+        // Rayon's threads read the files for the collection of this one
+        let context = crate::collection::capture();
         let (clozes, originals) = rayon::join(
             || {
                 clozes_filepaths
                     .into_par_iter()
-                    .map(|path| (path.to_path_buf(), read_clozes_svg(path)))
+                    .map(|path| {
+                        let _collection = context.enter();
+                        (path.to_path_buf(), read_clozes_svg(path))
+                    })
                     .collect()
             },
             || {
                 original_image_filepaths
                     .into_par_iter()
-                    .map(|path| (path.to_path_buf(), read_original_image(path, overlay)))
+                    .map(|path| {
+                        let _collection = context.enter();
+                        (path.to_path_buf(), read_original_image(path, overlay))
+                    })
                     .collect()
             },
         );
@@ -463,9 +471,11 @@ pub fn create_image_occlusion_cards(
         .collect::<Vec<_>>();
 
     // Process image occlusions in parallel
+    let context = crate::collection::capture();
     let _image_occlusion_card_filepaths = image_occlusions
         .par_iter()
         .map(|(i, cloze_indices, image_occlusion_data)| {
+            let _collection = context.enter();
             let image_occlusion_order_in_card = i + 1;
             let card_filepath = get_image_occlusion_card_filepath(
                 image_occlusion_output_rendered_filepath,

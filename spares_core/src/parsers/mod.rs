@@ -15,8 +15,8 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
-use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
+use crate::config::get_files_dir;
 use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
@@ -438,9 +438,10 @@ pub trait Parseable: Send + Sync {
     /// `spares: body` comment.
     fn default_template(&self) -> &'static str;
 
-    // This can be overridden for a specific parser, so it is in the trait.
+    /// Where rendered files go: the collection's files directory. It can be overridden for a
+    /// specific parser, so it is in the trait.
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        get_cache_dir()
+        get_files_dir()
     }
 
     /// Whether web clients compile this parser's cards themselves from the raw source instead of

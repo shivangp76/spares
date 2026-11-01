@@ -1,5 +1,4 @@
 use std::path::Path as FsPath;
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Multipart;
@@ -20,7 +19,7 @@ use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 /// Uploads can be large photos or scans.
@@ -38,7 +37,7 @@ pub(crate) async fn get_image_occlusion_editor_config_handler()
 
 /// Multipart fields: `parser_id`, `image` (with a file name) and `clozes` (the SVG).
 pub(crate) async fn create_image_occlusion_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let mut parser_id: Option<i64> = None;
@@ -140,7 +139,7 @@ pub(crate) async fn get_image_occlusion_file_handler(
 
 pub(crate) async fn list_note_image_occlusions_handler(
     Path(id): Path<NoteId>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = list_note_image_occlusions(&data.db, id, &get_all_parsers())
         .await
@@ -156,7 +155,7 @@ pub(crate) struct UpdateNoteImageOcclusionRequest {
 /// `index` is 0 based, in the order the image occlusions appear in the note.
 pub(crate) async fn update_note_image_occlusion_handler(
     Path((id, index)): Path<(NoteId, usize)>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UpdateNoteImageOcclusionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();

@@ -184,8 +184,13 @@ pub struct SyncConfig {
     /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`.
     pub remote_host: Option<String>,
     /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
-    /// to the remote user's home directory. Must match the server's `SPARES_CACHE_DIR`.
+    /// to the remote user's home directory. Must match the files directory of the collection on
+    /// the server.
     pub remote_rendered_dir: String,
+    /// This host's replica number for the collection (see [`crate::config::Replica`]). A
+    /// collection without `url` is the root of its sync chain, replica `1`, unless this says
+    /// otherwise. With `url`, it is set when this host enrolls with the upstream.
+    pub replica: Option<u8>,
 }
 
 impl Default for SyncConfig {
@@ -196,6 +201,7 @@ impl Default for SyncConfig {
             push_delay_seconds: 30,
             remote_host: None,
             remote_rendered_dir: ".cache/spares".to_string(),
+            replica: None,
         }
     }
 }

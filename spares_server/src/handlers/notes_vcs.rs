@@ -15,7 +15,7 @@ use spares_core::notes_vcs::anki::AnkiReceiveResponse;
 use spares_core::notes_vcs::anki::LinkSparesIdsRequest;
 use spares_core::notes_vcs::anki::LinkSparesIdsResponse;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn notes_vcs_status_handler() -> impl IntoResponse {
@@ -24,7 +24,7 @@ pub(crate) async fn notes_vcs_status_handler() -> impl IntoResponse {
 
 /// Called by the `push-to-checkout` hook. Holds the exclusive notes lock until the push settles.
 pub(crate) async fn notes_vcs_receive_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<ReceiveRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = notes_vcs::receive(data.db.clone(), body)
@@ -35,7 +35,7 @@ pub(crate) async fn notes_vcs_receive_handler(
 
 /// Called by the `post-receive` hook once git has updated `main`.
 pub(crate) async fn notes_vcs_finish_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<FinishRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = notes_vcs::finish(data.db.clone(), body)
@@ -46,7 +46,7 @@ pub(crate) async fn notes_vcs_finish_handler(
 
 /// Updates the notes repository's `anki` branch with Anki's notes (`spares vcs refresh anki`).
 pub(crate) async fn notes_vcs_anki_refresh_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let backend = backend::connect().await.map_err(error_to_response)?;
     let result = notes_vcs::anki::refresh(data.db.clone(), Arc::from(backend))
@@ -58,7 +58,7 @@ pub(crate) async fn notes_vcs_anki_refresh_handler(
 /// Called by the `update` hook for a push to `anki`: writes it into Anki. Holds the exclusive
 /// notes lock until the push settles.
 pub(crate) async fn notes_vcs_anki_receive_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<AnkiReceiveRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if !backend::anki_connect_is_up().await {
@@ -76,7 +76,7 @@ pub(crate) async fn notes_vcs_anki_receive_handler(
 
 /// Called by the `post-receive` hook once git has moved `anki`.
 pub(crate) async fn notes_vcs_anki_finish_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<AnkiFinishRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let backend = backend::connect().await.map_err(error_to_response)?;
@@ -101,7 +101,7 @@ pub(crate) async fn notes_vcs_anki_link_handler(
 
 /// Creates and activates the server copy of the notes repository (`spares vcs init`).
 pub(crate) async fn notes_vcs_init_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
     let result = notes_vcs::run_exclusive(async move { notes_vcs::init_server_repo(&db).await })
@@ -112,7 +112,7 @@ pub(crate) async fn notes_vcs_init_handler(
 
 /// Compares the notes repository with the database (`spares vcs check`).
 pub(crate) async fn notes_vcs_check_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<CheckRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();

@@ -9,6 +9,7 @@ mod history;
 mod import;
 mod keyword;
 mod link;
+mod local;
 mod migrate;
 mod migrate_ids;
 mod note;
@@ -26,6 +27,7 @@ mod utils;
 mod view;
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 use args::Cli;
 use args::Commands;
@@ -39,8 +41,8 @@ use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderValue;
 use spares_core::adapters::get_adapter_from_string;
-use spares_core::config::get_env_config;
-use spares_core::config::local_api_key;
+use spares_core::config::host_client;
+use spares_core::config::set_host_client;
 use spares_core::parsers::find_parser;
 use spares_core::parsers::get_all_parsers;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -61,9 +63,9 @@ async fn main() {
     }
 }
 
-/// The client for the local server, sending its API key (see [`local_api_key`]).
+/// The client for the host, sending its device token (see [`host_client`]).
 fn local_client() -> Result<Client, Error> {
-    client_with_key(local_api_key().as_deref())
+    client_with_key(host_client().token.as_deref())
 }
 
 /// A client sending this API key, if any.
@@ -80,12 +82,31 @@ fn client_with_key(key: Option<&str>) -> Result<Client, Error> {
         .into_diagnostic()
 }
 
+#[allow(clippy::too_many_lines, reason = "one arm per command")]
 async fn process_args(args: Cli) -> Result<(), Error> {
-    let env_config = get_env_config(args.environment);
-    let base_url = format!("http://{}", env_config.socket_address);
+    let Cli { host, command } = args;
+    let command = match command {
+        Commands::Host(host_args) => {
+            return spares_server::host::admin::run(host_args)
+                .await
+                .map_err(|e| miette!("{e}"));
+        }
+        command => command,
+    };
+    let root = spares_server::host::default_root();
+    set_host_client(local::host_client(host, &root));
+    // The collection on this machine, for the commands that work on its files
+    let collection = local::collection(&root).await;
+    if let Ok(collection) = &collection {
+        spares_core::collection::set_default(Some(Arc::clone(collection)));
+    }
+    let local_collection = || collection.clone().map_err(|e| miette!("{e}"));
+    let base_url = host_client().base_url;
     let client = local_client()?;
+    let local_env =
+        || local_collection().map(|collection| local::LocalEnv::new(&collection, &host_client()));
 
-    match args.command {
+    match command {
         Commands::Parser(parser_args) => parser::handle(parser_args, &base_url, &client).await,
         Commands::Tag(tag_args) => tag::handle(tag_args, &base_url, &client).await,
         Commands::Note(note_args) => note::handle(note_args, &base_url, &client).await,
@@ -94,8 +115,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Keyword(keyword_args) => keyword::handle(keyword_args, &base_url, &client).await,
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
         Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
-        Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &env_config).await,
+        Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &local_env()?).await,
         Commands::Vcs(vcs_args) => notes_vcs::handle(vcs_args, &base_url, &client).await,
+        Commands::Host(_) => unreachable!("handled above"),
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)
                 .await
@@ -106,6 +128,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             command: Some(migrate::MigrateCommands::Ids { dry_run }),
             ..
         }) => {
+            let env_config = local_env()?;
             migrate_ids::migrate_ids(
                 &env_config.database_url,
                 &env_config.socket_address,
@@ -122,6 +145,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             let adapter_string = adapter_string.ok_or_else(|| miette!("--adapter is required"))?;
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
+            let env_config = local_env()?;
             let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
                 .map_err(|e| miette!("{:?}", e))?
                 .with_regexp();

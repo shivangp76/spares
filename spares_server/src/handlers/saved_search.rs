@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Path;
-use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use spares_core::api::saved_search::delete_saved_search;
@@ -12,10 +9,10 @@ use spares_core::api::saved_search::save_search;
 use spares_core::schema::saved_search::SavedSearch;
 
 use super::error_to_response;
-use crate::AppState;
+use crate::Coll;
 
 pub(crate) async fn list_saved_searches_handler(
-    State(data): State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let searches = list_saved_searches(&data.db)
         .await
@@ -25,7 +22,7 @@ pub(crate) async fn list_saved_searches_handler(
 
 /// The saved search called `name`, or 404.
 pub(crate) async fn get_saved_search_handler(
-    State(data): State<Arc<AppState>>,
+    Coll(data): Coll,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     match get_saved_search(&data.db, &name)
@@ -42,7 +39,7 @@ pub(crate) async fn get_saved_search_handler(
 
 /// Saves a search, replacing the one with the same name.
 pub(crate) async fn save_search_handler(
-    State(data): State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<SavedSearch>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let saved = save_search(&data.db, body)
@@ -53,7 +50,7 @@ pub(crate) async fn save_search_handler(
 
 /// Deletes the saved search called `name`, returning whether there was one.
 pub(crate) async fn delete_saved_search_handler(
-    State(data): State<Arc<AppState>>,
+    Coll(data): Coll,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let deleted = delete_saved_search(&data.db, &name)

@@ -6,9 +6,6 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Output;
 use std::process::Stdio;
-use std::sync::LazyLock;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::thread;
 use std::time::Duration;
 
@@ -162,8 +159,9 @@ pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathD
 /// How long a command rendering a note or card may run before it is stopped.
 pub const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The render commands a collection is running (see [`crate::collection::CollectionState`]).
 #[derive(Default)]
-struct RunningRenders {
+pub(crate) struct RunningRenders {
     /// Process groups of render commands that have been spawned but not yet reaped. An id is
     /// removed while holding the lock before or as its process is reaped, so a group in here
     /// cannot have had its id reused.
@@ -172,16 +170,17 @@ struct RunningRenders {
     stopped: bool,
 }
 
-static RUNNING_RENDERS: LazyLock<Mutex<RunningRenders>> = LazyLock::new(Default::default);
-
-fn running_renders() -> MutexGuard<'static, RunningRenders> {
-    RUNNING_RENDERS.lock().unwrap_or_else(|e| e.into_inner())
+/// Stops every render command the current collection is running, along with any processes it
+/// started, and makes its later render commands fail without being started. Killing does nothing
+/// on platforms other than Unix.
+pub fn kill_running_renders() {
+    kill_renders_of(&crate::collection::state());
 }
 
-/// Stops every running render command, along with any processes it started, and makes any later
-/// render command fail without being started. Killing does nothing on platforms other than Unix.
-pub fn kill_running_renders() {
-    let mut running_renders = running_renders();
+/// [`kill_running_renders`] for `state`'s collection, e.g. for each open collection when a host
+/// shuts down.
+pub fn kill_renders_of(state: &crate::collection::CollectionState) {
+    let mut running_renders = crate::collection::lock(&state.renders);
     running_renders.stopped = true;
     for &process_group in &running_renders.process_groups {
         kill_process_group(process_group);
@@ -204,6 +203,8 @@ fn command_output_with_timeout(
     std::os::unix::process::CommandExt::process_group(command, 0);
     // The lock is held while spawning, so a command cannot start after `kill_running_renders`
     // without being refused or killed.
+    let state = crate::collection::state();
+    let running_renders = || crate::collection::lock(&state.renders);
     let mut child = {
         let mut running_renders = running_renders();
         if running_renders.stopped {

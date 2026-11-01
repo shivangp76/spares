@@ -23,7 +23,7 @@ use crate::api::image_occlusion::HASH_LENGTH;
 use crate::api::image_occlusion::other_error;
 use crate::api::image_occlusion::sanitized_stem;
 use crate::api::parser::get_parser_name;
-use crate::config::get_data_dir;
+use crate::config::get_media_dir;
 use crate::parsers::Parseable;
 use crate::parsers::audio::AUDIO_EXTENSIONS;
 use crate::parsers::audio::is_audio_path;
@@ -51,7 +51,7 @@ pub fn get_audio_directory() -> PathBuf {
     if let Some(dirs) = crate::platform::media_dirs() {
         return dirs.audio;
     }
-    get_data_dir().join("audio")
+    get_media_dir().join("audio")
 }
 
 /// Stores `audio` in the audio directory and returns its path. `audio_filename` is only used for

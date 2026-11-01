@@ -16,11 +16,9 @@ use miette::IntoDiagnostic;
 use miette::miette;
 use reqwest::StatusCode;
 use serde_json::Value;
-use spares_core::config::EnvironmentConfig;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
-use spares_core::config::local_api_key;
 use spares_core::config::read_external_config;
 use spares_core::config::set_sync_values;
 use spares_core::sync::run::SyncMode;
@@ -43,6 +41,7 @@ use super::shell::quote;
 use super::shell::run;
 use super::shell::warn;
 use super::upload;
+use crate::local::LocalEnv as EnvironmentConfig;
 use crate::sync::sync_cloud;
 use crate::utils::local_timezone;
 
@@ -408,7 +407,7 @@ async fn wait_for_local_server(
     me: &str,
     url: &str,
 ) -> Result<Option<String>, Error> {
-    let mut key = local_api_key();
+    let mut key = spares_core::config::host_client().token;
     let mut tried_keychain = false;
     let mut wait = true;
     loop {

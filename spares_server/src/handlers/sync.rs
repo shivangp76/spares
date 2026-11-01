@@ -3,7 +3,6 @@
 //! `spares_core::sync`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
@@ -47,7 +46,7 @@ use spares_core::sync::run::SyncMode;
 use spares_core::sync::run::local_state;
 use spares_core::sync::server;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 /// Pushes and full uploads carry whole databases.
@@ -98,7 +97,7 @@ pub(crate) struct ReplicaQuery {
 }
 
 pub(crate) async fn sync_meta_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Query(ReplicaQuery { replica }): Query<ReplicaQuery>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
@@ -109,7 +108,7 @@ pub(crate) async fn sync_meta_handler(
 }
 
 pub(crate) async fn sync_pull_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<PullRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
@@ -120,7 +119,7 @@ pub(crate) async fn sync_pull_handler(
 }
 
 pub(crate) async fn sync_push_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<PushRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
@@ -136,7 +135,7 @@ pub(crate) async fn sync_push_handler(
 }
 
 pub(crate) async fn sync_full_download_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
     let path = temp_file("download")?;
@@ -155,7 +154,7 @@ pub(crate) async fn sync_full_download_handler(
 // Spawns on Tokio
 #[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_full_upload_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Query(ReplicaQuery { replica }): Query<ReplicaQuery>,
     body: Bytes,
 ) -> Result<impl IntoResponse, HandlerError> {
@@ -180,7 +179,7 @@ pub(crate) async fn sync_full_upload_handler(
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // Answers once the database is replaced, then regenerates every note's files, still holding the
     // guard. Without a cache that takes minutes, which the device uploading shouldn't wait for.
-    tokio::spawn(async move {
+    spares_core::collection::spawn(async move {
         let _guard = guard;
         let uploaded = async {
             let before = files::note_ids(&db).await?;
@@ -209,7 +208,7 @@ pub(crate) async fn sync_full_upload_handler(
 
 /// Gives a browser that keeps a copy of the collection a replica number of its own.
 pub(crate) async fn sync_enroll_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<EnrollRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
@@ -220,7 +219,7 @@ pub(crate) async fn sync_enroll_handler(
 }
 
 pub(crate) async fn sync_unenroll_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UnenrollRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
@@ -293,7 +292,7 @@ pub(crate) async fn sync_media_handler(
 }
 
 pub(crate) async fn sync_devices_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Server)?;
     let devices = devices::list(&data.db).await.map_err(error_to_response)?;
@@ -313,7 +312,7 @@ fn normal() -> SyncMode {
 /// Syncs this (client) server with its `sync.url`.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_run_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(SyncRunRequest { mode }): Json<SyncRunRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     require_role(SyncRole::Client)?;
@@ -337,7 +336,7 @@ pub(crate) struct SyncStatusResponse {
 }
 
 pub(crate) async fn sync_status_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
     let state = local_state(&data.db).await.map_err(error_to_response)?;
     Ok(Json(SyncStatusResponse {
@@ -350,7 +349,7 @@ pub(crate) async fn sync_status_handler(
 }
 
 pub(crate) async fn list_sync_conflicts_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, HandlerError> {
     let conflicts = conflicts::list_conflicts(&data.db)
         .await
@@ -359,7 +358,7 @@ pub(crate) async fn list_sync_conflicts_handler(
 }
 
 pub(crate) async fn resolve_sync_conflict_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Path(id): Path<i64>,
     Json(resolution): Json<Resolution>,
 ) -> Result<impl IntoResponse, HandlerError> {

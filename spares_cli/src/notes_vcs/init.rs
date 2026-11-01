@@ -159,7 +159,6 @@ pub(crate) async fn init_vcs(
     if jj {
         check_jj_version()?;
     }
-    check_typst_root(&dirs.data)?;
     let status = server_status(base_url, client).await?;
     let data_dir = dirs
         .data
@@ -167,7 +166,7 @@ pub(crate) async fn init_vcs(
         .unwrap_or_else(|_| dirs.data.clone());
     if status.data_dir != data_dir {
         return Err(miette!(
-            "The spares server at {base_url} uses the data directory {}, but this command uses {}. Run it with the same SPARES_* settings as the server.",
+            "The spares server at {base_url} uses the data directory {}, but this command uses {}. Run it with the SPARES_ROOT and SPARES_USER of the host.",
             status.data_dir.display(),
             data_dir.display()
         ));
@@ -301,27 +300,6 @@ fn check_jj_version() -> Result<(), Error> {
     Ok(())
 }
 
-/// Typst can only read files under its root, and notes are compiled inside the data directory.
-fn check_typst_root(data_dir: &Path) -> Result<(), Error> {
-    let Some(root) = std::env::var_os("TYPST_ROOT") else {
-        return Ok(());
-    };
-    let root = PathBuf::from(root);
-    let root = root.canonicalize().unwrap_or(root);
-    let data = data_dir
-        .canonicalize()
-        .unwrap_or_else(|_| data_dir.to_path_buf());
-    if data.starts_with(&root) {
-        Ok(())
-    } else {
-        Err(miette!(
-            "TYPST_ROOT ({}) does not contain the data directory ({}), where spares compiles notes from now on. Set TYPST_ROOT to a directory containing both, e.g. `/`.",
-            root.display(),
-            data.display()
-        ))
-    }
-}
-
 /// git, isolated from the git environment of a caller such as a hook.
 fn git_command() -> Command {
     let mut command = Command::new("git");
@@ -383,18 +361,20 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// This spares binary, run against this instance: its address and data directory are fixed, so a
-/// shell with other settings cannot reach another spares instance.
+/// This spares binary, run against this host and collection: the host's address and root and the
+/// collection's user are fixed, so a shell with other settings cannot reach another host or user.
 fn spares_command(base_url: &str) -> Result<String, Error> {
     let exe = std::env::current_exe().map_err(|e| miette!("{}", e))?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    let socket_address = base_url.trim_start_matches("http://");
-    let data_dir = get_data_dir();
-    let data_dir = data_dir.canonicalize().unwrap_or(data_dir);
+    let root = spares_server::host::default_root();
+    let root = root.canonicalize().unwrap_or(root);
+    let user = spares_core::collection::current_id()
+        .ok_or_else(|| miette!("No collection on this machine to write hooks for"))?;
     Ok(format!(
-        "env SPARES_SOCKET_ADDRESS={} SPARES_DATA_DIR={} {}",
-        shell_quote(socket_address),
-        shell_quote(&data_dir.to_string_lossy()),
+        "env SPARES_HOST={} SPARES_ROOT={} SPARES_USER={} {}",
+        shell_quote(base_url),
+        shell_quote(&root.to_string_lossy()),
+        shell_quote(&user),
         shell_quote(&exe.to_string_lossy()),
     ))
 }
@@ -675,7 +655,7 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
         println!(
             "{} lists `notes/`; you may want to add `{}/` and `notes.pre-vcs-*/` too.",
             gitignore.display(),
-            notes_vcs::SERVER_REPO_DIR_NAME
+            spares_core::collection::NOTES_REPO_DIR_NAME
         );
     }
 }

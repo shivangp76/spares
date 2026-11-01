@@ -1,9 +1,10 @@
 //! Keeping raw note files in a git repository that users clone, so notes can be edited, branched and
 //! reviewed with git or jj, and imported into spares by pushing.
 //!
-//! The server copy (`<data dir>/notes-spares`) is written only by the server, which commits after
-//! every change, so its `main` describes the database. Users clone it to `<data dir>/notes`. A push
-//! is imported by hooks that ask the server to [`receive`] it.
+//! The server copy (`notes.git` in the collection's directory, see [`crate::collection`]) is
+//! written only by the host, which commits after every change, so its `main` describes the
+//! database. Users clone it, e.g. to `<data dir>/notes`. A push is imported by hooks that ask the
+//! host to [`receive`] it.
 //!
 //! Invariants:
 //! - The database is the source of truth. Whenever files may not match it, [`reconcile`]
@@ -26,7 +27,6 @@ mod receive;
 mod reconcile;
 mod renumber;
 
-pub use commit::NEEDS_RECONCILE;
 pub use commit::commit_message;
 pub use commit::commit_note_files;
 pub use commit::note_rel_paths;
@@ -55,7 +55,6 @@ pub use note_file::fill_linked_notes;
 pub use note_file::parse_new_note_file;
 pub use note_file::parse_note_file;
 pub use note_file::same_note;
-pub use paths::SERVER_REPO_DIR_NAME;
 pub use paths::enabled;
 pub use paths::note_file_name;
 pub use paths::note_rel_path;
@@ -88,3 +87,37 @@ pub use reconcile::reconcile_after;
 pub use reconcile::remove_saved_copies;
 pub use reconcile::saved_copies;
 pub use renumber::renumber_note_files;
+
+/// A collection's notes repository state while it is open: its locks, and the push being imported
+/// (see [`crate::collection::CollectionState`]).
+#[derive(Default)]
+pub(crate) struct VcsState {
+    /// See [`lock`]
+    pub(crate) lock: std::sync::Arc<tokio::sync::RwLock<()>>,
+    /// See `commit::git_index_lock`
+    pub(crate) git_index: commit::GitIndexLock,
+    /// See `commit::start_deferring`
+    pub(crate) deferred: std::sync::Mutex<Option<std::collections::BTreeSet<std::path::PathBuf>>>,
+    /// Set when committing failed, so files may differ from `HEAD`. The next push reconciles first.
+    pub(crate) needs_reconcile: std::sync::atomic::AtomicBool,
+    pub(crate) receive_session: std::sync::Mutex<Option<receive::Session>>,
+    pub(crate) last_incident: std::sync::Mutex<Option<String>>,
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) anki_session: std::sync::Mutex<Option<anki::AnkiSession>>,
+}
+
+/// Records that files may differ from `HEAD` (see [`VcsState::needs_reconcile`]), or that they
+/// match again.
+pub(crate) fn set_needs_reconcile(value: bool) {
+    crate::collection::state()
+        .vcs
+        .needs_reconcile
+        .store(value, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub(crate) fn needs_reconcile() -> bool {
+    crate::collection::state()
+        .vcs
+        .needs_reconcile
+        .load(std::sync::atomic::Ordering::SeqCst)
+}

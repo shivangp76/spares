@@ -62,7 +62,7 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
         // its interrupted setup
         format!(
             "--exclude=/{}/",
-            spares_core::notes_vcs::SERVER_REPO_DIR_NAME
+            spares_core::collection::NOTES_REPO_DIR_NAME
         ),
         "--exclude=/notes.pre-vcs-*/".to_string(),
         "--exclude=/.notes-spares-init/".to_string(),

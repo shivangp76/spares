@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Query;
 use axum::http::HeaderMap;
@@ -34,11 +32,11 @@ use spares_core::schema::review::UnmaskedImageOcclusionRequest;
 use spares_core::schema::statistics::StatisticsGraphsRequest;
 use spares_core::schema::statistics::StepsStatsRequest;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn get_review_card_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<GetReviewCardRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let review_card_response = get_review_card(&data.db, body, Utc::now(), &get_all_parsers())
@@ -48,7 +46,7 @@ pub(crate) async fn get_review_card_handler(
 }
 
 pub(crate) async fn next_review_card_available_at_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<GetReviewCardRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let available_at = next_review_card_available_at(&data.db, body, Utc::now())
@@ -58,7 +56,7 @@ pub(crate) async fn next_review_card_available_at_handler(
 }
 
 pub(crate) async fn create_review_snapshot_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<ReviewSnapshotRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let response = create_review_snapshot_tag(&data.db, body, Utc::now())
@@ -68,7 +66,7 @@ pub(crate) async fn create_review_snapshot_handler(
 }
 
 pub(crate) async fn queue_positions_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<QueuePositionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let response = queue_positions(&data.db, body, Utc::now())
@@ -78,7 +76,7 @@ pub(crate) async fn queue_positions_handler(
 }
 
 pub(crate) async fn submit_study_action_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<SubmitStudyActionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let submit_study_action_response = submit_study_action(&data.db, body, Utc::now())
@@ -88,7 +86,7 @@ pub(crate) async fn submit_study_action_handler(
 }
 
 pub(crate) async fn get_review_card_by_id_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     axum::extract::Path(card_id): axum::extract::Path<CardId>,
     Json(body): Json<GetReviewCardRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -105,7 +103,7 @@ pub(crate) async fn get_review_card_by_id_handler(
 }
 
 pub(crate) async fn get_statistics_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<StatisticsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let stats_response = get_statistics(&data.db, body)
@@ -115,7 +113,7 @@ pub(crate) async fn get_statistics_handler(
 }
 
 pub(crate) async fn get_review_history_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Query(request): Query<ReviewHistoryRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let history_response = get_review_history(&data.db, request)
@@ -125,7 +123,7 @@ pub(crate) async fn get_review_history_handler(
 }
 
 pub(crate) async fn get_statistics_graphs_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<StatisticsGraphsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let graphs = get_statistics_graphs(&data.db, body)
@@ -135,7 +133,7 @@ pub(crate) async fn get_statistics_graphs_handler(
 }
 
 pub(crate) async fn get_steps_stats_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<StepsStatsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let stats = get_steps_stats(&data.db, body, Utc::now())
@@ -157,7 +155,7 @@ pub(crate) async fn get_review_config_handler()
 /// SVG, or `204 No Content` if it has none (see `spares_core::api::review::unmasked_image_occlusion`).
 /// Revalidated by its hash, so opening it again reads it but sends nothing.
 pub(crate) async fn get_unmasked_image_occlusion_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Query(request): Query<UnmaskedImageOcclusionRequest>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {

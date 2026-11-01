@@ -25,9 +25,9 @@ use progress::Progress;
 use shell::Ssh;
 use shell::quote;
 use shell::warn;
-use spares_core::config::EnvironmentConfig;
 use spares_core::config::read_external_config;
 
+use crate::local::LocalEnv as EnvironmentConfig;
 use crate::utils::local_timezone;
 
 #[derive(Args, Debug)]

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -19,11 +17,11 @@ use spares_core::schema::tag::CreateTagRequest;
 use spares_core::schema::tag::RenameTagsRequest;
 use spares_core::schema::tag::UpdateTagRequest;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn create_tag_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<CreateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = create_tag(&data.db, body, true)
@@ -34,7 +32,7 @@ pub(crate) async fn create_tag_handler(
 
 pub(crate) async fn get_tag_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let tag_res = get_tag(&data.db, id).await.map_err(error_to_response)?;
     Ok(Json(tag_res))
@@ -42,7 +40,7 @@ pub(crate) async fn get_tag_handler(
 
 pub(crate) async fn get_tag_by_name_handler(
     Path(name): Path<String>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let tag_res = get_tag_by_name(&data.db, name.as_str())
         .await
@@ -51,7 +49,7 @@ pub(crate) async fn get_tag_by_name_handler(
 }
 
 pub(crate) async fn update_tag_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UpdateTagRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -62,7 +60,7 @@ pub(crate) async fn update_tag_handler(
 }
 
 pub(crate) async fn rename_tags_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<RenameTagsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -74,7 +72,7 @@ pub(crate) async fn rename_tags_handler(
 
 pub(crate) async fn delete_tag_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
     run_exclusive(async move { delete_tag(&db, id, true).await })
@@ -85,7 +83,7 @@ pub(crate) async fn delete_tag_handler(
 
 pub(crate) async fn list_tags_handler(
     opts: Query<FilterOptions>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let list_tags_res = list_tags(&data.db, opts.0)
         .await
@@ -95,7 +93,7 @@ pub(crate) async fn list_tags_handler(
 
 pub(crate) async fn rebuild_tag_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     rebuild_tag(&data.db, id).await.map_err(error_to_response)?;
     Ok(StatusCode::OK)

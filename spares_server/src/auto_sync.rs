@@ -3,6 +3,7 @@
 //! changes stop (see [`SyncConfig`]). A failed attempt (the server being unreachable, for one) is
 //! logged and tried again a minute later if it was for local changes or a wake.
 
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -11,6 +12,7 @@ use log::debug;
 use log::info;
 use log::warn;
 use spares_core::Error;
+use spares_core::collection::Collection;
 use spares_core::config::SyncRole;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_sync_role;
@@ -33,7 +35,13 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// to count as a wake.
 const MIN_SLEEP: Duration = Duration::from_secs(60);
 
-pub(crate) fn spawn(db: SqlitePool) {
+/// Starts syncing `collection` automatically, if its config says to.
+pub(crate) async fn spawn(collection: Arc<Collection>) {
+    let inner = Arc::clone(&collection);
+    collection.scope(async { spawn_current(inner) }).await;
+}
+
+fn spawn_current(collection: Arc<Collection>) {
     if !matches!(get_sync_role(), Ok(SyncRole::Client)) {
         return;
     }
@@ -62,7 +70,12 @@ pub(crate) fn spawn(db: SqlitePool) {
     }
     let interval = Duration::from_secs(interval_minutes * 60);
     let push_delay = (push_delay_seconds > 0).then(|| Duration::from_secs(push_delay_seconds));
-    tokio::spawn(run(db, interval, push_delay));
+    let db = collection.db.clone();
+    spares_core::collection::spawn(async move {
+        // Held, so the collection stays open while it syncs automatically
+        let _collection = collection;
+        run(db, interval, push_delay).await;
+    });
 }
 
 async fn run(db: SqlitePool, interval: Duration, push_delay: Option<Duration>) {

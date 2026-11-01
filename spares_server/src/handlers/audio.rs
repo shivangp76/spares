@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
@@ -9,7 +7,7 @@ use spares_core::api::audio::MAX_AUDIO_SIZE;
 use spares_core::api::audio::create_audio;
 use spares_core::parsers::get_all_parsers;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 /// Room is left for the multipart framing.
@@ -21,7 +19,7 @@ fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 /// Multipart fields: `parser_id` and `audio` (with a file name).
 pub(crate) async fn create_audio_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let mut parser_id: Option<i64> = None;

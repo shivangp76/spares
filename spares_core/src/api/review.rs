@@ -1247,6 +1247,9 @@ fn card_image_occlusions(
 
 /// A part of the `order`th image occlusion (from 1) of card `card_order` of note `note_id`, without
 /// masks, for the review page (see [`crate::parsers::image_occlusion::unmasked_overlay_svg`]).
+///
+/// A note's settings name its image occlusion's files by any path, so they are read only if they
+/// are where the collection's renders may read (see [`readable_file`]).
 pub async fn unmasked_image_occlusion(
     db: &SqlitePool,
     request: &UnmaskedImageOcclusionRequest,
@@ -1330,7 +1333,7 @@ pub enum UnmaskedImageOcclusionFile {
     },
     /// The image occlusion's Markup layer has no shapes
     NoMarkup,
-    /// No such note, card or image occlusion, or its files are missing
+    /// No such note, card or image occlusion, or its files aren't where renders may read
     NotFound,
 }
 
@@ -1344,12 +1347,16 @@ impl UnmaskedImageOcclusionFile {
     }
 }
 
-/// `path`, without symbolic links, if it is a file. The server's renders read any file a note
-/// names, too.
+/// `path`, without symbolic links, if it is a file in what a render of the collection may read
+/// ([`crate::render::readable_dirs`]).
 #[cfg(not(target_family = "wasm"))]
 fn readable_file(path: &Path) -> Option<PathBuf> {
     let path = path.canonicalize().ok()?;
-    path.is_file().then_some(path)
+    let readable = crate::render::readable_dirs()
+        .iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .any(|dir| path.starts_with(dir));
+    (readable && path.is_file()).then_some(path)
 }
 
 /// `path`, if it has no `..`. A device has only its collection's files, and no links.
@@ -2573,6 +2580,58 @@ mod tests {
         })
         .await;
         assert_eq!(review_image_occlusions(&pool, plain).await, vec![None]);
+    }
+
+    /// A note's settings may name any path, but only what renders may read is served.
+    #[sqlx::test]
+    async fn test_unmasked_image_occlusion_outside_collection(pool: SqlitePool) -> () {
+        use crate::api::parser::tests::create_parser_helper;
+
+        // Not in the collection's directories, which are in /tmp/spares under tests
+        let outside = std::env::temp_dir().join(format!("spares-unmask-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_image = outside.join("secret.png");
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let (note_id, image) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-outside", |s| s).await;
+        std::fs::write(&outside_image, &image).unwrap();
+        let data = &list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()[0];
+        let original = data.original_image_filepath.display().to_string();
+        let note: (String,) = sqlx::query_as("SELECT data FROM note WHERE id = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // As a sync could leave it: saving the note would move the image into the collection
+        sqlx::query("UPDATE note SET data = ? WHERE id = ?")
+            .bind(
+                note.0
+                    .replace(&original, &outside_image.display().to_string()),
+            )
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for part in [
+            UnmaskedImageOcclusionPart::Image,
+            UnmaskedImageOcclusionPart::Markup,
+        ] {
+            let request = UnmaskedImageOcclusionRequest {
+                note_id,
+                card_order: 1,
+                order: 1,
+                part,
+            };
+            assert_eq!(
+                unmasked_image_occlusion(&pool, &request, &get_all_parsers())
+                    .await
+                    .unwrap(),
+                UnmaskedImageOcclusionFile::NotFound
+            );
+        }
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[sqlx::test]

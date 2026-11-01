@@ -36,7 +36,7 @@ use crate::api::image_occlusion::image_extension;
 use crate::api::image_occlusion::other_error;
 use crate::api::image_occlusion::sanitized_stem;
 use crate::api::parser::get_parser_name;
-use crate::config::get_data_dir;
+use crate::config::get_media_dir;
 use crate::parsers::Parseable;
 use crate::parsers::find_parser;
 use crate::platform::create_dir_all;
@@ -59,7 +59,7 @@ pub fn get_image_directory() -> PathBuf {
     if let Some(dirs) = crate::platform::media_dirs() {
         return dirs.image;
     }
-    get_data_dir().join("images")
+    get_media_dir().join("images")
 }
 
 /// Stores `image` in the image directory and returns its path. `image_filename` is only used for
