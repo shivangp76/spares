@@ -216,8 +216,15 @@ impl Renderer {
         Duration::from_secs(self.config.timeout_seconds.max(1))
     }
 
+    /// The current collection's renders at once: its user's, else the host's.
     pub fn renders_at_once(&self) -> usize {
-        self.config.renders_at_once
+        match crate::collection::state()
+            .renders_at_once
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => self.config.renders_at_once,
+            user => user,
+        }
     }
 
     /// `command`, to run in the sandbox: refused if its engine is off, with the environment that
