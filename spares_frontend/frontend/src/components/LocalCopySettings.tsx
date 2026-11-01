@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  getSyncStatus,
   isNetworkError,
   listSyncDevices,
   removeSyncDevice,
@@ -79,11 +78,8 @@ function DeviceList({ active, own }: { active: boolean; own: number | null }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      // A device's copy answers the status as a client, but asks the server for the list
-      if (!active && (await getSyncStatus()).role !== "server") return null;
-      return listSyncDevices();
-    })().then(
+    // Every host lists its collection's devices, asking its upstream if it has one.
+    listSyncDevices().then(
       (list) => {
         if (!cancelled) {
           setDevices(list);
