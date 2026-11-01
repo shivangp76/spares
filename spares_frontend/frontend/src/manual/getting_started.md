@@ -22,27 +22,40 @@ Spares ships with 3 main parsers: "markdown", "typst", and "latex-note". To crea
 
 ## Starting the server
 
-Run the following command in the terminal:
+spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT`, by default `~/.local/share/spares-host`) that holds its settings (`host.toml`), its accounts, and each account's collection in `users/<id>/`. Your machine is a host with one account and signups closed. Create it once, with your account:
 ```sh
+spares host init --user <your name>
 spares_server
+spares login            # in another terminal: the CLI's device token for this host
 ```
+Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
+
+### Moving from spares before hosts
+
+Before hosts, spares kept its database and files where `SPARES_DATA_DIR`, `SPARES_CONFIG_DIR`, `SPARES_CACHE_DIR` and the parsers' `*_OUT_DIR` said. Stop the old server, create the host, and move them into your account:
+```sh
+spares host init --user <your name>
+spares host import ~/.local/share/spares <your name> --replica 0   # 0 on the laptop, 1 on a server
+```
+It moves the database, the notes repository, images, audio and image occlusions, `config.toml` and the templates, and the rendered files, and rewrites the paths notes name images by. Pass `--copy` to leave the old directories as they were. Then run `spares vcs init --repair-hooks` if you keep notes in a repository. None of those environment variables, nor `SPARES_API_KEY`, `SPARES_REPLICA`, `SPARES_SYNC_ROLE` and `SPARES_SYNC_API_KEY`, are read any more.
 
 ### Running on a remote server (optional)
 
-On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints. Re-running it with no arguments updates the server.
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --root <your local SPARES_ROOT> --account <your name> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints. It creates a host at the same root as yours, so the paths notes name images by work on both, with your account (asking for its password). Re-running it with no arguments updates the server.
 
 On macOS, `spares deploy init <server>` does it all from your machine instead: it builds spares here and installs it on a fresh VPS (`setup_vps.sh --bundle`, so the server needs neither the memory to build it nor GitHub), sets up your machine for two-way sync (below), uploads your database and closes the server's public ports, leaving Tailscale. A 512 MB server is enough with `--no-latex`, if you have no markdown or LaTeX notes. Install Tailscale on your machine and phone, and zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`), first. If your machine can't reach the server's address (an IPv6-only server), `spares deploy cloud-init` prints a script for the provider's cloud-init field that puts the server on your tailnet, and `init` then takes its Tailscale name. `spares deploy update` updates the server. [Deploying a sync server](./deploying.md) goes through it step by step, including creating the server on Vultr.
 
 #### Two-way sync
 
-Notes can be edited and reviewed both on your machine and on the server (e.g. from your phone), and synced like Anki and AnkiWeb. Each side needs its own replica number and role, which the server requires at startup:
+Notes can be edited and reviewed both on your machine and on the server (e.g. from your phone), and synced like Anki and AnkiWeb. Your machine's host syncs its copy of your collection with the server's as one of your devices: the server's copy is the *upstream*, the root of the collection's sync chain, which gives every other copy its replica number. Log your machine's host in to it once:
+```sh
+spares sync login https://<the server>
+```
+It gets a sync-only device token there, enrolls this copy (your machine keeps `0`, the laptop's number), and sets `url`, `token` and `replica` in the `[sync]` table of your collection's `config.toml`. `spares sync logout` undoes it.
 
-- your machine: `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client`, and `SPARES_SYNC_API_KEY` set to the server's `SPARES_API_KEY`;
-- the server: `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server` (`setup_vps.sh` sets these).
+A phone's browser can be a replica too, with a copy of its own: see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device). It gets its number from the root, also when it uses your machine's host, which relays its sync to the server.
 
-A phone's browser can be a replica too, with a copy of its own: see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device). It gets its number from the server.
-
-Set `url` in the `[sync]` table of your `config.toml` to the server's address. Then `spares sync cloud` exchanges changes both ways. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync.interval_minutes`, your local server also syncs in the background, and the web app it serves has a Sync button.
+Then `spares sync cloud` exchanges changes both ways, and images, audio and image occlusions either side lacks. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync.interval_minutes`, your host also syncs in the background, and the web app it serves has a Sync button.
 
 A sync merges notes both sides changed: changes to different lines, tags and fields are combined, and reviews from both sides are kept. A note whose same lines were changed on both sides keeps your machine's text and is tagged `sync-conflict`; resolve it with `spares sync conflicts`. A note deleted on one side and edited on the other is kept. A change can still be undone after a sync, which sends the undo at the next sync, unless that sync brought a change to the same note or card from the other side. Live notes are read-only in the web app, since their text comes from files on your machine. How sync works, and why, is documented on `spares_core::sync` (`cargo doc -p spares_core --document-private-items --open`).
 
@@ -53,10 +66,11 @@ Some limitations:
 
 #### Rendering locally
 
-To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides syncing the database (or, without `sync.url`, replacing the server's with yours), it copies the rendered files to `sync.remote_rendered_dir` on the server (default: `~/.cache/spares`), your templates, your `config.toml` (so reviews on the server are scheduled with your settings; see below), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
+To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides syncing the database, it copies the rendered files to `sync.remote_rendered_dir` on the server (by default, your collection's files directory, which is the server's too when its host has the same root, as `spares deploy` sets up), your templates, your `config.toml` (so reviews on the server are scheduled with your settings; see below), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
 
 - `render_browser_parsers` is `false` in its `config.toml`: `spares sync cloud` copies yours with that changed, and without its `[sync]` table. It overwrites the server's, so change settings on your machine. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
 - Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.
+- Every render runs in a sandbox (`sandbox-exec` on macOS, bubblewrap on Linux; see `spares_core::render`): it reads only the system's directories, your collection's directory and the directories in `read_dirs` under `[render]` in `host.toml`, and has no network. List there what your templates import from outside the collection, such as your preambles. LaTeX runs without shell escape.
 
 #### Markdown notes on the web
 
@@ -163,7 +177,7 @@ The note's text file will also contain the linked notes. The exact syntax of the
 
 ### Where files are written
 
-Rendered files go to `~/.cache/spares` by default. Environment variables such as `SPARES_CACHE_DIR` and the parsers' `*_OUT_DIR` change this; see "Directories" on `spares_core::config`. If you run a separate instance of spares next to your main one, unset the `*_OUT_DIR` variables for it, or its rendered files will overwrite your main instance's.
+Everything of a collection is in its directory on the host, `<SPARES_ROOT>/users/<id>/`: rendered files in `files/`, `config.toml` and the templates in `config/`, images, audio and image occlusions in `media/`, and the notes repository in `notes.git/` (see `spares_core::collection`). A second host for testing only needs its own `SPARES_ROOT`: nothing is shared with your main one.
 
 ## Editing notes
 

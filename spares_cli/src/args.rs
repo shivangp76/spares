@@ -78,7 +78,8 @@ pub(crate) enum Commands {
     /// server. They are not synced.
     #[command(arg_required_else_help = true)]
     SavedSearch(SavedSearchArgs),
-    /// Deploy spares to a VPS as the sync server, and set up this machine to sync with it
+    /// Deploy spares to a VPS as a host, the root of your collection's sync chain, and make this
+    /// machine's host sync with it
     ///
     /// spares is built here, from the checkout of the spares repository this runs in (or else the
     /// one this binary was built from), as it is, and uploaded: the server needs neither the
@@ -296,7 +297,7 @@ pub(crate) struct VcsArgs {
 pub(crate) enum VcsCommands {
     /// Keep notes in a git (or jj) repository you push to, instead of syncing local files
     ///
-    /// Spares writes notes to a repository it commits to (`notes-spares` in the data directory),
+    /// Spares writes notes to a repository it commits to (`notes.git` in the collection's directory),
     /// and your notes directory becomes a clone of it. Fetch to get changes made in spares; push
     /// to `main` to import your changes. The server must be running. Rerunning continues an
     /// interrupted setup.

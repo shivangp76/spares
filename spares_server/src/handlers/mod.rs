@@ -76,7 +76,7 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
         | Error::Library(
             LibraryError::Tag(TagErrorKind::InvalidInput(_)) | LibraryError::InvalidConfig(_),
         ) => Some(StatusCode::BAD_REQUEST),
-        // The laptop's server syncing with the sync server
+        // A host syncing with its upstream
         Error::SyncUnreachable(_) => Some(StatusCode::BAD_GATEWAY),
         Error::Library(LibraryError::Note(NoteErrorKind::NotFound { .. })) => {
             Some(StatusCode::NOT_FOUND)
