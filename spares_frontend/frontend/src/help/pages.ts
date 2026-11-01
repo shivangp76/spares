@@ -187,7 +187,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
 };
 
 /** Linked from the login page. */
-export const LOGIN_DOCS: DocLink = { label: 'Setting up a server to log in to', file: 'deploying.md', heading: '5. Log in on the phone' };
+export const LOGIN_DOCS: DocLink = { label: 'Setting up a host to log in to', file: 'getting_started.md', heading: 'Starting the server' };
 
 /** The shortcuts every page has, after the page's own. */
 export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT, ...GO_TO_SHORTCUTS];

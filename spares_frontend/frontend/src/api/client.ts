@@ -618,7 +618,7 @@ export async function runSync(): Promise<SyncReport> {
   });
 }
 
-/** A device enrolled with the sync server under a replica number of its own (`GET /api/sync/devices`). */
+/** A copy of the collection enrolled with the root of its sync chain under a replica number of its own (`GET /api/sync/devices`). */
 export interface SyncDevice {
   replica: number;
   name: string;
@@ -627,12 +627,12 @@ export interface SyncDevice {
   last_sync_at: number | null;
 }
 
-/** The devices enrolled with the sync server. Only the sync server has the list. */
+/** The copies enrolled with the root of the collection's sync chain, which a host with an upstream asks it for. */
 export async function listSyncDevices(): Promise<SyncDevice[]> {
   return apiFetch('Devices fetch', '/api/sync/devices');
 }
 
-/** Frees a device's replica number on the sync server, e.g. one whose browser deleted its copy. It can no longer sync. */
+/** Frees a device's replica number at the root, e.g. one whose browser deleted its copy. It can no longer sync. */
 export async function removeSyncDevice(replica: number): Promise<void> {
   await apiSend('Remove device', '/api/sync/unenroll', { method: 'POST', body: JSON.stringify({ replica }) });
 }
