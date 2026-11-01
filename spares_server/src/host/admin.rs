@@ -143,6 +143,25 @@ pub enum HostCommand {
         #[arg(long)]
         copy: bool,
     },
+    /// Show an account's limits and usage, or change its limits (`-1` for the host's)
+    Limits {
+        /// Its id, name or email
+        user: String,
+        #[arg(long, allow_negative_numbers = true)]
+        sync_body_mb: Option<i64>,
+        #[arg(long, allow_negative_numbers = true)]
+        media_body_mb: Option<i64>,
+        /// `0` for no quota
+        #[arg(long, allow_negative_numbers = true)]
+        storage_mb: Option<i64>,
+        /// `0` for no limit
+        #[arg(long, allow_negative_numbers = true)]
+        requests_per_minute: Option<i64>,
+        #[arg(long, allow_negative_numbers = true)]
+        search_seconds: Option<i64>,
+        #[arg(long, allow_negative_numbers = true)]
+        renders_at_once: Option<i64>,
+    },
     /// Migrate collections to this version of spares, which opening one does too
     Migrate {
         /// Every account's collection
@@ -425,6 +444,68 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
                     device.replica.map_or("-".to_string(), |r| r.to_string()),
                 );
             }
+        }
+        HostCommand::Limits {
+            user,
+            sync_body_mb,
+            media_body_mb,
+            storage_mb,
+            requests_per_minute,
+            search_seconds,
+            renders_at_once,
+        } => {
+            let host = Host::open(&root).await?;
+            let user = find(&host, &user).await?;
+            let mut overrides = super::limits::overrides(&host.accounts, &user.id).await?;
+            let changes = [
+                (&mut overrides.sync_body_mb, sync_body_mb),
+                (&mut overrides.media_body_mb, media_body_mb),
+                (&mut overrides.storage_mb, storage_mb),
+                (&mut overrides.requests_per_minute, requests_per_minute),
+                (&mut overrides.search_seconds, search_seconds),
+                (&mut overrides.renders_at_once, renders_at_once),
+            ];
+            let mut any = false;
+            for (field, value) in changes {
+                if let Some(value) = value {
+                    *field = (value >= 0).then_some(value);
+                    any = true;
+                }
+            }
+            if any {
+                super::limits::set_overrides(&host.accounts, &user.id, &overrides).await?;
+            }
+            let limits = host.config.limits.with(&overrides);
+            let usage = super::limits::usage(&host.accounts, &user.id).await?;
+            let megabytes = |bytes: i64| bytes / 1024 / 1024;
+            println!("{} ({})", user.name, user.id);
+            println!(
+                "  limits: sync {} MB, media {} MB, storage {}, {} requests a minute, searches {} s, \
+                 renders at once {}",
+                limits.sync_body_mb,
+                limits.media_body_mb,
+                if limits.storage_mb == 0 {
+                    "unlimited".to_string()
+                } else {
+                    format!("{} MB", limits.storage_mb)
+                },
+                if limits.requests_per_minute == 0 {
+                    "unlimited".to_string()
+                } else {
+                    limits.requests_per_minute.to_string()
+                },
+                limits.search_seconds,
+                if limits.renders_at_once == 0 {
+                    host.config.render.renders_at_once
+                } else {
+                    usize::try_from(limits.renders_at_once).unwrap_or(usize::MAX)
+                },
+            );
+            println!(
+                "  usage: {} MB stored, {} requests",
+                megabytes(usage.storage_bytes),
+                usage.requests
+            );
         }
         HostCommand::Migrate { all: _ } => {
             let _lock = HostLock::take(&root)?;

@@ -162,6 +162,8 @@ pub struct CollectionState {
     pub(crate) renders: Mutex<crate::parsers::RunningRenders>,
     /// Its turns at rendering (see [`crate::render`])
     pub(crate) render_slots: crate::render::RenderSlots,
+    /// Its renders at once, if its user's limits say other than the host's `[render]`; `0` if not
+    pub renders_at_once: std::sync::atomic::AtomicUsize,
     pub(crate) vcs: crate::notes_vcs::VcsState,
 }
 

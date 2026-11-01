@@ -38,6 +38,8 @@ pub struct HostConfig {
     pub session_days: u64,
     /// How many collections sync with their upstreams at once (see [`crate::auto_sync`]).
     pub sync_at_once: usize,
+    /// What each user may use, unless their account says otherwise (see [`super::limits`]).
+    pub limits: super::limits::Limits,
     /// How notes are rendered (see [`spares_core::render`]).
     pub render: spares_core::render::RenderConfig,
 }
@@ -54,6 +56,7 @@ impl Default for HostConfig {
             max_connections_per_collection: 8,
             session_days: 365,
             sync_at_once: 4,
+            limits: super::limits::Limits::default(),
             render: spares_core::render::RenderConfig::default(),
         }
     }
@@ -133,6 +136,15 @@ bind = "{bind}"
 signups = "closed"
 # max_open_collections = 64
 # idle_minutes = 30
+
+[limits]
+# Sized for one trusted user, as before hosts. Lower them before opening signups.
+# sync_body_mb = 1024
+# media_body_mb = 128
+# storage_mb = 0            # 0: no quota
+# requests_per_minute = 0   # 0: no limit
+# search_seconds = 30
+# renders_at_once = 0       # 0: [render]'s
 
 [render]
 # Directories outside users' collections that every render may read, such as preambles that this

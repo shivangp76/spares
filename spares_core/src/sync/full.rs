@@ -119,6 +119,19 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
              {version}. Update spares on both sides first."
         )));
     }
+    // A render asset's hash names its file in the collection's directory, so it must be one.
+    let bad_hashes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM incoming.render_asset
+         WHERE length(hash) != 64 OR hash GLOB '*[^0-9a-f]*'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    if bad_hashes > 0 {
+        return Err(Error::Sync(format!(
+            "the incoming database has {bad_hashes} render assets whose hash isn't one"
+        )));
+    }
     let usn: Option<String> =
         sqlx::query_scalar("SELECT value FROM incoming.app_state WHERE key = ?")
             .bind(SYNC_USN_KEY)

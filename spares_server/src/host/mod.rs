@@ -46,6 +46,7 @@ pub mod admin;
 pub mod auth;
 pub mod config;
 pub mod import;
+pub mod limits;
 pub mod lock;
 
 pub use config::HostConfig;
@@ -98,6 +99,8 @@ pub struct Host {
     opening: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// The automatic syncs of collections with an upstream
     pub sync: crate::auto_sync::Scheduler,
+    /// Requests and failed logins (see [`limits`])
+    pub counters: limits::Counters,
 }
 
 impl std::fmt::Debug for Host {
@@ -125,6 +128,7 @@ impl Host {
         Ok(Arc::new(Self {
             root: root.to_path_buf(),
             sync: crate::auto_sync::Scheduler::new(config.sync_at_once),
+            counters: limits::Counters::default(),
             config,
             accounts,
             open: Mutex::default(),
@@ -291,6 +295,31 @@ impl Host {
         let closed = self.open.lock().await.remove(id);
         if let Some(closed) = closed {
             closed.collection.db.close().await;
+        }
+    }
+
+    /// User `id`'s limits: the host's, with their account's overrides.
+    pub async fn limits_for(&self, id: &str) -> Result<limits::Limits, Error> {
+        Ok(self
+            .config
+            .limits
+            .with(&limits::overrides(&self.accounts, id).await?))
+    }
+
+    /// Measures the directories of the open collections, and writes what requests were counted,
+    /// to `usage`.
+    pub async fn record_usage(&self) {
+        for collection in self.open_collections().await {
+            let root = collection.paths.root.clone();
+            let bytes = tokio::task::spawn_blocking(move || limits::directory_size(&root))
+                .await
+                .unwrap_or_default();
+            if let Err(e) = limits::record_storage(&self.accounts, &collection.id, bytes).await {
+                warn!("Failed to record the storage of {}: {e}", collection.id);
+            }
+        }
+        if let Err(e) = self.counters.record(&self.accounts).await {
+            warn!("Failed to record requests: {e}");
         }
     }
 

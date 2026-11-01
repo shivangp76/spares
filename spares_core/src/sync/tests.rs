@@ -1343,14 +1343,17 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
     let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
     exec(
         &replicas.laptop,
-        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/template.typ', 'h1', 1, 1);
+        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/template.typ', '1111111111111111111111111111111111111111111111111111111111111111', 1, 1);
          INSERT INTO render_package (spec) VALUES ('@preview/a:0.1.0')",
     )
     .await;
     replicas.sync().await;
     let device = replicas.device().await;
     let first = (
-        vec![("/t/template.typ".to_string(), "h1".to_string())],
+        vec![(
+            "/t/template.typ".to_string(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        )],
         vec!["@preview/a:0.1.0".to_string()],
     );
     assert_eq!(render_assets(&device).await, first);
@@ -1358,8 +1361,8 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
     // The template changed on the laptop, and moved
     exec(
         &replicas.laptop,
-        "UPDATE render_asset SET hash = 'h2', mtime = 2 WHERE path = '/t/template.typ';
-         INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/u/template.typ', 'h3', 2, 1);
+        "UPDATE render_asset SET hash = '2222222222222222222222222222222222222222222222222222222222222222', mtime = 2 WHERE path = '/t/template.typ';
+         INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/u/template.typ', '3333333333333333333333333333333333333333333333333333333333333333', 2, 1);
          INSERT INTO render_package (spec) VALUES ('@preview/b:0.2.0')",
     )
     .await;
@@ -1371,8 +1374,14 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
         .unwrap();
     let second = (
         vec![
-            ("/t/template.typ".to_string(), "h2".to_string()),
-            ("/u/template.typ".to_string(), "h3".to_string()),
+            (
+                "/t/template.typ".to_string(),
+                "2222222222222222222222222222222222222222222222222222222222222222".to_string(),
+            ),
+            (
+                "/u/template.typ".to_string(),
+                "3333333333333333333333333333333333333333333333333333333333333333".to_string(),
+            ),
         ],
         vec![
             "@preview/a:0.1.0".to_string(),
@@ -1385,7 +1394,7 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
     // Rows a device has, however old, stay there: the server keeps the laptop's
     exec(
         &device,
-        "UPDATE render_asset SET hash = 'h1', mtime = 1 WHERE path = '/t/template.typ'",
+        "UPDATE render_asset SET hash = '1111111111111111111111111111111111111111111111111111111111111111', mtime = 1 WHERE path = '/t/template.typ'",
     )
     .await;
     on_device(edit(&device, ids[0], "A {{ one }} phone again")).await;

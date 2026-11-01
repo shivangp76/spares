@@ -26,6 +26,7 @@ use crate::host::accounts::User;
 use crate::host::auth;
 use crate::host::auth::Device;
 use crate::host::auth::Scope;
+use crate::host::limits::Limits;
 
 /// Who a request is from, which [`authenticate`] puts in its extensions.
 #[derive(Clone, Debug)]
@@ -110,14 +111,119 @@ pub(crate) async fn authenticate(
     } else {
         return unauthorized("log in first");
     };
+    let limits = match host.limits_for(&auth.user.id).await {
+        Ok(limits) => limits,
+        Err(e) => return error_to_response(e).into_response(),
+    };
+    let length = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    let path = request.uri().path().to_string();
+    let method = request.method().clone();
+    if let Some(refused) = over_limits(host, &auth.user.id, &limits, &path, &method, length).await {
+        return refused;
+    }
     let collection = match host.collection(&auth.user.id).await {
         Ok(collection) => collection,
         Err(e) => return error_to_response(e).into_response(),
     };
+    collection.state.renders_at_once.store(
+        usize::try_from(limits.renders_at_once).unwrap_or(usize::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let searches = Limits::searches(request.uri().path());
     request.extensions_mut().insert(Arc::clone(&collection));
     request.extensions_mut().insert(Arc::clone(host));
     request.extensions_mut().insert(auth);
+    if searches {
+        let search_time = limits.search_time();
+        return match tokio::time::timeout(search_time, collection.scope(next.run(request))).await {
+            Ok(response) => response,
+            Err(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "message": format!(
+                    "the search took longer than {} seconds; narrow it down",
+                    search_time.as_secs()
+                ) })),
+            )
+                .into_response(),
+        };
+    }
     collection.scope(next.run(request)).await
+}
+
+/// Refuses a request past its user's limits (see [`crate::host::limits`]): too many requests a
+/// minute, a body too large, or an upload past the storage quota.
+async fn over_limits(
+    host: &crate::host::Host,
+    user_id: &str,
+    limits: &Limits,
+    path: &str,
+    method: &Method,
+    length: u64,
+) -> Option<Response> {
+    let refuse = |status: StatusCode, message: String| {
+        Some((status, Json(json!({ "message": message }))).into_response())
+    };
+    if !host.counters.request(user_id, limits.requests_per_minute) {
+        return refuse(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "more than {} requests a minute; slow down",
+                limits.requests_per_minute
+            ),
+        );
+    }
+    if let Some(limit) = limits.body_limit(path)
+        && length > limit
+    {
+        return refuse(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("larger than this account's {} MB", limit / 1024 / 1024),
+        );
+    }
+    if Limits::stores(path, method)
+        && let Some(quota) = limits.storage_bytes()
+    {
+        let used = crate::host::limits::usage(&host.accounts, user_id)
+            .await
+            .map_or(0, |usage| u64::try_from(usage.storage_bytes).unwrap_or(0));
+        if used.saturating_add(length) > quota {
+            return refuse(
+                StatusCode::INSUFFICIENT_STORAGE,
+                format!(
+                    "this account's {} MB of storage are used up",
+                    quota / 1024 / 1024
+                ),
+            );
+        }
+    }
+    None
+}
+
+/// The account `who` names if `password` is its password, refusing a name with too many failed
+/// tries lately (see [`crate::host::limits::Counters::may_log_in`]).
+async fn check_login(
+    host: &crate::host::Host,
+    who: &str,
+    password: &str,
+) -> Result<Option<User>, HandlerError> {
+    if !host.counters.may_log_in(who) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "message": "too many failed logins; try again in a few minutes" })),
+        ));
+    }
+    let user = accounts::check_password(&host.accounts, who, password)
+        .await
+        .map_err(error_to_response)?;
+    if user.is_none() {
+        host.counters.failed_login(who);
+    }
+    Ok(user)
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,10 +246,7 @@ pub(crate) async fn login_handler(
     Json(request): Json<LoginRequest>,
 ) -> Result<Response, HandlerError> {
     let host = &state.host;
-    let Some(user) = accounts::check_password(&host.accounts, &request.user, &request.password)
-        .await
-        .map_err(error_to_response)?
-    else {
+    let Some(user) = check_login(host, &request.user, &request.password).await? else {
         return Ok(unauthorized("wrong name or password"));
     };
     let user_agent = headers
@@ -231,10 +334,7 @@ pub(crate) async fn token_handler(
     Json(request): Json<TokenRequest>,
 ) -> Result<Response, HandlerError> {
     let host = &state.host;
-    let Some(user) = accounts::check_password(&host.accounts, &request.user, &request.password)
-        .await
-        .map_err(error_to_response)?
-    else {
+    let Some(user) = check_login(host, &request.user, &request.password).await? else {
         return Ok(unauthorized("wrong name or password"));
     };
     let (device, token) =
