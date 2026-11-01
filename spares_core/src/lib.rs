@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod api;
+pub mod collection;
 pub mod config;
 pub(crate) mod helpers;
 pub mod ids;
@@ -7,6 +8,7 @@ pub mod model;
 pub mod notes_vcs;
 pub mod parsers;
 pub mod platform;
+pub mod render;
 pub mod schedulers;
 pub mod schema;
 pub mod search;

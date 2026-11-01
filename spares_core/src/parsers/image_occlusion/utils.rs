@@ -9,8 +9,8 @@ use resvg::tiny_skia::Transform;
 use xmltree::Element;
 
 use super::SvgClozeType;
-use crate::config::get_cache_dir;
-use crate::config::get_data_dir;
+use crate::config::get_files_dir;
+use crate::config::get_media_dir;
 use crate::parsers::generate_files::CardSide;
 
 /// Where image occlusions' files are stored. In a browser, where the server stores them (see
@@ -20,14 +20,15 @@ pub fn get_image_occlusion_directory() -> PathBuf {
     if let Some(dirs) = crate::platform::media_dirs() {
         return dirs.image_occlusion;
     }
-    let mut image_occlusions_dir = get_data_dir();
+    let mut image_occlusions_dir = get_media_dir();
     image_occlusions_dir.push("image_occlusions");
     crate::platform::create_dir_all(&image_occlusions_dir).unwrap();
     image_occlusions_dir
 }
 
+/// Rendered image occlusions, in the files directory, which serves them.
 pub fn get_image_occlusion_rendered_directory() -> PathBuf {
-    let mut image_occlusions_dir = get_cache_dir();
+    let mut image_occlusions_dir = get_files_dir();
     image_occlusions_dir.push("image_occlusions");
     crate::platform::create_dir_all(&image_occlusions_dir).unwrap();
     image_occlusions_dir

@@ -295,8 +295,11 @@ pub fn create_note_files_bulk(
         .unwrap()
         .progress_chars("##-"),
     );
+    // Rayon's threads render in the current collection too.
+    let context = crate::collection::capture();
     let result = requests
         .map(|create_note_files_request| {
+            let _collection = context.enter();
             create_note_files(
                 parser,
                 create_note_files_request,
@@ -436,10 +439,12 @@ fn create_note_files(
                 },
                 parser.image_occlusion_overlays(),
             );
+            let context = crate::collection::capture();
             cards
                 .par_iter()
                 .enumerate()
                 .try_for_each(|(i, card)| -> Result<(), Error> {
+                    let _collection = context.enter();
                     let card_order = i + 1;
                     let file_contents = construct_card_file_contents(
                         parser,

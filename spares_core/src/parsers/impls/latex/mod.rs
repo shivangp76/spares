@@ -54,8 +54,7 @@ use log::warn;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::config::get_cache_dir;
-use crate::config::is_test_mode;
+use crate::config::get_files_dir;
 use crate::helpers::get_or_compile_regex;
 use crate::model::NoteId;
 use crate::parsers::ClozeHiddenReplacement;
@@ -544,14 +543,7 @@ fn construct_image_occlusion(
 }
 
 fn get_output_rendered_dir(_: &impl Parseable, _output_type: RenderOutputDirectoryType) -> PathBuf {
-    if is_test_mode() {
-        return get_cache_dir();
-    }
-    std::env::var("LATEX_OUT_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|dir| dir.exists())
-        .unwrap_or_else(get_cache_dir)
+    get_files_dir()
 }
 
 fn get_aux_dir(parser: &impl Parseable, output_type: RenderOutputType, note_id: NoteId) -> PathBuf {

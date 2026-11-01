@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -11,7 +10,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::commit::NEEDS_RECONCILE;
 use super::commit::commit_message;
 use super::commit::git_index_lock;
 use super::commit::try_commit;
@@ -122,7 +120,7 @@ pub async fn reconcile_after(db: &SqlitePool, note_ids: Vec<NoteId>, what: &str)
     }
     let message = commit_message(what, &note_ids);
     if let Err(e) = reconcile(db, ReconcileScope::Notes(note_ids), Some(&message)).await {
-        NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+        super::set_needs_reconcile(true);
         log::error!("Failed to update note files after `{what}`: {e}");
     }
 }
@@ -292,7 +290,7 @@ async fn reconcile_inner(
     let default_message = commit_message("reconcile", &ids);
     report.committed = try_commit(&commit_paths, message.unwrap_or(&default_message))?;
     if matches!(scope, ReconcileScope::Dirty | ReconcileScope::All) {
-        NEEDS_RECONCILE.store(false, Ordering::SeqCst);
+        super::set_needs_reconcile(false);
     }
     if !report.is_empty() {
         log::info!("Reconciled the notes repository: {report:?}");

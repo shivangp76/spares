@@ -10,12 +10,9 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_output_raw_dir;
 
-/// Name of the server copy of the notes repository, relative to the data directory.
-pub const SERVER_REPO_DIR_NAME: &str = "notes-spares";
-
-/// The server copy of the notes repository, whether or not it exists.
+/// The server copy of the current collection's notes repository, whether or not it exists.
 pub fn server_repo_dir() -> PathBuf {
-    get_data_dir().join(SERVER_REPO_DIR_NAME)
+    crate::collection::paths().notes_repo.clone()
 }
 
 /// Whether notes are kept in a git repository that users push to. Without it, notes are written to

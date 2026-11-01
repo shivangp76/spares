@@ -146,6 +146,8 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
             "commit",
             "-q",
             "--no-verify",
+            // A new account's collection has no notes yet.
+            "--allow-empty",
             "-m",
             "spares: initial import",
         ],

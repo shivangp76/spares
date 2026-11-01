@@ -69,6 +69,15 @@ local function find_notes_dir()
   if g and type(g) == 'string' and g ~= '' then
     return vim.fn.expand(g)
   end
+  -- The clone of the notes repository in your collection's directory on this machine's host
+  local root = vim.env.SPARES_ROOT
+  if not root or root == '' then
+    root = (vim.env.HOME or vim.fn.expand('~')) .. '/.local/share/spares-host'
+  end
+  local users = vim.fn.glob(root .. '/users/*', false, true)
+  if #users == 1 then
+    return users[1] .. '/notes'
+  end
   return (vim.env.HOME or vim.fn.expand('~')) .. '/.local/share/spares/notes'
 end
 

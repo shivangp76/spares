@@ -1,26 +1,20 @@
-//! Settings from `config.toml` ([`SparesExternalConfig`]), the environment, and where spares keeps
-//! its files.
+//! Settings from `config.toml` ([`SparesExternalConfig`]), and where spares keeps its files.
 //!
 //! # Directories
 //!
-//! Rendered files are written to a per-parser directory, chosen by the first of these that
-//! applies:
+//! Every directory is the current collection's (see [`crate::collection`]): on a host,
+//! `users/<user_id>/` under `SPARES_ROOT`. Nothing is read from the environment, so two hosts on
+//! one machine (one for testing, say) never share files as long as their roots differ.
 //!
-//! 1. The parser's own environment variable, if it points to an existing directory:
-//!    `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, or `TYPST_OUT_DIR`.
-//! 2. `SPARES_CACHE_DIR`, if set ([`get_cache_dir`]).
-//! 3. The default cache directory, `$XDG_CACHE_HOME/spares` (`~/.cache/spares` if
-//!    `XDG_CACHE_HOME` is unset).
+//! - [`get_config_dir`]: `config.toml` and the parser templates
+//! - [`get_files_dir`]: rendered files, which the host serves at `/files`, and API responses name
+//!   files relative to
+//! - [`get_media_dir`]: images, audio and image occlusions
+//! - [`get_cache_dir`]: sync's snapshots and render hashes
+//! - [`get_data_dir`]: the collection's directory, with the database and raw note files
 //!
-//! The more specific variable wins, so `SPARES_CACHE_DIR` does **not** override a parser's
-//! `*_OUT_DIR`. If you run a separate instance of spares (e.g. for testing) next to your main one,
-//! unset the `*_OUT_DIR` variables for it too, or its rendered files will overwrite your main
-//! instance's. `spares_server` logs the directory each parser renders to when it starts (run it
-//! with `RUST_LOG=info` to see this).
-//!
-//! The other directories can be overridden with `SPARES_CONFIG_DIR` (config file and parser
-//! templates, [`get_config_dir`]), `SPARES_DATA_DIR` (database, and note and card text files,
-//! [`get_data_dir`]), and `DATABASE_URL` (the database alone, [`get_env_config`]).
+//! A program that renders a note itself (vimtex compiling a LaTeX note, say) finds its PDF in the
+//! files directory, `users/<user_id>/files`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -33,9 +27,6 @@ use chrono::Duration;
 use chrono::NaiveDate;
 use chrono::Utc;
 use chrono::Weekday;
-use etcetera::AppStrategy;
-use etcetera::AppStrategyArgs;
-use etcetera::choose_app_strategy;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -45,92 +36,40 @@ use toml_edit::DocumentMut;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
+use crate::collection;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
-use crate::platform::create_dir_all;
 use crate::platform::is_file;
 use crate::platform::read_to_string;
 use crate::platform::write;
 use crate::sync::SyncConfig;
 
-const SPARES: &str = "spares";
-
-/// A browser has no file system. Its config, cache and data directories are paths under this in
-/// the device's own files ([`crate::platform`]), and getting them creates nothing.
-const DEVICE_ROOT: &str = "/spares";
-
 /// True when running under a test harness. `cfg!(test)` alone is not enough: it only reflects
 /// whether *this crate* was compiled in test mode. A dependent crate's test binary (e.g.
 /// `spares_cli`'s tests) compiles `spares_core` as a normal, non-test dependency, so `cfg!(test)`
-/// is `false` there even though real tests are running — which previously caused those tests to
-/// read/write the user's actual config, cache, and data directories. `SPARES_TEST_MODE` lets such
-/// tests opt in explicitly.
+/// is `false` there even though real tests are running. `SPARES_TEST_MODE` lets such tests opt in
+/// explicitly. Under tests, code that runs outside of a collection gets the directories under
+/// `/tmp/spares` (see [`crate::collection`]).
 pub fn is_test_mode() -> bool {
     cfg!(test) || std::env::var_os("SPARES_TEST_MODE").is_some()
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's `config.toml` and parser templates.
 pub fn get_config_dir() -> PathBuf {
-    if cfg!(target_family = "wasm") {
-        return PathBuf::from(DEVICE_ROOT).join("config");
-    }
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("config");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_CONFIG_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.config_dir().push(SPARES);
-    create_dir_all(strategy.config_dir()).unwrap();
-    strategy.config_dir()
+    collection::paths().config.clone()
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's caches: sync's snapshots and render hashes.
 pub fn get_cache_dir() -> PathBuf {
-    if cfg!(target_family = "wasm") {
-        return PathBuf::from(DEVICE_ROOT).join("cache");
-    }
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("cache");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_CACHE_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.cache_dir().push(SPARES);
-    create_dir_all(strategy.cache_dir()).unwrap();
-    strategy.cache_dir()
+    collection::paths().cache.clone()
 }
 
-/// The directory the server serves at `/files`. Paths in API responses are relative to it, so
-/// web clients can request them and local clients can [resolve](resolve_in_files_dir) them.
-/// Defaults to the rendered files, never the data directory, which holds the database.
+/// The directory the host serves at `/files`: the current collection's rendered files. Paths in
+/// API responses are relative to it, so web clients can request them and local clients can
+/// [resolve](resolve_in_files_dir) them. Never the data directory, which holds the database.
 pub fn get_files_dir() -> PathBuf {
-    std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_cache_dir(), PathBuf::from)
+    collection::paths().files.clone()
 }
 
 /// The local path of a path from an API response. Paths outside the files directory are
@@ -139,84 +78,67 @@ pub fn resolve_in_files_dir(path: &Path) -> PathBuf {
     get_files_dir().join(path)
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's directory: its database, raw note and card files, and what doesn't
+/// belong in another of its directories.
 pub fn get_data_dir() -> PathBuf {
-    if cfg!(target_family = "wasm") {
-        return PathBuf::from(DEVICE_ROOT).join("data");
-    }
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("data");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_DATA_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.data_dir().push(SPARES);
-    create_dir_all(strategy.data_dir()).unwrap();
-    strategy.data_dir()
+    collection::paths().root.clone()
 }
 
-#[derive(Clone, Copy, Debug, strum::EnumString, strum::Display, strum_macros::EnumIter)]
-pub enum Environment {
-    Production,
-    Development,
+/// Where the current collection's images, audio and image occlusions are.
+pub fn get_media_dir() -> PathBuf {
+    collection::paths().media.clone()
 }
 
-#[derive(Debug, Clone)]
-pub struct EnvironmentConfig {
-    pub socket_address: String,
-    pub database_url: String,
+/// The host a command-line client talks to, and the device token it sends there (see `spares
+/// login`). The CLI sets it at startup ([`set_host_client`]); [`host_client`] defaults to a host
+/// on this machine at `127.0.0.1:8080`, without a token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostClient {
+    /// Such as `http://127.0.0.1:8080`, without a trailing slash
+    pub base_url: String,
+    pub token: Option<String>,
 }
 
-pub fn get_env_config(env: Environment) -> EnvironmentConfig {
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        let mut database_path = get_data_dir();
-        database_path.push(match env {
-            Environment::Production => "spares-main.sqlite",
-            Environment::Development => "spares-dev.sqlite",
-        });
-        format!("sqlite://{}", database_path.display())
-    });
-    let socket_address = std::env::var("SPARES_SOCKET_ADDRESS").unwrap_or_else(|_| match env {
-        Environment::Production => "127.0.0.1:8080".to_string(),
-        Environment::Development => "127.0.0.1:8081".to_string(),
-    });
-
-    EnvironmentConfig {
-        socket_address,
-        database_url,
+impl Default for HostClient {
+    fn default() -> Self {
+        Self {
+            base_url: "http://127.0.0.1:8080".to_string(),
+            token: None,
+        }
     }
 }
 
-/// The local server's API key, from `SPARES_API_KEY`. The server then refuses requests without it,
-/// so its clients send it too.
-pub fn local_api_key() -> Option<String> {
-    std::env::var("SPARES_API_KEY")
-        .ok()
-        .filter(|key| !key.is_empty())
+static HOST_CLIENT: std::sync::RwLock<Option<HostClient>> = std::sync::RwLock::new(None);
+
+pub fn set_host_client(client: HostClient) {
+    *HOST_CLIENT
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(client);
 }
 
-/// Which replica this instance is, from `SPARES_REPLICA`: `0` is the laptop, `1` the server, and a
-/// later replica takes the next unused number. It decides which form of note id this instance
-/// writes (see [`crate::ids`]). It comes from the environment, never the database, since a full
-/// sync copies the other replica's database.
+pub fn host_client() -> HostClient {
+    HOST_CLIENT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_default()
+}
+
+/// Which replica this host's copy of a collection is: `0` is the laptop, `1` the root of the sync
+/// chain (the server), and a later replica takes the next unused number. It decides which form of
+/// note id this copy writes (see [`crate::ids`]). It is kept outside the database, in the
+/// collection's `config.toml` (`[sync] replica`), since a full sync copies the other replica's
+/// database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Replica(u8);
 
 impl Replica {
     /// The largest replica number. Each replica owns one residue modulo [`crate::ids::ID_STEP`].
     pub const MAX: u8 = crate::ids::ID_STEP as u8 - 1;
+    /// The laptop, whose note ids are the shortest (see [`crate::ids`]).
+    pub const LAPTOP: Self = Self(0);
+    /// The root of a collection's sync chain: the copy with no upstream.
+    pub const ROOT: Self = Self(1);
 
     pub(crate) const fn new_unchecked(number: u8) -> Self {
         Self(number)
@@ -245,6 +167,14 @@ impl std::str::FromStr for Replica {
     }
 }
 
+impl TryFrom<u8> for Replica {
+    type Error = String;
+
+    fn try_from(number: u8) -> Result<Self, Self::Error> {
+        number.to_string().parse()
+    }
+}
+
 /// Whether this instance answers sync requests or runs the client side, from `SPARES_SYNC_ROLE`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::Display)]
 #[strum(serialize_all = "lowercase")]
@@ -253,13 +183,12 @@ pub enum SyncRole {
     Client,
 }
 
-pub const REPLICA_ENV: &str = "SPARES_REPLICA";
 pub const SYNC_ROLE_ENV: &str = "SPARES_SYNC_ROLE";
 
 #[cfg(test)]
 tokio::task_local! {
     /// Lets a test act as another replica (for example the server in a sync test) for the code it
-    /// runs inside [`with_test_replica`], since `SPARES_REPLICA` is shared by every test.
+    /// runs inside [`with_test_replica`].
     static TEST_REPLICA: (Replica, SyncRole);
 }
 
@@ -273,44 +202,29 @@ pub(crate) async fn with_test_replica<F: std::future::Future>(
     TEST_REPLICA.scope((replica, role), f).await
 }
 
-/// The replica of a browser that keeps a copy of the collection. A browser has no environment, so
-/// the device sets it once it knows it.
-#[cfg(target_family = "wasm")]
-static DEVICE_REPLICA: std::sync::RwLock<Option<Replica>> = std::sync::RwLock::new(None);
-
 /// Sets this browser's replica, or clears it with `None`. A browser is always a sync client.
 #[cfg(target_family = "wasm")]
-#[allow(clippy::missing_panics_doc)] // Only if a panic poisoned the lock
 pub fn set_device_replica(replica: Option<Replica>) {
-    *DEVICE_REPLICA.write().unwrap() = replica;
+    collection::state().set_replica(replica);
 }
 
-/// This browser's replica, which the device set with [`set_device_replica`]
-#[cfg(target_family = "wasm")]
-#[allow(clippy::missing_panics_doc)] // Only if a panic poisoned the lock
-pub fn get_replica() -> Result<Replica, Error> {
-    DEVICE_REPLICA
-        .read()
-        .unwrap()
-        .ok_or_else(|| invalid_config("this device has no replica yet".to_string()))
-}
-
-/// This instance's replica. Required, with no default, except under tests, which are replica `0`.
-#[cfg(not(target_family = "wasm"))]
+/// The current collection's replica on this host. Tests that open no collection are replica `0`.
 pub fn get_replica() -> Result<Replica, Error> {
     #[cfg(test)]
     if let Ok((replica, _)) = TEST_REPLICA.try_with(|test| *test) {
         return Ok(replica);
     }
-    match std::env::var(REPLICA_ENV) {
-        Ok(value) => value
-            .parse()
-            .map_err(|e| invalid_config(format!("{REPLICA_ENV}: {e}"))),
-        Err(_) if is_test_mode() => Ok(Replica(0)),
-        Err(_) => Err(invalid_config(format!(
-            "{REPLICA_ENV} is not set. Set it to 0 on the laptop and 1 on the server."
-        ))),
+    if let Some(replica) = collection::state().replica() {
+        return Ok(replica);
     }
+    if is_test_mode() && collection::current().is_none() {
+        return Ok(Replica(0));
+    }
+    Err(invalid_config(if cfg!(target_family = "wasm") {
+        "this device has no replica yet".to_string()
+    } else {
+        "this collection has no replica number (`[sync] replica` in its config.toml)".to_string()
+    }))
 }
 
 /// This instance's sync role. Required, with no default, except under tests, which are clients.
@@ -1229,9 +1143,7 @@ pub(crate) async fn write_internal_config(
 }
 
 pub fn get_external_config_file() -> PathBuf {
-    let mut config_file_path = get_config_dir();
-    config_file_path.push("config.toml");
-    config_file_path
+    collection::paths().config_file()
 }
 
 /// Sets `fsrs_parameters` in the config file, leaving the rest of the file, comments included, as
@@ -1333,6 +1245,12 @@ pub fn set_sync_values(
 
 pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
+    if let Some(dir) = config_file_path.parent() {
+        crate::platform::create_dir_all(dir).map_err(|e| Error::Io {
+            description: format!("Failed to create {}", dir.display()),
+            source: e,
+        })?;
+    }
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
         Error::Library(LibraryError::InvalidConfig(format!(
             "Failed to serialize config: {}",

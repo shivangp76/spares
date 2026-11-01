@@ -2,9 +2,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use super::git::git;
 use super::git::git_output;
@@ -17,36 +14,63 @@ use crate::model::NoteId;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 
-/// Set when committing failed, so files may differ from `HEAD`. The next push reconciles first.
-pub static NEEDS_RECONCILE: AtomicBool = AtomicBool::new(false);
-
 /// Serializes git commands that change the index. Requests holding the shared notes lock run
-/// concurrently, but their commits must not.
-static GIT_INDEX: Mutex<()> = Mutex::new(());
+/// concurrently, but their commits must not. Held until the guard is dropped.
+pub(crate) fn git_index_lock() -> GitIndexGuard {
+    let state = crate::collection::state();
+    {
+        let lock = &state.vcs.git_index;
+        let mut held = crate::collection::lock(&lock.held);
+        while *held {
+            held = lock
+                .freed
+                .wait(held)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *held = true;
+    }
+    GitIndexGuard(state)
+}
 
-pub(crate) fn git_index_lock() -> MutexGuard<'static, ()> {
-    GIT_INDEX.lock().unwrap_or_else(|e| e.into_inner())
+/// The collection's git index lock (see [`git_index_lock`]): a mutex whose guard owns what it
+/// locks, so it can be taken from the collection's state.
+#[derive(Default)]
+pub(crate) struct GitIndexLock {
+    held: Mutex<bool>,
+    freed: std::sync::Condvar,
+}
+
+pub(crate) struct GitIndexGuard(std::sync::Arc<crate::collection::CollectionState>);
+
+impl Drop for GitIndexGuard {
+    fn drop(&mut self) {
+        let lock = &self.0.vcs.git_index;
+        *crate::collection::lock(&lock.held) = false;
+        lock.freed.notify_one();
+    }
 }
 
 /// While a push is imported and until git has moved `main`, commits must not move `HEAD`, or git's
-/// ref update would fail after the database already changed. Paths to commit are collected here
-/// instead and committed when the push settles.
-static DEFERRED: Mutex<Option<BTreeSet<PathBuf>>> = Mutex::new(None);
-
-fn deferred() -> MutexGuard<'static, Option<BTreeSet<PathBuf>>> {
-    DEFERRED.lock().unwrap_or_else(|e| e.into_inner())
+/// ref update would fail after the database already changed. Paths to commit are collected in the
+/// collection's state instead and committed when the push settles.
+fn with_deferred<T>(f: impl FnOnce(&mut Option<BTreeSet<PathBuf>>) -> T) -> T {
+    let state = crate::collection::state();
+    let mut deferred = crate::collection::lock(&state.vcs.deferred);
+    f(&mut deferred)
 }
 
 pub(crate) fn start_deferring() {
-    *deferred() = Some(BTreeSet::new());
+    with_deferred(|deferred| *deferred = Some(BTreeSet::new()));
 }
 
 /// Stops deferring commits and returns the paths collected meanwhile.
 pub(crate) fn stop_deferring() -> Vec<PathBuf> {
-    deferred()
-        .take()
-        .map(|paths| paths.into_iter().collect())
-        .unwrap_or_default()
+    with_deferred(|deferred| {
+        deferred
+            .take()
+            .map(|paths| paths.into_iter().collect())
+            .unwrap_or_default()
+    })
 }
 
 /// `spares: <verb> notes 12, 15`, or `spares: <verb> 4120 notes` for many notes.
@@ -79,13 +103,13 @@ pub fn note_rel_paths(parser_name: &str, ids: &[NoteId]) -> Vec<PathBuf> {
 
 /// Commits the server's changes to `paths` (relative to the repository, or absolute inside it).
 /// Does nothing without VCS. Errors are logged rather than returned, since the database has already
-/// changed by the time files are committed; [`NEEDS_RECONCILE`] makes the next push repair it.
+/// changed by the time files are committed; `VcsState::needs_reconcile` makes the next push repair it.
 pub fn commit_note_files<P: AsRef<Path>>(paths: &[P], message: &str) {
     if !enabled() {
         return;
     }
     if let Err(e) = try_commit(paths, message) {
-        NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+        super::set_needs_reconcile(true);
         log::error!("Failed to commit notes ({message}): {e}");
     }
 }
@@ -103,8 +127,14 @@ pub(crate) fn try_commit<P: AsRef<Path>>(paths: &[P], message: &str) -> Result<b
     if rel_paths.is_empty() {
         return Ok(false);
     }
-    if let Some(pending) = deferred().as_mut() {
-        pending.extend(rel_paths);
+    let deferred = with_deferred(|deferred| match deferred.as_mut() {
+        Some(pending) => {
+            pending.extend(rel_paths.iter().cloned());
+            true
+        }
+        None => false,
+    });
+    if deferred {
         return Ok(false);
     }
     let rel_paths: Vec<PathBuf> = rel_paths.into_iter().collect();
