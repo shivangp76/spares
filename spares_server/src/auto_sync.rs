@@ -4,6 +4,10 @@
 //! A failed attempt (the upstream being unreachable, for one) is logged and tried again a minute
 //! later if it was for local changes or a wake.
 //!
+//! A wake syncs once the Mac has stayed awake for [`WAKE_GRACE`]. macOS wakes for a few seconds
+//! at a time while the lid is closed (dark wakes, in `pmset -g log`), before Wi-Fi and Tailscale
+//! are back, and a sync then would only fail.
+//!
 //! At most `sync_at_once` collections (in `host.toml`) sync at once; the others wait their turn.
 //! A collection that syncs automatically stays open.
 
@@ -39,6 +43,9 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// How far the wall clock must run ahead of the monotonic clock, which stops while macOS sleeps,
 /// to count as a wake.
 const MIN_SLEEP: Duration = Duration::from_secs(60);
+/// How long the Mac must stay awake after a wake before syncing. Most dark wakes are over by then,
+/// and the network is up in those that last longer.
+const WAKE_GRACE: Duration = Duration::from_secs(15);
 
 /// The host's automatic syncs, by user.
 #[derive(Debug)]
@@ -159,7 +166,8 @@ async fn run(
     let mut changes = Changes::default();
     let mut last_attempt: Option<Instant> = None;
     let mut retry_at: Option<Instant> = None;
-    let mut woke = false;
+    // When the last wake was seen, until a sync works
+    let mut woke_at: Option<Instant> = None;
     let mut last_check = (Instant::now(), SystemTime::now());
     let mut warned_full_sync = false;
     let mut failing = false;
@@ -168,11 +176,14 @@ async fn run(
         let now = (Instant::now(), SystemTime::now());
         let wall = now.1.duration_since(last_check.1).unwrap_or_default();
         if wall.saturating_sub(now.0 - last_check.0) >= MIN_SLEEP {
-            debug!("Woke from sleep; syncing");
-            woke = true;
+            debug!("Woke from sleep; syncing if awake for {WAKE_GRACE:?}");
+            woke_at = Some(now.0);
         }
         last_check = now;
         let now = now.0;
+        if woke_at.is_some_and(|at| now - at < WAKE_GRACE) {
+            continue;
+        }
 
         let changes_due = match push_delay {
             Some(delay) => match dirty_count(&db).await {
@@ -185,7 +196,9 @@ async fn run(
             None => false,
         };
         let interval_due = last_attempt.is_none_or(|at| now - at >= interval);
-        if !(interval_due || woke || changes_due) || retry_at.is_some_and(|at| now < at) {
+        if !(interval_due || woke_at.is_some() || changes_due)
+            || retry_at.is_some_and(|at| now < at)
+        {
             continue;
         }
 
@@ -200,7 +213,7 @@ async fn run(
                 }
                 failing = false;
                 warned_full_sync = false;
-                woke = false;
+                woke_at = None;
                 retry_at = None;
                 changes = Changes::default();
             }
