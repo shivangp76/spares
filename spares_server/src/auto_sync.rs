@@ -6,7 +6,8 @@
 //!
 //! A wake syncs once the Mac has stayed awake for [`WAKE_GRACE`]. macOS wakes for a few seconds
 //! at a time while the lid is closed (dark wakes, in `pmset -g log`), before Wi-Fi and Tailscale
-//! are back, and a sync then would only fail.
+//! are back, and a sync then would only fail. An unreachable upstream is warned about once it has
+//! stayed so for [`UNREACHABLE_WARN_AFTER`] of awake time, as the network may just be coming back.
 //!
 //! At most `sync_at_once` collections (in `host.toml`) sync at once; the others wait their turn.
 //! A collection that syncs automatically stays open.
@@ -46,6 +47,8 @@ const MIN_SLEEP: Duration = Duration::from_secs(60);
 /// How long the Mac must stay awake after a wake before syncing. Most dark wakes are over by then,
 /// and the network is up in those that last longer.
 const WAKE_GRACE: Duration = Duration::from_secs(15);
+/// How long the upstream may stay unreachable, in awake time, before a warning.
+const UNREACHABLE_WARN_AFTER: Duration = Duration::from_mins(5);
 
 /// The host's automatic syncs, by user.
 #[derive(Debug)]
@@ -170,7 +173,9 @@ async fn run(
     let mut woke_at: Option<Instant> = None;
     let mut last_check = (Instant::now(), SystemTime::now());
     let mut warned_full_sync = false;
-    let mut failing = false;
+    // When syncs started failing, and whether that was warned about
+    let mut failing_since: Option<Instant> = None;
+    let mut warned = false;
     loop {
         check.tick().await;
         let now = (Instant::now(), SystemTime::now());
@@ -208,10 +213,11 @@ async fn run(
         };
         match sync(&db).await {
             Ok(()) => {
-                if failing {
+                if warned {
                     info!("Automatic sync works again");
                 }
-                failing = false;
+                failing_since = None;
+                warned = false;
                 warned_full_sync = false;
                 woke_at = None;
                 retry_at = None;
@@ -231,12 +237,15 @@ async fn run(
             }
             // Said once while it keeps failing, since it is tried again every minute.
             Err(e) => {
-                if failing {
-                    debug!("Automatic sync failed again: {e}");
+                let since = *failing_since.get_or_insert(now);
+                let brief =
+                    matches!(e, Error::SyncUnreachable(_)) && now - since < UNREACHABLE_WARN_AFTER;
+                if warned || brief {
+                    debug!("Automatic sync failed: {e}");
                 } else {
                     warn!("Automatic sync failed: {e}");
+                    warned = true;
                 }
-                failing = true;
                 retry_at = Some(now + RETRY_AFTER);
             }
         }
