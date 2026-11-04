@@ -22,6 +22,7 @@ use std::sync::Mutex;
 
 use log::warn;
 
+use super::ImageOcclusionConfig;
 use super::ImageOcclusionData;
 use super::construct::card_clozes_svg;
 use super::construct::compose_image_occlusion_card;
@@ -45,6 +46,33 @@ struct CardImage {
     overlay: bool,
 }
 
+/// The `[image_occlusion]` table of `config.toml`. Each card's image is made with it, and on a
+/// device the file only changes at a sync, so there it's parsed again only once the device's files
+/// have changed (see `platform::version`), rather than for every card.
+fn image_occlusion_config() -> Result<ImageOcclusionConfig, Error> {
+    #[cfg(target_family = "wasm")]
+    {
+        static PARSED: Mutex<Option<(u64, PathBuf, ImageOcclusionConfig)>> = Mutex::new(None);
+        // Before reading, so that a change while it's parsed is parsed again next time
+        let version = crate::platform::version();
+        let path = crate::config::get_external_config_file();
+        let mut parsed = PARSED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((parsed_version, parsed_path, config)) = &*parsed
+            && *parsed_version == version
+            && *parsed_path == path
+        {
+            return Ok(config.clone());
+        }
+        let config = read_external_config()?.image_occlusion;
+        *parsed = Some((version, path, config.clone()));
+        Ok(config)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    Ok(read_external_config()?.image_occlusion)
+}
+
 fn cards() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, CardImage>> {
     // Each operation is one call on the map, so a panic leaves it whole.
     CARDS
@@ -63,14 +91,8 @@ pub(crate) fn card_filepath(
     side: CardSide,
     overlay: bool,
 ) -> Option<PathBuf> {
-    let made = read_external_config().and_then(|config| {
-        card_clozes_svg(
-            cloze_indices,
-            image_occlusion_data,
-            side,
-            &config.image_occlusion,
-        )
-    });
+    let made = image_occlusion_config()
+        .and_then(|config| card_clozes_svg(cloze_indices, image_occlusion_data, side, &config));
     let clozes_svg = match made {
         Ok(clozes_svg) => clozes_svg,
         Err(e) => {

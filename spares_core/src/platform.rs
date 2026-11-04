@@ -79,6 +79,8 @@ pub use memory::set_media_dirs;
 #[cfg(target_family = "wasm")]
 pub use memory::take_written;
 #[cfg(target_family = "wasm")]
+pub use memory::version;
+#[cfg(target_family = "wasm")]
 pub use memory::write;
 
 /// Whether `path` is a file.
@@ -122,6 +124,8 @@ mod memory {
     use std::pin::Pin;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
 
     /// Contents by absolute path
     static FILES: Mutex<BTreeMap<PathBuf, Vec<u8>>> = Mutex::new(BTreeMap::new());
@@ -136,6 +140,18 @@ mod memory {
     /// The width and height of each image whose contents have been in memory since they last
     /// changed, by absolute path, for [`image_size`]
     static SIZES: Mutex<BTreeMap<PathBuf, (u32, u32)>> = Mutex::new(BTreeMap::new());
+    /// See [`version`]
+    static VERSION: AtomicU64 = AtomicU64::new(0);
+
+    /// A number that changes whenever the files in memory do, so that what is parsed from them,
+    /// like `config.toml`, can be kept until then.
+    pub fn version() -> u64 {
+        VERSION.load(Ordering::Acquire)
+    }
+
+    fn changed() {
+        VERSION.fetch_add(1, Ordering::AcqRel);
+    }
 
     /// Reads a file in the device's storage, for [`read`].
     pub type Loader = fn(PathBuf) -> Pin<Box<dyn Future<Output = io::Result<Vec<u8>>> + Send>>;
@@ -187,6 +203,7 @@ mod memory {
         let mut all = lock(&FILES);
         all.retain(|path, _| !path.starts_with(dir));
         all.extend(files);
+        changed();
     }
 
     /// Adds files the device keeps, with their contents.
@@ -198,6 +215,7 @@ mod memory {
             stored.remove(&path);
             all.insert(path, contents);
         }
+        changed();
     }
 
     /// Adds files the device keeps in its storage, and drops their contents from memory. [`read`]
@@ -209,6 +227,7 @@ mod memory {
             all.remove(&path);
             stored.insert(path);
         }
+        changed();
     }
 
     /// Forgets every file, but not the downloaded HTML files for web clients.
@@ -217,6 +236,7 @@ mod memory {
         lock(&STORED).clear();
         lock(&WRITTEN).clear();
         lock(&SIZES).clear();
+        changed();
     }
 
     /// Every file in memory.
@@ -284,6 +304,7 @@ mod memory {
         lock(&FILES).insert(path.clone(), contents.as_ref().to_vec());
         lock(&STORED).remove(&path);
         lock(&WRITTEN).insert(path);
+        changed();
         Ok(())
     }
 
