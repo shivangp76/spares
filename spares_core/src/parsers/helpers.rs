@@ -51,14 +51,18 @@ pub struct RenderDependencies {
 }
 
 impl RenderDependencies {
-    /// Sorts and deduplicates the dependencies, then writes them to `dependencies_filepath`.
+    /// Sorts and deduplicates the dependencies, then writes them to `dependencies_filepath`, unless
+    /// it already holds them: a render that reads the same files leaves its modification time, so
+    /// `spares sync cloud` doesn't copy it again.
     pub fn write(mut self, dependencies_filepath: &Path) -> Result<(), String> {
         self.files.sort();
         self.files.dedup();
         self.packages.sort();
         self.packages.dedup();
         let contents = serde_json::to_string(&self).map_err(|e| e.to_string())?;
-        std::fs::write(dependencies_filepath, contents).map_err(|e| e.to_string())
+        crate::helpers::write_if_changed(dependencies_filepath, contents)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
