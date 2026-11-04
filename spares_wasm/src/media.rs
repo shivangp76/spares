@@ -32,14 +32,64 @@ use crate::storage::opened;
 use crate::storage::sqlx_error;
 
 /// `uploaded` is 0 for a file added here that isn't on the server yet. `mtime` is the server's,
-/// once the device has seen the file there.
+/// once the device has seen the file there. `width` and `height` are an image's, recorded when it
+/// is stored, so that the parser has them without reading it (see
+/// [`spares_core::platform::image_size`]).
 pub(crate) const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS media_file (
     path TEXT PRIMARY KEY NOT NULL,
     kind TEXT NOT NULL,
     contents BLOB NOT NULL,
     mtime INTEGER,
-    uploaded INTEGER NOT NULL
+    uploaded INTEGER NOT NULL,
+    width INTEGER,
+    height INTEGER
 )";
+
+/// Adds `width` and `height` to a `media_file` made before them, and records them for the images it
+/// has.
+pub(crate) async fn migrate(device: &SqlitePool) -> Result<(), JsValue> {
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('media_file')")
+            .fetch_all(device)
+            .await
+            .map_err(sqlx_error)?;
+    if columns.iter().any(|column| column == "width") {
+        return Ok(());
+    }
+    for statement in [
+        "ALTER TABLE media_file ADD COLUMN width INTEGER",
+        "ALTER TABLE media_file ADD COLUMN height INTEGER",
+    ] {
+        sqlx::query(statement)
+            .execute(device)
+            .await
+            .map_err(sqlx_error)?;
+    }
+    let paths: Vec<String> = sqlx::query_scalar("SELECT path FROM media_file WHERE kind != ?")
+        .bind(MediaKind::Audio.as_str())
+        .fetch_all(device)
+        .await
+        .map_err(sqlx_error)?;
+    for path in paths {
+        if let Some(contents) = read(device, &path).await? {
+            set_size(device, &path, &contents).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Records the size of the file at `path`, if it is an image, from its `contents`.
+async fn set_size(device: &SqlitePool, path: &str, contents: &[u8]) -> Result<(), JsValue> {
+    let size = platform::image_dimensions(contents);
+    sqlx::query("UPDATE media_file SET width = ?, height = ? WHERE path = ?")
+        .bind(size.map(|(width, _)| width))
+        .bind(size.map(|(_, height)| height))
+        .bind(path)
+        .execute(device)
+        .await
+        .map_err(sqlx_error)?;
+    Ok(())
+}
 
 /// Image occlusions downloaded at once
 const DOWNLOAD_CONCURRENCY: usize = 4;
@@ -76,6 +126,17 @@ pub(crate) async fn load(device: &SqlitePool) -> Result<(), JsValue> {
         .fetch_all(device)
         .await
         .map_err(sqlx_error)?;
+    let sizes: Vec<(String, u32, u32)> = sqlx::query_as(
+        "SELECT path, width, height FROM media_file WHERE width IS NOT NULL AND height IS NOT NULL",
+    )
+    .fetch_all(device)
+    .await
+    .map_err(sqlx_error)?;
+    platform::load_sizes(
+        sizes
+            .into_iter()
+            .map(|(path, width, height)| (PathBuf::from(path), (width, height))),
+    );
     let (in_memory, stored): (Vec<PathBuf>, Vec<PathBuf>) = paths
         .into_iter()
         .map(PathBuf::from)
@@ -136,10 +197,11 @@ pub(crate) async fn save_written(device: &SqlitePool) -> Result<(), JsValue> {
         )
         .bind(path.to_string_lossy())
         .bind(kind.as_str())
-        .bind(contents)
+        .bind(&contents)
         .execute(device)
         .await
         .map_err(sqlx_error)?;
+        set_size(device, &path.to_string_lossy(), &contents).await?;
         if !in_memory(&path) {
             stored.push(path);
         }
@@ -251,9 +313,13 @@ pub(crate) async fn download(device: &SqlitePool, remote: &HttpRemote) -> Result
         .execute(device)
         .await
         .map_err(sqlx_error)?;
+        set_size(device, &path.to_string_lossy(), &contents).await?;
         if in_memory(&path) {
             platform::load_files([(path, contents)]);
         } else {
+            if let Some(size) = platform::image_dimensions(&contents) {
+                platform::load_sizes([(path.clone(), size)]);
+            }
             platform::load_stored([path]);
         }
     }
