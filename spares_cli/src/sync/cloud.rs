@@ -11,6 +11,7 @@ use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
+use spares_core::config::get_files_dir;
 use spares_core::config::read_external_config;
 use spares_core::ids::NoteId;
 use spares_core::parsers::Parseable;
@@ -23,15 +24,42 @@ use spares_core::sync::push::PushTarget;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
-/// Copies everything but the database to `remote_host`: the data files the server does not
-/// generate itself, rendered files, templates and the files the notes read. First asks the
-/// server at `url` where they go, and checks over SSH that `remote_host` is that server (see
-/// [`check_target`]).
+/// What [`push_files`] did, for after the sync.
+pub(crate) struct Pushed {
+    remote: HttpRemote,
+    /// Whether templates, settings or the files notes read changed on the server, so its rendered
+    /// files may be out of date
+    render_inputs_changed: bool,
+}
+
+impl Pushed {
+    /// Asks the server to render again the notes whose files are out of date, if what rendering
+    /// reads changed. Its render cache tells which, from the note file each renders (made from
+    /// the template).
+    pub(crate) async fn render_if_changed(&self) -> Result<(), String> {
+        if !self.render_inputs_changed {
+            return Ok(());
+        }
+        self.remote
+            .render_all()
+            .await
+            .map_err(|e| format!("Failed to ask the server to render: {e}"))?;
+        println!("The server renders the notes these changes affect.");
+        Ok(())
+    }
+}
+
+/// Copies to `remote_host` what the server needs besides the database and media, which the sync
+/// carries: the render assets, the templates and settings, the files the notes read, and the
+/// rendered files of parsers the server cannot render. First asks the server at `url` where they
+/// go, and checks over SSH that `remote_host` is that server (see [`check_target`]).
+///
+/// Runs before the sync, so that the notes the server renders after it are rendered with these.
 pub(crate) async fn push_files(
     remote_host: &str,
     url: &str,
     token: Option<String>,
-) -> Result<(), String> {
+) -> Result<Pushed, String> {
     let remote = HttpRemote::new(url, RemoteAuth::token(token)).map_err(|e| e.to_string())?;
     let target = remote
         .push_target()
@@ -59,16 +87,14 @@ pub(crate) async fn push_files(
     )?;
     let local = data_dir_source()?;
 
-    // Pass 2: Everything else (image occlusions, render assets). The server reads notes from the
-    // database, so raw note and card files are not needed: it writes them when it renders. Without
-    // them, the server's render cache misses, so a note edited there has all its cards rendered
-    // again rather than only the changed ones, which is cheaper than pushing a file per card.
-    println!("Syncing files → {}", remote_host);
+    // Everything else (render assets). The server reads notes from the database, so raw note
+    // and card files are not needed: it writes them when it renders.
+    println!("Copying files → {remote_host}");
     let excludes = [
-        // The database, its WAL/SHM/journal files and local backups. The database is synced above.
+        // The database, its WAL/SHM/journal files and local backups, which the sync carries
         "--exclude=*.sqlite*".to_string(),
         // config.toml has this machine's [sync] table, with its token and replica. Settings and
-        // templates go in pass 4.
+        // templates are sent below.
         "--exclude=/config/".to_string(),
         "--exclude=/notes/".to_string(),
         "--exclude=/cards/".to_string(),
@@ -83,37 +109,53 @@ pub(crate) async fn push_files(
         "--exclude=/.notes-clone-tmp/".to_string(),
     ];
     let destination = remote_dir(remote_host, &target.root)?;
-    let mut args = vec!["-avz"];
+    let mut args = vec!["-az"];
     args.extend(excludes.iter().map(String::as_str));
     args.extend([local.as_str(), destination.as_str()]);
     run_rsync(&args)?;
 
-    // Pass 3: Rendered files, so the server does not have to render notes again, but not over
-    // its newer ones (see `sync_rendered_files`).
-    println!("Syncing rendered files → {}", remote_host);
-    sync_rendered_files(&remote_dir(remote_host, &target.files)?, &note_ids)?;
-
-    // Pass 4: Templates, and config.toml, which the server merges with its own (keeping its
-    // `[sync]` table), so reviews there are scheduled with the same settings.
-    println!("Syncing templates and settings → {}", remote_host);
-    run_rsync(&[
-        "-avz",
+    // Templates, and config.toml, which the server merges with its own (keeping its `[sync]`
+    // table), so reviews there are scheduled with the same settings.
+    println!("Copying templates and settings → {remote_host}");
+    let templates = run_rsync(&[
+        "-az",
         "--exclude=/config.toml",
         "--exclude=/config.toml.*",
         // Symlinks out of the config directory, such as one to pandoc's data directory, name
-        // paths of this machine. The files notes read from there are copied in pass 5.
+        // paths of this machine. The files notes read from there are copied below.
         "--safe-links",
         &dir_source(&get_config_dir())?,
         &remote_dir(remote_host, &target.config)?,
     ])?;
-    push_config(&remote).await?;
+    let config_changed = push_config(&remote).await?;
 
-    // Pass 5: Files the notes read, so the server can render notes edited there.
-    println!("Syncing files read by notes → {}", remote_host);
-    sync_render_dependencies(remote_host, &home, &dependencies)?;
+    // Files the notes read, so the server can render notes edited there.
+    println!("Copying files read by notes → {remote_host}");
+    let read = sync_render_dependencies(remote_host, &home, &dependencies)?;
 
-    println!("Done.");
-    Ok(())
+    // The rendered files of parsers the server can't render, for want of their programs (see
+    // `setup_vps.sh --no-latex`), but not over its newer ones (see `sync_rendered_files`). The
+    // server renders the others itself after the sync.
+    let unrendered: Vec<String> = server_rendered_parsers()
+        .map(|parser| parser.get_parser_name().to_string())
+        .filter(|name| !target.renders.contains(name))
+        .collect();
+    if !unrendered.is_empty() {
+        println!(
+            "Copying rendered files of {} notes, which the server can't render → {remote_host}",
+            unrendered.join(" and ")
+        );
+        sync_rendered_files(
+            &remote_dir(remote_host, &target.files)?,
+            &note_ids,
+            &unrendered,
+        )?;
+    }
+
+    Ok(Pushed {
+        remote,
+        render_inputs_changed: !templates.is_empty() || config_changed || !read.is_empty(),
+    })
 }
 
 /// The collection's directory as an rsync source that copies its contents.
@@ -292,7 +334,7 @@ fn check_target(
 
 /// Sends this machine's config.toml to the server, which keeps its own `[sync]` table, so the
 /// token, replica and addresses here never reach it.
-async fn push_config(remote: &HttpRemote) -> Result<(), String> {
+async fn push_config(remote: &HttpRemote) -> Result<bool, String> {
     let path = get_external_config_file();
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -301,9 +343,9 @@ async fn push_config(remote: &HttpRemote) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to send {} to the server: {e}", path.display()))?;
     if changed {
-        println!("Updated the server's config.toml");
+        println!("  config.toml");
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// Parsers whose notes the server renders.
@@ -369,58 +411,71 @@ fn dir_source(dir: &Path) -> Result<String, String> {
     Ok(format!("{dir}/"))
 }
 
-/// Copies the rendered files of the notes the server renders into `destination`, along
-/// with rendered image occlusions.
+/// Copies the rendered files of the notes of `parsers` into `destination`, the server's files
+/// directory, with their rendered image occlusions.
 ///
-/// Files newer on the server are kept (`--update`). A note created or edited here isn't rendered
-/// here (`render: false` in `api::note`), so its files are from before the edit, while the server
-/// rendered the edit when this machine's changes reached it. Likewise a note edited on the server
-/// between the sync and this. Otherwise the server's render cache, whose hash is the edit's, would
-/// take the older files for its own, and devices would keep theirs, since the mtime is older. This
+/// Files newer on the server are kept (`--update`), in case it rendered a note edited there. This
 /// needs the two clocks to roughly agree.
 fn sync_rendered_files(
     destination: &str,
     note_ids: &HashMap<&'static str, HashSet<NoteId>>,
+    parsers: &[String],
 ) -> Result<(), String> {
     // Rendered files can share a directory with other files (`aux/`, files rendered outside
     // spares), so only those of existing notes are copied, by name.
     let mut dirs: BTreeMap<PathBuf, HashSet<NoteId>> = BTreeMap::new();
+    let mut all_ids: HashSet<NoteId> = HashSet::new();
     for parser in server_rendered_parsers() {
+        if !parsers.iter().any(|name| name == parser.get_parser_name()) {
+            continue;
+        }
         let ids = &note_ids[parser.get_parser_name()];
+        all_ids.extend(ids);
         for dir in parser_rendered_dirs(parser.as_ref()) {
             dirs.entry(dir).or_default().extend(ids);
         }
     }
+    dirs.entry(get_image_occlusion_rendered_directory())
+        .or_default()
+        .extend(all_ids);
     for (dir, ids) in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let names: Vec<String> = entries
-            .flatten()
-            .filter(|entry| entry.path().is_file())
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| {
-                !name.ends_with(".synctex.gz")
-                    && !name.contains('\n')
-                    && rendered_file_note_id(name).is_some_and(|id| ids.contains(&id))
-            })
-            .collect();
+        let names = rendered_files_of(&dir, &ids);
         if names.is_empty() {
             continue;
         }
+        let destination = match dir.strip_prefix(get_files_dir()) {
+            Ok(relative) if !relative.as_os_str().is_empty() => {
+                format!("{destination}{}/", relative.display())
+            }
+            _ => destination.to_string(),
+        };
         run_rsync_files_from(
             &names.join("\n"),
-            &["-avz", "--update"],
+            &["-az", "--update"],
             &dir_source(&dir)?,
-            destination,
+            &destination,
         )?;
     }
-    run_rsync(&[
-        "-avz",
-        "--update",
-        &dir_source(&get_image_occlusion_rendered_directory())?,
-        &format!("{destination}image_occlusions/"),
-    ])
+    Ok(())
+}
+
+/// The names of the rendered files in `dir` of the notes `ids`.
+fn rendered_files_of(dir: &Path, ids: &HashSet<NoteId>) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| {
+            !name.ends_with(".synctex.gz")
+                && !name.contains('\n')
+                && rendered_file_note_id(name).is_some_and(|id| ids.contains(&id))
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// Copies the files that rendering recorded as read by the notes of parsers the server renders
@@ -434,7 +489,7 @@ fn sync_render_dependencies(
     remote_host: &str,
     home: &Path,
     plan: &DependencySync,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     for path in &plan.skipped {
         eprintln!(
             "Not syncing {}, since it is outside {}",
@@ -443,7 +498,7 @@ fn sync_render_dependencies(
         );
     }
     if plan.files.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let contents = plan
         .files
@@ -451,9 +506,9 @@ fn sync_render_dependencies(
         .filter_map(|path| path.to_str())
         .collect::<Vec<_>>()
         .join("\n");
-    run_rsync_files_from(
+    let copied = run_rsync_files_from(
         &contents,
-        &["-avzR"],
+        &["-azR"],
         &dir_source(home)?,
         &format!("{remote_host}:"),
     )?;
@@ -461,7 +516,7 @@ fn sync_render_dependencies(
         run_ssh(remote_host, &symlinks_command(&plan.symlinks))
             .map_err(|e| format!("Creating symlinks failed: {e}"))?;
     }
-    Ok(())
+    Ok(copied)
 }
 
 /// Existing files read by rendered notes of parsers the server renders, except those synced by
@@ -596,13 +651,14 @@ fn run_ssh(remote_host: &str, command: &str) -> Result<(), String> {
     }
 }
 
-/// Runs rsync on the files listed in `list` (one path per line, relative to `source`).
+/// Runs rsync on the files listed in `list` (one path per line, relative to `source`). Returns
+/// the files it copied (see [`run_rsync`]).
 fn run_rsync_files_from(
     list: &str,
     args: &[&str],
     source: &str,
     destination: &str,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let path = std::env::temp_dir().join(format!("spares-sync-files-{}", std::process::id()));
     let result = std::fs::write(&path, list)
         .map_err(|e| format!("Failed to write {}: {e}", path.display()))
@@ -616,16 +672,32 @@ fn run_rsync_files_from(
     result
 }
 
-fn run_rsync(args: &[&str]) -> Result<(), String> {
-    let status = Command::new("rsync")
+/// Runs rsync, printing each file it copies. Returns them, relative to the source, without the
+/// directories it created or updated.
+fn run_rsync(args: &[&str]) -> Result<Vec<String>, String> {
+    let output = Command::new("rsync")
+        .arg("--out-format=%n")
         .args(args)
-        .status()
+        .stderr(std::process::Stdio::inherit())
+        .output()
         .map_err(|e| format!("Failed to run rsync: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("rsync exited with {status}"))
+    if !output.status.success() {
+        return Err(format!("rsync exited with {}", output.status));
     }
+    let copied = copied_files(&String::from_utf8_lossy(&output.stdout));
+    for file in &copied {
+        println!("  {file}");
+    }
+    Ok(copied)
+}
+
+/// The files in rsync's `--out-format=%n` output: one per line, directories ending in `/`.
+fn copied_files(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty() && !line.ends_with('/'))
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -640,9 +712,11 @@ mod tests {
     use super::RemoteFacts;
     use super::SymlinkTarget;
     use super::check_target;
+    use super::copied_files;
     use super::parse_remote_facts;
     use super::plan_dependency_sync;
     use super::rendered_file_note_id;
+    use super::rendered_files_of;
     use super::symlinks_command;
 
     fn target() -> PushTarget {
@@ -797,6 +871,42 @@ mod tests {
             }
         );
         assert_eq!(run(&dir.join("missing")).local_home, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rsync_reports_the_files_it_copied_without_directories() {
+        assert_eq!(
+            copied_files("./\nmarkdown/\nmarkdown/templates/note_template.md\n\nconfig.toml\n"),
+            ["markdown/templates/note_template.md", "config.toml"]
+        );
+        assert_eq!(copied_files(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rendered_files_of_some_notes() {
+        let dir = std::env::temp_dir().join(format!("spares-rendered-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("aab")).unwrap();
+        for name in [
+            "aab.pdf",
+            "aab-1-front.pdf",
+            "aab-1-front-io-1.png",
+            "aab.synctex.gz",
+            "aac.pdf",
+            "539_HW1.pdf",
+        ] {
+            std::fs::write(dir.join(name), "x").unwrap();
+        }
+        let ids = [NoteId::from_letters("aab").unwrap()].into_iter().collect();
+        assert_eq!(
+            rendered_files_of(&dir, &ids),
+            ["aab-1-front-io-1.png", "aab-1-front.pdf", "aab.pdf"]
+        );
+        assert_eq!(
+            rendered_files_of(&dir.join("missing"), &ids),
+            Vec::<String>::new()
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
