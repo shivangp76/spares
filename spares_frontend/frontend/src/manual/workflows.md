@@ -31,7 +31,7 @@ Here the new card inherits from note `aae`'s first card. The rules are on `inher
 A crankshaft's webs carry {{[o:1] counterweights}}, opposite {{[mv:bxd/1] the rod journals}}.
 ```
 
-Write the merged note, give each cloze brought in from another note `mv:` in place of its `o:` (`spares card get -n NOTE_ID` lists a note's orders), and push. Once the cards have moved, the source notes have no cards left for those clozes, so delete their files in a **second** push: a push deletes notes before it edits and creates others, so a source deleted in the same push is gone before its card can move. A cloze takes `inh:` or `mv:`, not both; no two clozes may move the same card; and one undo puts the moved cards back.
+Write the merged note, give each cloze brought in from another note `mv:` in place of its `o:` (`spares card get -n NOTE_ID` lists a note's orders), and push. Once the cards have moved, the source notes have no cards left for those clozes, so delete their files or remove those clozes from them, in the same push or a later one. A push imports the notes it takes cards from after the moves, so their cards are still there to move. A cloze takes `inh:` or `mv:`, not both; no two clozes may move the same card; and one undo puts the moved cards back.
 
 ## CLI cards
 
@@ -167,7 +167,7 @@ git commit -am "…" && git push origin HEAD:main  # like it: imports it into sp
 - Only `main` and `anki` (see [Syncing notes with Anki](workflows.md#syncing-notes-with-anki)) can be pushed, and not both in one push.
 - Never edit `notes-spares/` by hand (a PDF viewer's inverse search may open files there). Spares rewrites such files from the database, saving what it overwrites (see [Files spares overwrote](workflows.md#files-spares-overwrote)).
 
-A push is imported in the order deletes, edits, creations, and completely or not at all: a single `spares undo` reverts all of it. After a push, spares may commit the notes as it writes them (for example with renumbered clozes) and render them, so pull before editing the same notes again. If what you pushed was already written the way spares writes it, there is nothing to pull.
+A push is imported in the order deletes, edits, creations, except that notes another pushed note takes cards from with `mv:` are edited and deleted last, once their cards have moved. It is imported completely or not at all: a single `spares undo` reverts all of it. After a push, spares may commit the notes as it writes them (for example with renumbered clozes) and render them, so pull before editing the same notes again. If what you pushed was already written the way spares writes it, there is nothing to pull.
 
 ### Rejected pushes
 

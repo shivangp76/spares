@@ -179,8 +179,8 @@ pub struct ClozeGroupingSettings {
     /// where they are still counted alongside the copies. A cloze takes `inh:` or `mv:`, not both,
     /// and no two clozes of one import may move the same card. The source must be in another note.
     /// The source note keeps its cloze, but no longer has a card for it, so the cloze should be
-    /// removed from it or the note deleted afterwards (in a later push, since a push deletes notes
-    /// before it updates and creates others).
+    /// removed from it or the note deleted, in the same push or afterwards (a push updates and
+    /// deletes the notes its `mv:` takes cards from after the moves).
     pub inherit: Option<CardInheritance>,
     /// `orders` is used to specify the order of the cards created from a cloze. Using this information, a card's parameters can be properly lined up when a cloze is added, deleted, or moved.
     /// It is only specified on the first cloze in a card, since that determines the order of how the cards are parsed.

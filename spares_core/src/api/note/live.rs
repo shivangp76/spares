@@ -239,9 +239,8 @@ pub(crate) async fn check_card_moves(
                 .map_err(|e| Error::Sqlx { source: e })?;
         if found.is_none() {
             return Err(invalid(format!(
-                "`mv:` source card not found: note_id={}, order={src_order}. If the source note \
-                 is deleted in the same push, delete it in a later push instead, since a push \
-                 deletes notes before it updates and creates others.",
+                "`mv:` source card not found: note_id={}, order={src_order}. `spares card get -n \
+                 NOTE_ID` lists a note's orders.",
                 src_note_id.letters()
             )));
         }

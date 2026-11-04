@@ -1205,6 +1205,223 @@ async fn test_push_creating_and_deleting_rolls_back(pool: SqlitePool) {
     );
 }
 
+/// The id of the card at `order` of note `id`, if there is one
+async fn card_at(pool: &SqlitePool, id: NoteId, order: u32) -> Option<i64> {
+    sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? AND "order" = ?"#)
+        .bind(id)
+        .bind(order)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// Gives the first note's file a second cloze that moves the second note's card, in the clone.
+fn move_second_card_into_first(clone: &Path) {
+    let path = note_path(clone, first());
+    let file = read(&path);
+    let merged = file.replace(
+        "First {{[o:1] Cloze here }}",
+        &format!(
+            "First {{{{[o:1] Cloze here }}}} and {{{{[mv:{}/1] moved }}}}",
+            second()
+        ),
+    );
+    assert_ne!(merged, file);
+    std::fs::write(path, merged).unwrap();
+}
+
+async fn undo_last_group(pool: &SqlitePool) {
+    undo_event(
+        pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_out_of_a_note_it_deletes(pool: SqlitePool) {
+    let _guard = setup().await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let clone = clone();
+    move_second_card_into_first(&clone);
+    std::fs::remove_file(note_path(&clone, second())).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "merge the second note into the first"],
+    );
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(get_note(&pool, second()).await.is_err());
+    // The card kept its id, so its scheduling and reviews, in the first note.
+    assert_eq!(card_at(&pool, first(), 2).await, Some(card));
+    assert!(pushed.finish.unwrap().normalized);
+    assert!(!read(&note_path(&repo(), first())).contains("mv:"));
+    assert_eq!(status(&repo()), "");
+
+    // One undo puts the card back and restores the note.
+    undo_last_group(&pool).await;
+    assert_eq!(card_at(&pool, second(), 1).await, Some(card));
+    assert_eq!(card_at(&pool, first(), 2).await, None);
+}
+
+#[sqlx::test]
+async fn test_push_of_several_commits_moves_cards_before_deleting_their_note(pool: SqlitePool) {
+    let _guard = setup().await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let clone = clone();
+    // A note moved to another file: created with the card, then the old one deleted.
+    std::fs::write(
+        clone.join("markdown/new-merged.md"),
+        new_note_file(
+            &clone,
+            &format!("Merged {{{{[mv:{}/1] moved }}}}", second()),
+        ),
+    )
+    .unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "create the merged note"]);
+    git(
+        &clone,
+        &["rm", "-q", note_path(&clone, second()).to_str().unwrap()],
+    );
+    git(&clone, &["commit", "-qm", "delete the second note"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let created: NoteId = sqlx::query_scalar("SELECT id FROM note WHERE data LIKE 'Merged%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(card_at(&pool, created, 1).await, Some(card));
+    assert!(get_note(&pool, second()).await.is_err());
+    assert_eq!(status(&repo()), "");
+}
+
+#[sqlx::test]
+async fn test_push_moving_cards_out_of_a_note_it_deletes_rolls_back(pool: SqlitePool) {
+    let _guard = setup().await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let before = head(&repo());
+    let clone = clone();
+    move_second_card_into_first(&clone);
+    std::fs::remove_file(note_path(&clone, second())).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "merge the second note into the first"],
+    );
+    let pushed = push(&pool, &clone, false).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let finish = pushed.finish.unwrap();
+    assert!(finish.message.contains("rolled back"), "{}", finish.message);
+    assert!(!finish.message.contains("partial"), "{}", finish.message);
+    assert_eq!(card_at(&pool, second(), 1).await, Some(card));
+    assert_eq!(card_at(&pool, first(), 2).await, None);
+    assert!(note_path(&repo(), second()).exists());
+    assert_eq!(head(&repo()), before);
+    assert_eq!(status(&repo()), "");
+}
+
+/// Pushes the second note taking the first note's card with `mv:`, and `edit` of the first note,
+/// whose file is imported first, being first in the diff. Checks that the card moved, and that the
+/// first note is left with `cards_left` other cards.
+async fn push_move_and_edit_of_its_note(pool: &SqlitePool, edit: &str, cards_left: usize) {
+    let _guard = setup().await;
+    init(pool).await;
+    let card = card_at(pool, first(), 1).await.unwrap();
+    let clone = clone();
+    let path = note_path(&clone, second());
+    let file = read(&path);
+    let merged = file.replace(
+        "Second {{[o:1] Cloze }}",
+        &format!(
+            "Second {{{{[o:1] Cloze }}}} {{{{[mv:{}/1] moved }}}}",
+            first()
+        ),
+    );
+    assert_ne!(merged, file);
+    std::fs::write(path, merged).unwrap();
+    let path = note_path(&clone, first());
+    let file = read(&path);
+    let edited = file.replace("First {{[o:1] Cloze here }}", edit);
+    assert_ne!(edited, file);
+    std::fs::write(path, edited).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "move the card and edit its note"],
+    );
+    let pushed = push(pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert_eq!(card_at(pool, second(), 2).await, Some(card));
+    let left: Vec<i64> = sqlx::query_scalar("SELECT id FROM card WHERE note_id = ?")
+        .bind(first())
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), cards_left);
+    assert!(!left.contains(&card));
+    assert_eq!(status(&repo()), "");
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_before_inserting_a_cloze_before_them(pool: SqlitePool) {
+    // Editing the first note first would give the card's order to the inserted cloze's new card,
+    // which would then be moved instead.
+    push_move_and_edit_of_its_note(&pool, "First {{ Inserted }} {{[o:1] Cloze here }}", 2).await;
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_before_removing_their_cloze(pool: SqlitePool) {
+    // Editing the first note first would delete the card with its cloze, so it could not move.
+    push_move_and_edit_of_its_note(&pool, "First, its cloze moved", 0).await;
+}
+
+#[sqlx::test]
+async fn test_push_with_impossible_moves_is_rejected(pool: SqlitePool) {
+    let _guard = setup().await;
+    init(&pool).await;
+    let clone = clone();
+    let before = head(&repo());
+    let with_cloze = |id: NoteId, cloze: String| {
+        let path = note_path(&clone, id);
+        let file = read(&path);
+        let marker = "{{[o:1] ";
+        let at = file.find(marker).unwrap();
+        let edited = format!("{}{cloze} {}", &file[..at], &file[at..]);
+        std::fs::write(path, edited).unwrap();
+    };
+    let third: NoteId = "aac".parse().unwrap();
+    // A card within its own note, a card that does not exist, and one card moved twice
+    std::fs::write(
+        clone.join("markdown/new-twice.md"),
+        new_note_file(&clone, &format!("Twice {{{{[mv:{third}/1] twice }}}}")),
+    )
+    .unwrap();
+    with_cloze(first(), format!("{{{{[mv:{}/1] own }}}}", first()));
+    with_cloze(second(), format!("{{{{[mv:{third}/9] missing }}}}"));
+    with_cloze(second(), format!("{{{{[mv:{third}/1] once }}}}"));
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "impossible moves"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(!pushed.receive.ok);
+    let message = &pushed.receive.message;
+    assert!(message.contains("nothing was imported"), "{message}");
+    assert!(message.contains("within its own note"), "{message}");
+    assert!(
+        message.contains(&format!("`mv:{third}/9` names a card")),
+        "{message}"
+    );
+    assert!(message.contains("can only move once"), "{message}");
+    assert!(card_at(&pool, third, 1).await.is_some());
+    assert_eq!(note_count(&pool).await, 3);
+    assert_eq!(head(&repo()), before);
+}
+
 #[sqlx::test]
 async fn test_push_deleting_every_note_of_a_parser(pool: SqlitePool) {
     let _guard = setup().await;
