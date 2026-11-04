@@ -1446,7 +1446,14 @@ fn anki_ref(dir: &Path) -> String {
 /// What spares writes to Anki for the note in `contents`
 fn stored_in_anki(id: NoteId, contents: &str) -> (String, String) {
     let parser = find_parser("markdown", &get_all_parsers()).unwrap();
-    let mut parsed = notes_vcs::parse_note_file(parser.as_ref(), contents, id, false).unwrap();
+    let mut parsed = notes_vcs::parse_note_file(
+        &notes_vcs::NoteFileContext::default(),
+        parser.as_ref(),
+        contents,
+        id,
+        false,
+    )
+    .unwrap();
     parsed
         .settings
         .custom_data

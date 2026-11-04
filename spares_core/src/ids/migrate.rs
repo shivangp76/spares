@@ -47,6 +47,7 @@ use crate::config::Replica;
 use crate::config::get_cache_dir;
 use crate::config::get_data_dir;
 use crate::notes_vcs;
+use crate::notes_vcs::NoteFileContext;
 use crate::notes_vcs::construct_db_note_file;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
@@ -619,6 +620,7 @@ pub async fn mismatched_note_files(
     migrated: &SqlitePool,
     mapping: &[IdMapping],
 ) -> Result<Vec<String>, Error> {
+    let context = NoteFileContext::default();
     let parsers = get_all_parsers();
     let by_new: HashMap<NoteId, &IdMapping> = mapping.iter().map(|m| (m.new, m)).collect();
     let by_old: HashMap<i64, NoteId> = mapping.iter().map(|m| (m.old, m.new)).collect();
@@ -652,7 +654,7 @@ pub async fn mismatched_note_files(
             mismatches.push(format!("{} is missing", old_path.display()));
             continue;
         };
-        let expected = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let expected = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         let renumbered = swap_note_id_value(&current, m.old, m.new)
             .map(|contents| swap_linked_file_names(&contents, &by_old));
         if renumbered.as_deref() != Some(expected.as_str()) {

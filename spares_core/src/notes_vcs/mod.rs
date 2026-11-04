@@ -47,6 +47,7 @@ pub use lock::run_holding;
 pub use lock::run_shared;
 pub use lock::shared_guard;
 pub use note_file::NoteFields;
+pub use note_file::NoteFileContext;
 pub use note_file::ParsedNewNoteFile;
 pub use note_file::ParsedNoteFile;
 pub(crate) use note_file::construct_db_note_file;

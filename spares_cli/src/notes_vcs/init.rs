@@ -472,6 +472,7 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
     let mut local_edits: Vec<PathBuf> = Vec::new();
     let mut untracked: Vec<PathBuf> = Vec::new();
     let mut same_note = 0;
+    let context = notes_vcs::NoteFileContext::default();
     for entry in WalkDir::new(backup)
         .into_iter()
         .filter_entry(|e| !matches!(e.file_name().to_str(), Some(".git" | ".jj")))
@@ -498,9 +499,11 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
         // Files that differ only in the linked-notes section or formatting hold the same note.
         if let Some((parser, id)) = notes_vcs::parse_note_rel_path(&rel)
             && let (Ok(old), Ok(new)) = (std::str::from_utf8(&old), std::str::from_utf8(&new))
-            && let Some(old_fields) = notes_vcs::file_note_fields(parser.as_ref(), old, id)
-            && let Some(new_fields) = notes_vcs::file_note_fields(parser.as_ref(), new, id)
-            && notes_vcs::same_note(parser.as_ref(), id, &old_fields, &new_fields)
+            && let Some(old_fields) =
+                notes_vcs::file_note_fields(&context, parser.as_ref(), old, id)
+            && let Some(new_fields) =
+                notes_vcs::file_note_fields(&context, parser.as_ref(), new, id)
+            && notes_vcs::same_note(&context, parser.as_ref(), id, &old_fields, &new_fields)
         {
             same_note += 1;
             continue;
