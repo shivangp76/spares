@@ -32,32 +32,6 @@ const JJ_ALIASES_BEGIN: &str =
     "# BEGIN spares aliases (rewritten by `spares vcs init --repair-hooks`)";
 const JJ_ALIASES_END: &str = "# END spares aliases";
 
-/// The aliases as versions before [`JJ_ALIASES_BEGIN`] wrote them, to replace
-const OLD_JJ_ALIASES: &str = r#"
-[aliases]
-# Fetch spares' changes and rebase your work (the current branch, or the given revision's) onto them
-spares-pull = ["util", "exec", "--", "sh", "-c", '''
-  jj git fetch && jj rebase -b "${1:-@}" -d main@origin
-''', "spares-pull"]
-# Push a revision (default: @, or @- when @ is empty) to spares
-spares-push = ["util", "exec", "--", "sh", "-c", '''
-  set -e
-  rev="${1:-@}"
-  if [ "$rev" = @ ] && [ "$(jj log --no-graph -r @ -T empty)" = true ]; then rev=@-; fi
-  jj git fetch
-  if [ -z "$(jj log --no-graph -r "main@origin & ::($rev)" -T '"x"')" ]; then
-    echo "spares has newer notes; run 'jj spares-pull' first" >&2; exit 1
-  fi
-  if [ -n "$(jj log --no-graph -r "conflicts() & (main@origin..($rev))" -T '"x"')" ]; then
-    echo "resolve the conflicts first (jj log -r 'conflicts()')" >&2; exit 1
-  fi
-  # Checked above to be on top of spares' `main`, so moving the local bookmark anywhere is safe
-  jj bookmark set main --allow-backwards -r "$rev"
-  # A rejected push must not leave the local `main` on the rejected commit
-  jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
-''', "spares-push"]
-"#;
-
 /// Aliases added to the clone's jj config, running `spares` as `spares_command`. See the workflow
 /// docs.
 fn jj_aliases(spares_command: &str) -> String {
@@ -131,9 +105,6 @@ fn with_jj_aliases(config: &str, aliases: &str) -> Option<String> {
         let mut config = config.to_string();
         config.replace_range(start..end, aliases);
         return Some(config);
-    }
-    if config.contains(OLD_JJ_ALIASES) {
-        return Some(config.replacen(OLD_JJ_ALIASES, &format!("\n{aliases}"), 1));
     }
     if config.contains("spares-push") {
         return None;
@@ -544,8 +515,7 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
         if old == new {
             continue;
         }
-        // Files that differ only in the hash line, the linked-notes section or formatting hold
-        // the same note.
+        // Files that differ only in the linked-notes section or formatting hold the same note.
         if let Some((parser, id)) = notes_vcs::parse_note_rel_path(&rel)
             && let (Ok(old), Ok(new)) = (std::str::from_utf8(&old), std::str::from_utf8(&new))
             && let Some(old_fields) = notes_vcs::file_note_fields(parser.as_ref(), old, id)
@@ -637,7 +607,7 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
     println!();
     if same_note > 0 {
         println!(
-            "{same_note} note file(s) in the old directory only differed in formatting, the hash line or linked notes."
+            "{same_note} note file(s) in the old directory only differed in formatting or linked notes."
         );
     }
     if let Some(local_edits_ref) = local_edits_ref {
@@ -713,7 +683,6 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
 #[cfg(test)]
 mod tests {
     use super::JJ_ALIASES_BEGIN;
-    use super::OLD_JJ_ALIASES;
     use super::jj_aliases;
     use super::with_jj_aliases;
 
@@ -731,12 +700,6 @@ mod tests {
         let replaced = with_jj_aliases(&added, &newer).unwrap();
         assert_eq!(replaced, format!("{user}\n{newer}"));
         assert_eq!(with_jj_aliases(&replaced, &newer).unwrap(), replaced);
-
-        // The unmarked aliases of earlier versions are replaced.
-        let old = format!("{user}{OLD_JJ_ALIASES}");
-        let migrated = with_jj_aliases(&old, &aliases).unwrap();
-        assert_eq!(migrated, format!("{user}\n{aliases}"));
-        assert_eq!(migrated.matches("spares-push =").count(), 1);
 
         // Aliases someone edited are left alone.
         let edited = format!("{user}[aliases]\nspares-push = [\"x\"]\n");
