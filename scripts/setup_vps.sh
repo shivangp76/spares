@@ -297,8 +297,9 @@ ProtectSystem=full
 WantedBy=multi-user.target
 EOF
 
-# Renders every note on the server. `spares sync cloud` copies the rendered files, so this is only
-# for recovery, e.g. if they were deleted.
+# Renders every note on the server. The server renders notes after each sync, and after
+# `spares sync cloud` changes what they read, so this is only for recovery, e.g. if they were
+# deleted.
 cat > /usr/local/bin/spares-render <<'EOF'
 #!/usr/bin/env bash
 # Usage: sudo spares-render [--force]
@@ -376,11 +377,11 @@ Next, on the machine you sync from, whose host's copy of your collection syncs w
   1. Log its host in to this one:  spares sync login $URL
   2. Optionally, in its config.toml:
        [sync]
-       remote_host = "$SPARES_USER@$HOST"   # for \`spares sync cloud\` to copy rendered files
+       remote_host = "$SPARES_USER@$HOST"   # for \`spares sync cloud\` to copy files over SSH
        interval_minutes = 15                # sync in the background
   3. Run once:  spares sync cloud --full-upload
-     After that, \`spares sync cloud\` syncs both ways and copies the rendered files, your
-     templates and the files your notes read.
+     After that, \`spares sync cloud\` copies your templates, settings and the files your notes
+     read, then syncs both ways. \`spares sync cloud --dry-run\` lists what it would copy.
 
 Logs: journalctl -u spares -f      Update: sudo bash setup_vps.sh (no arguments needed)
 EOF
