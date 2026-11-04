@@ -1273,7 +1273,9 @@ fn test_typst_card_shows_clozes_over_original_image() {
         r#"std.image("{}", width: 100%)"#,
         original_image_filepath.display()
     )));
-    let overlay = image_occlusion_overlay(&cloze_indices, &data, CardSide::Front).unwrap();
+    let overlay = image_occlusion_overlay(&cloze_indices, &data, CardSide::Front)
+        .unwrap()
+        .unwrap();
     let svg = String::from_utf8(overlay).unwrap();
     assert!(
         source.contains(&format!(

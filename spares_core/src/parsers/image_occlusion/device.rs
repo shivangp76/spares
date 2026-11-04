@@ -5,7 +5,9 @@
 //! the clozes from before it until the laptop renders the card again. Instead, a card's source
 //! names the image by what it's made from ([`card_filepath`]), and the device makes it when the web
 //! app asks for it ([`read_card`]): a PNG, or the SVG of the clozes that cards of parsers with
-//! [`crate::parsers::Parseable::image_occlusion_overlays`] show over the original image. An image
+//! [`crate::parsers::Parseable::image_occlusion_overlays`] show over the original image. Those
+//! cards only name an SVG until the device knows the original image's size, which making one
+//! reads; from then on the SVG is in their source (see [`crate::platform::image_size`]). An image
 //! named this way is never out of date, so the web app can keep it as long as it likes. The web app
 //! shows it in Typst cards, which it compiles, and in Markdown cards changed on the device, which
 //! it shows from their source until the server renders them

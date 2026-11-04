@@ -20,9 +20,10 @@
 //!   [`read`] gets them from there (`set_loader`).
 //!
 //! A browser never writes note or card files, nor renders them: the server does that after the
-//! device's changes reach it (see [`crate::sync`]). It only makes the images of its Typst cards'
-//! image occlusions, in memory, when the web app asks for them (see
-//! `parsers::read_device_card`, wasm only). The web app downloads them, and tells the device
+//! device's changes reach it (see [`crate::sync`]). Its Typst cards have their image occlusions'
+//! overlays in their sources, which need the size of the original image, and [`image_size`] has
+//! it once the image has been in memory. Until then, and for other cards, it makes their images,
+//! in memory, when the web app asks for them (see `parsers::read_device_card`, wasm only). The web app downloads them, and tells the device
 //! which non-empty HTML files for web clients it has (`load_web_renders`, wasm only), which
 //! [`has_web_render`] answers from. Apart from that, only the code that reads config and templates,
 //! and that stores and parses those files, goes through this module. Everything else uses `std::fs`,
@@ -51,6 +52,8 @@ pub use memory::create_dir_all;
 pub use memory::files;
 #[cfg(target_family = "wasm")]
 pub use memory::has_web_render;
+#[cfg(target_family = "wasm")]
+pub use memory::image_size;
 #[cfg(target_family = "wasm")]
 pub use memory::is_file;
 #[cfg(target_family = "wasm")]
@@ -91,6 +94,14 @@ pub async fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
+/// The width and height of the image at `path`, from its header, if they can be had without
+/// waiting. Natively they always can.
+#[cfg(not(target_family = "wasm"))]
+#[allow(clippy::unnecessary_wraps)] // As in a browser
+pub fn image_size(path: &Path) -> Option<Result<(u32, u32), String>> {
+    Some(image::image_dimensions(path).map_err(|e| e.to_string()))
+}
+
 /// Whether `path`, the HTML for web clients next to a rendered file, is there and not empty (see
 /// [`crate::parsers::web_render_filepath`]).
 #[cfg(not(target_family = "wasm"))]
@@ -122,6 +133,9 @@ mod memory {
     static WEB_RENDERS: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
     static LOADER: Mutex<Option<Loader>> = Mutex::new(None);
     static MEDIA_DIRS: Mutex<Option<MediaDirs>> = Mutex::new(None);
+    /// The width and height of each image whose contents have been in memory since they last
+    /// changed, by absolute path, for [`image_size`]
+    static SIZES: Mutex<BTreeMap<PathBuf, (u32, u32)>> = Mutex::new(BTreeMap::new());
 
     /// Reads a file in the device's storage, for [`read`].
     pub type Loader = fn(PathBuf) -> Pin<Box<dyn Future<Output = io::Result<Vec<u8>>> + Send>>;
@@ -150,8 +164,26 @@ mod memory {
         )
     }
 
+    /// Records the size of the image at `path` from `contents`, its new contents, or forgets it if
+    /// they aren't an image.
+    fn remember_size(path: &Path, contents: &[u8]) {
+        let size = image::ImageReader::new(io::Cursor::new(contents))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        let mut sizes = lock(&SIZES);
+        match size {
+            Some(size) => sizes.insert(path.to_path_buf(), size),
+            None => sizes.remove(path),
+        };
+    }
+
     /// Replaces the files under `dir` with `files`, which are under it too.
     pub fn load_dir(dir: &Path, files: BTreeMap<PathBuf, Vec<u8>>) {
+        lock(&SIZES).retain(|path, _| !path.starts_with(dir));
+        for (path, contents) in &files {
+            remember_size(path, contents);
+        }
         let mut all = lock(&FILES);
         all.retain(|path, _| !path.starts_with(dir));
         all.extend(files);
@@ -162,6 +194,7 @@ mod memory {
         let mut all = lock(&FILES);
         let mut stored = lock(&STORED);
         for (path, contents) in files {
+            remember_size(&path, &contents);
             stored.remove(&path);
             all.insert(path, contents);
         }
@@ -183,6 +216,7 @@ mod memory {
         lock(&FILES).clear();
         lock(&STORED).clear();
         lock(&WRITTEN).clear();
+        lock(&SIZES).clear();
     }
 
     /// Every file in memory.
@@ -221,9 +255,21 @@ mod memory {
         }
         let loader = *lock(&LOADER);
         match loader {
-            Some(loader) if lock(&STORED).contains(path) => loader(path.to_path_buf()).await,
+            Some(loader) if lock(&STORED).contains(path) => {
+                let contents = loader(path.to_path_buf()).await?;
+                remember_size(path, &contents);
+                Ok(contents)
+            }
             _ => Err(not_found(path)),
         }
+    }
+
+    /// The width and height of the image at `path`, if its contents have been in memory since
+    /// they last changed: written, loaded or read. The parser needs them synchronously, but the
+    /// device's storage is read asynchronously, and keeping every image in memory, or reading
+    /// them all when the device opens its copy, would cost more than it saves.
+    pub fn image_size(path: &Path) -> Option<Result<(u32, u32), String>> {
+        lock(&SIZES).get(path).copied().map(Ok)
     }
 
     /// Sets how [`read`] gets files from the device's storage.
@@ -234,6 +280,7 @@ mod memory {
     #[allow(clippy::unnecessary_wraps)] // As `std::fs::write`
     pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
         let path = path.as_ref().to_path_buf();
+        remember_size(&path, contents.as_ref());
         lock(&FILES).insert(path.clone(), contents.as_ref().to_vec());
         lock(&STORED).remove(&path);
         lock(&WRITTEN).insert(path);
@@ -245,6 +292,7 @@ mod memory {
         let from = from.as_ref();
         let contents = lock(&FILES).remove(from).ok_or_else(|| not_found(from))?;
         lock(&WRITTEN).remove(from);
+        lock(&SIZES).remove(from);
         write(to, contents)
     }
 
@@ -284,7 +332,22 @@ mod memory {
             Box::pin(async move { Ok(path.to_string_lossy().into_owned().into_bytes()) })
         }
 
-        /// The only test of `FILES`, `STORED`, `WRITTEN` and `LOADER`, which are global.
+        /// A tiny PNG of `width` by `height` pixels.
+        fn png(width: u32, height: u32) -> Vec<u8> {
+            let mut png = Vec::new();
+            image::RgbaImage::new(width, height)
+                .write_to(&mut io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
+            png
+        }
+
+        fn load_image_from_storage(
+            _path: PathBuf,
+        ) -> Pin<Box<dyn Future<Output = io::Result<Vec<u8>>> + Send>> {
+            Box::pin(async { Ok(png(7, 6)) })
+        }
+
+        /// The only test of `FILES`, `STORED`, `WRITTEN`, `LOADER` and `SIZES`, which are global.
         #[tokio::test]
         async fn writes_reads_loads_and_stores() {
             let config = Path::new("/spares/config");
@@ -339,6 +402,27 @@ mod memory {
             assert_eq!(read_to_string(&path).unwrap(), "x");
             assert_eq!(take_written(), [(path.clone(), b"x".to_vec())]);
 
+            // An image's size is known once its contents have been in memory, and until they
+            // change
+            let original = Path::new("/srv/spares/image_occlusions/cell.png");
+            assert_eq!(image_size(original), None);
+            load_files([(original.to_path_buf(), png(4, 3))]);
+            load_stored([original.to_path_buf()]);
+            assert_eq!(image_size(original), Some(Ok((4, 3))));
+            write(original, png(5, 2)).unwrap();
+            assert_eq!(image_size(original), Some(Ok((5, 2))));
+            write(original, "not an image").unwrap();
+            assert_eq!(image_size(original), None);
+            assert_eq!(image_size(&path), None);
+            take_written();
+            clear();
+            set_loader(load_image_from_storage);
+            load_stored([original.to_path_buf()]);
+            assert_eq!(image_size(original), None);
+            read(original).await.unwrap();
+            assert_eq!(image_size(original), Some(Ok((7, 6))));
+            write(&path, "x").unwrap();
+
             write(&path, [0xff]).unwrap();
             assert_eq!(
                 read_to_string(&path).unwrap_err().kind(),
@@ -346,6 +430,7 @@ mod memory {
             );
             clear();
             assert!(!is_file(image));
+            assert_eq!(image_size(original), None);
             assert_eq!(take_written(), []);
         }
 
