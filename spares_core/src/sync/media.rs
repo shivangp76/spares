@@ -252,12 +252,7 @@ fn has_suffix(stem: &str) -> bool {
 /// blake3 hash. Image occlusions are named `<stem>-<suffix>.<ext>` and
 /// `<stem>-<suffix>_clozes.svg` by the device that made them, with a suffix that is unique rather
 /// than a hash, since card orders are written into the SVG while a note is parsed.
-fn check_media(
-    kind: MediaKind,
-    name: &str,
-    contents: &[u8],
-    legacy_names: bool,
-) -> Result<(), Error> {
+fn check_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<(), Error> {
     let stem = Path::new(name)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -284,15 +279,7 @@ fn check_media(
                     stem
                 }
             };
-            // Image occlusions made before their names ended in a hash keep their names: a host
-            // sends them to its upstream as they are. Stored files are never replaced, so such a
-            // name still never stands for two files on one side.
-            let legacy = legacy_names
-                && !stem.is_empty()
-                && stem
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
-            if !has_suffix(stem) && !legacy {
+            if !has_suffix(stem) {
                 return Err(invalid(format!(
                     "`{name}` isn't named as image occlusions are stored"
                 )));
@@ -310,21 +297,12 @@ fn check_media(
     Ok(())
 }
 
-/// Stores a file a device added, under `name` in the server's directory for `kind`, and returns
-/// its path there. `name` is as the device named it (see `check_media`). A file that is already
-/// there is kept: the server never replaces one this way (see [`replace_media`]).
+/// Stores a file a device or another host added, under `name` in the server's directory for
+/// `kind`, and returns its path there. `name` is as the device named it (see `check_media`). A
+/// file that is already there is kept: the server never replaces one this way (see
+/// [`replace_media`]).
 pub fn store_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<PathBuf, Error> {
-    store(kind, name, contents, false, None).map(|(path, _)| path)
-}
-
-/// [`store_media`] for another host's copy of the collection, which may also send image
-/// occlusions named before their names ended in a hash.
-pub fn store_media_from_host(
-    kind: MediaKind,
-    name: &str,
-    contents: &[u8],
-) -> Result<PathBuf, Error> {
-    store(kind, name, contents, true, None).map(|(path, _)| path)
+    store(kind, name, contents, None).map(|(path, _)| path)
 }
 
 /// What [`replace_media`] did
@@ -343,7 +321,7 @@ pub enum Replaced {
 /// parsing a note writes card orders into a clozes SVG, and an image can be replaced. Fails, and
 /// keeps the file, if it changed since, so the newer file is never replaced by an older one.
 /// Images and clips are named by their contents, so they are never replaced. Checked as by
-/// [`store_media_from_host`], as only hosts replace files.
+/// [`store_media`].
 pub fn replace_media(
     kind: MediaKind,
     name: &str,
@@ -355,7 +333,7 @@ pub fn replace_media(
             "`{name}` is named by its contents, so it can't be replaced"
         )));
     }
-    store(kind, name, contents, true, Some(replaces))
+    store(kind, name, contents, Some(replaces))
 }
 
 /// The hash of a media file's contents, as [`MediaFile::hash`] has it
@@ -367,7 +345,6 @@ fn store(
     kind: MediaKind,
     name: &str,
     contents: &[u8],
-    legacy_names: bool,
     replaces: Option<&str>,
 ) -> Result<(PathBuf, Replaced), Error> {
     if contents.len() > kind.max_size() {
@@ -379,7 +356,7 @@ fn store(
     if !is_plain(name) {
         return Err(invalid(format!("`{name}` is not a file name")));
     }
-    check_media(kind, name, contents, legacy_names)?;
+    check_media(kind, name, contents)?;
     let directory = kind.directory();
     std::fs::create_dir_all(&directory).map_err(|e| Error::Io {
         description: format!("Failed to create {}", directory.display()),
@@ -581,7 +558,10 @@ mod tests {
             )
         };
         let kind = MediaKind::ImageOcclusion;
-        let (image, clozes) = ("spares-replace-test.png", "spares-replace-test_clozes.svg");
+        let (image, clozes) = (
+            "spares-replace-test-0123456789ab.png",
+            "spares-replace-test-0123456789ab_clozes.svg",
+        );
         // Left by a failed run
         for name in [image, clozes] {
             let _ = std::fs::remove_file(kind.directory().join(name));
@@ -614,14 +594,16 @@ mod tests {
             replace_media(kind, image, b"second", &first).unwrap().1,
             Replaced::Unchanged
         );
+        // Named as when stored, as image occlusions from another host are too
+        assert!(replace_media(kind, "spares-replace-test.png", b"first", "none").is_err());
         // Clozes are checked as when stored
-        let clozes_path = store_media_from_host(kind, clozes, svg(2).as_bytes()).unwrap();
+        let clozes_path = store_media(kind, clozes, svg(2).as_bytes()).unwrap();
         let old = hash(clozes).unwrap();
         assert!(replace_media(kind, clozes, b"<svg/>", &old).is_err());
         replace_media(kind, clozes, svg(3).as_bytes(), &old).unwrap();
         assert_eq!(std::fs::read_to_string(&clozes_path).unwrap(), svg(3));
         // Without a replacement in mind, a file is still never replaced
-        store_media_from_host(kind, clozes, svg(4).as_bytes()).unwrap();
+        store_media(kind, clozes, svg(4).as_bytes()).unwrap();
         assert_eq!(std::fs::read_to_string(&clozes_path).unwrap(), svg(3));
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_file(&clozes_path).unwrap();

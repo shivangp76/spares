@@ -313,8 +313,7 @@ async fn a_replaced_image_occlusion_file_reaches_the_other_side() {
             r#"<svg xmlns="http://www.w3.org/2000/svg"><g class="layer" id="clozes-group"><rect id="a" x="1" y="1" width="{width}" height="2"/></g></svg>"#
         )
     };
-    // Named as before names ended in a hash, as most of the user's are
-    let (image, clozes) = ("roster.png", "roster_clozes.svg");
+    let (image, clozes) = ("roster-0123456789ab.png", "roster-0123456789ab_clozes.svg");
     write_at(&laptop_dir.join(image), b"first image", 60);
     write_at(&laptop_dir.join(clozes), svg(2).as_bytes(), 60);
     sync(&collection, SyncMode::Normal).await;

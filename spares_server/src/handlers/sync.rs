@@ -363,21 +363,13 @@ pub(crate) async fn sync_media_handler(
     Coll(data): Coll,
     Path((kind, name)): Path<(MediaKind, String)>,
     Query(query): Query<MediaUploadQuery>,
-    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
     body: Bytes,
 ) -> Result<impl IntoResponse, HandlerError> {
-    // Another host's copy, with its sync-only token
-    let from_host = auth.is_some_and(|auth| {
-        auth.device
-            .as_ref()
-            .is_some_and(|device| device.scope == crate::host::auth::Scope::Sync)
-    });
     let (path, replaced) = match &query.replaces {
         // Only if the file is still the one the host saw, so not limited to hosts' tokens: a host
         // without accounts has none
         Some(replaces) => media::replace_media(kind, &name, &body, replaces)
             .map(|(path, replaced)| (path, replaced == media::Replaced::Replaced)),
-        None if from_host => media::store_media_from_host(kind, &name, &body).map(|p| (p, false)),
         None => media::store_media(kind, &name, &body).map(|p| (p, false)),
     }
     .map_err(error_to_response)?;
