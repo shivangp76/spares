@@ -535,6 +535,7 @@ fn create_raw_and_rendered_file(
                     card_data,
                     side,
                     &image_occlusion_output_rendered_filepath,
+                    parser.image_occlusion_overlays(),
                 )?;
             }
         }

@@ -866,7 +866,8 @@ fn test_image_occlusion_parallel_performance() {
 
     // Test parallel version
     let parallel_start = Instant::now();
-    let parallel_result = create_image_occlusion_cards(&card_data, CardSide::Front, &output_path);
+    let parallel_result =
+        create_image_occlusion_cards(&card_data, CardSide::Front, &output_path, false);
     let parallel_duration = parallel_start.elapsed();
 
     if let Err(e) = parallel_result {
@@ -884,7 +885,8 @@ fn test_image_occlusion_parallel_performance() {
 
     // Verify files were created
     for i in 1..=num_cards {
-        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        let card_filepath =
+            get_image_occlusion_card_filepath(&output_path, CardSide::Front, i, false);
         if !card_filepath.exists() {
             // List what files actually exist
             let files: Vec<_> = std::fs::read_dir(&rendered_dir)
@@ -924,6 +926,7 @@ fn test_image_occlusion_parallel_performance() {
             &output_path,
             CardSide::Front,
             image_occlusion_order_in_card,
+            false,
         );
         let _ = create_image_occlusion_card(
             cloze_indices,
@@ -931,6 +934,7 @@ fn test_image_occlusion_parallel_performance() {
             &card_filepath,
             CardSide::Front,
             &config.image_occlusion,
+            false,
         );
     }
 
@@ -938,7 +942,8 @@ fn test_image_occlusion_parallel_performance() {
 
     // Clean up sequential test files
     for i in 1..=num_cards {
-        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        let card_filepath =
+            get_image_occlusion_card_filepath(&output_path, CardSide::Front, i, false);
         let _ = std::fs::remove_file(&card_filepath);
     }
 
@@ -1128,13 +1133,16 @@ fn test_delete_note_files_with_missing_image_occlusion_files() {
         original_image_filepath.display(),
     );
 
+    // PNGs and overlays, in case another parser rendered the note
     let rendered_filepaths = [CardSide::Front, CardSide::Back]
         .into_iter()
-        .map(|side| {
+        .flat_map(|side| {
             let output_rendered_filepath = get_image_occlusion_rendered_directory().join(
                 parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
             );
-            get_image_occlusion_card_filepath(&output_rendered_filepath, side, 1)
+            [false, true].map(|overlay| {
+                get_image_occlusion_card_filepath(&output_rendered_filepath, side, 1, overlay)
+            })
         })
         .collect::<Vec<_>>();
     for filepath in &rendered_filepaths {
@@ -1182,4 +1190,110 @@ fn test_update_cloze_settings_skips_unchanged_file() {
     );
 
     std::fs::remove_file(&clozes_filepath).unwrap();
+}
+
+/// A Typst card shows the original image with an SVG of the card's clozes over it, the size of
+/// the original image, instead of a PNG of both.
+#[test]
+fn test_typst_card_shows_clozes_over_original_image() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let original_image_filepath = dir.join("test-overlay.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-overlay_clozes.svg");
+    // Larger than the image, which clips it
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="350">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+            <line x1="0" y1="0" x2="100" y2="100" stroke="#1565C0" />
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_1" x="53" />
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_2" x="253" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let config = ImageOcclusionConfig::default();
+
+    let parser = TypstParser::new();
+    assert!(parser.image_occlusion_overlays());
+    let note_id: NoteId = "zzzy".parse().unwrap();
+    let source = parser.construct_image_occlusion(
+        &data,
+        ConstructImageOcclusionType::Card {
+            side: CardSide::Front,
+            note_id,
+            card_order: 1,
+            image_occlusion_order: 1,
+        },
+    );
+    let overlay_filepath = get_image_occlusion_rendered_directory().join(format!(
+        "{}-io-1.svg",
+        PathBuf::from(
+            parser.get_output_filename(RenderOutputType::Card(1, CardSide::Front), note_id)
+        )
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+    ));
+    assert!(source.contains(&format!(
+        r#"std.image("{}", width: 100%)"#,
+        original_image_filepath.display()
+    )));
+    assert!(source.contains(&format!(
+        r#"std.image("{}", format: "svg", width: 100%)"#,
+        overlay_filepath.display()
+    )));
+
+    create_image_occlusion_card(
+        &[
+            (0, ClozeHiddenReplacement::ToAnswer { hint: None }),
+            (1, ClozeHiddenReplacement::NotToAnswer),
+        ],
+        &data,
+        &overlay_filepath,
+        CardSide::Front,
+        &config,
+        true,
+    )
+    .unwrap();
+    let overlay = Element::parse(std::fs::read(&overlay_filepath).unwrap().as_slice()).unwrap();
+    assert_eq!(overlay.attributes["width"], "400");
+    assert_eq!(overlay.attributes["height"], "200");
+    assert_eq!(overlay.attributes["viewBox"], "0 0 400 200");
+    // The clozes SVG at its own size, as the PNG draws it
+    let clozes = overlay.get_child("svg").unwrap();
+    assert_eq!(clozes.attributes["width"], "1024");
+    let svg = String::from_utf8(std::fs::read(&overlay_filepath).unwrap()).unwrap();
+    assert!(
+        svg.contains(r##"stroke="#1565C0""##),
+        "markup is kept: {svg}"
+    );
+    assert!(svg.contains(&config.cloze_to_answer_color), "{svg}");
+    assert!(svg.contains(&config.cloze_not_to_answer_color), "{svg}");
+
+    for path in [original_image_filepath, clozes_filepath, overlay_filepath] {
+        std::fs::remove_file(path).unwrap();
+    }
 }
