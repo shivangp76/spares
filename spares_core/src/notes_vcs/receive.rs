@@ -11,6 +11,7 @@ use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
@@ -61,9 +62,13 @@ use crate::api::undo::join_event_group;
 use crate::api::undo::undo_event;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
+use crate::parsers::CardInheritance;
+use crate::parsers::InheritMode;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
+use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::get_all_parsers;
+use crate::parsers::get_cards;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
@@ -528,6 +533,8 @@ struct PushedNote {
     rel: PathBuf,
     parser: Box<dyn Parseable>,
     change: PushedChange,
+    /// The cards its `mv:` settings take from other notes
+    moves: Vec<ReadableCardIdentifier>,
 }
 
 enum PushedChange {
@@ -748,7 +755,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             }
             *new_blob = blob;
         }
-        let parsed_settings = match &change {
+        let parsed = match &change {
             PushedChange::Update {
                 id,
                 old_blob,
@@ -759,36 +766,50 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                         errors.push(format!("{path}: {reason}"));
                         continue;
                     }
-                    Ok(parsed.settings)
+                    Ok((parsed.settings, Some(parsed.data)))
                 }
                 Err(problems) => Err(problems),
             },
             PushedChange::Create { new_blob } => {
-                parse_new_note_file(parser.as_ref(), new_blob, false).map(|parsed| parsed.settings)
+                parse_new_note_file(parser.as_ref(), new_blob, false)
+                    .map(|parsed| (parsed.settings, Some(parsed.data)))
             }
-            PushedChange::Delete { .. } => Ok(NoteSettings::default()),
+            PushedChange::Delete { .. } => Ok((NoteSettings::default(), None)),
         };
-        match parsed_settings {
-            Ok(settings) => warnings.extend(
-                settings
-                    .errors_and_warnings
-                    .iter()
-                    .filter(|e| is_warning(e))
-                    .map(|e| format!("{path}: {e}")),
-            ),
+        let data = match parsed {
+            Ok((settings, data)) => {
+                warnings.extend(
+                    settings
+                        .errors_and_warnings
+                        .iter()
+                        .filter(|e| is_warning(e))
+                        .map(|e| format!("{path}: {e}")),
+                );
+                data
+            }
             Err(problems) => {
                 for problem in problems {
                     errors.push(format!("{path}: {problem}"));
                 }
                 continue;
             }
-        }
+        };
+        let moves = match data.map(|data| card_move_sources(parser.as_ref(), &data)) {
+            None => Vec::new(),
+            Some(Ok(moves)) => moves,
+            Some(Err(e)) => {
+                errors.push(format!("{path}: {e}"));
+                continue;
+            }
+        };
         pushed.push(PushedNote {
             rel: PathBuf::from(&path),
             parser,
             change,
+            moves,
         });
     }
+    errors.extend(card_move_errors(db, &pushed).await?);
     if !errors.is_empty() {
         return Ok(Outcome::Rejected(format!(
             "spares rejected the push, so nothing was imported:\n{}",
@@ -951,69 +972,150 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     Ok(Outcome::Accepted { journal, message })
 }
 
+/// The cards that the `mv:` settings in a note's data take from other notes
+fn card_move_sources(
+    parser: &dyn Parseable,
+    data: &str,
+) -> Result<Vec<ReadableCardIdentifier>, Error> {
+    Ok(get_cards(parser, None, data, false, false)?
+        .into_iter()
+        .filter_map(|card| match card.inherit {
+            Some(CardInheritance {
+                source,
+                mode: InheritMode::Move,
+            }) => Some(source),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Why the `mv:` settings of the pushed notes cannot be carried out: a source card that does not
+/// exist (the push cannot create it, since a pushed note gets its id only once it is imported), is
+/// in the note that moves it, or is moved by more than one cloze.
+async fn card_move_errors(db: &SqlitePool, pushed: &[PushedNote]) -> Result<Vec<String>, Error> {
+    let mut errors = Vec::new();
+    let mut moved_by: Vec<(ReadableCardIdentifier, &Path)> = Vec::new();
+    for note in pushed {
+        let own_id = note.existing().map(|(id, _)| id);
+        for source in &note.moves {
+            let path = note.rel.display();
+            let setting = format!("`mv:{}/{}`", source.note_id.letters(), source.order);
+            if own_id == Some(source.note_id) {
+                errors.push(format!(
+                    "{path}: {setting} moves a card within its own note; reorder the clozes instead"
+                ));
+            } else if let Some((_, other)) = moved_by.iter().find(|(s, _)| s == source) {
+                errors.push(format!(
+                    "{path}: {setting} moves a card that `{}` moves too, but a card can only move once",
+                    other.display()
+                ));
+            } else if !card_exists(db, *source).await? {
+                errors.push(format!(
+                    "{path}: {setting} names a card spares does not have (`spares card get -n {}` lists the note's orders)",
+                    source.note_id.letters()
+                ));
+            }
+            moved_by.push((*source, &note.rel));
+        }
+    }
+    Ok(errors)
+}
+
 /// Imports the push: deletes first, then updates, then creates, so a note moved to another parser
-/// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Its
-/// events form one group, so one undo reverts it all.
+/// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Notes
+/// that a pushed `mv:` takes cards from are the exception: they are updated and deleted last, once
+/// their cards have moved, so a push can merge notes and delete or edit their sources. Its events
+/// form one group, so one undo reverts it all.
 async fn import(
     db: &SqlitePool,
     pushed: &[PushedNote],
     journal: &mut Journal,
 ) -> Result<(), Error> {
-    let parsers = get_all_parsers();
-    let at = Utc::now();
-    // The first event of the import, whose group the later ones join
-    let mut leader = None;
-    if !journal.deleted.is_empty() {
+    let sources: BTreeSet<NoteId> = pushed
+        .iter()
+        .flat_map(|note| note.moves.iter().map(|source| source.note_id))
+        .collect();
+    let (deleted_last, deleted_first): (Vec<NoteId>, Vec<NoteId>) =
+        journal.deleted.iter().partition(|id| sources.contains(id));
+    let mut import = Import {
+        db,
+        parsers: get_all_parsers(),
+        at: Utc::now(),
+        leader: None,
+        journal,
+    };
+    import.delete(deleted_first).await?;
+    for note in pushed {
+        if let PushedChange::Update { id, new_blob, .. } = &note.change
+            && !sources.contains(id)
+        {
+            import.update(note, *id, new_blob).await?;
+        }
+    }
+    for note in pushed {
+        if let PushedChange::Create { new_blob } = &note.change {
+            import.create(note, new_blob).await?;
+        }
+    }
+    for note in pushed {
+        if let PushedChange::Update { id, new_blob, .. } = &note.change
+            && sources.contains(id)
+        {
+            import.update(note, *id, new_blob).await?;
+        }
+    }
+    import.delete(deleted_last).await
+}
+
+/// An import in progress
+struct Import<'a> {
+    db: &'a SqlitePool,
+    parsers: Vec<fn() -> Box<dyn Parseable>>,
+    at: DateTime<Utc>,
+    /// The first event of the import, whose group the later ones join
+    leader: Option<i64>,
+    journal: &'a mut Journal,
+}
+
+impl Import<'_> {
+    async fn delete(&mut self, ids: Vec<NoteId>) -> Result<(), Error> {
+        if ids.is_empty() {
+            return Ok(());
+        }
         let response = delete_notes(
-            db,
+            self.db,
             DeleteNotesRequest {
-                selector: NotesSelector::Ids(journal.deleted.clone()),
+                selector: NotesSelector::Ids(ids),
             },
-            &parsers,
+            &self.parsers,
             true,
         )
         .await?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        self.join(response.event_id).await
     }
 
-    for note in pushed {
-        let PushedChange::Update { id, new_blob, .. } = &note.change else {
-            continue;
-        };
-        let parser_id = parser_id(db, note.parser.get_parser_name())
-            .await?
-            .ok_or_else(|| {
-                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
-            })?;
-        let parsed = parse_note_file(note.parser.as_ref(), new_blob, *id, true)
+    async fn update(&mut self, note: &PushedNote, id: NoteId, new_blob: &str) -> Result<(), Error> {
+        let parser_id = self.parser_id(note).await?;
+        let parsed = parse_note_file(note.parser.as_ref(), new_blob, id, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let request = UpdateNotesRequest {
-            selector: NotesSelector::Ids(vec![*id]),
+            selector: NotesSelector::Ids(vec![id]),
             parser_id: Some(parser_id),
             data: Some(parsed.data),
             keywords: Some(parsed.settings.keywords),
             tags: UpdateTags::SetTags(parsed.settings.tags),
             custom_data: Some(parsed.settings.custom_data),
         };
-        let response = update_notes(db, request, at, &parsers, true).await?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        let response = update_notes(self.db, request, self.at, &self.parsers, true).await?;
+        self.join(response.event_id).await
     }
 
-    for note in pushed {
-        let PushedChange::Create { new_blob } = &note.change else {
-            continue;
-        };
-        let parser_id = parser_id(db, note.parser.get_parser_name())
-            .await?
-            .ok_or_else(|| {
-                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
-            })?;
+    async fn create(&mut self, note: &PushedNote, new_blob: &str) -> Result<(), Error> {
+        let parser_id = self.parser_id(note).await?;
         let parsed = parse_new_note_file(note.parser.as_ref(), new_blob, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let response = create_notes(
-            db,
+            self.db,
             CreateNotesRequest {
                 parser_id,
                 requests: vec![CreateNoteRequest {
@@ -1024,21 +1126,32 @@ async fn import(
                     custom_data: parsed.settings.custom_data,
                 }],
             },
-            at,
-            &parsers,
+            self.at,
+            &self.parsers,
             true,
         )
         .await?;
         for created in &response.notes {
-            journal.created.push(created.id);
-            journal.ids.push(created.id);
+            self.journal.created.push(created.id);
+            self.journal.ids.push(created.id);
         }
         // Before the event, so a failure from here on still reconciles the created files away
-        write_journal(journal)?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        write_journal(self.journal)?;
+        self.join(response.event_id).await
     }
-    Ok(())
+
+    async fn parser_id(&self, note: &PushedNote) -> Result<i64, Error> {
+        let name = note.parser.get_parser_name();
+        parser_id(self.db, name)
+            .await?
+            .ok_or_else(|| Error::NotesVcs(format!("no parser `{name}`")))
+    }
+
+    /// Records an event of the import, in the group of its first event, in the journal.
+    async fn join(&mut self, event_id: Option<i64>) -> Result<(), Error> {
+        join_import_group(self.db, &mut self.leader, event_id, self.journal).await?;
+        write_journal(self.journal)
+    }
 }
 
 /// Records an event of the import, in the group of its first event.
@@ -1065,6 +1178,17 @@ async fn parser_id(db: &SqlitePool, parser_name: &str) -> Result<Option<i64>, Er
         .fetch_optional(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })
+}
+
+async fn card_exists(db: &SqlitePool, card: ReadableCardIdentifier) -> Result<bool, Error> {
+    let found: Option<i64> =
+        sqlx::query_scalar(r#"SELECT 1 FROM card WHERE note_id = ? AND "order" = ?"#)
+            .bind(card.note_id)
+            .bind(card.order as u32)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(found.is_some())
 }
 
 async fn note_exists(db: &SqlitePool, id: NoteId) -> Result<bool, Error> {

@@ -249,7 +249,7 @@ pub fn syntax_examples(
             format!(
                 "`{}{}gir/1` moves card 1 of note `gir` here, with its scheduling and reviews, \
                  in place of a new card for the cloze. Use it to merge notes: the reviews are not \
-                 copied, so each is still counted once after `gir` is deleted (in a later push). \
+                 copied, so each is still counted once after `gir` is deleted (in the same push or later). \
                  It is removed from the note once the card is moved.",
                 keys.move_card, note_keys.settings_key_value_delim
             ),
