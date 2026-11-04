@@ -83,9 +83,10 @@ impl RenderDependencies {
 }
 
 /// The HTML written for web clients next to a rendered file by parsers with a
-/// [web render](crate::parsers::Parseable::has_web_render). An empty file means web clients show
-/// the rendered file instead. It replaces a stale HTML file on the server when synced, since sync
-/// does not delete files.
+/// [web render](crate::parsers::Parseable::has_web_render). Without it, web clients show the
+/// rendered file. Rendering removes it when they should, and `spares sync cloud` removes it on a
+/// server that gets the rendered files instead of rendering them. An empty file, which marked the
+/// same before, is treated as none.
 pub fn web_render_filepath(output_rendered_filepath: &Path) -> PathBuf {
     output_rendered_filepath.with_extension("html")
 }
