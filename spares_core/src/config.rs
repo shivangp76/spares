@@ -1277,13 +1277,13 @@ mod tests {
         };
         let original = "maximum_interval = 100 # days, roughly\n\n\
                         [sync] # how to reach the server\nurl = \"https://old\" # replaced\n\
-                        remote_rendered_dir = \"rendered\"\n\n[leech]\nlapses_threshold = 8\n";
+                        push_delay_seconds = 45\n\n[leech]\nlapses_threshold = 8\n";
         let written = set_sync_values(original, values()).unwrap();
         let config = parse(&written);
         assert_eq!(config.sync.remote_host.as_deref(), Some("me@vps"));
         assert_eq!(config.sync.url.as_deref(), Some("https://vps"));
         assert_eq!(config.sync.interval_minutes, 15);
-        assert_eq!(config.sync.remote_rendered_dir, "rendered");
+        assert_eq!(config.sync.push_delay_seconds, 45);
         assert_eq!(config.leech.lapses_threshold, 8);
         assert!(written.contains("# days, roughly"), "{written}");
         assert!(written.contains("# how to reach the server"), "{written}");

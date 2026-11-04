@@ -152,6 +152,7 @@ pub mod media;
 pub mod merge;
 mod orders;
 pub mod protocol;
+pub mod push;
 pub mod records;
 pub mod run;
 pub mod server;
@@ -177,13 +178,10 @@ pub struct SyncConfig {
     /// have stopped for this many seconds, and at least every two minutes while they keep coming,
     /// so they reach the server without waiting for the interval. `0` turns this off.
     pub push_delay_seconds: u64,
-    /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`.
+    /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`: the machine
+    /// `url` is served from, logged in as the user the server runs as. Where they go there is the
+    /// server's answer to `GET /api/sync/push-target` (see [`push`]), which is checked first.
     pub remote_host: Option<String>,
-    /// Where `spares sync cloud` puts rendered files on `remote_host`: the files directory of the
-    /// collection there. Relative paths are relative to the remote user's home directory. Empty,
-    /// the default, is this collection's own files directory, which is the server's when its host
-    /// has the same root, as `spares deploy` sets it up.
-    pub remote_rendered_dir: String,
     /// This host's replica number for the collection (see [`crate::config::Replica`]). A
     /// collection without `url` is the root of its sync chain, replica `1`, unless this says
     /// otherwise. With `url`, it is set when this host enrolls with the upstream.
@@ -201,7 +199,6 @@ impl Default for SyncConfig {
             interval_minutes: 0,
             push_delay_seconds: 30,
             remote_host: None,
-            remote_rendered_dir: String::new(),
             replica: None,
             token: None,
         }

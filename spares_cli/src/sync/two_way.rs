@@ -83,15 +83,8 @@ pub(crate) async fn sync_cloud(
         };
     };
     print_report(&report);
-    if let Some(remote_host) = &config.sync.remote_host {
-        let remote_rendered_dir = if config.sync.remote_rendered_dir.is_empty() {
-            spares_core::config::get_files_dir()
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            config.sync.remote_rendered_dir.clone()
-        };
-        push_files(remote_host, &remote_rendered_dir).await?;
+    if let (Some(remote_host), Some(url)) = (&config.sync.remote_host, &config.sync.url) {
+        push_files(remote_host, url, config.sync.token.clone()).await?;
     }
     Ok(())
 }

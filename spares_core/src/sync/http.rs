@@ -21,6 +21,7 @@ use super::protocol::PullRequest;
 use super::protocol::PullResponse;
 use super::protocol::PushRequest;
 use super::protocol::PushResponse;
+use super::push::PushTarget;
 use super::run::SyncRemote;
 use crate::Error;
 
@@ -214,6 +215,15 @@ impl HttpRemote {
     pub async fn device_config(&self) -> Result<DeviceConfig, Error> {
         Ok(self
             .send(self.request(reqwest::Method::GET, "/api/sync/config", QUICK_TIMEOUT))
+            .await?
+            .json()
+            .await?)
+    }
+
+    /// Where `spares sync cloud` copies files to on the server (see [`super::push`]).
+    pub async fn push_target(&self) -> Result<PushTarget, Error> {
+        Ok(self
+            .send(self.request(reqwest::Method::GET, "/api/sync/push-target", QUICK_TIMEOUT))
             .await?
             .json()
             .await?)
