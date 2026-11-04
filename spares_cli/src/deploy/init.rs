@@ -65,8 +65,7 @@ pub(super) async fn init(
     let db = database_path(&env_config.database_url)?;
     if !db.is_file() {
         return Err(miette!(
-            "No database at {}. Create a host with `spares host init`, and import a collection \
-             with `spares host import`.",
+            "No database at {}. Create a host with `spares host init`.",
             db.display()
         ));
     }

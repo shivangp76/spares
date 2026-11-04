@@ -18,6 +18,7 @@ use std::process::Command;
 
 use spares_core::Error;
 
+use super::CollectionPaths;
 use super::Host;
 use super::accounts::invalid;
 use super::accounts::random_string;
@@ -125,6 +126,39 @@ pub async fn export(host: &Host, id: &str, out: &Path) -> Result<(), Error> {
     result
 }
 
+/// The account's collection may only be the empty one it got when it was created, which the
+/// import replaces.
+pub(super) async fn ensure_empty_collection(
+    host: &Host,
+    user_id: &str,
+    paths: &CollectionPaths,
+) -> Result<(), Error> {
+    if paths.database().exists() {
+        let collection = host.collection(user_id).await?;
+        let notes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+            .fetch_one(&collection.db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        drop(collection);
+        host.close(user_id).await;
+        if notes > 0 {
+            return Err(invalid(format!(
+                "{} already has a collection with {notes} notes. Import into a new account.",
+                paths.root.display()
+            )));
+        }
+    }
+    // Its database, notes repository and default config.toml go: the import's replace them. So
+    // does what its cache has, which may be another collection's.
+    for dir in [&paths.root, &paths.cache] {
+        if dir.exists() {
+            std::fs::remove_dir_all(dir).map_err(|e| io(dir, e))?;
+        }
+    }
+    paths.create().map_err(|e| io(&paths.root, e))?;
+    Ok(())
+}
+
 /// Unpacks an export into user `id`'s directory, whose collection must be empty, and opens the
 /// collection, which checks and migrates it.
 pub async fn import_archive(host: &Host, id: &str, archive: &Path) -> Result<(), Error> {
@@ -156,7 +190,7 @@ pub async fn import_archive(host: &Host, id: &str, archive: &Path) -> Result<(),
             spares_core::collection::DATABASE_FILE_NAME
         )));
     }
-    super::import::ensure_empty_collection(host, id, &paths).await?;
+    ensure_empty_collection(host, id, &paths).await?;
     run_tar(
         Command::new("tar")
             .arg("-xzf")

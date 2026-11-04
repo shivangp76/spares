@@ -9,13 +9,11 @@ use std::path::PathBuf;
 use clap::Args;
 use clap::Subcommand;
 use spares_core::Error;
-use spares_core::config::Replica;
 
 use super::Host;
 use super::accounts;
 use super::accounts::NewUser;
 use super::accounts::invalid;
-use super::import::ImportOptions;
 use super::lock::HostLock;
 
 #[derive(Args, Debug)]
@@ -109,43 +107,13 @@ pub enum HostCommand {
         #[arg(long)]
         yes: bool,
     },
-    /// Move a collection into an account: another host's export, or one kept the way spares kept
-    /// one before hosts
-    ///
-    /// An export (`spares host export`, or a user's download) is unpacked into `users/<id>/`.
-    /// From before hosts, the data directory's database, notes repository, images, audio and
-    /// image occlusions, the config directory's config.toml and templates, and the rendered files
-    /// move into `users/<id>/`. See `spares_server::host::import` and `spares_server::host::export`.
+    /// Unpack another host's export (`spares host export`, or a user's download) into an account
+    /// whose collection is empty. See `spares_server::host::export`.
     Import {
-        /// An export (`.tar.gz`), or the old data directory (what `SPARES_DATA_DIR` was, by
-        /// default ~/.local/share/spares)
-        data_dir: PathBuf,
+        /// The export (`.tar.gz`)
+        archive: PathBuf,
         /// The account to import into (its id, name or email). Its collection must be empty.
         user: String,
-        /// The database, if not `spares-main.sqlite` in the data directory
-        #[arg(long)]
-        database: Option<PathBuf>,
-        /// The old config directory (`SPARES_CONFIG_DIR`; default ~/.config/spares)
-        #[arg(long)]
-        config_dir: Option<PathBuf>,
-        /// The old cache directory (`SPARES_CACHE_DIR`; default ~/.cache/spares)
-        #[arg(long)]
-        cache_dir: Option<PathBuf>,
-        /// A directory of rendered files to move into the files directory: `SPARES_FILES_DIR`,
-        /// `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, `TYPST_OUT_DIR` (the default: those that are set)
-        #[arg(long = "rendered-dir")]
-        rendered_dirs: Vec<PathBuf>,
-        /// Pandoc's user data directory, which the collection's `config/pandoc` links to, and
-        /// renders may read (default: ~/.local/share/pandoc)
-        #[arg(long)]
-        pandoc_dir: Option<PathBuf>,
-        /// This host's replica number for the collection: what `SPARES_REPLICA` was (default:
-        /// `SPARES_REPLICA`, else 1)
-        #[arg(long)]
-        replica: Option<Replica>,
-        /// Copy rather than move, leaving the old directories as they were
-        #[arg(long)]
-        copy: bool,
     },
     /// Make an invite for `signups = "invite"`: a code that creates one account
     Invite {
@@ -190,10 +158,6 @@ pub enum HostCommand {
         #[arg(long, required = true)]
         all: bool,
     },
-}
-
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
 }
 
 fn read_password(args: &PasswordArgs, prompt: &str) -> Result<String, Error> {
@@ -362,106 +326,16 @@ pub async fn run(args: HostArgs) -> Result<(), Error> {
             host.delete_user(&user.id).await?;
             println!("Deleted {} ({}).", user.name, user.id);
         }
-        HostCommand::Import {
-            data_dir,
-            user,
-            database,
-            config_dir,
-            cache_dir,
-            rendered_dirs,
-            pandoc_dir,
-            replica,
-            copy,
-        } => {
+        HostCommand::Import { archive, user } => {
             let _lock = HostLock::take(&root)?;
             let host = Host::open(&root).await?;
             let user = find(&host, &user).await?;
-            if data_dir.is_file() {
-                super::export::import_archive(&host, &user.id, &data_dir).await?;
-                host.close_all().await;
-                println!(
-                    "Unpacked {} into {}.",
-                    data_dir.display(),
-                    host.user_dir(&user.id).display()
-                );
-                return Ok(());
-            }
-            let env_dir = |name: &str| std::env::var_os(name).map(PathBuf::from);
-            let rendered_dirs = if rendered_dirs.is_empty() {
-                [
-                    "SPARES_FILES_DIR",
-                    "MARKDOWN_OUT_DIR",
-                    "LATEX_OUT_DIR",
-                    "TYPST_OUT_DIR",
-                ]
-                .into_iter()
-                .filter_map(env_dir)
-                .collect()
-            } else {
-                rendered_dirs
-            };
-            let replica = match replica {
-                Some(replica) => Some(replica),
-                None => std::env::var("SPARES_REPLICA")
-                    .ok()
-                    .map(|r| r.parse().map_err(invalid))
-                    .transpose()?,
-            };
-            let pandoc_dir = pandoc_dir.unwrap_or_else(|| home().join(".local/share/pandoc"));
-            let options = ImportOptions {
-                data_dir,
-                database,
-                config_dir: Some(config_dir.unwrap_or_else(|| home().join(".config/spares"))),
-                cache_dir: Some(cache_dir.unwrap_or_else(|| home().join(".cache/spares"))),
-                rendered_dirs,
-                pandoc_dir: pandoc_dir.is_dir().then_some(pandoc_dir),
-                replica,
-                copy,
-            };
-            let report = super::import::import(&host, &user.id, &options).await?;
+            super::export::import_archive(&host, &user.id, &archive).await?;
             host.close_all().await;
-            let verb = if copy { "Copied" } else { "Moved" };
-            for (from, to) in &report.moved {
-                println!("{verb} {} to {}", from.display(), to.display());
-            }
-            for (from, to, count) in &report.merged {
-                println!(
-                    "{verb} {count} files from {} into {}",
-                    from.display(),
-                    to.display()
-                );
-            }
-            for path in &report.skipped {
-                println!("Kept what was already there instead of {}", path.display());
-            }
-            if let Some((pandoc, read_dirs)) = &report.pandoc {
-                let read_dirs: Vec<String> =
-                    read_dirs.iter().map(|d| d.display().to_string()).collect();
-                println!(
-                    "Linked config/pandoc to {}, and let renders read {} ([render] read_dirs in \
-                     host.toml).",
-                    pandoc.display(),
-                    read_dirs.join(", ")
-                );
-            }
-            if report.notes_rewritten > 0 {
-                println!(
-                    "Rewrote the paths of images, audio and image occlusions in {} notes.",
-                    report.notes_rewritten
-                );
-            }
-            if !report.left.is_empty() {
-                println!("Left where they were:");
-                for path in &report.left {
-                    println!("  {}", path.display());
-                }
-            }
             println!(
-                "\nThe collection is replica {} on this host. Rendered files are in {}; point \
-                 tools that read them (vimtex's LATEX_OUT_DIR, say) there. If its notes \
-                 repository has a clone, run `spares vcs init --repair-hooks`.",
-                report.replica.unwrap_or(1),
-                host.paths(&user.id).files.display()
+                "Unpacked {} into {}.",
+                archive.display(),
+                host.user_dir(&user.id).display()
             );
         }
         HostCommand::Token { user, name, scope } => {

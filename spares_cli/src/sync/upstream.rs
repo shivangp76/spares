@@ -74,8 +74,8 @@ pub(crate) async fn login(
         "this host",
     )
     .await?;
-    // Logging in again to the same upstream, or to the one a collection from before hosts names
-    // without a token, replaces the token.
+    // Logging in again to the same upstream, or to the one config.toml names without a token,
+    // replaces the token.
     if let Some(current) = status["sync_url"].as_str()
         && normalize_host(current) != url
         && status["sync_token_set"].as_bool() == Some(true)

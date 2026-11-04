@@ -6,8 +6,8 @@
 //!
 //! - **A host** enrolls when it gets an upstream (`spares sync login`), with a sync-only device
 //!   token. It gets `0`, the laptop's number, whose note ids are the shortest (see
-//!   [`crate::ids`]), if that is free, else a device's. A host that already has a number (a
-//!   collection imported with the replica it had before hosts) claims it ([`EnrollRequest`]).
+//!   [`crate::ids`]), if that is free, else a device's. A host that already has a number (`[sync]
+//!   replica` in its config.toml) claims it ([`EnrollRequest`]).
 //! - **A browser** that keeps a copy of the collection asks the host it uses for a number
 //!   (`POST /api/sync/enroll`), and gets the smallest free one from `2` to `4`. A host with an
 //!   upstream relays the request there, so enrolling needs the upstream to be reachable.
@@ -65,8 +65,7 @@ pub struct EnrollRequest {
     /// Whether it is another host's copy rather than a browser's, which gets `0` if it is free.
     #[serde(default)]
     pub host: bool,
-    /// The number it already has, to keep: a host whose collection was imported with the replica
-    /// it had before hosts.
+    /// The number it already has, to keep: a host whose config.toml sets `[sync] replica`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replica: Option<u8>,
 }

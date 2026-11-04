@@ -51,7 +51,6 @@ pub mod admin;
 pub mod auth;
 pub mod config;
 pub mod export;
-pub mod import;
 pub mod limits;
 pub mod lock;
 pub mod signup;
@@ -156,8 +155,7 @@ impl Host {
         let accounts_path = root.join(accounts::ACCOUNTS_FILE_NAME);
         if !accounts_path.is_file() {
             return Err(invalid(format!(
-                "{} is not a spares host: it has no {}. Create one with `spares host init`, \
-                 and move a collection into it with `spares host import`.",
+                "{} is not a spares host: it has no {}. Create one with `spares host init`.",
                 root.display(),
                 accounts::ACCOUNTS_FILE_NAME
             )));
@@ -216,7 +214,7 @@ impl Host {
             && self.paths(id).database().exists()
         {
             return Err(invalid(format!(
-                "{} already exists. Import a collection into it with `spares host import`, or \
+                "{} already exists. Import an export into it with `spares host import`, or \
                  remove it first.",
                 self.user_dir(id).display()
             )));
@@ -291,7 +289,6 @@ impl Host {
             return Ok(Arc::clone(&open.collection));
         }
         let paths = self.paths(id);
-        move_cache_out(&paths);
         let collection =
             open_collection(id, paths, self.config.max_connections_per_collection).await?;
         let mut open = self.open.lock().await;
@@ -440,55 +437,6 @@ async fn evict_least_recently_used(open: &mut HashMap<String, OpenCollection>) {
             open.len()
         ),
     }
-}
-
-/// Moves what spares kept in a user's directory before caches had a directory of their own
-/// (`cache/`, `files/`, `cards/`) into their cache, and removes renders' scratch directories
-/// (`render/`). Entries already in the cache are kept, and the old ones left where they were.
-pub fn move_cache_out(paths: &CollectionPaths) {
-    let root = &paths.root;
-    let render = root.join("render");
-    if render != paths.render && render.is_dir() {
-        let _ = std::fs::remove_dir_all(&render);
-    }
-    for (from, to) in [
-        (root.join(CACHE_DIR_NAME), paths.cache.clone()),
-        (root.join("files"), paths.files.clone()),
-        (root.join("cards"), paths.cards()),
-    ] {
-        if from == to || to.starts_with(&from) || !from.is_dir() {
-            continue;
-        }
-        if let Err(e) = move_into(&from, &to) {
-            warn!(
-                "Failed to move {} to {}: {e}. Move it yourself, or delete it: spares recreates it.",
-                from.display(),
-                to.display()
-            );
-        } else {
-            info!("Moved {} to {}", from.display(), to.display());
-        }
-    }
-}
-
-/// Moves directory `from` to `to`, or its entries into `to` if it exists, keeping `to`'s.
-fn move_into(from: &Path, to: &Path) -> std::io::Result<()> {
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    if !to.exists() {
-        return std::fs::rename(from, to);
-    }
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let dest = to.join(entry.file_name());
-        if !dest.exists() && !dest.is_symlink() {
-            std::fs::rename(entry.path(), dest)?;
-        }
-    }
-    // Only if everything moved
-    let _ = std::fs::remove_dir(from);
-    Ok(())
 }
 
 /// Opens the collection in `paths`, creating its directories and an empty database if it has
@@ -691,40 +639,6 @@ pub(crate) mod tests {
             cache_root(Path::new("/tmp/scratch-host"), &config),
             Path::new("/var/cache/spares")
         );
-    }
-
-    /// Caches that were in a user's directory move to their cache when the collection opens.
-    #[test]
-    fn caches_move_out_of_a_users_directory() {
-        let root = temp_root();
-        let user = root.join("users/me");
-        let paths = CollectionPaths::new(&user, root.join("cache/users/me"));
-        for dir in [
-            "files/typst",
-            "cards/typst",
-            "cache/note-hashes",
-            "render/tmp",
-        ] {
-            std::fs::create_dir_all(user.join(dir)).unwrap();
-        }
-        std::fs::write(user.join("files/typst/a.pdf"), "old").unwrap();
-        std::fs::write(user.join("files/b.pdf"), "b").unwrap();
-        std::fs::write(user.join("cards/typst/a-1-front.typ"), "card").unwrap();
-        // Rendered again since: the newer one stays.
-        std::fs::create_dir_all(paths.files.join("typst")).unwrap();
-        std::fs::write(paths.files.join("typst/a.pdf"), "new").unwrap();
-        move_cache_out(&paths);
-        let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
-        assert_eq!(read(paths.files.join("typst/a.pdf")), "new");
-        assert_eq!(read(paths.files.join("b.pdf")), "b");
-        assert_eq!(read(paths.cards().join("typst/a-1-front.typ")), "card");
-        assert!(paths.cache.join("note-hashes").is_dir());
-        assert!(!user.join("cards").exists());
-        assert!(!user.join("cache").exists());
-        assert!(!user.join("render").exists());
-        // What didn't move stays.
-        assert!(user.join("files/typst/a.pdf").is_file());
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The least recently used collection that nothing holds is closed to open another.

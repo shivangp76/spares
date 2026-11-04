@@ -13,8 +13,7 @@
 # --root        The root of the spares host on the machine you sync from (its SPARES_ROOT, e.g.
 #               /Users/you/.local/share/spares). The host here gets the same path, so the paths
 #               notes name images by are the same on both. The first run creates the host there
-#               with your account, asking for its password, and moves into it a collection kept the
-#               way spares kept one before hosts (in the --data-dir of an earlier run).
+#               with your account, asking for its password.
 # --account     Your account's name on the host here, and --account-id its id: make it your
 #               account's id on the machine you sync from, so the directories match.
 # --local-home  Your home directory on the machine you sync from, e.g. /Users/you. It is made a
@@ -41,17 +40,9 @@
 #
 set -euo pipefail
 
-# The password of the account a server moving into a host gets, which `spares deploy update` sends
-# on standard input. Read first, before any command here can read standard input instead.
-ACCOUNT_PASSWORD=""
-if [[ ! -t 0 ]]; then
-  IFS= read -r ACCOUNT_PASSWORD || true
-fi
-
 REPO_URL="https://github.com/shivangp76/spares.git"
 # The arguments of the last run, for updating without them
 SETUP_CONF="/etc/spares/setup.conf"
-DATA_DIR=""
 ROOT=""
 ACCOUNT=""
 ACCOUNT_ID=""
@@ -74,10 +65,6 @@ if [[ -f "$SETUP_CONF" ]]; then
 fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
-  --data-dir)
-    DATA_DIR="$2"
-    shift 2
-    ;;
   --root)
     ROOT="${2%/}"
     shift 2
@@ -129,8 +116,6 @@ done
   echo "Pass --user <name>, or run with sudo as the user that syncs. Not root." >&2
   exit 1
 }
-# Before hosts, a server only had --data-dir, which becomes its host.
-[[ -n "$ROOT" || -z "$DATA_DIR" ]] || ROOT="$DATA_DIR"
 [[ "$ROOT" == /* ]] || {
   echo "--root must be an absolute path." >&2
   exit 1
@@ -178,7 +163,6 @@ fi
 
 mkdir -p /etc/spares
 {
-  printf 'DATA_DIR=%q\n' "$DATA_DIR"
   printf 'ROOT=%q\n' "$ROOT"
   printf 'ACCOUNT=%q\n' "$ACCOUNT"
   printf 'ACCOUNT_ID=%q\n' "$ACCOUNT_ID"
@@ -207,10 +191,6 @@ if [[ -n "$LOCAL_HOME" && "$LOCAL_HOME" != "$USER_HOME" ]]; then
   fi
 fi
 SRC_DIR="$USER_HOME/spares"
-# Before hosts: the config and rendered files of a server set up by an earlier version, which the
-# first run of this version moves into the host
-CONFIG_DIR="$USER_HOME/.config/spares"
-RENDERED_DIR="$USER_HOME/.cache/spares"
 ENV_FILE="/etc/spares/spares.env"
 USER_DIR="$ROOT/users/$ACCOUNT_ID"
 as_user() { sudo -u "$SPARES_USER" -H bash -c "export PATH=\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH; $1"; }
@@ -327,23 +307,17 @@ if ! has_account; then
   else
     CREATE="init --user '$ACCOUNT' --user-id '$ACCOUNT_ID' --bind 127.0.0.1:8080"
   fi
-  # The password: typed (spares deploy init), or sent on standard input (spares deploy update)
-  if [[ -n "$ACCOUNT_PASSWORD" ]]; then
-    spares_host "$CREATE --password-stdin" <<<"$ACCOUNT_PASSWORD"
-  elif [[ -t 0 ]]; then
+  # The password, typed (spares deploy init)
+  if [[ -t 0 ]]; then
     spares_host "$CREATE" </dev/tty
   else
-    echo "The host here needs your account's password: run \`spares deploy update\` again, which asks for it." >&2
+    echo "The host here needs your account's password: run \`spares deploy init\`, which asks for it." >&2
     exit 1
   fi
   has_account || {
     echo "The account $ACCOUNT wasn't created." >&2
     exit 1
   }
-  if [[ -n "$DATA_DIR" && -f "$DATA_DIR/spares-main.sqlite" ]]; then
-    echo "==> Moving the collection in $DATA_DIR into the host"
-    spares_host "import '$DATA_DIR' '$ACCOUNT_ID' --config-dir '$CONFIG_DIR' --cache-dir '$RENDERED_DIR' --rendered-dir '$RENDERED_DIR' --replica 1"
-  fi
 fi
 HOST_TOML="$ROOT/host.toml"
 # The settings this script manages; the rest of host.toml is the admin's
