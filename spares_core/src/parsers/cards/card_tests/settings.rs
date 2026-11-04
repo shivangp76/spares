@@ -765,16 +765,6 @@ fn test_get_cards_inherit_with_order() {
 }
 
 #[test]
-fn test_get_cards_inherit_numeric_note_id() {
-    // Old numeric note ids are rejected, with a hint to look them up.
-    let data = r"{{[inh:99/3]b}}";
-    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
-    let err = format!("{:?}", cards_res.unwrap_err());
-    assert!(err.contains("id-map.tsv"), "got: {err}");
-}
-
-#[test]
 fn test_get_cards_inherit_invalid_note_id() {
     // A note id that is not letters should produce an error.
     let data = r"{{[inh:a-c/1]b}}";

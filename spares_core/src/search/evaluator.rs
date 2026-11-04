@@ -3107,7 +3107,7 @@ mod tests {
             // Field type and operator type do not match
             "data>2", // Strings do not have an order
             "id~2",   // Numbers cannot use containment operator
-            // Note ids are letters, so old numeric ids are rejected rather than reinterpreted.
+            // Note ids are letters, so numbers are rejected
             "id>100",
             "id=42",
             "linked_to_note=12",

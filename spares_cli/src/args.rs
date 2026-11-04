@@ -946,15 +946,6 @@ mod tests {
     fn migrate_parses() {
         assert!(Cli::try_parse_from(["spares", "migrate", "--adapter", "anki"]).is_ok());
         assert!(Cli::try_parse_from(["spares", "migrate"]).is_err());
-        let cli = Cli::try_parse_from(["spares", "migrate", "ids", "--dry-run"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Migrate(MigrateArgs {
-                command: Some(crate::migrate::MigrateCommands::Ids { dry_run: true }),
-                ..
-            })
-        ));
-        assert!(Cli::try_parse_from(["spares", "migrate", "ids"]).is_ok());
     }
 
     #[test]

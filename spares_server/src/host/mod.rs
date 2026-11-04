@@ -479,7 +479,6 @@ pub async fn open_collection(
                 paths.database().display()
             ))
         })?;
-    spares_core::ids::ensure_note_ids_migrated(&db).await?;
     let collection = Arc::new(Collection::new(id, db, paths));
     collection
         .scope(async {

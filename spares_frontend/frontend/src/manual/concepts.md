@@ -10,7 +10,7 @@ See `spares_core::parsers::NoteSettings` for a full list of note settings.
 
 ### Note ids
 
-Notes are named by short lowercase letter ids, such as `gir`, which also name their files (`typst/gir.typ`). Ids sort in creation order, and notes created together get ids next to each other. Ids are accepted in any case. Numeric ids from before `spares migrate ids` are listed in `id-map.tsv` in the data directory. How ids are chosen is documented on `spares_core::ids`.
+Notes are named by short lowercase letter ids, such as `gir`, which also name their files (`typst/gir.typ`). Ids sort in creation order, and notes created together get ids next to each other. Ids are accepted in any case. How ids are chosen is documented on `spares_core::ids`.
 
 ## Clozes
 

@@ -143,6 +143,7 @@ impl Replica {
     /// The root of a collection's sync chain: the copy with no upstream.
     pub const ROOT: Self = Self(1);
 
+    #[cfg(test)]
     pub(crate) const fn new_unchecked(number: u8) -> Self {
         Self(number)
     }
