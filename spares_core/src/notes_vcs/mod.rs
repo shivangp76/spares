@@ -25,7 +25,6 @@ mod note_file;
 mod paths;
 mod receive;
 mod reconcile;
-mod renumber;
 
 pub use commit::commit_message;
 pub use commit::commit_note_files;
@@ -50,7 +49,6 @@ pub use note_file::NoteFields;
 pub use note_file::NoteFileContext;
 pub use note_file::ParsedNewNoteFile;
 pub use note_file::ParsedNoteFile;
-pub(crate) use note_file::construct_db_note_file;
 pub use note_file::file_note_fields;
 pub use note_file::fill_linked_notes;
 pub use note_file::parse_new_note_file;
@@ -87,7 +85,6 @@ pub use reconcile::reconcile;
 pub use reconcile::reconcile_after;
 pub use reconcile::remove_saved_copies;
 pub use reconcile::saved_copies;
-pub use renumber::renumber_note_files;
 
 /// A collection's notes repository state while it is open: its locks, and the push being imported
 /// (see [`crate::collection::CollectionState`]).
