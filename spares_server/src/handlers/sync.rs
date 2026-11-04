@@ -261,6 +261,41 @@ pub(crate) async fn sync_push_config_handler(
     Ok(Json(json!({ "changed": changed })))
 }
 
+/// `spares sync cloud` after sending templates, settings or files notes read: renders every note
+/// whose files are out of date, in the background. The render cache leaves the others alone.
+#[cfg(not(target_family = "wasm"))]
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_render_handler(
+    Coll(data): Coll,
+    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_device_token(auth.as_ref().map(|auth| &auth.0))?;
+    let db = data.db.clone();
+    spares_core::collection::spawn(async move {
+        let rendered = spares_core::notes_vcs::run_shared(async move {
+            spares_core::api::note::render_notes(
+                &db,
+                spares_core::schema::note::RenderNotesRequest {
+                    selector: spares_core::schema::note::NotesSelector::All,
+                    immutable_note_ids: None,
+                    overridden_output_raw_dir: None,
+                    include_linked_notes: true,
+                    include_cards: true,
+                    generate_rendered: true,
+                    force_generate_rendered: false,
+                },
+                &get_all_parsers(),
+            )
+            .await
+        })
+        .await;
+        if let Err(e) = rendered {
+            log::error!("Failed to render notes after `spares sync cloud`: {e}");
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!({}))))
+}
+
 /// Refuses the web app's session, for the requests only `spares sync cloud` makes. A host without
 /// accounts has no [`Auth`](crate::handlers::auth::Auth) to check.
 #[cfg(not(target_family = "wasm"))]

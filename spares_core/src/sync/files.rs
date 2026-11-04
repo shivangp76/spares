@@ -50,14 +50,19 @@ pub async fn sync_now(
         .url
         .ok_or_else(|| Error::Sync("`sync.url` is not set in config.toml".to_string()))?;
     let remote = HttpRemote::new(&url, RemoteAuth::token(upstream.token))?;
+    // Before the push, so the upstream has them when it renders the notes that name them, as a
+    // browser sends its own (see `super::media`)
+    match send_media(&remote).await {
+        Ok(0) => {}
+        Ok(sent) => log::info!("Sent {sent} images, clips and image occlusions"),
+        Err(e) => error!("Failed to send images and audio to {url}: {e}"),
+    }
     let report = sync(db, &remote, mode, temp_dir).await?;
     // Before the files of changed notes are regenerated, which may name them
-    match exchange_media(&remote).await {
-        Ok((sent, received)) if sent + received > 0 => {
-            log::info!("Sent {sent} and received {received} images, clips and image occlusions");
-        }
-        Ok(_) => {}
-        Err(e) => error!("Failed to exchange images and audio with {url}: {e}"),
+    match receive_media(&remote).await {
+        Ok(0) => {}
+        Ok(received) => log::info!("Received {received} images, clips and image occlusions"),
+        Err(e) => error!("Failed to receive images and audio from {url}: {e}"),
     }
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;
     // Automatic sync sends local changes within a minute, so a sync that only sent is routine.
@@ -76,27 +81,38 @@ pub async fn sync_now(
     Ok(report)
 }
 
-/// Exchanges images, audio and image occlusions with the upstream, after a sync: each side gets
-/// the files it lacks. A file's name ends in its contents' hash (see [`super::media`]), so a name
-/// never stands for two files, and neither side's are replaced. Returns how many were sent and
-/// received.
-pub async fn exchange_media(remote: &HttpRemote) -> Result<(usize, usize), Error> {
-    let (mut sent, mut received) = (0, 0);
-    for kind in [
-        MediaKind::Image,
-        MediaKind::Audio,
-        MediaKind::ImageOcclusion,
-    ] {
-        let theirs: BTreeSet<String> = remote
-            .list_media(kind)
-            .await?
-            .into_iter()
-            .map(|file| file.name)
-            .collect();
-        let ours: BTreeSet<String> = media::list_media(kind)?
-            .into_iter()
-            .map(|file| file.name)
-            .collect();
+/// The kinds of media the sync exchanges with the upstream.
+const MEDIA_KINDS: [MediaKind; 3] = [
+    MediaKind::Image,
+    MediaKind::Audio,
+    MediaKind::ImageOcclusion,
+];
+
+/// The names of the upstream's files of `kind`, and of ours.
+async fn media_names(
+    remote: &HttpRemote,
+    kind: MediaKind,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), Error> {
+    let theirs = remote
+        .list_media(kind)
+        .await?
+        .into_iter()
+        .map(|file| file.name)
+        .collect();
+    let ours = media::list_media(kind)?
+        .into_iter()
+        .map(|file| file.name)
+        .collect();
+    Ok((theirs, ours))
+}
+
+/// Sends the upstream the images, audio and image occlusions it lacks, before a sync. A file's
+/// name ends in its contents' hash (see [`super::media`]), so a name never stands for two files,
+/// and the upstream never replaces one. Returns how many were sent.
+pub async fn send_media(remote: &HttpRemote) -> Result<usize, Error> {
+    let mut sent = 0;
+    for kind in MEDIA_KINDS {
+        let (theirs, ours) = media_names(remote, kind).await?;
         for name in ours.difference(&theirs) {
             let path = kind.directory().join(name);
             let contents = std::fs::read(&path).map_err(|e| Error::Io {
@@ -108,6 +124,16 @@ pub async fn exchange_media(remote: &HttpRemote) -> Result<(usize, usize), Error
                 Err(e) => log::warn!("Failed to send {name}: {e}"),
             }
         }
+    }
+    Ok(sent)
+}
+
+/// Receives from the upstream the images, audio and image occlusions this host lacks, after a
+/// sync. Returns how many were received.
+pub async fn receive_media(remote: &HttpRemote) -> Result<usize, Error> {
+    let mut received = 0;
+    for kind in MEDIA_KINDS {
+        let (theirs, ours) = media_names(remote, kind).await?;
         for name in theirs.difference(&ours) {
             let stored = async {
                 let contents = remote.download_media(kind, name).await?;
@@ -119,7 +145,7 @@ pub async fn exchange_media(remote: &HttpRemote) -> Result<(usize, usize), Error
             }
         }
     }
-    Ok((sent, received))
+    Ok(received)
 }
 
 /// Every note id, for telling afterwards which notes a full sync removed.

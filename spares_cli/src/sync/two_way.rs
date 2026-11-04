@@ -21,8 +21,9 @@ use spares_core::sync::run::SyncReport;
 
 use super::cloud::push_files;
 
-/// Syncs with the server, asking which way to go if only a full sync is possible, then copies the
-/// files the server cannot generate itself to `sync.remote_host`.
+/// Copies the files the server cannot generate itself to `sync.remote_host`, then syncs with the
+/// server, asking which way to go if only a full sync is possible, then has the server render
+/// what the files changed.
 pub(crate) async fn sync_cloud(
     base_url: &str,
     client: &Client,
@@ -44,6 +45,14 @@ pub(crate) async fn sync_cloud(
                 .yellow()
         );
     }
+    // Before the sync, so the notes the server renders after it are rendered with the templates and
+    // files sent here: after a full upload, it renders every note.
+    let pushed = match (&config.sync.remote_host, &config.sync.url) {
+        (Some(remote_host), Some(url)) => {
+            Some(push_files(remote_host, url, config.sync.token.clone()).await?)
+        }
+        _ => None,
+    };
     let mut mode = mode;
     let report = loop {
         println!("Syncing ({})...", mode_name(mode));
@@ -83,8 +92,11 @@ pub(crate) async fn sync_cloud(
         };
     };
     print_report(&report);
-    if let (Some(remote_host), Some(url)) = (&config.sync.remote_host, &config.sync.url) {
-        push_files(remote_host, url, config.sync.token.clone()).await?;
+    // A full upload has the server render every note anyway.
+    if let Some(pushed) = pushed
+        && report.mode != Some(SyncMode::FullUpload)
+    {
+        pushed.render_if_changed().await?;
     }
     Ok(())
 }
