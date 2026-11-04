@@ -133,6 +133,26 @@ pub(crate) enum ParserCommands {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+    /// Write a parser's default template to its file in this machine's collection, to edit it
+    ///
+    /// Until then, the parser uses its default, which changes with spares. Prints the file's path.
+    /// A template that already has a file is left as it is.
+    Template {
+        /// The parser's name, e.g. `markdown`
+        name: String,
+        #[arg(value_enum, default_value_t = TemplateKind::Note)]
+        kind: TemplateKind,
+    },
+}
+
+/// See `spares_core::parsers::TemplateType`
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum TemplateKind {
+    /// Notes' files, and cards' without a card template
+    Note,
+    Card,
+    /// Exported notes
+    Export,
 }
 
 #[derive(Args, Debug)]

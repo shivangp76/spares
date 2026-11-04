@@ -123,7 +123,13 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         || local_collection().map(|collection| local::LocalEnv::new(&collection, &host_client()));
 
     match command {
-        Commands::Parser(parser_args) => parser::handle(parser_args, &base_url, &client).await,
+        Commands::Parser(parser_args) => {
+            // Templates are files of the collection on this machine
+            if matches!(parser_args.command, args::ParserCommands::Template { .. }) {
+                local_collection()?;
+            }
+            parser::handle(parser_args, &base_url, &client).await
+        }
         Commands::Tag(tag_args) => tag::handle(tag_args, &base_url, &client).await,
         Commands::Note(note_args) => note::handle(note_args, &base_url, &client).await,
         Commands::Card(card_args) => card::handle(card_args, &base_url, &client).await,
