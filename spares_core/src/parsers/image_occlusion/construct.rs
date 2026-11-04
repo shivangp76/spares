@@ -948,6 +948,27 @@ pub fn read_image_occlusion_data(
             at: image_occlusion_capture_range.clone().into(),
         }));
     }
+    // On a host every user's files belong to the server, so a note naming another collection's
+    // file would have it moved into this one below, or drawn into this one's cards
+    for path in [
+        &image_occlusion_data.original_image_filepath,
+        &image_occlusion_data.clozes_filepath,
+    ] {
+        if !in_collection(path) {
+            return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
+                description: format!(
+                    "Image occlusion file {} is not in this collection.",
+                    path.display()
+                ),
+                advice: Some(
+                    "Add the image with Insert image occlusion in the note editor, which stores it in the collection."
+                        .to_string(),
+                ),
+                src: data.to_string(),
+                at: image_occlusion_capture_range.clone().into(),
+            }));
+        }
+    }
     // Move image files
     // Cases to check: 2 different image occlusions that have:
     // - different original image file and different cloze file: Main case
@@ -1023,6 +1044,25 @@ pub fn read_image_occlusion_data(
     }
 
     Ok(image_occlusion_data)
+}
+
+/// Whether `path`, without symbolic links, is in one of the current collection's directories.
+#[cfg(not(target_family = "wasm"))]
+fn in_collection(path: &Path) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    crate::collection::paths()
+        .enclosing_dir()
+        .canonicalize()
+        .is_ok_and(|dir| path.starts_with(dir))
+}
+
+/// Always, on a device: it has only its own collection's files, which its notes name by the
+/// server's paths, not its own directories'.
+#[cfg(target_family = "wasm")]
+fn in_collection(_path: &Path) -> bool {
+    true
 }
 
 pub fn get_clozes_from_svg(

@@ -363,6 +363,8 @@ mod tests {
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::undo::undo_event;
     use crate::parsers::get_all_parsers;
+    use crate::parsers::image_occlusion::append_to_stem;
+    use crate::parsers::impls::markdown::MarkdownParser;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
     use crate::schema::undo::UndoEventRequest;
@@ -503,6 +505,85 @@ mod tests {
         .await
         .unwrap();
         (notes.notes[0].id, created.snippet)
+    }
+
+    /// A note's image occlusion may only name files in its own collection: on a host, every
+    /// user's files belong to the server, which would otherwise move another user's file into
+    /// this collection when the note is saved, or draw it into a card when the note is rendered.
+    #[sqlx::test]
+    async fn test_image_occlusion_files_outside_the_collection_are_refused(pool: SqlitePool) -> () {
+        // Not in the collection's directories, which are in /tmp/spares under tests, like
+        // another user's
+        let outside =
+            std::env::temp_dir().join(format!("spares-io-outside-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&outside).unwrap();
+        let name = format!("outside-{}", uuid::Uuid::new_v4().simple());
+        let outside_image = outside.join(format!("{name}.svg"));
+        let outside_clozes = outside.join(format!("{name}_clozes.svg"));
+        std::fs::write(&outside_image, IMAGE).unwrap();
+        std::fs::write(&outside_clozes, clozes_svg(RECT_1)).unwrap();
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let created = create_image_occlusion(
+            &pool,
+            parser.id,
+            IMAGE.as_bytes(),
+            "inside.svg",
+            &clozes_svg(RECT_1),
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        let inside = &created.image_occlusion;
+        let naming = |image: &Path, clozes: &Path| {
+            created
+                .snippet
+                .replace(
+                    &inside.original_image_filepath.display().to_string(),
+                    &image.display().to_string(),
+                )
+                .replace(
+                    &inside.clozes_filepath.display().to_string(),
+                    &clozes.display().to_string(),
+                )
+        };
+        let markdown = MarkdownParser::new();
+        for data in [
+            naming(&outside_image, &inside.clozes_filepath),
+            naming(&inside.original_image_filepath, &outside_clozes),
+            naming(&outside_image, &outside_clozes),
+        ] {
+            // Saved, which moves an image occlusion's files into the collection
+            let saved = create_notes(
+                &pool,
+                CreateNotesRequest {
+                    parser_id: parser.id,
+                    requests: vec![CreateNoteRequest {
+                        data: data.clone(),
+                        keywords: Vec::new(),
+                        tags: Vec::new(),
+                        is_suspended: false,
+                        custom_data: Map::new(),
+                    }],
+                },
+                Utc::now(),
+                &get_all_parsers(),
+                true,
+            )
+            .await;
+            assert!(saved.is_err(), "{data}");
+            // Or parsed as it is, as a render or a sync does
+            assert!(
+                crate::parsers::get_cards(&markdown, None, &data, false, false).is_err(),
+                "{data}"
+            );
+        }
+        // Left where they were
+        assert!(outside_image.is_file() && outside_clozes.is_file());
+        let moved = get_image_occlusion_directory().join(format!("{name}.svg"));
+        let _ = std::fs::remove_file(&moved);
+        let _ = std::fs::remove_file(append_to_stem(&moved, "_clozes"));
+        std::fs::remove_dir_all(&outside).unwrap();
     }
 
     #[sqlx::test]

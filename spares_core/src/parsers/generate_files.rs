@@ -892,7 +892,9 @@ mod tests {
 
     #[test]
     fn test_render_key_follows_image_occlusion_files() {
-        let dir = std::env::temp_dir().join(format!("spares-render-key-{}", std::process::id()));
+        // In the collection, where image occlusion files must be
+        let dir = crate::parsers::image_occlusion::get_image_occlusion_directory()
+            .join(format!("spares-render-key-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let (image, clozes) = (dir.join("a.png"), dir.join("a_clozes.svg"));
@@ -934,7 +936,9 @@ mod tests {
 
     #[test]
     fn test_note_files_are_made_again_when_an_image_occlusion_file_is_replaced() {
-        let dir = std::env::temp_dir().join(format!("spares-io-cache-{}", std::process::id()));
+        // In the collection, where image occlusion files must be
+        let dir = crate::parsers::image_occlusion::get_image_occlusion_directory()
+            .join(format!("spares-io-cache-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
