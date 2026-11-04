@@ -108,8 +108,8 @@ pub fn image_size(path: &Path) -> Option<Result<(u32, u32), String>> {
     Some(image::image_dimensions(path).map_err(|e| e.to_string()))
 }
 
-/// Whether `path`, the HTML for web clients next to a rendered file, is there and not empty (see
-/// [`crate::parsers::web_render_filepath`]).
+/// Whether `path`, the HTML for web clients next to a rendered file, is there and not empty, as an
+/// old empty one isn't (see [`crate::parsers::web_render_filepath`]).
 #[cfg(not(target_family = "wasm"))]
 pub fn has_web_render(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.len() > 0)

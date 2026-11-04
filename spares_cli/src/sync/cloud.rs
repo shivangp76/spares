@@ -22,6 +22,7 @@ use spares_core::parsers::Parseable;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_image_occlusion_rendered_directory;
+use spares_core::parsers::has_web_render_file;
 use spares_core::sync::http::HttpRemote;
 use spares_core::sync::http::RemoteAuth;
 use spares_core::sync::push::PushTarget;
@@ -155,11 +156,7 @@ pub(crate) async fn push_files(
             "Copying rendered files of {} notes, which the server can't render → {remote_host}",
             unrendered.join(" and ")
         );
-        sync_rendered_files(
-            &remote_dir(remote_host, &target.files)?,
-            &note_ids,
-            &unrendered,
-        )?;
+        sync_rendered_files(remote_host, &target.files, &note_ids, &unrendered)?;
     }
 
     Ok(Pushed {
@@ -456,25 +453,31 @@ fn dir_source(dir: &Path) -> Result<String, String> {
     Ok(format!("{dir}/"))
 }
 
-/// Copies the rendered files of the notes of `parsers` into `destination`, the server's files
-/// directory. Not their rendered image occlusions: the PDFs and web HTML files have them embedded,
-/// and nothing else on the server reads them.
+/// Copies the rendered files of the notes of `parsers` into `files_dir`, the server's files
+/// directory on `remote_host`. Not their rendered image occlusions: the PDFs and web HTML files
+/// have them embedded, and nothing else on the server reads them. The server's web HTML of a
+/// rendered file that has none here is removed (see [`stale_web_renders`]).
 ///
 /// Files newer on the server are kept (`--update`), in case it rendered a note edited there. This
 /// needs the two clocks to roughly agree.
 fn sync_rendered_files(
-    destination: &str,
+    remote_host: &str,
+    files_dir: &Path,
     note_ids: &HashMap<&'static str, HashSet<NoteId>>,
     parsers: &[String],
 ) -> Result<(), String> {
     // Rendered files can share a directory with other files (`aux/`, files rendered outside
     // spares), so only those of existing notes are copied, by name.
     let mut dirs: BTreeMap<PathBuf, HashSet<NoteId>> = BTreeMap::new();
+    let mut web_ids: HashSet<NoteId> = HashSet::new();
     for parser in server_rendered_parsers() {
         if !parsers.iter().any(|name| name == parser.get_parser_name()) {
             continue;
         }
         let ids = &note_ids[parser.get_parser_name()];
+        if parser.has_web_render() {
+            web_ids.extend(ids);
+        }
         for dir in parser_rendered_dirs(parser.as_ref()) {
             dirs.entry(dir).or_default().extend(ids);
         }
@@ -484,20 +487,77 @@ fn sync_rendered_files(
         if names.is_empty() {
             continue;
         }
-        let destination = match dir.strip_prefix(get_files_dir()) {
-            Ok(relative) if !relative.as_os_str().is_empty() => {
-                format!("{destination}{}/", relative.display())
-            }
-            _ => destination.to_string(),
+        let remote = match dir.strip_prefix(get_files_dir()) {
+            Ok(relative) => files_dir.join(relative),
+            Err(_) => files_dir.to_path_buf(),
         };
         run_rsync_files_from(
             &names.join("\n"),
             &["-az", "--update"],
             &dir_source(&dir)?,
-            &destination,
+            &remote_dir(remote_host, &remote)?,
+        )?;
+        remove_remote_files(
+            remote_host,
+            &remote,
+            &stale_web_renders(&dir, &names, &web_ids),
         )?;
     }
     Ok(())
+}
+
+/// Of `names`, the rendered files in `dir`, the web HTML files that the PDFs of the notes
+/// `web_ids` have no longer: rendering removes it when web clients should show the PDF, and rsync
+/// doesn't remove files.
+fn stale_web_renders(dir: &Path, names: &[String], web_ids: &HashSet<NoteId>) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| rendered_file_note_id(name).is_some_and(|id| web_ids.contains(&id)))
+        .filter(|name| !has_web_render_file(&dir.join(name)))
+        .filter_map(|name| name.strip_suffix(".pdf"))
+        .map(|stem| format!("{stem}.html"))
+        .collect()
+}
+
+/// Removes the files `names` from `dir` on `remote_host`, if they are there.
+fn remove_remote_files(remote_host: &str, dir: &Path, names: &[String]) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    if dry_run() {
+        for name in names {
+            println!("  would remove {name}, if it's there");
+        }
+        return Ok(());
+    }
+    let dir = dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", dir.display()))?;
+    let mut child = Command::new("ssh")
+        .arg(remote_host)
+        .arg(format!("cd {} && xargs -0 rm -f --", shell_quote(dir)))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    let mut input = String::new();
+    for name in names {
+        input.push_str(name);
+        input.push('\0');
+    }
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("Failed to write to ssh: {e}"))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("ssh to {remote_host} exited with {status}"))
+    }
 }
 
 /// The names of the rendered files in `dir` of the notes `ids`.
@@ -768,6 +828,7 @@ mod tests {
     use super::plan_dependency_sync;
     use super::rendered_file_note_id;
     use super::rendered_files_of;
+    use super::stale_web_renders;
     use super::symlinks_command;
 
     fn target() -> PushTarget {
@@ -978,6 +1039,35 @@ mod tests {
             Vec::<String>::new()
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The server's HTML of a PDF that has none here is removed, as is an old empty one.
+    #[test]
+    fn web_renders_the_pdfs_have_no_longer_are_stale() {
+        let dir =
+            std::env::temp_dir().join(format!("spares-stale-web-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, contents) in [
+            ("aab.pdf", "x"),
+            ("aab.html", "<p>x</p>"),
+            ("aab-1-front.pdf", "x"),
+            ("aab-1-back.pdf", "x"),
+            ("aab-1-back.html", ""),
+            ("aac.pdf", "x"),
+        ] {
+            std::fs::write(dir.join(name), contents).unwrap();
+        }
+        let names = rendered_files_of(&dir, &[note("aab"), note("aac")].into_iter().collect());
+        assert_eq!(
+            stale_web_renders(&dir, &names, &[note("aab")].into_iter().collect()),
+            ["aab-1-back.html", "aab-1-front.html"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn note(letters: &str) -> NoteId {
+        NoteId::from_letters(letters).unwrap()
     }
 
     #[test]
