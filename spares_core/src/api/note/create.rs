@@ -16,7 +16,10 @@ use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
 use crate::api::max_rows_for;
+use crate::api::note::CardMove;
 use crate::api::note::basic::fetch_note_snapshot;
+use crate::api::note::check_card_moves;
+use crate::api::note::move_cards;
 use crate::api::parser::get_parser_name;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
@@ -25,6 +28,7 @@ use crate::api::tag::create_tag;
 use crate::api::tag::restore_tags;
 use crate::api::undo::create_event_group;
 use crate::api::undo::insert_events;
+use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::CardLinks;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateTagPayload;
@@ -45,8 +49,9 @@ use crate::model::NoteLink;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::notes_vcs;
+use crate::parsers::CardInheritance;
+use crate::parsers::InheritMode;
 use crate::parsers::Parseable;
-use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::add_order_to_note_data;
 use crate::parsers::extract_and_combine_keywords;
 use crate::parsers::find_parser;
@@ -121,6 +126,8 @@ pub async fn create_notes(
     let mut card_entries = Vec::new();
     // (dst_note_id, dst_order, src_note_id, src_order)
     let mut inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = Vec::new();
+    // `mv:` directives, carried out once the notes' event is logged
+    let mut move_entries: Vec<CardMove> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     // One run of ids for the whole call, so notes created together sort next to each other.
     let note_ids = allocate_note_ids(db, body.requests.len()).await?;
@@ -141,6 +148,25 @@ pub async fn create_notes(
             data,
             external_config.as_ref().map(|c| &c.overlapper),
         )?;
+        // Check this note's `mv:` directives (with the earlier notes', so no card moves twice)
+        // before anything of it is written
+        let note_moves = card_datas
+            .iter()
+            .enumerate()
+            .filter_map(|(i, card_data)| match card_data.inherit {
+                Some(CardInheritance {
+                    source,
+                    mode: InheritMode::Move,
+                }) => Some((note_id, (i + 1) as u32, source.note_id, source.order)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !note_moves.is_empty() {
+            let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+            let mut moves = move_entries.clone();
+            moves.extend(note_moves);
+            check_card_moves(&mut conn, &moves).await?;
+        }
         // Create note
         sqlx::query(r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(note_id)
@@ -205,12 +231,12 @@ pub async fn create_notes(
                         }
                     }
                     // Collect inheritance directives for post-creation update
-                    if let Some(ReadableCardIdentifier {
-                        note_id: src_note_id,
-                        order: src_order,
-                    }) = card_data.inherit
-                    {
-                        inherit_entries.push((note_id, order, src_note_id, src_order));
+                    if let Some(CardInheritance { source, mode }) = card_data.inherit {
+                        let entry = (note_id, order, source.note_id, source.order);
+                        match mode {
+                            InheritMode::Copy => inherit_entries.push(entry),
+                            InheritMode::Move => move_entries.push(entry),
+                        }
                     }
                     card
                 })
@@ -347,6 +373,12 @@ pub async fn create_notes(
             events.push(note_event);
             event_id = Some(create_event_group(db, events, at).await?);
         }
+    }
+
+    // After the event, which holds the cards as created, so undoing the moves restores them
+    let move_event_id = move_cards(db, &move_entries, at, log).await?;
+    if let (Some(leader), Some(move_event_id)) = (event_id, move_event_id) {
+        join_event_group(db, leader, move_event_id).await?;
     }
 
     Ok(NotesResponse {

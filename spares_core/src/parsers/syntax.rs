@@ -244,6 +244,20 @@ pub fn syntax_examples(
                 cloze("Paris", &[(keys.inherit, "gir/1")])
             ),
         ),
+        (
+            "Move a card here",
+            format!(
+                "`{}{}gir/1` moves card 1 of note `gir` here, with its scheduling and reviews, \
+                 in place of a new card for the cloze. Use it to merge notes: the reviews are not \
+                 copied, so each is still counted once after `gir` is deleted (in a later push). \
+                 It is removed from the note once the card is moved.",
+                keys.move_card, note_keys.settings_key_value_delim
+            ),
+            format!(
+                "The capital of France is {}.",
+                cloze("Paris", &[(keys.move_card, "gir/1")])
+            ),
+        ),
     ];
     if let Some(link) = parser.construct_linked_note("French cities") {
         examples.push((
@@ -438,12 +452,17 @@ mod tests {
                 "{name}: {speech:?}"
             );
             assert_eq!(parsed("Suspended")[0].is_suspended, Some(true));
-            assert_eq!(
-                parsed("Inherit a card's reviews")[0]
-                    .inherit
-                    .map(|c| (c.note_id.letters(), c.order)),
-                Some(("gir".to_string(), 1))
-            );
+            for (name, mode) in [
+                (
+                    "Inherit a card's reviews",
+                    crate::parsers::InheritMode::Copy,
+                ),
+                ("Move a card here", crate::parsers::InheritMode::Move),
+            ] {
+                let inherit = parsed(name)[0].inherit;
+                let inherit = inherit.map(|c| (c.source.note_id.letters(), c.source.order, c.mode));
+                assert_eq!(inherit, Some(("gir".to_string(), 1, mode)), "{name}");
+            }
             if parser.construct_linked_note("x").is_some() {
                 let source = source("Linked note");
                 let links = parser.get_linked_notes(&source).unwrap();
