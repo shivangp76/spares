@@ -18,15 +18,11 @@ use bundle::Target;
 use clap::Args;
 use clap::Subcommand;
 use colored::Colorize;
-use inquire::Password;
-use inquire::PasswordDisplayMode;
 use miette::Error;
-use miette::IntoDiagnostic;
 use miette::miette;
 use progress::Progress;
 use shell::Ssh;
 use shell::quote;
-use shell::warn;
 use spares_core::config::read_external_config;
 
 use crate::local::LocalEnv as EnvironmentConfig;
@@ -53,7 +49,7 @@ pub(crate) enum DeployCommands {
     ///    tailnet;
     ///
     /// 3. creates the host there, at the same root as this machine's, with your account (asking
-    ///    for its password there), or moves a server set up before hosts into one;
+    ///    for its password there);
     ///
     /// 4. sets `remote_host` and `interval_minutes` in the [sync] table of config.toml, logs this
     ///    host's copy of your collection in to the server's (`spares sync login`), uploads it
@@ -76,10 +72,8 @@ pub(crate) enum DeployCommands {
         #[arg(long)]
         no_latex: bool,
     },
-    /// Builds this checkout and installs it on the server (with sudo there).
-    ///
-    /// The server lets your user use sudo without a password. If it does not yet (set up before
-    /// it did), this asks for the password first, so the rest runs unattended.
+    /// Builds this checkout and installs it on the server (with sudo there, which `init` lets
+    /// your user use without a password).
     ///
     /// Restart the local server at the same time: the two refuse to sync across database
     /// versions.
@@ -130,10 +124,12 @@ async fn update() -> Result<(), Error> {
     })?;
     let (root, account_id, account) = crate::local::account().await?;
     let ssh = Ssh::new();
-    let sudo_password = sudo_password(&ssh, &remote_host)?;
-    // A server set up before hosts is moved into one: setup_vps.sh creates your account there,
-    // with the password asked for here, and imports the server's collection into it.
-    // A host with your account; a host an earlier update left without it gets it now.
+    if ssh.output(&remote_host, "sudo -n true 2>/dev/null && echo yes || true")? != "yes" {
+        return Err(miette!(
+            "Your user on {remote_host} can't use sudo without a password. Run `spares deploy \
+             init <server>` once, which lets it."
+        ));
+    }
     let has_host = ssh.output(
         &remote_host,
         &format!(
@@ -142,25 +138,12 @@ async fn update() -> Result<(), Error> {
             account_id.replace('\'', "")
         ),
     )? == "1";
-    let account_password = if has_host {
-        None
-    } else {
-        if sudo_password.is_some() {
-            return Err(miette!(
-                "The server has no spares host yet, and its sudo needs a password. Run `spares \
-                 deploy init <server>` once, which moves it into a host."
-            ));
-        }
-        println!(
-            "The server predates hosts: this update moves it into a host, with your account {account} \
-             there."
-        );
-        let password = Password::new(&format!("Password for {account} on the server:"))
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .prompt()
-            .into_diagnostic()?;
-        Some(password)
-    };
+    if !has_host {
+        return Err(miette!(
+            "The server has no spares host with your account {account}. Run `spares deploy init \
+             <server>`, which creates it."
+        ));
+    }
     let progress = Progress::start("update", &["Building", "Uploading", "Installing"]);
     let bundle = Bundle::build(&progress, &repo, &remote_host, || {
         let output = ssh.output(
@@ -182,39 +165,31 @@ async fn update() -> Result<(), Error> {
         .map(|zone| format!(" --timezone {}", quote(&zone)))
         .unwrap_or_default();
     progress.step("Installing", &format!("on {remote_host}"));
-    // With the passwords asked for at the start, on standard input, so this does not wait for
-    // them: sudo's, or the account's for a server moving into a host (never both, see above)
-    let (sudo, input) = match (&sudo_password, &account_password) {
-        (Some(password), _) => ("sudo -S -p ''", Some(format!("{password}\n"))),
-        (None, Some(password)) => ("sudo -n", Some(format!("{password}\n"))),
-        // Closed, so the script never waits on this terminal
-        (None, None) => ("sudo -n", Some(String::new())),
-    };
     let mut command = ssh.command();
     command.args([
         &remote_host,
         &format!(
-            "{sudo} bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone} \
+            "sudo -n bash {REMOTE_DIR}/setup_vps.sh --bundle \"$HOME/{REMOTE_DIR}\"{timezone} \
              --root {} --account {} --account-id {}",
             quote(&root.to_string_lossy()),
             quote(&account),
             quote(&account_id)
         ),
     ]);
-    progress.run(command, input.as_deref())?;
+    // Closed standard input, so the script never waits on this terminal
+    progress.run(command, Some(""))?;
     progress.end_step();
     progress.finish();
-    // This host's copy needs a token there, after the server moved into a host, or after this
-    // machine did.
+    // This host's copy needs a token there, after this machine moved into a host
     let url = match config.sync.url.clone() {
         Some(url) => url,
         None => ssh.output(&remote_host, "cat /etc/spares/url")?,
     };
-    if account_password.is_some() || config.sync.token.is_none() {
+    if config.sync.token.is_none() {
         let base_url = spares_core::config::host_client().base_url;
         let client = crate::local_client()?;
         println!("Logging this host in to {url}…");
-        crate::sync::upstream_login(&base_url, &client, &url, &account, account_password)
+        crate::sync::upstream_login(&base_url, &client, &url, &account, None)
             .await
             .map_err(|e| miette!("{e}"))?;
     }
@@ -223,31 +198,6 @@ async fn update() -> Result<(), Error> {
         "Restart spares_server here too, so both sides run the same version.".yellow()
     );
     Ok(())
-}
-
-/// The password of the user's sudo on `host` (as user@host), asked for and checked before the
-/// update starts so that it can run unattended. `None` if sudo needs none there, as on servers set
-/// up since `setup_vps.sh` allows that.
-fn sudo_password(ssh: &Ssh, host: &str) -> Result<Option<String>, Error> {
-    if ssh.output(host, "sudo -n true 2>/dev/null && echo yes || true")? == "yes" {
-        return Ok(None);
-    }
-    for _ in 0..3 {
-        let password = Password::new(&format!("Your sudo password on {host}:"))
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Hidden)
-            .prompt()
-            .map_err(|e| miette!("{e}"))?;
-        if ssh.succeeds_with_input(
-            host,
-            "sudo -k -S -p '' true 2>/dev/null",
-            &format!("{password}\n"),
-        )? {
-            return Ok(Some(password));
-        }
-        warn("Sorry, try again.");
-    }
-    Err(miette!("Wrong sudo password on {host}."))
 }
 
 /// Copies `bundle` to [`REMOTE_DIR`] on `server` (as user@host), sending only what changed since

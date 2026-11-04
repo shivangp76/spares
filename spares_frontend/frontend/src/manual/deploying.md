@@ -11,7 +11,7 @@ The server never builds anything or downloads from GitHub, so it needs neither t
 ## What you need first
 
 On the laptop:
-0. **A spares host with your account**, running: `spares host init --user <you>`, then `spares_server`, and `spares login` (see Getting Started, which also moves a collection from before hosts into it).
+0. **A spares host with your account**, running: `spares host init --user <you>`, then `spares_server`, and `spares login` (see Getting Started).
 1. **Tailscale**, logged in: `brew install tailscale && sudo brew services start tailscale && sudo tailscale up`, then open the link it prints.
 2. **The cross-compiling tools:** `brew install zig && cargo install --locked cargo-zigbuild`. `spares deploy` adds the Rust target itself.
 3. **bun**, which builds the web app (already needed for development).
@@ -76,7 +76,7 @@ It takes 10–15 minutes. What it does, and what it asks:
 
 1. **Backs up your database** next to it, in your collection's directory (`<SPARES_ROOT>/users/<you>/`).
 2. **Builds** spares for the server and the web app, and uploads them with `setup_vps.sh` (about 50 MB) to `~/.cache/spares-bundle` on the server. It keeps that copy, so later deploys send only what changed.
-3. **Sets up the server** as root: your user (who can use `sudo` on the server without a password), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS. It creates a host at the same root as your laptop's, with your account, and **asks for the account's password there**. A server set up before hosts is moved into the host instead, with its database.
+3. **Sets up the server** as root: your user (who can use `sudo` on the server without a password), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS. It creates a host at the same root as your laptop's, with your account, and **asks for the account's password there**.
    - **The first time on a tailnet**, Tailscale prints a link to enable HTTPS (`https://login.tailscale.com/f/serve?node=...`) and waits. Open it and enable **HTTPS**. **Don't enable Funnel**, which would put the server on the public internet.
 4. **Sets up the laptop:** asks **how often to sync in the background** (Enter keeps 15 minutes), and sets `remote_host` and `interval_minutes` in the `[sync]` table of your collection's `config.toml` (keeping the old one as `config.toml.bak` if it changed).
 5. **Logs your laptop's host in to the server** (`spares sync login`), with the password you just gave it: it gets a sync-only token there and keeps replica `0`.
