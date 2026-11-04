@@ -12,7 +12,6 @@ mod link;
 mod local;
 mod login;
 mod migrate;
-mod migrate_ids;
 mod note;
 mod notes_vcs;
 mod parser;
@@ -119,8 +118,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
     let local_collection = || collection.clone().map_err(|e| miette!("{e}"));
     let base_url = host_client().base_url;
     let client = local_client()?;
-    let local_env =
-        || local_collection().map(|collection| local::LocalEnv::new(&collection, &host_client()));
+    let local_env = || local_collection().map(|collection| local::LocalEnv::new(&collection));
 
     match command {
         Commands::Parser(parser_args) => {
@@ -149,24 +147,10 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             Ok(())
         }
         Commands::Migrate(migrate::MigrateArgs {
-            command: Some(migrate::MigrateCommands::Ids { dry_run }),
-            ..
-        }) => {
-            let env_config = local_env()?;
-            migrate_ids::migrate_ids(
-                &env_config.database_url,
-                &env_config.socket_address,
-                dry_run,
-            )
-            .await
-        }
-        Commands::Migrate(migrate::MigrateArgs {
-            command: None,
             adapter: adapter_string,
             initial_migration,
             dry_run,
         }) => {
-            let adapter_string = adapter_string.ok_or_else(|| miette!("--adapter is required"))?;
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
             let env_config = local_env()?;

@@ -2,7 +2,7 @@
 //!
 //! Most commands only send requests to the host (see [`spares_core::config::host_client`]). Some
 //! work on the collection's files on this machine too: opening rendered files, live notes, the
-//! notes repository, `spares migrate ids`, `spares sync cloud` and `spares deploy`. They use the
+//! notes repository, `spares sync cloud` and `spares deploy`. They use the
 //! collection in the host's root on this machine (`SPARES_ROOT`, else
 //! `~/.local/share/spares`): the account `SPARES_USER` names, else the one the CLI is logged in
 //! as there, else its only account.
@@ -114,25 +114,17 @@ pub(crate) async fn collection(
     Ok(collection)
 }
 
-/// Where the collection on this machine is, and the address of the host serving it, for commands
-/// that use both.
+/// Where the collection on this machine is, for commands that work on it directly
 #[derive(Clone, Debug)]
 pub(crate) struct LocalEnv {
     /// `sqlite://` URL of the collection's database
     pub(crate) database_url: String,
-    /// The host's address, such as `127.0.0.1:8080`
-    pub(crate) socket_address: String,
 }
 
 impl LocalEnv {
-    pub(crate) fn new(collection: &Collection, host: &HostClient) -> Self {
+    pub(crate) fn new(collection: &Collection) -> Self {
         Self {
             database_url: collection.paths.database_url(),
-            socket_address: host
-                .base_url
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .to_string(),
         }
     }
 }
