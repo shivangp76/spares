@@ -23,7 +23,11 @@
 //! device's changes reach it (see [`crate::sync`]). Its Typst cards have their image occlusions'
 //! overlays in their sources, which need the size of the original image, and [`image_size`] has
 //! it once the image has been in memory. Until then, and for other cards, it makes their images,
-//! in memory, when the web app asks for them (see `parsers::read_device_card`, wasm only). The web app downloads them, and tells the device
+//! in memory, when the web app asks for them (see `parsers::read_device_card`, wasm only). They
+//! aren't kept in the device's storage. In iOS Safari (2026-10-31, before [`image_size`]), a card
+//! of a 4000×3000 image occlusion took 2.9–3.4 s the first time and 0.7–0.8 s after, and one of a
+//! 254 KB JPEG 1.1–1.2 s. If that is too slow on a phone, keep the images made in `device.sqlite`.
+//! The web app downloads the rendered files, and tells the device
 //! which non-empty HTML files for web clients it has (`load_web_renders`, wasm only), which
 //! [`has_web_render`] answers from. Apart from that, only the code that reads config and templates,
 //! and that stores and parses those files, goes through this module. Everything else uses `std::fs`,
