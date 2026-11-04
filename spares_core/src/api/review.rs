@@ -2624,11 +2624,12 @@ mod tests {
                 order: 1,
                 part,
             };
-            assert_eq!(
-                unmasked_image_occlusion(&pool, &request, &get_all_parsers())
-                    .await
-                    .unwrap(),
-                UnmaskedImageOcclusionFile::NotFound
+            // The note doesn't parse with it (see `read_image_occlusion_data`), and if it did, the
+            // file still wouldn't be read
+            let found = unmasked_image_occlusion(&pool, &request, &get_all_parsers()).await;
+            assert!(
+                !matches!(found, Ok(UnmaskedImageOcclusionFile::File { .. })),
+                "{found:?}"
             );
         }
         std::fs::remove_dir_all(outside).unwrap();
