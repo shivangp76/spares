@@ -561,9 +561,8 @@ fn write_sync_values<const N: usize>(
             source: e,
         })
     };
-    let contents = std::fs::read_to_string(&path).unwrap_or_default();
-    let contents =
-        spares_core::config::set_sync_values(&contents, set).map_err(error_to_response)?;
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let contents = spares_core::config::set_sync_values(&old, set).map_err(error_to_response)?;
     let mut doc: toml_edit::DocumentMut = contents
         .parse()
         .map_err(|e: toml_edit::TomlError| error_to_response(Error::Sync(e.to_string())))?;
@@ -572,6 +571,11 @@ fn write_sync_values<const N: usize>(
             sync.remove(key);
         }
     }
+    let new = doc.to_string();
+    // Left alone if it has these values already
+    if new == old && path.exists() {
+        return Ok(());
+    }
     std::fs::create_dir_all(&collection.paths.config).map_err(io)?;
-    std::fs::write(&path, doc.to_string()).map_err(io)
+    std::fs::write(&path, new).map_err(io)
 }
