@@ -681,6 +681,13 @@ async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
     .unwrap();
     assert_eq!(due().await, after);
     assert_eq!(reschedules().await, logged, "redo must restore the rows");
+    // As if the redo came a minute later. The rows it restored keep the postponement's time.
+    sqlx::query(
+        "UPDATE event SET created_at = created_at + 60 WHERE id = (SELECT MAX(id) FROM event)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // And again, from the redo
     undo_event(
