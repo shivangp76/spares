@@ -26,6 +26,7 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_cards;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::construct::get_clozes_from_svg;
 use crate::parsers::image_occlusion::construct::modify_clozes_for_card;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
@@ -875,8 +876,9 @@ fn test_image_occlusion_parallel_performance() {
 
     // Test parallel version
     let parallel_start = Instant::now();
+    let sources = ImageOcclusionSources::read(std::slice::from_ref(&card_data), false);
     let parallel_result =
-        create_image_occlusion_cards(&card_data, CardSide::Front, &output_path, false);
+        create_image_occlusion_cards(&card_data, CardSide::Front, &output_path, &sources);
     let parallel_duration = parallel_start.elapsed();
 
     if let Err(e) = parallel_result {
@@ -1306,4 +1308,114 @@ fn test_typst_card_shows_clozes_over_original_image() {
     for path in [original_image_filepath, clozes_filepath, overlay_filepath] {
         std::fs::remove_file(path).unwrap();
     }
+}
+
+/// A note's cards draw their image occlusions from files read once for all of them: the clozes
+/// SVG and the original image are not read again for each card, so the cards are drawn after
+/// both are gone, and as each would be drawn on its own.
+#[test]
+fn test_note_cards_read_image_occlusion_files_once() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::config::read_external_config;
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+
+    let dir = get_image_occlusion_directory();
+    let rendered_dir = get_image_occlusion_rendered_directory();
+    std::fs::create_dir_all(&rendered_dir).unwrap();
+    let original_image_filepath = dir.join("test-read-once.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-read-once_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_1" x="53" />
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_2" x="253" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = Arc::new(ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    });
+    let card = |order: usize| {
+        let cloze_indices = vec![
+            (order - 1, ClozeHiddenReplacement::ToAnswer { hint: None }),
+            (2 - order, ClozeHiddenReplacement::NotToAnswer),
+        ];
+        CardData {
+            order: Some(order),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(order.try_into().unwrap()),
+            is_suspended: None,
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+            back_type: BackType::CardFilePath,
+            type_answer: None,
+            inherit: None,
+            cloze_uid: None,
+            data: vec![NotePart::ImageOcclusion {
+                cloze_indices,
+                data: data.clone(),
+            }],
+        }
+    };
+    let cards = [card(1), card(2)];
+    let config = read_external_config().unwrap().image_occlusion;
+
+    for overlay in [false, true] {
+        let sources = ImageOcclusionSources::read(&cards, overlay);
+        // Moved away, so a card that read them again would fail
+        let moved = |path: &PathBuf| path.with_extension("moved");
+        std::fs::rename(&original_image_filepath, moved(&original_image_filepath)).unwrap();
+        std::fs::rename(&clozes_filepath, moved(&clozes_filepath)).unwrap();
+        let mut drawn = Vec::new();
+        for (i, card) in cards.iter().enumerate() {
+            for side in [CardSide::Front, CardSide::Back] {
+                let output = rendered_dir.join(format!("test-read-once-{}-{side:?}.txt", i + 1));
+                create_image_occlusion_cards(card, side, &output, &sources).unwrap();
+                drawn.push((
+                    card,
+                    side,
+                    get_image_occlusion_card_filepath(&output, side, 1, overlay),
+                ));
+            }
+        }
+        std::fs::rename(moved(&original_image_filepath), &original_image_filepath).unwrap();
+        std::fs::rename(moved(&clozes_filepath), &clozes_filepath).unwrap();
+
+        for (card, side, filepath) in drawn {
+            let NotePart::ImageOcclusion { cloze_indices, .. } = &card.data[0] else {
+                unreachable!()
+            };
+            let alone =
+                filepath.with_extension(format!("alone.{}", if overlay { "svg" } else { "png" }));
+            create_image_occlusion_card(cloze_indices, &data, &alone, side, &config, overlay)
+                .unwrap();
+            assert!(
+                std::fs::read(&filepath).unwrap() == std::fs::read(&alone).unwrap(),
+                "{} differs from the card drawn alone",
+                filepath.display()
+            );
+            std::fs::remove_file(filepath).unwrap();
+            std::fs::remove_file(alone).unwrap();
+        }
+    }
+
+    std::fs::remove_file(original_image_filepath).unwrap();
+    std::fs::remove_file(clozes_filepath).unwrap();
 }
