@@ -1419,3 +1419,76 @@ fn test_note_cards_read_image_occlusion_files_once() {
     std::fs::remove_file(original_image_filepath).unwrap();
     std::fs::remove_file(clozes_filepath).unwrap();
 }
+
+/// A card's image is not written again when it is unchanged, which would change its modification
+/// time, but is when it changes.
+#[test]
+fn test_card_image_skips_unchanged_file() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+
+    let dir = get_image_occlusion_directory();
+    let rendered_dir = get_image_occlusion_rendered_directory();
+    std::fs::create_dir_all(&rendered_dir).unwrap();
+    let original_image_filepath = dir.join("test-unchanged-card.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-unchanged-card_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><rect x="0" y="0" width="50" height="50"/><rect x="100" y="0" width="50" height="50"/></g></svg>"#,
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let config = ImageOcclusionConfig::default();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let modified = |path: &PathBuf| std::fs::metadata(path).unwrap().modified().unwrap();
+
+    for overlay in [false, true] {
+        let card_filepath = rendered_dir.join(format!(
+            "test-unchanged-card.{}",
+            if overlay { "svg" } else { "png" }
+        ));
+        let draw = |cloze: usize| {
+            create_image_occlusion_card(
+                &[(cloze, ClozeHiddenReplacement::ToAnswer { hint: None })],
+                &data,
+                &card_filepath,
+                CardSide::Front,
+                &config,
+                overlay,
+            )
+            .unwrap();
+        };
+        draw(0);
+        let first = std::fs::read(&card_filepath).unwrap();
+        File::options()
+            .write(true)
+            .open(&card_filepath)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        draw(0);
+        assert_eq!(modified(&card_filepath), old, "overlay: {overlay}");
+
+        draw(1);
+        assert_ne!(modified(&card_filepath), old, "overlay: {overlay}");
+        // Not `assert_ne!`, which would print both images
+        assert!(std::fs::read(&card_filepath).unwrap().ne(&first));
+
+        std::fs::remove_file(card_filepath).unwrap();
+    }
+
+    std::fs::remove_file(original_image_filepath).unwrap();
+    std::fs::remove_file(clozes_filepath).unwrap();
+}
