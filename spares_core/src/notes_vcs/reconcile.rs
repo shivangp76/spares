@@ -16,6 +16,7 @@ use super::commit::try_commit;
 use super::git::git;
 use super::git::git_output;
 use super::git::nul_split;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
@@ -132,6 +133,7 @@ async fn reconcile_inner(
     message: Option<&str>,
     dry_run: bool,
 ) -> Result<ReconcileReport, Error> {
+    let context = NoteFileContext::default();
     let mut report = ReconcileReport::default();
     if !enabled() {
         return Ok(report);
@@ -224,7 +226,7 @@ async fn reconcile_inner(
             let Some((rel, parser, row)) = expected else {
                 continue;
             };
-            let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+            let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
             let absolute = repo.join(&rel);
             let current = std::fs::read(&absolute).ok();
             commit_paths.push(rel.clone());
@@ -234,8 +236,9 @@ async fn reconcile_inner(
             if semantic
                 && let Some(current) = current.as_deref()
                 && let Ok(current) = std::str::from_utf8(current)
-                && file_note_fields(parser.as_ref(), current, id)
-                    .is_some_and(|f| same_note(parser.as_ref(), id, &f, &db_note_fields(row)))
+                && file_note_fields(&context, parser.as_ref(), current, id).is_some_and(|f| {
+                    same_note(&context, parser.as_ref(), id, &f, &db_note_fields(row))
+                })
             {
                 continue;
             }
@@ -303,6 +306,7 @@ pub(crate) async fn write_db_note_files(
     db: &SqlitePool,
     ids: &[NoteId],
 ) -> Result<Vec<PathBuf>, Error> {
+    let context = NoteFileContext::default();
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -314,7 +318,7 @@ pub(crate) async fn write_db_note_files(
     for row in &rows {
         let parser = find_parser(&row.parser_name, &parsers)?;
         let rel = note_rel_path(parser.as_ref(), row.note_id);
-        let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         write_file(&repo.join(&rel), contents.as_bytes())?;
         written.push(rel);
     }

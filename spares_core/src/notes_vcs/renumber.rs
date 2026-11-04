@@ -9,6 +9,7 @@ use super::commit::commit_index;
 use super::commit::git_index_lock;
 use super::git::git;
 use super::git::nul_join;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::paths::note_rel_path;
 use super::paths::server_repo_dir;
@@ -32,6 +33,7 @@ pub async fn renumber_note_files(
     mapping: &[IdMapping],
     message: &str,
 ) -> Result<bool, Error> {
+    let context = NoteFileContext::default();
     let repo = server_repo_dir();
     let parsers = get_all_parsers();
     let mut parser_dirs: BTreeSet<PathBuf> = BTreeSet::new();
@@ -60,7 +62,7 @@ pub async fn renumber_note_files(
         let parser = find_parser(&row.parser_name, &parsers)?;
         parser_dirs.insert(PathBuf::from(parser.get_parser_name()));
         let path = repo.join(note_rel_path(parser.as_ref(), row.note_id));
-        let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
         }
