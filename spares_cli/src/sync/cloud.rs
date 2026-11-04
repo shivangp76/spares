@@ -5,6 +5,8 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use spares_core::api::browser_render::get_render_assets_dir;
 use spares_core::api::browser_render::read_render_dependencies;
@@ -25,6 +27,26 @@ use spares_core::sync::http::RemoteAuth;
 use spares_core::sync::push::PushTarget;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
+
+/// Set by `spares sync cloud --dry-run`: rsync only lists what it would copy, and nothing else is
+/// changed on the server.
+static DRY_RUN: AtomicBool = AtomicBool::new(false);
+
+fn dry_run() -> bool {
+    DRY_RUN.load(Ordering::Relaxed)
+}
+
+/// Lists what [`push_files`] would copy, after the same checks, and changes nothing.
+pub(crate) async fn preview_files(
+    remote_host: &str,
+    url: &str,
+    token: Option<String>,
+) -> Result<(), String> {
+    DRY_RUN.store(true, Ordering::Relaxed);
+    let result = push_files(remote_host, url, token).await;
+    DRY_RUN.store(false, Ordering::Relaxed);
+    result.map(|_| ())
+}
 
 /// What [`push_files`] did, for after the sync.
 pub(crate) struct Pushed {
@@ -357,6 +379,10 @@ async fn push_config(remote: &HttpRemote) -> Result<bool, String> {
     let path = get_external_config_file();
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if dry_run() {
+        println!("  config.toml, without its [sync] table");
+        return Ok(false);
+    }
     let changed = remote
         .push_config(contents)
         .await
@@ -531,7 +557,15 @@ fn sync_render_dependencies(
         &dir_source(home)?,
         &format!("{remote_host}:"),
     )?;
-    if !plan.symlinks.is_empty() {
+    if dry_run() {
+        for (link, target) in &plan.symlinks {
+            let target = match target {
+                SymlinkTarget::InHome(path) => format!("~/{}", path.display()),
+                SymlinkTarget::Other(path) => path.display().to_string(),
+            };
+            println!("  ~/{} → {target} (symlink)", link.display());
+        }
+    } else if !plan.symlinks.is_empty() {
         run_ssh(remote_host, &symlinks_command(&plan.symlinks))
             .map_err(|e| format!("Creating symlinks failed: {e}"))?;
     }
@@ -696,6 +730,7 @@ fn run_rsync_files_from(
 fn run_rsync(args: &[&str]) -> Result<Vec<String>, String> {
     let output = Command::new("rsync")
         .arg("--out-format=%n")
+        .args(dry_run().then_some("--dry-run"))
         .args(args)
         .stderr(std::process::Stdio::inherit())
         .output()
