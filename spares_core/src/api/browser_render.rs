@@ -13,7 +13,8 @@
 //!   [`Parseable::image_occlusion_overlays`]), and a device that keeps a copy of the collection
 //!   makes the images of its Markdown cards itself (see `parsers::read_device_card`, wasm only).
 //! - Audio clips (see [`crate::parsers::audio`]) are stored the same way for every parser, since
-//!   web clients play them outside the rendered card.
+//!   web clients play them outside the rendered card. Renderers don't read them, so they are
+//!   found in the notes themselves ([`audio_clips`]).
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -49,7 +50,6 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
-use crate::parsers::audio::is_audio_path;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
@@ -255,9 +255,10 @@ struct RenderAssetRow {
     size: i64,
 }
 
-/// Records the dependencies of `parser`'s rendered files for `note_ids` (all notes if `None`) and
-/// refreshes every stored asset whose file changed since it was last stored. For parsers that do
-/// not [render in the browser](Parseable::renders_in_browser), only audio clips are recorded.
+/// Records the dependencies of `parser`'s rendered files for `note_ids` (all notes if `None`), and
+/// the audio clips they link to, and refreshes every stored asset whose file changed since it was
+/// last stored. For parsers that do not [render in the browser](Parseable::renders_in_browser),
+/// only audio clips are recorded.
 ///
 /// Files that do not exist locally keep their stored copy, so this is safe to run on a server that
 /// only has the synced store.
@@ -266,14 +267,15 @@ pub async fn sync_render_assets<S: BuildHasher>(
     parser: &dyn Parseable,
     note_ids: Option<&HashSet<NoteId, S>>,
 ) -> Result<(), Error> {
-    let (mut files, mut packages) = read_render_dependencies(parser, note_ids);
     // Other parsers' cards are shown rendered, so web clients only need their audio clips
-    if !parser.renders_in_browser() {
-        files.retain(|path| is_audio_path(path));
-        packages.clear();
-        if files.is_empty() {
-            return Ok(());
-        }
+    let (mut files, packages) = if parser.renders_in_browser() {
+        read_render_dependencies(parser, note_ids)
+    } else {
+        Default::default()
+    };
+    files.extend(audio_clips(db, parser, note_ids).await?);
+    if files.is_empty() && packages.is_empty() && !parser.renders_in_browser() {
+        return Ok(());
     }
 
     let existing: Vec<RenderAssetRow> =
@@ -353,6 +355,36 @@ pub async fn sync_render_assets<S: BuildHasher>(
         remove_unreferenced_render_assets(db, &store_dir).await?;
     }
     Ok(())
+}
+
+/// The audio clips that `parser`'s notes of `note_ids` (all notes if `None`) link to by absolute
+/// path.
+async fn audio_clips<S: BuildHasher>(
+    db: &SqlitePool,
+    parser: &dyn Parseable,
+    note_ids: Option<&HashSet<NoteId, S>>,
+) -> Result<BTreeSet<PathBuf>, Error> {
+    let ids = note_ids.map(|ids| serde_json::to_string(&ids.iter().collect::<Vec<_>>()));
+    let ids = ids.transpose().map_err(|e| {
+        Error::Library(LibraryError::Card(CardErrorKind::InvalidInput(format!(
+            "Failed to list note ids: {e}"
+        ))))
+    })?;
+    let data: Vec<String> = sqlx::query_scalar(
+        r"SELECT n.data FROM note n JOIN parser p ON p.id = n.parser_id
+        WHERE p.name = ?1 AND (?2 IS NULL OR n.id IN (SELECT value FROM json_each(?2)))",
+    )
+    .bind(parser.get_parser_name())
+    .bind(ids)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(data
+        .iter()
+        .flat_map(|data| parser.audio_refs(data))
+        .map(|audio_ref| PathBuf::from(audio_ref.path))
+        .filter(|path| path.is_absolute())
+        .collect())
 }
 
 /// Collects the dependency files written next to `parser`'s rendered files of `note_ids` (all
@@ -576,6 +608,66 @@ mod tests {
             let _ = std::fs::remove_file(get_render_assets_dir().join(hash));
         }
         let _ = std::fs::remove_dir_all(outside);
+    }
+
+    /// Audio clips are read from the notes, of the requested notes only.
+    #[sqlx::test]
+    async fn audio_clips_are_read_from_the_notes(pool: SqlitePool) {
+        use std::collections::HashSet;
+
+        use chrono::Utc;
+
+        use super::audio_clips;
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::model::NoteId;
+        use crate::parsers::get_all_parsers;
+        use crate::parsers::impls::markdown::MarkdownParser;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let note = |data: &str| CreateNoteRequest {
+            data: data.to_string(),
+            keywords: Vec::new(),
+            tags: Vec::new(),
+            is_suspended: false,
+            custom_data: serde_json::Map::new(),
+        };
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![
+                note("{{Paris}} [🔊](/m/b.mp3) [🔊](rel.mp3) {{ [🔊](/m/a.ogg) }}"),
+                note("{{Berlin}} [🔊](/m/c.mp3)"),
+            ],
+        };
+        create_notes(&pool, request, Utc::now(), &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let ids: Vec<NoteId> = sqlx::query_scalar("SELECT id FROM note ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        let clips = async |ids: Option<&HashSet<NoteId>>| {
+            audio_clips(&pool, &MarkdownParser::new(), ids)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            clips(None).await,
+            ["/m/a.ogg", "/m/b.mp3", "/m/c.mp3"].map(std::path::PathBuf::from)
+        );
+        assert_eq!(
+            clips(Some(&HashSet::from([ids[1]]))).await,
+            [std::path::PathBuf::from("/m/c.mp3")]
+        );
+        assert_eq!(
+            clips(Some(&HashSet::new())).await,
+            Vec::<std::path::PathBuf>::new()
+        );
     }
 
     /// A Markdown card's sources hide the card's own cloze on the front. A server leaves them out
