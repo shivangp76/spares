@@ -414,11 +414,15 @@ fn remove_stale_index_lock(repo: &Path) {
     }
 }
 
+/// Writes `contents` to `path`, unless it already holds them, so that a note file whose note did
+/// not change keeps its modification time.
 fn write_file(path: &Path, contents: &[u8]) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
     }
-    std::fs::write(path, contents).map_err(|e| io_error(path, e))
+    crate::helpers::write_if_changed(path, contents)
+        .map(|_| ())
+        .map_err(|e| io_error(path, e))
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> Error {
