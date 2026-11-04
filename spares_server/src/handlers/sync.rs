@@ -349,10 +349,20 @@ pub(crate) async fn sync_media_download_handler(
         })
 }
 
-/// A file a device added offline, before the push whose notes name it.
+/// `?replaces=` of [`sync_media_handler`]
+#[derive(Debug, Deserialize)]
+pub(crate) struct MediaUploadQuery {
+    /// The hash of the server's file this one replaces, as listed (see `media::replace_media`)
+    replaces: Option<String>,
+}
+
+/// A file a device added offline, before the push whose notes name it, or, with `?replaces=`, an
+/// image occlusion file another host changed since it listed the server's.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) async fn sync_media_handler(
+    Coll(data): Coll,
     Path((kind, name)): Path<(MediaKind, String)>,
+    Query(query): Query<MediaUploadQuery>,
     auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
     body: Bytes,
 ) -> Result<impl IntoResponse, HandlerError> {
@@ -362,21 +372,42 @@ pub(crate) async fn sync_media_handler(
             .as_ref()
             .is_some_and(|device| device.scope == crate::host::auth::Scope::Sync)
     });
-    let path = if from_host {
-        media::store_media_from_host(kind, &name, &body)
-    } else {
-        media::store_media(kind, &name, &body)
+    let (path, replaced) = match &query.replaces {
+        // Only if the file is still the one the host saw, so not limited to hosts' tokens: a host
+        // without accounts has none
+        Some(replaces) => media::replace_media(kind, &name, &body, replaces)
+            .map(|(path, replaced)| (path, replaced == media::Replaced::Replaced)),
+        None if from_host => media::store_media_from_host(kind, &name, &body).map(|p| (p, false)),
+        None => media::store_media(kind, &name, &body).map(|p| (p, false)),
     }
     .map_err(error_to_response)?;
+    // Their text is unchanged, so no push renders them
+    if replaced {
+        let db = data.db.clone();
+        let name = name.clone();
+        let names = vec![name.clone()];
+        spares_core::collection::spawn(async move {
+            let rendered = spares_core::notes_vcs::run_shared(async move {
+                files::render_notes_naming(&db, &names).await;
+                Ok(())
+            })
+            .await;
+            if let Err(e) = rendered {
+                log::error!("Failed to render the notes naming {name}: {e}");
+            }
+        });
+    }
     // The upstream renders the notes that name it too, once the device's push reaches it.
-    #[cfg(not(target_family = "wasm"))]
     if let Some((url, token)) = crate::handlers::relay::upstream() {
         let remote = spares_core::sync::http::HttpRemote::new(
             &url,
             spares_core::sync::http::RemoteAuth::token(token),
         )
         .map_err(error_to_response)?;
-        if let Err(e) = remote.upload_media(kind, &name, body.to_vec()).await {
+        let sent = remote
+            .upload_media(kind, &name, body.to_vec(), query.replaces.as_deref())
+            .await;
+        if let Err(e) = sent {
             log::warn!("Failed to send {name} on to {url}: {e}");
         }
     }

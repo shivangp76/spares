@@ -182,7 +182,7 @@ pub(crate) async fn upload(
             .and_then(|name| name.to_str())
             .ok_or_else(|| js_error(&format!("{path} has no file name")))?;
         remote
-            .upload_media(kind, name, contents)
+            .upload_media(kind, name, contents, None)
             .await
             .map_err(|e| core_error(&e))?;
         sqlx::query("UPDATE media_file SET uploaded = 1 WHERE path = ?")
