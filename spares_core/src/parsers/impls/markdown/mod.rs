@@ -60,6 +60,7 @@ use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::WebRenderMode;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
@@ -70,7 +71,6 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
@@ -414,16 +414,14 @@ impl Parseable for MarkdownParser {
         output_text_filepath: &Path,
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
+    ) -> Result<RenderedFile, Error> {
         // Output is rendered as a pdf. This is because some formats, like png, do not support text selection. Other formats, such as svg, do not have popular viewers on all platforms.
-        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
         // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
-        let mut log_filepath = dependencies_filepath.clone();
-        log_filepath.set_extension("pandoc-log.json");
+        let log_filepath = output_rendered_filepath.with_extension("pandoc-log.json");
         let input = PandocInput::new(
             self,
             output_text_filepath,
-            dependencies_filepath.with_extension("pandoc-input.md"),
+            output_rendered_filepath.with_extension("pandoc-input.md"),
         )
         .map_err(|source| Error::Io {
             description: format!("Failed to read {}", output_text_filepath.display()),
@@ -442,8 +440,8 @@ impl Parseable for MarkdownParser {
             command = command.arg("--defaults").arg(defaults_file);
         }
         let output = render_command_output(command, "pandoc");
-        if output.is_ok()
-            && let Err(e) = record_dependencies(
+        let dependencies = output.as_ref().ok().map(|_| {
+            record_dependencies(
                 &log_filepath,
                 config
                     .parser
@@ -451,16 +449,20 @@ impl Parseable for MarkdownParser {
                     .defaults_file
                     .as_deref()
                     .map(Path::new),
-                &dependencies_filepath,
             )
-        {
-            warn!(
-                "Failed to record dependencies of {}: {e}",
-                output_text_filepath.display()
-            );
-        }
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Failed to record dependencies of {}: {e}",
+                    output_text_filepath.display()
+                );
+                RenderDependencies::default()
+            })
+        });
         let _ = remove_file(&log_filepath);
-        output
+        Ok(RenderedFile {
+            output: output?,
+            dependencies: dependencies.unwrap_or_default(),
+        })
     }
 
     fn has_web_render(&self) -> bool {
@@ -473,14 +475,13 @@ impl Parseable for MarkdownParser {
         output_rendered_filepath: &Path,
         output_web_filepath: &Path,
         mode: WebRenderMode,
+        dependencies: &mut RenderDependencies,
     ) -> Result<(), String> {
-        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
-        let mut log_filepath = dependencies_filepath.clone();
-        log_filepath.set_extension("pandoc-web-log.json");
+        let log_filepath = output_rendered_filepath.with_extension("pandoc-web-log.json");
         let input = PandocInput::new(
             self,
             output_text_filepath,
-            dependencies_filepath.with_extension("pandoc-web-input.md"),
+            output_rendered_filepath.with_extension("pandoc-web-input.md"),
         )
         .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
         let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
@@ -512,7 +513,7 @@ impl Parseable for MarkdownParser {
             &mut command,
             &log_filepath,
             web_defaults_file.as_deref(),
-            &dependencies_filepath,
+            dependencies,
             mode,
         );
         let _ = remove_file(&log_filepath);
@@ -566,7 +567,7 @@ fn render_web_command(
     command: &mut Command,
     log_filepath: &Path,
     web_defaults_file: Option<&Path>,
-    dependencies_filepath: &Path,
+    dependencies: &mut RenderDependencies,
     mode: WebRenderMode,
 ) -> Result<(), String> {
     let output = render_command_output(command, "pandoc").map_err(|e| e.to_string())?;
@@ -585,14 +586,10 @@ fn render_web_command(
 
     // The web defaults file and what it loads, such as stylesheets, are synced to the server like
     // the PDF's.
-    let mut files = loaded_resources_of(&messages);
-    files.extend(web_defaults_file.map(Path::to_path_buf));
-    if let Err(e) = RenderDependencies::extend_file(dependencies_filepath, files) {
-        warn!(
-            "Failed to record dependencies in {}: {e}",
-            dependencies_filepath.display()
-        );
-    }
+    dependencies.files.extend(loaded_resources_of(&messages));
+    dependencies
+        .files
+        .extend(web_defaults_file.map(Path::to_path_buf));
 
     match mode {
         WebRenderMode::Auto => match messages.iter().find_map(content_loss) {
@@ -742,25 +739,23 @@ fn shorten(text: &str) -> String {
     }
 }
 
-/// Writes the [`RenderDependencies`] of a rendered file from the resources in pandoc's log and the
+/// The [`RenderDependencies`] of a rendered file, from the resources in pandoc's log and the
 /// defaults file. Files that are only referenced by the defaults file, such as a template, are not
 /// logged, so they are not included.
 fn record_dependencies(
     log_filepath: &Path,
     defaults_file: Option<&Path>,
-    dependencies_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let log = read_to_string(log_filepath)
         .map_err(|e| format!("Failed to read {}: {e}", log_filepath.display()))?;
     let mut files = loaded_resources(&log)?;
     if let Some(defaults_file) = defaults_file {
         files.extend(find_defaults_file(defaults_file));
     }
-    RenderDependencies {
+    Ok(RenderDependencies {
         files,
         packages: Vec::new(),
-    }
-    .write(dependencies_filepath)
+    })
 }
 
 /// Absolute paths of the local files pandoc loaded according to its JSON log.
@@ -1068,7 +1063,6 @@ pub mod tests {
     mod web_render {
         use std::fs::read_to_string;
         use std::fs::write;
-        use std::path::Path;
         use std::path::PathBuf;
 
         use super::super::CARD_SEPARATOR;
@@ -1079,7 +1073,6 @@ pub mod tests {
         use crate::parsers::Parseable;
         use crate::parsers::RenderDependencies;
         use crate::parsers::WebRenderMode;
-        use crate::parsers::render_dependencies_filepath;
 
         /// A 1x1 PNG.
         const PNG: &[u8] = &[
@@ -1108,8 +1101,13 @@ pub mod tests {
             let text = dir.join("0001.md");
             write(&text, markdown).unwrap();
             let html = dir.join("0001.html");
-            let result =
-                MarkdownParser::new().render_web_file(&text, &dir.join("0001.pdf"), &html, mode);
+            let result = MarkdownParser::new().render_web_file(
+                &text,
+                &dir.join("0001.pdf"),
+                &html,
+                mode,
+                &mut RenderDependencies::default(),
+            );
             (result, html)
         }
 
@@ -1179,18 +1177,21 @@ pub mod tests {
             .unwrap();
             let rendered = dir.join("0001.pdf");
             let html = dir.join("0001.html");
+            let mut dependencies = RenderDependencies::default();
             MarkdownParser::new()
-                .render_web_file(&text, &rendered, &html, WebRenderMode::Auto)
+                .render_web_file(
+                    &text,
+                    &rendered,
+                    &html,
+                    WebRenderMode::Auto,
+                    &mut dependencies,
+                )
                 .unwrap();
             let html = read_to_string(html).unwrap();
             assert!(!html.contains("<script"));
             assert!(html.contains("data:image/png"));
             assert!(html.contains("<math"));
             // The image is recorded so sync copies it to the server
-            let dependencies: RenderDependencies = serde_json::from_str(
-                &read_to_string(render_dependencies_filepath(&rendered)).unwrap(),
-            )
-            .unwrap();
             assert!(dependencies.files.contains(&image));
         }
 
@@ -1247,27 +1248,6 @@ pub mod tests {
                 WebRenderMode::Html,
             );
             assert!(result.unwrap_err().starts_with("pandoc exited"));
-        }
-
-        #[test]
-        fn test_extend_dependencies_file() {
-            let dir = test_dir("dependencies");
-            let path = dir.join("0001.deps.json");
-            RenderDependencies {
-                files: vec![PathBuf::from("/b")],
-                packages: Vec::new(),
-            }
-            .write(&path)
-            .unwrap();
-            RenderDependencies::extend_file(&path, vec![PathBuf::from("/a"), PathBuf::from("/b")])
-                .unwrap();
-            let dependencies: RenderDependencies =
-                serde_json::from_str(&read_to_string(&path).unwrap()).unwrap();
-            assert_eq!(dependencies.files, [Path::new("/a"), Path::new("/b")]);
-            // A missing file is created
-            let new_path = dir.join("0002.deps.json");
-            RenderDependencies::extend_file(&new_path, vec![PathBuf::from("/c")]).unwrap();
-            assert!(new_path.exists());
         }
     }
 }

@@ -17,7 +17,6 @@
 //!   files/              rendered notes and cards, served at /files
 //!   cards/              raw card files, which renders write from notes
 //!   render/             scratch directories of renders
-//!   note-hashes/        what tells a note needs rendering again
 //!   sync/               sync's snapshots
 //! ```
 //!

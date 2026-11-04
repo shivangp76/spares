@@ -37,7 +37,6 @@ use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
-use crate::parsers::generate_files::card_render_key_path;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::get_image_occlusion_card_filepath;
 use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
@@ -100,7 +99,6 @@ pub fn delete_note_files(
             delete_file(&note_raw_path)?;
         }
     }
-    notes_vcs::remove_render_hash(parser.get_parser_name(), note_id);
 
     // Note rendered path
     let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
@@ -144,13 +142,6 @@ pub fn delete_card_files(
             note_id,
         ));
         delete_rendered_file(&card_front_rendered_path)?;
-        let _ = std::fs::remove_file(card_render_key_path(
-            parser,
-            &parser.get_output_filename(
-                RenderOutputType::Card(*current_card_order, CardSide::Front),
-                note_id,
-            ),
-        ));
 
         // Card back raw path
         let mut card_back_raw_path = get_output_raw_dir(
@@ -175,13 +166,6 @@ pub fn delete_card_files(
             note_id,
         ));
         delete_rendered_file(&card_back_rendered_path)?;
-        let _ = std::fs::remove_file(card_render_key_path(
-            parser,
-            &parser.get_output_filename(
-                RenderOutputType::Card(*current_card_order, CardSide::Back),
-                note_id,
-            ),
-        ));
 
         // Image occlusion rendered paths
         for i in 0..image_occlusion_count {
