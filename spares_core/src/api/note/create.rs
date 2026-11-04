@@ -131,6 +131,8 @@ pub async fn create_notes(
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     // One run of ids for the whole call, so notes created together sort next to each other.
     let note_ids = allocate_note_ids(db, body.requests.len()).await?;
+    // Read once for every note, rather than parsing config.toml again for each
+    let external_config = read_external_config().ok();
     for (create_note_request, note_id) in body.requests.iter().zip(note_ids) {
         let CreateNoteRequest {
             data,
@@ -142,7 +144,6 @@ pub async fn create_notes(
         let mut tags = remove_ancestor_tags(tags);
         tags.sort();
         let custom_data_str = Value::Object(custom_data.clone());
-        let external_config = read_external_config().ok();
         let (note_data, card_datas) = add_order_to_note_data(
             parser.as_ref(),
             data,
@@ -296,8 +297,7 @@ pub async fn create_notes(
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
     notes_vcs::fill_linked_notes(db, &mut generate_files_requests).await?;
     let created_ids: Vec<NoteId> = generate_files_requests.iter().map(|r| r.note_id).collect();
-    let include_cards =
-        generates_render_files(parser.as_ref(), read_external_config().ok().as_ref());
+    let include_cards = generates_render_files(parser.as_ref(), external_config.as_ref());
     let parse_notes_request = GenerateNoteFilesRequests {
         requests: generate_files_requests,
         overridden_output_raw_dir: None,
