@@ -3040,11 +3040,12 @@ mod tests {
 
     #[sqlx::test]
     async fn test_get_review_card_by_id_respects_filter(pool: sqlx::SqlitePool) -> () {
-        let now = Utc::now();
-
         // Create notes (3 notes from helper)
         let created_notes = create_note_helper(&pool).await;
         assert_eq!(created_notes.len(), 3);
+        // After the notes, whose cards are due when they're created, so that they're due today
+        // even if midnight passes while they're created
+        let now = Utc::now();
 
         // Get all cards (1 per note)
         let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")
