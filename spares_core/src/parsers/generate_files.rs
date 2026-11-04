@@ -35,7 +35,6 @@ use crate::parsers::ConstructFileDataType;
 use crate::parsers::CustomData;
 use crate::parsers::NoteImportAction;
 use crate::parsers::Parseable;
-use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
 use crate::parsers::WebRenderMode;
@@ -44,7 +43,6 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::parsers::image_occlusion::read_image_occlusions;
-use crate::parsers::render_dependencies_filepath;
 use crate::parsers::web_render_filepath;
 use crate::schema::note::LinkedNote;
 
@@ -729,7 +727,6 @@ fn create_raw_and_rendered_file(
             });
         }
 
-        add_audio_dependencies(parser, note_id, file_contents, &output_rendered_filepath);
         if matches!(render_output_type, RenderOutputType::Note) {
             copy_rendered_note(parser, note_id, &output_rendered_filepath);
         }
@@ -840,33 +837,6 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Adds the audio clips `file_contents` links to the dependencies of its rendered file, since
-/// renderers do not read them, so they are shipped like the files a render reads.
-fn add_audio_dependencies(
-    parser: &dyn Parseable,
-    note_id: NoteId,
-    file_contents: &str,
-    output_rendered_filepath: &Path,
-) {
-    let clips = parser
-        .audio_refs(file_contents)
-        .into_iter()
-        .map(|audio_ref| PathBuf::from(audio_ref.path))
-        .filter(|path| path.is_absolute())
-        .collect::<Vec<_>>();
-    if clips.is_empty() {
-        return;
-    }
-    let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
-    if let Err(e) = RenderDependencies::extend_file(&dependencies_filepath, clips) {
-        warn!(
-            "[Note Id: {}] Failed to add audio clips to {}: {e}",
-            note_id.letters(),
-            dependencies_filepath.display()
-        );
-    }
-}
-
 /// Writes the HTML for web clients next to the rendered file, or an empty file if they should show
 /// the rendered file instead (see [`web_render_filepath`]). Never fails the render, since the
 /// rendered file is always there to fall back to.
@@ -923,7 +893,6 @@ mod tests {
 
     use super::GenerateNoteFilesRequest;
     use super::GenerateNoteFilesRequests;
-    use super::add_audio_dependencies;
     use super::blake3_hex;
     use super::card_is_rendered;
     use super::card_render_key;
@@ -1007,33 +976,6 @@ mod tests {
             WebRenderMode::Auto
         );
         assert_eq!(mode(serde_json::json!({"render": 1})), WebRenderMode::Auto);
-    }
-
-    #[test]
-    fn test_add_audio_dependencies() {
-        use crate::parsers::RenderDependencies;
-        use crate::parsers::render_dependencies_filepath;
-
-        let dir = std::env::temp_dir().join(format!("spares-audio-deps-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let rendered = dir.join("0001.pdf");
-        let deps = render_dependencies_filepath(&rendered);
-        write(&deps, r#"{"files":["/m/figure.png"],"packages":[]}"#).unwrap();
-        let note_id = "aaa".parse().unwrap();
-        add_audio_dependencies(
-            &MarkdownParser::new(),
-            note_id,
-            "[🔊](/m/b.mp3) [🔊](rel.mp3) {{ [🔊](/m/a.ogg) }}",
-            &rendered,
-        );
-        let dependencies: RenderDependencies =
-            serde_json::from_str(&std::fs::read_to_string(&deps).unwrap()).unwrap();
-        assert_eq!(
-            dependencies.files,
-            ["/m/a.ogg", "/m/b.mp3", "/m/figure.png"].map(std::path::PathBuf::from)
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A note with an image occlusion drawn from `image` and `clozes`, then `rest`
