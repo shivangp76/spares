@@ -8,6 +8,7 @@ import {
 } from "../api/client";
 import { useServerReachable } from "../api/reachability";
 import {
+  describeDownload,
   disableLocalCopy,
   enableLocalCopy,
   useLocalStatus,
@@ -303,7 +304,9 @@ export default function LocalCopySettings() {
             role="status"
             style={{ fontSize: 13, color: "var(--text-secondary)" }}
           >
-            {step}…
+            {(step !== "Registering this device" && describeDownload(local)) ||
+              step}
+            …
           </span>
         )}
       </div>
@@ -334,7 +337,9 @@ export default function LocalCopySettings() {
               marginLeft: 12,
             }}
           >
-            {step}…
+            {(step !== "Registering this device" && describeDownload(local)) ||
+              step}
+            …
           </span>
         )}
       </>
