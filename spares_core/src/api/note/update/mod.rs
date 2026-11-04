@@ -138,7 +138,8 @@ fn get_parser_and_cards(
     parser_factories: &HashMap<&'static str, fn() -> Box<dyn Parseable>>,
 ) -> Result<(Box<dyn Parseable>, Vec<CardData>), Error> {
     let parser = get_parser_only(parser_name, parser_factories)?;
-    let cards = get_cards(parser.as_ref(), None, note_data, false, true)?;
+    // As it is: the files the old text names stay where they are, for its cards and its undo
+    let cards = get_cards(parser.as_ref(), None, note_data, false, false)?;
     Ok((parser, cards))
 }
 
