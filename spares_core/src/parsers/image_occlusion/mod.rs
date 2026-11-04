@@ -68,6 +68,7 @@ use crate::parsers::Parseable;
 mod construct;
 mod hint;
 mod utils;
+pub use construct::ImageOcclusionSources;
 pub use construct::combine_image_occlusion_clozes;
 pub use construct::construct_image_occlusion_from_image;
 pub use construct::create_image_occlusion_cards;

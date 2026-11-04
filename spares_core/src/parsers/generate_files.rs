@@ -37,6 +37,7 @@ use crate::parsers::TemplateType;
 use crate::parsers::WebRenderMode;
 use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
+use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::parsers::render_dependencies_filepath;
 use crate::parsers::web_render_filepath;
@@ -353,6 +354,11 @@ fn create_note_files(
                 Some(cards) => cards.clone(),
                 None => get_cards(parser, None, note_data, false, true)?,
             };
+            // Read once for all of the note's cards, and only if their images are made
+            let image_occlusion_sources = ImageOcclusionSources::read(
+                if render { &cards } else { &[] },
+                parser.image_occlusion_overlays(),
+            );
             cards
                 .par_iter()
                 .enumerate()
@@ -375,6 +381,7 @@ fn create_note_files(
                         overridden_output_raw_dir,
                         render,
                         web_render_mode,
+                        Some(&image_occlusion_sources),
                     )?;
 
                     if matches!(card.back_type, BackType::CardFilePath) {
@@ -395,6 +402,7 @@ fn create_note_files(
                             overridden_output_raw_dir,
                             render,
                             web_render_mode,
+                            Some(&image_occlusion_sources),
                         )?;
                     }
                     Ok(())
@@ -419,6 +427,7 @@ fn create_note_files(
             overridden_output_raw_dir,
             render,
             web_render_mode,
+            None,
         );
         if vcs_format {
             if render && result.is_ok() && output_rendered_filepath.exists() {
@@ -440,6 +449,7 @@ fn create_note_files(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_raw_and_rendered_file(
     parser: &dyn Parseable,
     note_id: NoteId,
@@ -448,6 +458,8 @@ fn create_raw_and_rendered_file(
     overridden_output_raw_dir: Option<&Path>,
     render: bool,
     web_render_mode: WebRenderMode,
+    // What a card's image occlusions are drawn from, read for the note's cards
+    image_occlusion_sources: Option<&ImageOcclusionSources>,
 ) -> Result<PathBuf, Error> {
     let render_output_type: RenderOutputType = match output_type {
         ConstructFileDataType::Note => RenderOutputType::Note,
@@ -531,11 +543,22 @@ fn create_raw_and_rendered_file(
                 image_occlusion_output_rendered_filepath.push(
                     parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
                 );
+                // Read for this card alone if they weren't for the note's cards
+                let read;
+                let image_occlusion_sources = if let Some(sources) = image_occlusion_sources {
+                    sources
+                } else {
+                    read = ImageOcclusionSources::read(
+                        std::slice::from_ref(card_data),
+                        parser.image_occlusion_overlays(),
+                    );
+                    &read
+                };
                 create_image_occlusion_cards(
                     card_data,
                     side,
                     &image_occlusion_output_rendered_filepath,
-                    parser.image_occlusion_overlays(),
+                    image_occlusion_sources,
                 )?;
             }
         }
