@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sets up (or updates) a spares host on a Debian/Ubuntu VPS. Safe to re-run: it pulls, rebuilds
-# and restarts, keeping the accounts and data.
+# Sets up (or updates) a spares host on a Debian/Ubuntu VPS. Safe to re-run: it upgrades the
+# system's packages (Tailscale's too), pulls, rebuilds and restarts, keeping the accounts and data.
 #
 #   sudo bash setup_vps.sh --root <local host root> --account <name> [--account-id <id>]
 #                          [--local-home <local home>] [--domain <domain> | --tailscale]
@@ -210,16 +210,30 @@ PACKAGES=(curl rsync sqlite3 openssl python3 ca-certificates bubblewrap git)
 # texlive-fonts-extra has the NewCM math font; inkscape converts SVGs for LaTeX.
 [[ "$NO_LATEX" == false ]] && PACKAGES+=(latexmk texlive-latex-recommended texlive-latex-extra
   texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape)
-# Only the missing ones, so updates skip apt. Installed ones get upgraded with the rest of the
-# system, e.g. by unattended-upgrades.
+installed() { [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" == *"ok installed" ]]; }
 MISSING=()
 for package in "${PACKAGES[@]}"; do
-  [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" == *"ok installed" ]] || MISSING+=("$package")
+  installed "$package" || MISSING+=("$package")
 done
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-  echo "==> Installing packages"
-  apt-get update -q
-  apt-get install -y -q "${MISSING[@]}"
+# Every run upgrades the whole system too (unattended-upgrades only applies security updates),
+# keeping config files changed here rather than asking. Not Tailscale, which waits for the end.
+APT=(apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+echo "==> Upgrading packages"
+apt-get update -q
+[[ ${#MISSING[@]} -eq 0 ]] || "${APT[@]}" install "${MISSING[@]}"
+installed tailscale && apt-mark hold tailscale >/dev/null
+UPGRADED=true
+"${APT[@]}" upgrade --with-new-pkgs || UPGRADED=false
+installed tailscale && apt-mark unhold tailscale >/dev/null
+[[ "$UPGRADED" == true ]] || exit 1
+# Kernels older than the running one, and what nothing needs anymore. The disk is small.
+"${APT[@]}" autoremove --purge
+apt-get clean
+JOURNALD_CONF=/etc/systemd/journald.conf.d/spares.conf
+if [[ "$(cat "$JOURNALD_CONF" 2>/dev/null)" != $'[Journal]\nSystemMaxUse=50M' ]]; then
+  mkdir -p "$(dirname "$JOURNALD_CONF")"
+  printf '[Journal]\nSystemMaxUse=50M\n' >"$JOURNALD_CONF"
+  systemctl restart systemd-journald
 fi
 
 # pandoc from its release instead of apt, whose pandoc is too old for the HTML of markdown notes
@@ -434,6 +448,15 @@ systemctl is-active --quiet spares || {
 }
 # For `spares deploy`, which reads where the server is from here
 echo "$URL" >/etc/spares/url
+# Upgrading Tailscale restarts it, which ends the SSH sessions over the tailnet, maybe this one: so
+# last, in a unit of its own that outlives them, after a pause for this script to finish.
+# `spares deploy update` waits for it before connecting again.
+if installed tailscale && ! systemctl is-active --quiet spares-tailscale-upgrade &&
+  [[ "$(apt-get -s install --only-upgrade tailscale 2>/dev/null)" == *$'\nInst tailscale '* ]]; then
+  echo "==> Upgrading Tailscale, in the background"
+  systemd-run --quiet --collect --no-block --unit=spares-tailscale-upgrade \
+    bash -c "sleep 5; DEBIAN_FRONTEND=noninteractive ${APT[*]} install --only-upgrade tailscale"
+fi
 HOST="${DOMAIN:-$(hostname -I | awk '{print $1}')}"
 [[ "$TAILSCALE" == true ]] && HOST="${URL#https://}"
 cat <<EOF
@@ -453,3 +476,5 @@ Next, on the machine you sync from, whose host's copy of your collection syncs w
 
 Logs: journalctl -u spares -f      Update: sudo bash setup_vps.sh (no arguments needed)
 EOF
+[[ ! -f /var/run/reboot-required ]] || echo "
+Reboot this server (sudo reboot) to finish the upgrade: $(sort -u /var/run/reboot-required.pkgs 2>/dev/null | paste -sd' ')"
