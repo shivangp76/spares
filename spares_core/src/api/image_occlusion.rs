@@ -362,13 +362,14 @@ mod tests {
 
     #[test]
     fn test_editor_settings_default_when_missing() {
-        // A config written before the editor settings existed
+        // A config written before the editor settings existed, with `cloze_hint_font_size`,
+        // which hints no longer have since they are sized to fit
         let config: crate::config::SparesExternalConfig = toml_edit::de::from_str(
             "[image_occlusion]\ncloze_hint_font_size = 24\n[image_occlusion.editor]\nfill_color = \"#123456\"\n",
         )
         .unwrap();
         let config = config.image_occlusion;
-        assert_eq!(config.cloze_hint_font_size, Some(24));
+        assert_eq!(config.cloze_hint_fill, 0.75);
         assert_eq!(config.editor.fill_color, "#123456");
         assert_eq!(config.editor.stroke_color, "#000000");
         assert_eq!(config.editor.initial_tool, "rect");
