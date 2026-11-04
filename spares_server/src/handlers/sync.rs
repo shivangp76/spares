@@ -240,6 +240,27 @@ pub(crate) async fn sync_push_target_handler(
     ))
 }
 
+/// `spares sync cloud` sending its machine's `config.toml`, which replaces this collection's but
+/// for its `[sync]` table (`spares_core::sync::push::apply_pushed_config`).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn sync_push_config_handler(
+    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
+    body: String,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_device_token(auth.as_ref().map(|auth| &auth.0))?;
+    // Not while a render reads it
+    let changed = run_exclusive(async move { spares_core::sync::push::apply_pushed_config(&body) })
+        .await
+        .map_err(|e| match e {
+            Error::Library(spares_core::LibraryError::InvalidConfig(message)) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "message": format!("Invalid config.toml: {message}") })),
+            ),
+            e => error_to_response(e),
+        })?;
+    Ok(Json(json!({ "changed": changed })))
+}
+
 /// Refuses the web app's session, for the requests only `spares sync cloud` makes. A host without
 /// accounts has no [`Auth`](crate::handlers::auth::Auth) to check.
 #[cfg(not(target_family = "wasm"))]

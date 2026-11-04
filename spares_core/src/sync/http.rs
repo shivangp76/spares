@@ -229,6 +229,24 @@ impl HttpRemote {
             .await?)
     }
 
+    /// Sends this machine's `config.toml` to the server, which keeps its own `[sync]` table (see
+    /// [`super::push::apply_pushed_config`]). Returns whether the server's changed.
+    pub async fn push_config(&self, contents: String) -> Result<bool, Error> {
+        let response: serde_json::Value = self
+            .send(
+                self.request(reqwest::Method::PUT, "/api/sync/push-config", QUICK_TIMEOUT)
+                    .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .body(contents),
+            )
+            .await?
+            .json()
+            .await?;
+        Ok(response
+            .get("changed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true))
+    }
+
     /// The server's files of `kind` (see [`super::media`]).
     pub async fn list_media(&self, kind: MediaKind) -> Result<Vec<MediaFile>, Error> {
         Ok(self
