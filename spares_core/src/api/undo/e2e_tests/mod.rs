@@ -1,5 +1,6 @@
 mod card;
 mod ids;
+mod move_cards;
 mod note;
 mod parser;
 mod redo;

@@ -194,16 +194,17 @@ async fn plan_on(conn: &mut SqliteConnection) -> Result<MigrationPlan, Error> {
     let by_old: HashMap<i64, NoteId> = mapping.iter().map(|m| (m.old, m.new)).collect();
 
     let mut rewrites = Vec::new();
-    let datas: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, data FROM note WHERE data LIKE '%inh:%' ORDER BY id")
-            .fetch_all(&mut *conn)
-            .await
-            .map_err(sqlx_error)?;
+    let datas: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, data FROM note WHERE data LIKE '%inh:%' OR data LIKE '%mv:%' ORDER BY id",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
     for (id, data) in datas {
         let after = rewrite_inh(&data, &by_old).map_err(|old| {
             migrate_error(format!(
-                "Note {id} inherits from note {old} with `inh:{old}/…`, which does not exist. \
-                 Fix the reference before migrating."
+                "Note {id} takes a card of note {old} with `inh:{old}/…` or `mv:{old}/…`, which \
+                 does not exist. Fix the reference before migrating."
             ))
         })?;
         if after != data {
@@ -276,9 +277,10 @@ async fn plan_on(conn: &mut SqliteConnection) -> Result<MigrationPlan, Error> {
     })
 }
 
-/// `data` with every `inh:<old id>/` naming the new id, or the first old id that has no new one.
+/// `data` with every `inh:<old id>/` and `mv:<old id>/` naming the new id, or the first old id
+/// that has no new one.
 fn rewrite_inh(data: &str, by_old: &HashMap<i64, NoteId>) -> Result<String, i64> {
-    let regex = Regex::new(r"(inh:\s*)(\d+)(?=\s*/)").expect("valid regex");
+    let regex = Regex::new(r"((?<![\w-])(?:inh|mv):\s*)(\d+)(?=\s*/)").expect("valid regex");
     let mut missing = None;
     let after = regex.replace_all(data, |caps: &Captures<'_, str>| {
         let old: i64 = caps[2].parse().unwrap_or(-1);
@@ -994,6 +996,11 @@ mod tests {
             "no inheritance"
         );
         assert_eq!(rewrite_inh("{{[inh:7/1] a}}", &map), Err(7));
+        assert_eq!(
+            rewrite_inh("{{[o:1;mv:12/2] a }}", &map).unwrap(),
+            format!("{{{{[o:1;mv:{}/2] a }}}}", map[&12].letters())
+        );
+        assert_eq!(rewrite_inh("{{[mv:7/1] a}}", &map), Err(7));
     }
 
     #[test]

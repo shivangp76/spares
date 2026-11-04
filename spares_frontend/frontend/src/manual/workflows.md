@@ -23,6 +23,16 @@ The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:aae/1] at ab
 
 Here the new card inherits from note `aae`'s first card. The rules are on `inherit` in `spares_core::parsers::ClozeGroupingSettings`.
 
+## Merging notes
+
+`inh:` copies, so the source card keeps its reviews, and if you then delete its note, those reviews stay behind with no card and are still counted in the history next to the copies. To merge notes, use `mv:` instead, which takes the same `NOTE_ID/ORDER` but moves the source card itself into the new cloze's place, with its id, scheduling and review history:
+
+```md
+A crankshaft's webs carry {{[o:1] counterweights}}, opposite {{[mv:bxd/1] the rod journals}}.
+```
+
+Write the merged note, give each cloze brought in from another note `mv:` in place of its `o:` (`spares card get -n NOTE_ID` lists a note's orders), and push. Once the cards have moved, the source notes have no cards left for those clozes, so delete their files in a **second** push: a push deletes notes before it edits and creates others, so a source deleted in the same push is gone before its card can move. A cloze takes `inh:` or `mv:`, not both; no two clozes may move the same card; and one undo puts the moved cards back.
+
 ## CLI cards
 
 A CLI card is reviewed by running a command, such as a test suite, rather than by flipping a rendered document. Its syntax and how its score becomes a rating are documented on `spares_core::parsers::cli`.

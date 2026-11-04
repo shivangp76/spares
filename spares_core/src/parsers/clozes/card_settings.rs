@@ -4,11 +4,13 @@ use std::str::FromStr;
 use indexmap::IndexMap;
 
 use super::data::BackReveal;
+use super::data::CardInheritance;
 use super::data::ClozeGrouping;
 use super::data::ClozeGroupingSettings;
 use super::data::ClozeSettings;
 use super::data::ClozeUid;
 use super::data::FrontConceal;
+use super::data::InheritMode;
 use super::data::ModifyDefaultsFn;
 use super::data::ReadableCardIdentifier;
 use super::data::TypeAnswer;
@@ -37,6 +39,8 @@ pub struct ClozeSettingsKeys {
     /// The answer is typed before the card is flipped. See [`TypeAnswer`] for its values.
     pub type_answer: &'static str,
     pub inherit: &'static str,
+    /// Like `inherit`, but moves the source card instead of copying it
+    pub move_card: &'static str,
     pub overlapper: &'static str,
     pub id: &'static str,
     /// Speaks the cloze's text. See [`crate::parsers::tts`] for its values.
@@ -58,6 +62,7 @@ impl Default for ClozeSettingsKeys {
             back_emphasis: "be",
             type_answer: "t",
             inherit: "inh",
+            move_card: "mv",
             overlapper: "ov",
             id: "id",
             tts: TtsSetting::KEY,
@@ -221,13 +226,17 @@ pub fn construct_cloze_string(
                 )
             });
         }
-        if serialize_ephemeral && let Some(identifier) = inherit {
+        if serialize_ephemeral && let Some(CardInheritance { source, mode }) = inherit {
+            let key = match mode {
+                InheritMode::Copy => cloze_settings_keys.inherit,
+                InheritMode::Move => cloze_settings_keys.move_card,
+            };
             grouping_parts.push(format!(
                 "{}{}{}/{}",
-                cloze_settings_keys.inherit,
+                key,
                 settings_key_value_delim,
-                identifier.note_id.letters(),
-                identifier.order,
+                source.note_id.letters(),
+                source.order,
             ));
         }
 
@@ -285,6 +294,7 @@ fn parse_grouping(
 }
 
 fn parse_card_source(
+    key: &str,
     value: &str,
     data: &str,
     card_settings_indices: &Range<usize>,
@@ -295,7 +305,8 @@ fn parse_card_source(
     let note_id = note_id_str.parse::<NoteId>().map_err(|e| {
         LibraryError::Card(CardErrorKind::InvalidSettings {
             description: format!(
-                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid note id `{}`. Error: {}",
+                "`{key}:` must be in the format `{key}:NOTE_ID/ORDER`. Invalid note id `{}`. \
+                 Error: {}",
                 note_id_str, e
             ),
             src: data.to_string(),
@@ -305,7 +316,7 @@ fn parse_card_source(
     let order = order_str.parse::<usize>().map_err(|e| {
         LibraryError::Card(CardErrorKind::InvalidSettings {
             description: format!(
-                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid order `{}`. Error: {}",
+                "`{key}:` must be in the format `{key}:NOTE_ID/ORDER`. Invalid order `{}`. Error: {}",
                 order_str, e
             ),
             src: data.to_string(),
@@ -314,7 +325,7 @@ fn parse_card_source(
     })?;
     if order == 0 {
         return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
-            description: "`inh:` order must be >= 1.".to_string(),
+            description: format!("`{key}:` order must be >= 1."),
             src: data.to_string(),
             at: card_settings_indices.clone().into(),
         }));
@@ -342,6 +353,7 @@ fn parse_grouping_settings(
         back_emphasis: back_emphasis_key,
         type_answer: type_answer_key,
         inherit: inherit_key,
+        move_card: move_card_key,
         overlapper: overlapper_key,
         id: id_key,
         tts: tts_key,
@@ -405,9 +417,24 @@ fn parse_grouping_settings(
                 })?);
         } else if key == overlapper_key {
             settings.is_overlapper = true;
-        } else if key == inherit_key {
-            current_grouping_settings.inherit =
-                Some(parse_card_source(value, data, card_settings_indices)?);
+        } else if key == inherit_key || key == move_card_key {
+            if current_grouping_settings.inherit.is_some() {
+                return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
+                    description: format!(
+                        "A cloze takes one of `{inherit_key}:` and `{move_card_key}:`, once."
+                    ),
+                    src: data.to_string(),
+                    at: card_settings_indices.clone().into(),
+                }));
+            }
+            current_grouping_settings.inherit = Some(CardInheritance {
+                source: parse_card_source(key, value, data, card_settings_indices)?,
+                mode: if key == inherit_key {
+                    InheritMode::Copy
+                } else {
+                    InheritMode::Move
+                },
+            });
         } else if key == orders_key {
             let orders = value
                 .split(',')

@@ -178,7 +178,7 @@ fn print_plan(plan: &MigrationPlan, card_count: usize, scratch: &Path) {
         println!("  {:>6} -> {}  ({})", m.old, m.new, m.parser_name);
     }
     if plan.rewrites.is_empty() {
-        println!("No `inh:` references or filtered tag queries name notes.");
+        println!("No `inh:` or `mv:` references or filtered tag queries name notes.");
     } else {
         println!("Rewritten references:");
         for rewrite in &plan.rewrites {
