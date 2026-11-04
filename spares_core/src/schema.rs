@@ -841,6 +841,38 @@ pub mod review {
         pub card_count: u32,
     }
 
+    /// An image occlusion of a review card whose back masks some of it, which the review page can
+    /// show without masks.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+    pub struct UnmaskedImageOcclusion {
+        /// As the card's figure is captioned ([`crate::parsers::image_occlusion::image_occlusion_caption`])
+        pub caption: String,
+        /// Its place among the card's image occlusions, from 1
+        pub order: usize,
+    }
+
+    /// `GET /api/review/unmasked-image-occlusion`: a part of an image occlusion of a card, without
+    /// masks (see [`crate::api::review::unmasked_image_occlusion`]).
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct UnmaskedImageOcclusionRequest {
+        pub note_id: NoteId,
+        pub card_order: u32,
+        /// [`UnmaskedImageOcclusion::order`]
+        pub order: usize,
+        pub part: UnmaskedImageOcclusionPart,
+    }
+
+    /// A part of an image occlusion without masks, which the review page shows one over the other
+    /// at the same width.
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum UnmaskedImageOcclusionPart {
+        /// The original image, as it is
+        Image,
+        /// Its Markup layer, as an SVG the size of the original image
+        Markup,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub enum CardBackRenderedPath {
         CardBack(PathBuf),
@@ -931,6 +963,10 @@ pub mod review {
         /// which web clients fetch from the render assets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub audio: Option<CardAudio>,
+        /// Present iff the back of the card still masks some of its image occlusions: those, which
+        /// the review page shows without masks when asked (`GET /api/review/unmasked-image-occlusion`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub image_occlusions: Option<Vec<UnmaskedImageOcclusion>>,
         /// The number of cards left in each state for the relevant query, as many as today's
         /// limits leave room for. With `reviews_daily_limit = 200`, 600 reviews due and 50
         /// already done today, reviews show 150, not 550. Learning and relearning cards, and the

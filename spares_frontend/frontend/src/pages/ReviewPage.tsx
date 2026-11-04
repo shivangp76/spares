@@ -48,6 +48,7 @@ import {
   TypedAnswerInputs,
   TypedAnswerResult,
 } from "../components/TypedAnswer";
+import UnmaskedImageOcclusions from "../components/UnmaskedImageOcclusions";
 import AudioBar from "../components/AudioBar";
 import ReviewHeatmap from "../components/ReviewHeatmap";
 import { NavbarHelp } from "../components/Navbar";
@@ -511,6 +512,10 @@ export default function ReviewPage() {
   const [showPreviousCardInfo, setShowPreviousCardInfo] = useState(false);
   // Find in queue, during a session, for its filter
   const [showFindInQueue, setShowFindInQueue] = useState(false);
+  // The card whose image occlusions are shown without masks, on its back. Any other card or side
+  // closes them, so the next card starts with its masks.
+  const [unmaskedCard, setUnmaskedCard] =
+    useState<GetReviewCardResponse | null>(null);
 
   const tagId =
     activeFilter && "FilteredTag" in activeFilter
@@ -712,6 +717,7 @@ export default function ReviewPage() {
     rateStart.current = Date.now();
     rateDuration.current = null;
     syncStopwatch();
+    setUnmaskedCard(null);
     setPhase("back");
   }
 
@@ -1244,6 +1250,10 @@ export default function ReviewPage() {
     !!cardAudio &&
     (cardAudio.front.length > 0 ||
       (phase === "back" && cardAudio.back.length > 0));
+  // Only on the back, since the front would give the answer away
+  const canUnmask = phase === "back" && !!card?.image_occlusions?.length;
+  const showUnmasked = canUnmask && unmaskedCard === card;
+  const toggleUnmasked = () => setUnmaskedCard(showUnmasked ? null : card);
   const pageWidth = usePageWidth();
   function cyclePageWidth() {
     setPageWidth(
@@ -1328,6 +1338,13 @@ export default function ReviewPage() {
       available: reviewing && hasAudio,
     },
     {
+      keys: ["m"],
+      description: showUnmasked
+        ? "Close the image occlusions without masks"
+        : "Show the image occlusions without masks",
+      available: canUnmask,
+    },
+    {
       keys: ["w"],
       description: `Change the page width (now ${PAGE_WIDTH_LABELS[pageWidth]})`,
       available: reviewing && !isNarrow,
@@ -1389,6 +1406,7 @@ export default function ReviewPage() {
         Q: () => setShowFindInQueue((v) => !v),
         r: replayAudio,
         w: cyclePageWidth,
+        m: toggleUnmasked,
         "+": zoomIn,
         "=": zoomIn,
         "-": zoomOut,
@@ -2068,6 +2086,26 @@ export default function ReviewPage() {
                 <TypedAnswerResult
                   info={card.typed_answer}
                   answers={typedAnswers}
+                />
+              )}
+              {canUnmask && (
+                <div style={{ marginBottom: 8 }}>
+                  <button
+                    onClick={toggleUnmasked}
+                    aria-pressed={showUnmasked}
+                    style={toned(TONES.gray, actionButton)}
+                    title="The card's image occlusions as their images, with their markup and no masks"
+                  >
+                    Without Masks <span className="key-hint">(m)</span>
+                  </button>
+                </div>
+              )}
+              {showUnmasked && (
+                <UnmaskedImageOcclusions
+                  noteId={card.note_id}
+                  cardOrder={card.card_order}
+                  occlusions={card.image_occlusions!}
+                  onClose={() => setUnmaskedCard(null)}
                 />
               )}
               <div

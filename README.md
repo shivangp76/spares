@@ -26,6 +26,7 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
   - Drawn in the web app's note editor
   - Support for interweaving image occlusion with text clozes
   - Hint display over image clozes
+  - On a card's back, its images without masks (`m`), with their markup
 - **Cross-note Referencing**:
   - Keyword-based linking system
   - Support for partial references

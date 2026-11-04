@@ -89,6 +89,10 @@ pub use utils::get_image_occlusion_rendered_directory;
 
 #[cfg(test)]
 mod test;
+mod unmask;
+pub use unmask::cloze_count;
+pub use unmask::masks_on_back;
+pub use unmask::unmasked_overlay_svg;
 
 const CLOZE_SETTINGS_KEY: &str = "data-cloze-settings";
 const CLOZES_GROUP_ID: &str = "clozes-group";
