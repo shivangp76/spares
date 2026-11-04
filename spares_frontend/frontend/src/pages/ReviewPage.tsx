@@ -37,6 +37,7 @@ import FindInQueue from '../components/QueuePositions';
 import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import { TypedAnswerInputs, TypedAnswerResult } from '../components/TypedAnswer';
+import UnmaskedImageOcclusions from '../components/UnmaskedImageOcclusions';
 import AudioBar from '../components/AudioBar';
 import ReviewHeatmap from '../components/ReviewHeatmap';
 import { NavbarHelp } from '../components/Navbar';
@@ -320,6 +321,9 @@ export default function ReviewPage() {
   const [showPreviousCardInfo, setShowPreviousCardInfo] = useState(false);
   // Find in queue, during a session, for its filter
   const [showFindInQueue, setShowFindInQueue] = useState(false);
+  // The card whose image occlusions are shown without masks, on its back. Any other card or side
+  // closes them, so the next card starts with its masks.
+  const [unmaskedCard, setUnmaskedCard] = useState<GetReviewCardResponse | null>(null);
 
   const tagId = activeFilter && 'FilteredTag' in activeFilter ? activeFilter.FilteredTag.tag_id : null;
 
@@ -484,6 +488,7 @@ export default function ReviewPage() {
     rateStart.current = Date.now();
     rateDuration.current = null;
     syncStopwatch();
+    setUnmaskedCard(null);
     setPhase('back');
   }
 
@@ -912,6 +917,10 @@ export default function ReviewPage() {
   const [showKeybindings, setShowKeybindings] = useState(false);
   const cardShown = reviewing && card !== null;
   const hasAudio = !!cardAudio && (cardAudio.front.length > 0 || (phase === 'back' && cardAudio.back.length > 0));
+  // Only on the back, since the front would give the answer away
+  const canUnmask = phase === 'back' && !!card?.image_occlusions?.length;
+  const showUnmasked = canUnmask && unmaskedCard === card;
+  const toggleUnmasked = () => setUnmaskedCard(showUnmasked ? null : card);
   const pageWidth = usePageWidth();
   function cyclePageWidth() {
     setPageWidth(PAGE_WIDTHS[(PAGE_WIDTHS.indexOf(pageWidth) + 1) % PAGE_WIDTHS.length]);
@@ -937,6 +946,7 @@ export default function ReviewPage() {
     { keys: ['q'], description: 'Switch query', available: reviewing },
     { keys: ['Q'], description: showFindInQueue ? 'Close Find in queue' : "Find cards in this session's queue", available: reviewing },
     { keys: ['r'], description: 'Replay audio', available: reviewing && hasAudio },
+    { keys: ['m'], description: showUnmasked ? 'Close the image occlusions without masks' : 'Show the image occlusions without masks', available: canUnmask },
     { keys: ['w'], description: `Change the page width (now ${PAGE_WIDTH_LABELS[pageWidth]})`, available: reviewing && !isNarrow },
     { keys: ['+', '='], description: `Larger card text (now ${cardZoom}%)`, available: reviewing },
     { keys: ['-'], description: 'Smaller card text', available: reviewing },
@@ -966,6 +976,7 @@ export default function ReviewPage() {
       const actions: Record<string, () => void> = {
         Space: showAnswer, u: undo, U: redo, b: buryCard, B: buryNote, l: buryUntilLaterToday, d: buryCardUntilDate, s: suspendCard, e: toggleCardNote,
         R: reloadCard, f: flagNote, q: switchQuery, Q: () => setShowFindInQueue(v => !v), r: replayAudio, w: cyclePageWidth,
+        m: toggleUnmasked,
         '+': zoomIn, '=': zoomIn, '-': zoomOut,
       };
       ratings.forEach((r, i) => { actions[String(i + 1)] = () => rate(r.id); });
@@ -1254,6 +1265,16 @@ export default function ReviewPage() {
             <div style={phase === 'back' ? undefined : hiddenSide} aria-hidden={phase !== 'back'}>
               {phase === 'back' && cardAudio && <AudioBar audio={cardAudio} flipped player={audioPlayer} />}
               {phase === 'back' && card.typed_answer && <TypedAnswerResult info={card.typed_answer} answers={typedAnswers} />}
+              {canUnmask && (
+                <div style={{ marginBottom: 8 }}>
+                  <button onClick={toggleUnmasked} aria-pressed={showUnmasked} style={toned(TONES.gray, actionButton)} title="The card's image occlusions as their images, with their markup and no masks">
+                    Without Masks <span className="key-hint">(m)</span>
+                  </button>
+                </div>
+              )}
+              {showUnmasked && (
+                <UnmaskedImageOcclusions noteId={card.note_id} cardOrder={card.card_order} occlusions={card.image_occlusions!} onClose={() => setUnmaskedCard(null)} />
+              )}
               <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 16, background: 'var(--surface)' }}>
                 <CardRenderer path={backPath(card)} source={card.browser_sources?.card_back} deviceSource={card.device_sources?.card_back} noteId={card.note_id} webPath={backWebPath(card)} version={cardVersion} onOpenNote={openNote} onPlayAudio={playAudioClip} scrollToCloze={phase === 'back'} />
               </div>

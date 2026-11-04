@@ -1,11 +1,12 @@
 // End-to-end test of a device's copy of the collection (src/local), in headless Chromium, WebKit
 // and Firefox, against a server of its own on an empty collection:
 //
-// 1. Settings → Keep a Copy on This Device.
-// 2. Offline: review a card, open `/`, see a card's audio clip, add notes, one with a dropped
-//    image, edit a note the server also edits and one with the server's image occlusion, search,
-//    open the statistics, undo. Show a Typst card with the server's image occlusion, whose image
-//    the device makes.
+// 1. Show a card's image occlusion without masks, from the server. Settings → Keep a Copy on This
+//    Device.
+// 2. Offline: review a card, and a card's image occlusion without masks, open `/`, see a card's
+//    audio clip, add notes, one with a dropped image, edit a note the server also edits and one
+//    with the server's image occlusion, search, open the statistics, undo. Show a Typst card with
+//    the server's image occlusion, whose image the device makes.
 // 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Add a note with a
 //    new image occlusion, which the copy stores, and a Typst note with one, whose card shows before
 //    a sync, and sync. Offline, a Markdown note with a cloze and an image occlusion, whose cards
@@ -88,6 +89,8 @@ interface Note { id: number; data: string }
 
 const IMAGE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#F97316"/></svg>';
 const CLOZES_SVG = '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title><rect id="svg_1" x="10" y="10" width="50" height="50" fill="#FFEBA2"/></g></svg>';
+/** With a shape on the Markup layer, which a card's back shows without masks too */
+const MARKUP_CLOZES_SVG = CLOZES_SVG.replace('<title>Markup</title>', '<title>Markup</title><circle id="svg_9" cx="200" cy="200" r="40" fill="#2563EB"/>');
 
 /** A `width`×`height` PNG of one color. Image occlusions in cards need an image the `image` crate reads, which an SVG isn't. */
 function png(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
@@ -164,7 +167,7 @@ async function seed(): Promise<void> {
   const form = new FormData();
   form.append('parser_id', String(markdown));
   form.append('image', new File([IMAGE_PNG], 'seed.png', { type: 'image/png' }));
-  form.append('clozes', CLOZES_SVG);
+  form.append('clozes', MARKUP_CLOZES_SVG);
   const res = await fetch(`${ORIGIN}/api/image-occlusions`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: form });
   if (!res.ok) throw new Error(`POST /api/image-occlusions: ${res.status} ${await res.text()}`);
   const { snippet } = await res.json() as { snippet: string };
@@ -250,6 +253,30 @@ async function deviceMathFront(page: Page, query: string): Promise<ShownCard> {
 }
 
 /** Text in the page, waited for. */
+/**
+ * Reviews the card `query` finds, and on its back opens its image occlusion without masks with
+ * `m`: its original image with its markup over it, both loaded. Then `afterwards` closes it, or
+ * rates the card. Whether they showed and the popup is gone.
+ */
+async function seeUnmasked(page: Page, query: string, afterwards: 'Escape' | '1'): Promise<boolean> {
+  await page.goto(`${ORIGIN}/review?query=${encodeURIComponent(query)}`);
+  await page.getByRole('button', { name: 'Start Review' }).click();
+  await page.getByRole('button', { name: /Show Answer/ }).click();
+  await page.getByRole('button', { name: /Without Masks/ }).waitFor();
+  await page.keyboard.press('m');
+  const dialog = page.getByRole('dialog', { name: 'Without masks' });
+  await dialog.waitFor();
+  const shown = await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll<HTMLImageElement>('dialog.unmasked-image-occlusions img')];
+    return images.length === 2 && images.every(image => image.src.startsWith('blob:') && image.complete && image.naturalWidth > 0);
+  }, null, { timeout: TIMEOUT }).then(() => true, () => false);
+  await page.keyboard.press(afterwards);
+  await dialog.waitFor({ state: 'detached' });
+  // The next card, if any, starts with its masks
+  if (afterwards === '1') await page.waitForTimeout(500);
+  return shown && await dialog.count() === 0;
+}
+
 async function see(page: Page, text: string | RegExp, timeout = TIMEOUT): Promise<void> {
   await page.getByText(text).first().waitFor({ timeout });
 }
@@ -324,6 +351,8 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     }, { serverUrl: ORIGIN, apiKey: KEY, schedulerName: schedulers[0] });
     // Controlled by the service worker from here on, so the app opens offline
     await page.evaluate(() => navigator.serviceWorker.ready);
+    // A card's image occlusion without masks, from the server
+    check('the back of a card shows its image occlusion without masks', await seeUnmasked(page, '"Occlusion seed"', 'Escape'));
     await page.goto(`${ORIGIN}/settings`);
 
     // 1. Set up the copy
@@ -361,6 +390,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
 
     // 2. Offline
     await context.setOffline(true);
+    check('the back of a card shows its image occlusion without masks offline, and rating it closes them', await seeUnmasked(page, '"Occlusion seed"', '1'));
     await page.goto(`${ORIGIN}/review`);
     await page.getByRole('button', { name: 'Start Review' }).click();
     await page.getByRole('button', { name: /Show Answer/ }).click();

@@ -106,6 +106,7 @@ use crate::handlers::review::get_review_history_handler;
 use crate::handlers::review::get_statistics_graphs_handler;
 use crate::handlers::review::get_statistics_handler;
 use crate::handlers::review::get_steps_stats_handler;
+use crate::handlers::review::get_unmasked_image_occlusion_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::queue_positions_handler;
 use crate::handlers::review::submit_study_action_handler;
@@ -324,6 +325,10 @@ fn review_routes() -> Router<Arc<AppState>> {
         )
         .route("/api/statistics/steps", post(get_steps_stats_handler))
         .route("/api/review/config", get(get_review_config_handler))
+        .route(
+            "/api/review/unmasked-image-occlusion",
+            get(get_unmasked_image_occlusion_handler),
+        )
 }
 
 /// The routes that only need the database (and the files of `spares_core::platform`: config,

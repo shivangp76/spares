@@ -377,6 +377,21 @@ export async function fetchImageOcclusionFile(path: string): Promise<Blob> {
   return res.blob();
 }
 
+/**
+ * The `order`th image occlusion (from 1) of card `cardOrder` of a note, without masks, as object
+ * URLs to revoke: its original image, and its markup to show over it at the same width, if it has
+ * any. On a device that keeps a copy, the copy answers.
+ */
+export async function fetchUnmaskedImageOcclusion(noteId: number, cardOrder: number, order: number): Promise<{ image: string; markup: string | null }> {
+  const path = (part: 'image' | 'markup') =>
+    `/api/review/unmasked-image-occlusion?note_id=${noteId}&card_order=${cardOrder}&order=${order}&part=${part}`;
+  const [image, markup] = await Promise.all([
+    apiSend('Image occlusion without masks', path('image')).then(res => res.blob()),
+    apiSend('Image occlusion markup', path('markup')).then(res => (res.status === 204 ? null : res.blob())),
+  ]);
+  return { image: URL.createObjectURL(image), markup: markup && URL.createObjectURL(markup) };
+}
+
 /** The note's image occlusions, in the order they appear in it. */
 export async function listNoteImageOcclusions(noteId: number): Promise<ImageOcclusionData[]> {
   return apiFetch('Image occlusions', `/api/notes/${noteId}/image-occlusions`);
