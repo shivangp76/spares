@@ -191,10 +191,7 @@ fn print_plan(plan: &MigrationPlan, card_count: usize, scratch: &Path) {
     for (what, count) in &plan.orphans {
         println!("Rows naming notes that no longer exist, to clean up: {count} {what}.");
     }
-    println!(
-        "Undo history to drop: {} events. Image occlusion render assets to drop: {}.",
-        plan.events, plan.image_occlusion_assets
-    );
+    println!("Undo history to drop: {} events.", plan.events);
     let counts = count_files(mapping, card_count);
     println!(
         "Files: {} note files to rename and regenerate, {} card files and {} rendered files to \
