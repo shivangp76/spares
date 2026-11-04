@@ -591,8 +591,17 @@ pub(crate) fn create_image_occlusion_card(
     write_card_image(card_filepath, &contents)
 }
 
-/// Writes `contents`, a card's image, to `card_filepath`.
+/// Writes `contents`, a card's image, to `card_filepath`, unless the file already holds them.
+/// Rewriting it would change its modification time, so `sync_render_assets` would hash it again
+/// and tools like rsync would copy it again, though most of a note's card images are unchanged
+/// when it is rendered again.
 fn write_card_image(card_filepath: &Path, contents: &[u8]) -> Result<(), Error> {
+    // Compared by size first, so a changed image is usually not read
+    if fs::metadata(card_filepath).is_ok_and(|m| m.len() == contents.len() as u64)
+        && fs::read(card_filepath).is_ok_and(|old| old == contents)
+    {
+        return Ok(());
+    }
     fs::write(card_filepath, contents).map_err(|e| {
         Error::Library(LibraryError::Note(NoteErrorKind::Other {
             description: format!("Failed to save {}: {}", card_filepath.display(), e),
