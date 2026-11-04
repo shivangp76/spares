@@ -37,8 +37,8 @@ use crate::parsers::audio::is_audio_path;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
 
 /// Directories in the files directory that hold the server's own state rather than rendered
-/// files: sync's snapshots and the hashes that tell a note needs rendering again.
-const INTERNAL_DIRS: [&str; 2] = ["sync", "note-hashes"];
+/// files: sync's snapshots.
+const INTERNAL_DIRS: [&str; 1] = ["sync"];
 
 /// The kinds of rendered file web clients fetch from `/files`: rendered notes and cards, their
 /// HTML for web clients, and rendered image occlusions. Others are by-products, such as LaTeX's.

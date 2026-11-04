@@ -234,17 +234,11 @@ fn check_hooks() {
     match hooks {
         Ok(hooks) if same_path(&hooks, &expected) => {
             for hook in ["pre-receive", "push-to-checkout", "post-receive"] {
-                match std::fs::read_to_string(expected.join(hook)) {
-                    Err(_) => log::warn!(
+                if !expected.join(hook).is_file() {
+                    log::warn!(
                         "The `{hook}` hook is missing from {}; run `spares vcs init --repair-hooks`",
                         expected.display()
-                    ),
-                    // Hooks written before `spares vcs` run `spares note vcs-hook`, which is gone
-                    Ok(script) if !script.contains(" vcs hook ") => log::warn!(
-                        "The `{hook}` hook in {} is from an older spares; run `spares vcs init --repair-hooks`",
-                        expected.display()
-                    ),
-                    Ok(_) => {}
+                    );
                 }
             }
         }

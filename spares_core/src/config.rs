@@ -361,10 +361,6 @@ impl Default for SparesInternalConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EasyDaysConfig {
-    /// Deprecated: use [`SparesExternalConfig::load_balance`]. `false` is read as
-    /// `load_balance = false`, which is what it used to control.
-    #[serde(skip_serializing)]
-    pub enabled: Option<bool>,
     /// Mapping from days of the week to a percentage describing their workload.
     /// Between 0% (0.0) and 100% (1.0). For example, if this is 0.2, then 20% of cards will be scheduled on that day, relative to normal days (which are set to 1.0).
     ///
@@ -392,7 +388,6 @@ impl Default for EasyDaysConfig {
             days_to_workload_percentage.insert(weekday, 1.);
         }
         Self {
-            enabled: None,
             days_to_workload_percentage,
             specific_dates: HashSet::default(),
         }
@@ -1089,13 +1084,6 @@ impl SparesExternalConfig {
                 self.fsrs_parameters.len()
             ));
         }
-        if self.easy_days.enabled == Some(false) && self.load_balance {
-            log::warn!(
-                "`easy_days.enabled` is deprecated. Replace `enabled = false` with \
-                 `load_balance = false` at the top level of the config."
-            );
-            self.load_balance = false;
-        }
         for (weekday, workload_percentage) in &self.easy_days.days_to_workload_percentage {
             if !(&0_f64..=&1.).contains(&workload_percentage) {
                 return Err(format!(
@@ -1441,23 +1429,6 @@ mod tests {
         let config = parse("");
         assert!(config.load_balance);
         assert!(config.disperse_siblings);
-    }
-
-    #[test]
-    fn deprecated_easy_days_enabled_turns_off_load_balancing() {
-        let config = parse("[easy_days]\nenabled = false\n");
-        assert!(!config.load_balance);
-        assert!(config.disperse_siblings, "it never controlled dispersal");
-
-        assert!(parse("[easy_days]\nenabled = true\n").load_balance);
-    }
-
-    #[test]
-    fn deprecated_easy_days_enabled_is_not_written_back() {
-        let config = parse("[easy_days]\nenabled = false\n");
-        let written = toml_edit::ser::to_string_pretty(&config).unwrap();
-        assert!(!written.contains("enabled"), "{written}");
-        assert!(written.contains("load_balance = false"), "{written}");
     }
 
     #[test]
