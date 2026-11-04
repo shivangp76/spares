@@ -282,20 +282,27 @@ impl HttpRemote {
             .to_vec())
     }
 
-    /// Stores a file this browser added on the server, before the push whose notes name it.
+    /// Stores a file this browser added on the server, before the push whose notes name it. With
+    /// `replaces`, the hash the server listed for its file, the file replaces that one, if the
+    /// server still has it (see [`super::media::replace_media`]).
     pub async fn upload_media(
         &self,
         kind: MediaKind,
         name: &str,
         contents: Vec<u8>,
+        replaces: Option<&str>,
     ) -> Result<(), Error> {
+        // A hash, in hex
+        let path = match replaces {
+            Some(replaces) => format!(
+                "/api/sync/media/{}/{name}?replaces={replaces}",
+                kind.as_str()
+            ),
+            None => format!("/api/sync/media/{}/{name}", kind.as_str()),
+        };
         self.send(
-            self.request(
-                reqwest::Method::PUT,
-                &format!("/api/sync/media/{}/{name}", kind.as_str()),
-                EXCHANGE_TIMEOUT,
-            )
-            .body(contents),
+            self.request(reqwest::Method::PUT, &path, EXCHANGE_TIMEOUT)
+                .body(contents),
         )
         .await?;
         Ok(())
