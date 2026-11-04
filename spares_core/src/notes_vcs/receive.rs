@@ -27,6 +27,7 @@ use super::git::nul_split;
 use super::git::rev_parse;
 use super::lock::NotesGuard;
 use super::lock::exclusive_guard;
+use super::note_file::NoteFileContext;
 use super::note_file::ParsedNoteFile;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
@@ -579,6 +580,8 @@ impl PushedNote {
 
 #[expect(clippy::too_many_lines)]
 async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Outcome, Error> {
+    // config.toml and the note templates, read once for every pushed file
+    let context = NoteFileContext::default();
     // 1. The hook's repository must be the one this server writes to.
     if let Some(reason) = wrong_repo(&request.repo) {
         return Ok(Outcome::Rejected(reason));
@@ -772,9 +775,11 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 id,
                 old_blob,
                 new_blob,
-            } => match parse_note_file(parser.as_ref(), new_blob, *id, false) {
+            } => match parse_note_file(&context, parser.as_ref(), new_blob, *id, false) {
                 Ok(parsed) => {
-                    if let Some(reason) = live_note_edit(parser.as_ref(), *id, old_blob, &parsed) {
+                    if let Some(reason) =
+                        live_note_edit(&context, parser.as_ref(), *id, old_blob, &parsed)
+                    {
                         errors.push(format!("{path}: {reason}"));
                         continue;
                     }
@@ -783,7 +788,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 Err(problems) => Err(problems),
             },
             PushedChange::Create { new_blob } => {
-                parse_new_note_file(parser.as_ref(), new_blob, false)
+                parse_new_note_file(&context, parser.as_ref(), new_blob, false)
                     .map(|parsed| (parsed.settings, Some(parsed.data)))
             }
             PushedChange::Delete { .. } => Ok((NoteSettings::default(), None)),
@@ -853,15 +858,21 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 changed.push(*id);
                 continue;
             }
-            let db_file = construct_db_note_file(note.parser.as_ref(), row, &links)?;
+            let db_file = construct_db_note_file(&context, note.parser.as_ref(), row, &links)?;
             if db_file.as_bytes() == *old_blob {
                 continue;
             }
             let base_fields = std::str::from_utf8(old_blob)
                 .ok()
-                .and_then(|old| file_note_fields(note.parser.as_ref(), old, *id));
+                .and_then(|old| file_note_fields(&context, note.parser.as_ref(), old, *id));
             let unchanged = base_fields.is_some_and(|base| {
-                same_note(note.parser.as_ref(), *id, &base, &db_note_fields(row))
+                same_note(
+                    &context,
+                    note.parser.as_ref(),
+                    *id,
+                    &base,
+                    &db_note_fields(row),
+                )
             });
             if !unchanged {
                 changed.push(*id);
@@ -919,7 +930,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     start_deferring();
 
     // 8. Import
-    if let Err(e) = import(db, &pushed, &mut journal).await {
+    if let Err(e) = import(db, &context, &pushed, &mut journal).await {
         stop_deferring();
         let outcome = rollback(db, &journal).await;
         remove_journal();
@@ -1040,6 +1051,7 @@ async fn card_move_errors(db: &SqlitePool, pushed: &[PushedNote]) -> Result<Vec<
 /// form one group, so one undo reverts it all.
 async fn import(
     db: &SqlitePool,
+    context: &NoteFileContext,
     pushed: &[PushedNote],
     journal: &mut Journal,
 ) -> Result<(), Error> {
@@ -1051,6 +1063,7 @@ async fn import(
         journal.deleted.iter().partition(|id| sources.contains(id));
     let mut import = Import {
         db,
+        context,
         parsers: get_all_parsers(),
         at: Utc::now(),
         leader: None,
@@ -1082,6 +1095,7 @@ async fn import(
 /// An import in progress
 struct Import<'a> {
     db: &'a SqlitePool,
+    context: &'a NoteFileContext,
     parsers: Vec<fn() -> Box<dyn Parseable>>,
     at: DateTime<Utc>,
     /// The first event of the import, whose group the later ones join
@@ -1108,7 +1122,7 @@ impl Import<'_> {
 
     async fn update(&mut self, note: &PushedNote, id: NoteId, new_blob: &str) -> Result<(), Error> {
         let parser_id = self.parser_id(note).await?;
-        let parsed = parse_note_file(note.parser.as_ref(), new_blob, id, true)
+        let parsed = parse_note_file(self.context, note.parser.as_ref(), new_blob, id, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let request = UpdateNotesRequest {
             selector: NotesSelector::Ids(vec![id]),
@@ -1124,7 +1138,7 @@ impl Import<'_> {
 
     async fn create(&mut self, note: &PushedNote, new_blob: &str) -> Result<(), Error> {
         let parser_id = self.parser_id(note).await?;
-        let parsed = parse_new_note_file(note.parser.as_ref(), new_blob, true)
+        let parsed = parse_new_note_file(self.context, note.parser.as_ref(), new_blob, true)
             .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let response = create_notes(
             self.db,
@@ -1253,6 +1267,7 @@ fn imported_ids(journal: &Journal) -> Vec<NoteId> {
 /// live note's data and custom data come from its source file, so an edit here would be overwritten
 /// by the next `spares import` of that file. Its tags and keywords stay editable, as on the web.
 fn live_note_edit(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     id: NoteId,
     old_blob: &[u8],
@@ -1260,7 +1275,7 @@ fn live_note_edit(
 ) -> Option<String> {
     let old = std::str::from_utf8(old_blob)
         .ok()
-        .and_then(|old| file_note_fields(parser, old, id))?;
+        .and_then(|old| file_note_fields(context, parser, old, id))?;
     let mut new = new.fields(parser);
     let live_sync_name = [&old, &new]
         .into_iter()
@@ -1268,7 +1283,7 @@ fn live_note_edit(
         .to_string();
     new.tags.clone_from(&old.tags);
     new.keywords.clone_from(&old.keywords);
-    if same_note(parser, id, &old, &new) {
+    if same_note(context, parser, id, &old, &new) {
         return None;
     }
     Some(format!(

@@ -9,6 +9,7 @@ use sqlx::SqlitePool;
 use super::commit::commit_index;
 use super::commit::git_index_lock;
 use super::git::git;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::paths::enabled;
 use super::paths::note_rel_path;
@@ -58,6 +59,7 @@ pub struct InitResponse {
 /// Creates the server copy of the notes repository from the database and activates it. The caller
 /// holds the exclusive notes lock, so no change can land between the snapshot and the activation.
 pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
+    let context = NoteFileContext::default();
     let repo = server_repo_dir();
     if repo.exists() {
         return Err(Error::NotesVcs(format!(
@@ -102,7 +104,7 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
     for row in &rows {
         let parser = find_parser(&row.parser_name, &parsers)?;
         let rel = note_rel_path(parser.as_ref(), row.note_id);
-        let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         let path = staging_repo.join(&rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
