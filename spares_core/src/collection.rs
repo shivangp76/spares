@@ -12,7 +12,7 @@
 //!   media/              images, audio and image occlusions that notes name
 //!   notes.git/          the notes repository (see `crate::notes_vcs`)
 //!   notes/              raw note files, a clone of the notes repository
-//!   render_assets/, id-map.tsv, …
+//!   render_assets/, …
 //! <cache>/users/<user_id>/     CollectionPaths::cache
 //!   files/              rendered notes and cards, served at /files
 //!   cards/              raw card files, which renders write from notes
