@@ -474,6 +474,13 @@ input[type="checkbox"] {
   width: min(640px, calc(100% - 32px));
 }
 
+/* A card's image occlusions without masks, as large as the window allows */
+.help-dialog.unmasked-image-occlusions {
+  width: auto;
+  max-width: calc(100% - 32px);
+  min-width: min(440px, calc(100% - 32px));
+}
+
 .help-dialog td:first-child button {
   padding: 2px 6px;
   font-size: 12px;

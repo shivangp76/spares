@@ -32,9 +32,19 @@ export interface GetReviewCardResponse {
   typed_answer?: TypedAnswerInfo;
   // Present iff the card has audio clips or text to read aloud
   audio?: CardAudio;
+  // Present iff the card's back still masks some of its image occlusions: those, which the review page shows without masks
+  image_occlusions?: UnmaskedImageOcclusion[];
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
+}
+
+/** An image occlusion of a review card whose back masks some of it. */
+export interface UnmaskedImageOcclusion {
+  /** As the card's figure is captioned */
+  caption: string;
+  /** Its place among the card's image occlusions, from 1 */
+  order: number;
 }
 
 export interface CliReviewInfo {

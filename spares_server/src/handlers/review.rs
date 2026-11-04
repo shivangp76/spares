@@ -2,15 +2,20 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Query;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::http::header;
 use axum::response::IntoResponse;
+use axum::response::Response;
 use chrono::Utc;
 use spares_core::api::queue_position::queue_positions;
+use spares_core::api::review::UnmaskedImageOcclusionFile;
 use spares_core::api::review::create_review_snapshot_tag;
 use spares_core::api::review::get_review_card;
 use spares_core::api::review::get_review_card_by_id;
 use spares_core::api::review::next_review_card_available_at;
 use spares_core::api::review::submit_study_action;
+use spares_core::api::review::unmasked_image_occlusion;
 use spares_core::api::statistics::get_review_history;
 use spares_core::api::statistics::get_statistics;
 use spares_core::api::statistics::get_statistics_graphs;
@@ -25,6 +30,7 @@ use spares_core::schema::review::ReviewHistoryRequest;
 use spares_core::schema::review::ReviewSnapshotRequest;
 use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::SubmitStudyActionRequest;
+use spares_core::schema::review::UnmaskedImageOcclusionRequest;
 use spares_core::schema::statistics::StatisticsGraphsRequest;
 use spares_core::schema::statistics::StepsStatsRequest;
 
@@ -145,4 +151,55 @@ pub(crate) async fn get_review_config_handler()
         flagged_tag_name: config.flagged_tag_name,
         set_card_due_date_duration: config.set_card_due_date_duration,
     }))
+}
+
+/// A part of an image occlusion of a card, without masks: the original image, or its markup as an
+/// SVG, or `204 No Content` if it has none (see `spares_core::api::review::unmasked_image_occlusion`).
+/// Revalidated by its hash, so opening it again reads it but sends nothing.
+pub(crate) async fn get_unmasked_image_occlusion_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Query(request): Query<UnmaskedImageOcclusionRequest>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let file = unmasked_image_occlusion(&data.db, &request, &get_all_parsers())
+        .await
+        .map_err(error_to_response)?;
+    let (contents, media_type, hash) = match file {
+        UnmaskedImageOcclusionFile::File {
+            contents,
+            media_type,
+            hash,
+        } => (contents, media_type, hash),
+        UnmaskedImageOcclusionFile::NoMarkup => return Ok(StatusCode::NO_CONTENT.into_response()),
+        UnmaskedImageOcclusionFile::NotFound => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "message": format!(
+                        "Note {} card {} has no image occlusion {}.",
+                        request.note_id.letters(),
+                        request.card_order,
+                        request.order
+                    )
+                })),
+            ));
+        }
+    };
+    let etag = format!("\"{hash}\"");
+    let cache_headers = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "private, no-cache".to_string()),
+    ];
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .is_some_and(|value| value.as_bytes() == etag.as_bytes())
+    {
+        return Ok((StatusCode::NOT_MODIFIED, cache_headers).into_response());
+    }
+    Ok((
+        cache_headers,
+        [(header::CONTENT_TYPE, media_type)],
+        contents,
+    )
+        .into_response())
 }

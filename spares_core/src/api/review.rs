@@ -31,6 +31,8 @@ use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards_logged_as;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::note::get_render_note_data;
+use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
 use crate::api::preset::PresetLimitsLeft;
@@ -80,6 +82,9 @@ use crate::model::StateId;
 use crate::model::Tag;
 use crate::model::TagId;
 use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::audio::card_audio;
@@ -89,8 +94,14 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
+use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::has_web_render_file;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::cloze_count;
+use crate::parsers::image_occlusion::image_occlusion_caption;
+use crate::parsers::image_occlusion::masks_on_back;
+use crate::parsers::image_occlusion::unmasked_overlay_svg;
 use crate::parsers::tts::TtsSetting;
 use crate::parsers::typed_answer::typed_answer_info;
 use crate::parsers::web_render_filepath;
@@ -117,6 +128,9 @@ use crate::schema::review::StateRole;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
+use crate::schema::review::UnmaskedImageOcclusion;
+use crate::schema::review::UnmaskedImageOcclusionPart;
+use crate::schema::review::UnmaskedImageOcclusionRequest;
 use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
 /// Makes a path relative to the [files directory](get_files_dir), when it is inside it.
@@ -373,6 +387,7 @@ fn build_review_card_response(
         device_sources: None,
         typed_answer: None,
         audio: None,
+        image_occlusions: None,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -1187,7 +1202,163 @@ async fn add_card_extras(
     response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
     let note_tts = TtsSetting::of_note(&request.custom_data);
     response.audio = card_audio(parser.as_ref(), &card, note_tts.as_ref());
+    response.image_occlusions = masked_image_occlusions(response, &card);
     Ok(())
+}
+
+/// The image occlusions of `card`, `response`'s card, that its back still masks some of (see
+/// [`masks_on_back`]), for the review page to show without masks. `None` if there are none, or if
+/// the back is the note, which shows the original images.
+fn masked_image_occlusions(
+    response: &GetReviewCardResponse,
+    card: &CardData,
+) -> Option<Vec<UnmaskedImageOcclusion>> {
+    if !matches!(
+        response.card_back_rendered_path,
+        CardBackRenderedPath::CardBack(_)
+    ) {
+        return None;
+    }
+    let masked: Vec<_> = card_image_occlusions(card)
+        .enumerate()
+        .filter(|(_, (cloze_indices, data))| {
+            masks_on_back(cloze_indices, data, || cloze_count(&data.clozes_filepath))
+        })
+        .map(|(i, (_, data))| UnmaskedImageOcclusion {
+            caption: image_occlusion_caption(data),
+            order: i + 1,
+        })
+        .collect();
+    (!masked.is_empty()).then_some(masked)
+}
+
+/// The image occlusions of `card`, in its order, with the clozes it asks for.
+fn card_image_occlusions(
+    card: &CardData,
+) -> impl Iterator<Item = (&[(usize, ClozeHiddenReplacement)], &ImageOcclusionData)> {
+    card.data.iter().filter_map(|part| match part {
+        NotePart::ImageOcclusion {
+            cloze_indices,
+            data,
+        } => Some((cloze_indices.as_slice(), data.as_ref())),
+        _ => None,
+    })
+}
+
+/// A part of the `order`th image occlusion (from 1) of card `card_order` of note `note_id`, without
+/// masks, for the review page (see [`crate::parsers::image_occlusion::unmasked_overlay_svg`]).
+pub async fn unmasked_image_occlusion(
+    db: &SqlitePool,
+    request: &UnmaskedImageOcclusionRequest,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<UnmaskedImageOcclusionFile, Error> {
+    let &UnmaskedImageOcclusionRequest {
+        note_id,
+        card_order,
+        order,
+        part,
+    } = request;
+    let Some(note_data) = get_render_note_data(db, Some(vec![note_id]))
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let parser = find_parser(&note_data.parser_name, all_parsers)?;
+    let generate_request = render_note_data_to_generate_files_request::<
+        std::collections::hash_map::RandomState,
+    >(&note_data, None);
+    let cards = get_cards(
+        parser.as_ref(),
+        None,
+        &generate_request.note_data,
+        false,
+        false,
+    )?;
+    let data = (card_order as usize)
+        .checked_sub(1)
+        .and_then(|i| cards.get(i))
+        .and_then(|card| {
+            order
+                .checked_sub(1)
+                .and_then(|i| card_image_occlusions(card).nth(i))
+        })
+        .map(|(_, data)| data.clone());
+    let Some(data) = data else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let Some(original_image_filepath) = readable_file(&data.original_image_filepath) else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let original_image = crate::platform::read(&original_image_filepath)
+        .await
+        .map_err(|e| Error::Io {
+            description: format!("Failed to read {}", original_image_filepath.display()),
+            source: e,
+        })?;
+    match part {
+        UnmaskedImageOcclusionPart::Image => Ok(UnmaskedImageOcclusionFile::file(
+            image::guess_format(&original_image)
+                .map_or("application/octet-stream", |format| format.to_mime_type()),
+            original_image,
+        )),
+        UnmaskedImageOcclusionPart::Markup => {
+            let Some(clozes_filepath) = readable_file(&data.clozes_filepath) else {
+                return Ok(UnmaskedImageOcclusionFile::NotFound);
+            };
+            let data = ImageOcclusionData {
+                clozes_filepath,
+                ..data
+            };
+            Ok(match unmasked_overlay_svg(&data, &original_image)? {
+                Some(contents) => UnmaskedImageOcclusionFile::file("image/svg+xml", contents),
+                None => UnmaskedImageOcclusionFile::NoMarkup,
+            })
+        }
+    }
+}
+
+/// What [`unmasked_image_occlusion`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnmaskedImageOcclusionFile {
+    File {
+        contents: Vec<u8>,
+        media_type: &'static str,
+        /// Of `contents`, by blake3, for an `ETag`
+        hash: String,
+    },
+    /// The image occlusion's Markup layer has no shapes
+    NoMarkup,
+    /// No such note, card or image occlusion, or its files are missing
+    NotFound,
+}
+
+impl UnmaskedImageOcclusionFile {
+    fn file(media_type: &'static str, contents: Vec<u8>) -> Self {
+        Self::File {
+            hash: blake3::hash(&contents).to_hex().to_string(),
+            contents,
+            media_type,
+        }
+    }
+}
+
+/// `path`, without symbolic links, if it is a file. The server's renders read any file a note
+/// names, too.
+#[cfg(not(target_family = "wasm"))]
+fn readable_file(path: &Path) -> Option<PathBuf> {
+    let path = path.canonicalize().ok()?;
+    path.is_file().then_some(path)
+}
+
+/// `path`, if it has no `..`. A device has only its collection's files, and no links.
+#[cfg(target_family = "wasm")]
+fn readable_file(path: &Path) -> Option<PathBuf> {
+    let inside = !path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir));
+    inside.then(|| path.to_path_buf())
 }
 
 pub async fn get_review_card_by_id(
@@ -2055,6 +2226,7 @@ pub(crate) async fn reschedule_all_cards(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::image_occlusion::list_note_image_occlusions;
     use crate::api::note::tests::tests::create_note_helper;
     use crate::api::note::update_notes;
     use crate::api::statistics::get_statistics;
@@ -2219,6 +2391,188 @@ mod tests {
                 ],
             })
         );
+    }
+
+    /// A Markdown note of `parser_id` with an image occlusion of two clozes and a markup circle,
+    /// with `edit` applied to its snippet, and the original image's contents.
+    async fn create_image_occlusion_note(
+        pool: &SqlitePool,
+        parser_id: i64,
+        name: &str,
+        edit: impl FnOnce(String) -> String,
+    ) -> (NoteId, Vec<u8>) {
+        use crate::api::image_occlusion::create_image_occlusion;
+        use crate::api::note::create_notes;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let mut image = Vec::new();
+        image::RgbaImage::new(40, 30)
+            .write_to(
+                &mut std::io::Cursor::new(&mut image),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let clozes = r##"<svg width="40" height="30" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title><circle id="svg_9" cx="20" cy="15" r="3" fill="red"/></g><g class="layer" id="clozes-group"><title>Clozes</title><rect id="svg_1" x="1" y="1" width="5" height="5" fill="#FFEBA2"/><rect id="svg_2" x="20" y="20" width="5" height="5" fill="#FFEBA2"/></g></svg>"##;
+        let created = create_image_occlusion(
+            pool,
+            parser_id,
+            &image,
+            &format!("{name}.png"),
+            clozes,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        let request = CreateNotesRequest {
+            parser_id,
+            requests: vec![CreateNoteRequest {
+                data: format!("{name}\n\n{}", edit(created.snippet)),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let notes = create_notes(pool, request, Utc::now(), &get_all_parsers(), false)
+            .await
+            .unwrap();
+        (notes.notes[0].id, image)
+    }
+
+    /// The `image_occlusions` of the review cards of `note_id`, by card order.
+    async fn review_image_occlusions(
+        pool: &SqlitePool,
+        note_id: NoteId,
+    ) -> Vec<Option<Vec<UnmaskedImageOcclusion>>> {
+        let card_ids: Vec<CardId> =
+            sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        let mut image_occlusions = Vec::new();
+        for card_id in card_ids {
+            let review_card =
+                get_review_card_by_id(pool, card_id, None, Utc::now(), &get_all_parsers())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            image_occlusions.push(review_card.image_occlusions);
+        }
+        image_occlusions
+    }
+
+    #[sqlx::test]
+    async fn test_review_card_unmasked_image_occlusions(pool: SqlitePool) -> () {
+        use crate::api::parser::tests::create_parser_helper;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        // By default the back emphasizes its answer and masks the other cloze
+        let (note_id, image) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-default", |s| s).await;
+        let data = &list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()[0];
+        let masked = Some(vec![UnmaskedImageOcclusion {
+            caption: image_occlusion_caption(data),
+            order: 1,
+        }]);
+        assert!(
+            masked.as_ref().unwrap()[0]
+                .caption
+                .starts_with("Unmask Default")
+        );
+        assert_eq!(
+            review_image_occlusions(&pool, note_id).await,
+            vec![masked.clone(), masked]
+        );
+
+        let unmasked = |card_order, order, part| {
+            let pool = pool.clone();
+            async move {
+                let request = UnmaskedImageOcclusionRequest {
+                    note_id,
+                    card_order,
+                    order,
+                    part,
+                };
+                unmasked_image_occlusion(&pool, &request, &get_all_parsers())
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(
+            unmasked(2, 1, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::file("image/png", image)
+        );
+        let UnmaskedImageOcclusionFile::File {
+            contents,
+            media_type,
+            ..
+        } = unmasked(1, 1, UnmaskedImageOcclusionPart::Markup).await
+        else {
+            panic!("no markup");
+        };
+        let markup = String::from_utf8(contents).unwrap();
+        assert_eq!(media_type, "image/svg+xml");
+        assert!(
+            markup.contains("<circle") && !markup.contains("<rect"),
+            "{markup}"
+        );
+        assert_eq!(
+            unmasked(1, 2, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::NotFound
+        );
+        assert_eq!(
+            unmasked(3, 1, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::NotFound
+        );
+
+        // Without markup
+        let (no_markup, _) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-plain", |s| s).await;
+        std::fs::write(
+            &list_note_image_occlusions(&pool, no_markup, &get_all_parsers())
+                .await
+                .unwrap()[0]
+                .clozes_filepath,
+            r#"<svg width="40" height="30" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title><rect x="1" y="1" width="5" height="5"/></g></svg>"#,
+        )
+        .unwrap();
+        let request = UnmaskedImageOcclusionRequest {
+            note_id: no_markup,
+            card_order: 1,
+            order: 1,
+            part: UnmaskedImageOcclusionPart::Markup,
+        };
+        assert_eq!(
+            unmasked_image_occlusion(&pool, &request, &get_all_parsers())
+                .await
+                .unwrap(),
+            UnmaskedImageOcclusionFile::NoMarkup
+        );
+
+        // A back that reveals the whole note masks nothing
+        let (full_note, _) = create_image_occlusion_note(&pool, parser.id, "unmask-full", |s| {
+            s.replace(
+                r#"back_reveal = "only_answered""#,
+                r#"back_reveal = "full_note""#,
+            )
+            .replace("back_emphasis = true", "back_emphasis = false")
+        })
+        .await;
+        assert_eq!(
+            review_image_occlusions(&pool, full_note).await,
+            vec![None, None]
+        );
+
+        // Nor does a card without image occlusions
+        let (plain, _) = create_image_occlusion_note(&pool, parser.id, "unmask-none", |_| {
+            "{{Paris}}".to_string()
+        })
+        .await;
+        assert_eq!(review_image_occlusions(&pool, plain).await, vec![None]);
     }
 
     #[sqlx::test]

@@ -246,8 +246,8 @@ pub struct ImageOcclusionSources {
 }
 
 /// A clozes SVG as it was read, before a card colors, hides or labels its clozes
-struct ClozesSvg {
-    element: Element,
+pub(super) struct ClozesSvg {
+    pub(super) element: Element,
     /// The file's contents, for errors that point into it
     contents: String,
 }
@@ -373,7 +373,7 @@ impl ImageOcclusionSources {
 }
 
 /// The clozes SVG at `clozes_filepath`, parsed.
-fn read_clozes_svg(clozes_filepath: &Path) -> Result<ClozesSvg, LibraryError> {
+pub(super) fn read_clozes_svg(clozes_filepath: &Path) -> Result<ClozesSvg, LibraryError> {
     let contents = read_to_string(clozes_filepath).map_err(|_| {
         LibraryError::Note(NoteErrorKind::Other {
             description: format!("Failed to read {}.", clozes_filepath.display()),
@@ -746,7 +746,7 @@ pub(crate) fn image_occlusion_overlay_svg(
 /// It is drawn as [`compose_image_occlusion_card`] draws it: at its own size, from the top left
 /// corner of the original image, and clipped to it. So it is nested in an SVG whose size and
 /// coordinates are the original image's pixels.
-fn overlay_svg_of_size(clozes_svg: &[u8], (width, height): (u32, u32)) -> Vec<u8> {
+pub(super) fn overlay_svg_of_size(clozes_svg: &[u8], (width, height): (u32, u32)) -> Vec<u8> {
     // An XML declaration may only start a document
     let clozes_svg = clozes_svg
         .strip_prefix(b"<?xml")
