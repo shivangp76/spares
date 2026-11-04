@@ -457,7 +457,8 @@ fn dir_source(dir: &Path) -> Result<String, String> {
 }
 
 /// Copies the rendered files of the notes of `parsers` into `destination`, the server's files
-/// directory, with their rendered image occlusions.
+/// directory. Not their rendered image occlusions: the PDFs and web HTML files have them embedded,
+/// and nothing else on the server reads them.
 ///
 /// Files newer on the server are kept (`--update`), in case it rendered a note edited there. This
 /// needs the two clocks to roughly agree.
@@ -469,20 +470,15 @@ fn sync_rendered_files(
     // Rendered files can share a directory with other files (`aux/`, files rendered outside
     // spares), so only those of existing notes are copied, by name.
     let mut dirs: BTreeMap<PathBuf, HashSet<NoteId>> = BTreeMap::new();
-    let mut all_ids: HashSet<NoteId> = HashSet::new();
     for parser in server_rendered_parsers() {
         if !parsers.iter().any(|name| name == parser.get_parser_name()) {
             continue;
         }
         let ids = &note_ids[parser.get_parser_name()];
-        all_ids.extend(ids);
         for dir in parser_rendered_dirs(parser.as_ref()) {
             dirs.entry(dir).or_default().extend(ids);
         }
     }
-    dirs.entry(get_image_occlusion_rendered_directory())
-        .or_default()
-        .extend(all_ids);
     for (dir, ids) in dirs {
         let names = rendered_files_of(&dir, &ids);
         if names.is_empty() {
