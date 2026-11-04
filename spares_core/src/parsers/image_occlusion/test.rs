@@ -376,6 +376,7 @@ fn test_get_cards_image_occlusion_2() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -391,11 +392,14 @@ fn test_get_cards_image_occlusion_2() {
                 <title>Clozes</title>
                 <g>
                   <rect fill="#FF7E7E" height="75" width="123.21429" stroke="#2D2D2D" y="65.17857" id="svg_1" x="53.67857" data-cloze-settings="h:Hi there;g:1" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="115.28571500000001" y="110.67857">Hi there</text>
+                  <text font-family="Libertinus Serif" font-size="27.48" text-anchor="middle" dominant-baseline="central" x="115.29" y="102.68" textLength="92.41" lengthAdjust="spacingAndGlyphs">Hi there</text>
                 </g>
                 <g>
                   <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" data-cloze-settings="g:1;hide:" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.52633" y="78.94737">(no answer)</text>
+                  <text font-family="Libertinus Serif" font-size="17.49" text-anchor="middle" dominant-baseline="central" x="346.53" y="78.95">
+                    <tspan x="346.53" y="68.98" textLength="23.5" lengthAdjust="spacingAndGlyphs">(no</tspan>
+                    <tspan x="346.53" y="88.91" textLength="56.45" lengthAdjust="spacingAndGlyphs">answer)</tspan>
+                  </text>
                 </g>
               </g>
             </svg>"##
@@ -580,6 +584,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
         back_emphasis,
         CardSide::Front,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -596,11 +601,14 @@ fn test_get_cards_image_occlusion_front_conceal() {
                 <rect fill="#FF7E7E" height="75" id="svg_1" stroke="#2D2D2D" width="123.21" x="53.68" y="65.18" data-cloze-settings="g:1" />
                 <g>
                   <rect fill="#FF7E7E" height="75" id="svg_2" stroke="#2D2D2D" width="123.21" x="193.68" y="236.18" data-cloze-settings="h:Hi;g:1" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="255.285" y="281.68">Hi</text>
+                  <text font-family="Libertinus Serif" font-size="49.34" text-anchor="middle" dominant-baseline="central" x="255.28" y="273.68" textLength="49.39" lengthAdjust="spacingAndGlyphs">Hi</text>
                 </g>
                 <g>
                   <ellipse cx="346.53" cy="78.95" fill="#FFEBA2" id="svg_3" rx="46.32" ry="46.32" stroke="#2D2D2D" stroke-dasharray="null" stroke-linecap="null" stroke-linejoin="null" data-cloze-settings="o:2" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.53" y="78.95">(no answer)</text>
+                  <text font-family="Libertinus Serif" font-size="17.49" text-anchor="middle" dominant-baseline="central" x="346.53" y="78.95">
+                    <tspan x="346.53" y="68.98" textLength="23.5" lengthAdjust="spacingAndGlyphs">(no</tspan>
+                    <tspan x="346.53" y="88.92" textLength="56.45" lengthAdjust="spacingAndGlyphs">answer)</tspan>
+                  </text>
                 </g>
               </g>
             </svg>"##
@@ -630,6 +638,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
         back_emphasis,
         CardSide::Back,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -987,14 +996,13 @@ fn test_grouped_shapes_accepted_by_get_clozes_from_svg() {
 
 /// `modify_clozes_for_card` with a group cloze (front, `ToAnswer + hint`) should:
 /// - recursively apply the answer colour to every shape child
-/// - wrap the group in a hint `<g>` with a `<text>` element whose position is
-///   the centre of the group's bounding box
+/// - wrap the group in a hint `<g>` with a `<text>` element inside its shapes
 #[test]
 fn test_grouped_shapes_modify_card_to_answer() {
     // Two shapes:
     //   rect  x=0  y=0  w=100 h=40  → bbox (0,  0, 100, 40)
     //   ellipse cx=200 cy=20 rx=20 ry=20 → bbox (180, 0, 220, 40)
-    //   union bbox → (0, 0, 220, 40)  centre → (110, 20)
+    //   the rect is the largest room for text → centre about (50, 20)
     let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><g id="group_1"><rect x="0" y="0" width="100" height="40"/><ellipse cx="200" cy="20" rx="20" ry="20"/></g></g></svg>"#;
 
     let mut svg_element = Element::parse(svg.as_bytes()).unwrap();
@@ -1015,6 +1023,7 @@ fn test_grouped_shapes_modify_card_to_answer() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
 
     // add_text_to_cloze wraps the group in a new <g> and adds a <text> sibling.
@@ -1061,15 +1070,15 @@ fn test_grouped_shapes_modify_card_to_answer() {
         other => panic!("expected Element, got {:?}", other),
     };
     assert_eq!(text_el.name, "text");
-    assert_eq!(
-        text_el.attributes.get("x").map(String::as_str),
-        Some("110"),
-        "text x must be at horizontal centre of union bounding box"
+    // The hint goes in the largest room inside the shapes, the rect, not the gap between them
+    let coordinate = |key: &str| -> f64 { text_el.attributes[key].parse().unwrap() };
+    assert!(
+        (coordinate("x") - 50.).abs() < 2.,
+        "text x must be near the centre of the rect"
     );
-    assert_eq!(
-        text_el.attributes.get("y").map(String::as_str),
-        Some("20"),
-        "text y must be at vertical centre of union bounding box"
+    assert!(
+        (coordinate("y") - 20.).abs() < 2.,
+        "text y must be near the centre of the rect"
     );
     assert_eq!(
         text_el.children,
@@ -1096,6 +1105,7 @@ fn test_grouped_shapes_modify_card_hidden() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
 
     assert_eq!(

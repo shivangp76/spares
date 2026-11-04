@@ -66,6 +66,7 @@ use crate::parsers::ClozeSettings;
 use crate::parsers::Parseable;
 
 mod construct;
+mod hint;
 mod utils;
 pub use construct::combine_image_occlusion_clozes;
 pub use construct::construct_image_occlusion_from_image;
@@ -84,6 +85,16 @@ mod test;
 const CLOZE_SETTINGS_KEY: &str = "data-cloze-settings";
 const CLOZES_GROUP_ID: &str = "clozes-group";
 
+/// How cards draw image occlusions, set by `[image_occlusion]` in `config.toml`.
+///
+/// A hidden cloze is labeled with its hint, or with "(no answer)" when the card does not ask
+/// for it. The label is sized to fill the cloze: as large as fits in `cloze_hint_fill` of the
+/// largest rectangle inside the cloze's shape and the image (so it stays inside ellipses,
+/// rotated rects, triangles and freehand paths), wrapped between words onto more lines when
+/// that makes it larger. It is then kept between
+/// `cloze_hint_min_font_fraction` and `cloze_hint_max_font_fraction` of the image's longer side,
+/// so it stays readable on tiny clozes, overflowing them, and is not huge on large ones. Sizes
+/// are in the image's pixels, so they scale with the image wherever a card shows it.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 #[allow(clippy::struct_field_names)]
@@ -91,7 +102,15 @@ pub struct ImageOcclusionConfig {
     pub cloze_to_answer_color: String,
     pub cloze_not_to_answer_color: String,
     pub cloze_emphasis_fill_opacity: f64,
-    pub cloze_hint_font_size: u32,
+    /// Fraction of a cloze's width and height its label may fill, from 0.05 to 1.
+    pub cloze_hint_fill: f64,
+    /// Smallest label, as a fraction of the image's longer side.
+    pub cloze_hint_min_font_fraction: f64,
+    /// Largest label, as a fraction of the image's longer side.
+    pub cloze_hint_max_font_fraction: f64,
+    /// Largest label in the image's pixels, if set. Labels used to be this fixed size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloze_hint_font_size: Option<u32>,
     pub editor: ImageOcclusionEditorConfig,
 }
 
@@ -101,7 +120,10 @@ impl Default for ImageOcclusionConfig {
             cloze_to_answer_color: "#FF7E7E".to_string(),
             cloze_not_to_answer_color: "#FFEBA2".to_string(),
             cloze_emphasis_fill_opacity: 0.3,
-            cloze_hint_font_size: 16,
+            cloze_hint_fill: 0.75,
+            cloze_hint_min_font_fraction: 0.01,
+            cloze_hint_max_font_fraction: 0.05,
+            cloze_hint_font_size: None,
             editor: ImageOcclusionEditorConfig::default(),
         }
     }
