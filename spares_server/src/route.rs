@@ -288,6 +288,11 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 .delete(crate::handlers::sync::remove_upstream_handler),
         )
         .route("/api/sync/config", get(sync_config_handler))
+        // What `spares sync cloud` copies its files to. Not relayed: the files are for this host.
+        .route(
+            "/api/sync/push-target",
+            get(crate::handlers::sync::sync_push_target_handler),
+        )
         .route("/api/sync/files", get(sync_files_handler))
         .route("/api/sync/files/changed", post(sync_changed_files_handler))
         .route("/api/sync/media/{kind}", get(sync_media_list_handler))
@@ -888,6 +893,65 @@ mod tests {
             headers,
             serde_json::from_slice(&body).unwrap_or_default(),
         )
+    }
+
+    /// `spares sync cloud` learns where to copy files with its token, and finds the check value
+    /// the answer names in the file it names. The web app's session can't ask.
+    #[tokio::test]
+    async fn the_push_target_is_for_device_tokens() {
+        use axum::http::header::AUTHORIZATION;
+        use axum::http::header::COOKIE;
+        use axum::http::header::SET_COOKIE;
+
+        let (host, root) = crate::host::tests::test_host().await;
+        let router = create_router(Arc::new(AppState { host }), None);
+        let get = |uri: &str| Request::builder().uri(uri.to_string());
+        let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());
+        let credentials = serde_json::json!({ "user": "me", "password": "password1" });
+
+        let (_, headers, _) =
+            send(&router, post("/api/auth/login"), Some(credentials.clone())).await;
+        let cookie = headers[SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let (status, _, _) = send(
+            &router,
+            get("/api/sync/push-target").header(COOKIE, &cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let mut request = credentials;
+        request["name"] = "a CLI".into();
+        let (_, _, body) = send(&router, post("/api/auth/token"), Some(request)).await;
+        let token = format!("Bearer {}", body["token"].as_str().unwrap());
+        let mut checks = Vec::new();
+        for _ in 0..2 {
+            let (status, _, target) = send(
+                &router,
+                get("/api/sync/push-target").header(AUTHORIZATION, &token),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{target}");
+            let target: spares_core::sync::push::PushTarget =
+                serde_json::from_value(target).unwrap();
+            assert_eq!(target.root, root.0.join("users/me"));
+            assert_eq!(target.config, root.0.join("users/me/config"));
+            assert_eq!(target.files, root.0.join("cache/users/me/files"));
+            assert_eq!(target.replica, 1);
+            assert_eq!(
+                std::fs::read_to_string(&target.check_file).unwrap(),
+                target.check
+            );
+            checks.push(target.check);
+        }
+        assert_ne!(checks[0], checks[1]);
     }
 
     /// Sessions need their CSRF token to change anything, tokens can be revoked and limited to
