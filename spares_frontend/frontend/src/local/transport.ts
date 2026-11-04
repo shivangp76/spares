@@ -13,7 +13,11 @@
 //
 // Some of what copy.ts does, such as syncing and downloading files, only the tab with the copy
 // does: other tabs ask it to (`inCopyTab`), and it tells them its status (`tellOtherTabs`).
-import type { WorkerRequest, WorkerResponse } from "./worker";
+import type {
+  CollectionProgress,
+  WorkerMessage,
+  WorkerRequest,
+} from "./worker";
 
 const COPY_KEY = "spares_local_copy";
 const LOCK_NAME = "spares-db";
@@ -376,12 +380,27 @@ const waiting = new Map<
   number,
   { resolve: (result: unknown) => void; reject: (error: Error) => void }
 >();
+const progressListeners = new Set<
+  (progress: CollectionProgress | null) => void
+>();
+
+/** Calls `listener` with a full download's progress while it runs, and `null` once it has the whole collection. */
+export function onCollectionProgress(
+  listener: (progress: CollectionProgress | null) => void,
+): () => void {
+  progressListeners.add(listener);
+  return () => progressListeners.delete(listener);
+}
 
 function startWorker(): Worker {
   const started = new Worker(new URL("./worker.ts", import.meta.url), {
     type: "module",
   });
-  started.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
+  started.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
+    if ("progress" in data) {
+      for (const listener of progressListeners) listener(data.progress);
+      return;
+    }
     const call = waiting.get(data.id);
     if (!call) return;
     waiting.delete(data.id);
