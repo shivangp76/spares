@@ -293,6 +293,10 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/sync/push-target",
             get(crate::handlers::sync::sync_push_target_handler),
         )
+        .route(
+            "/api/sync/push-config",
+            put(crate::handlers::sync::sync_push_config_handler),
+        )
         .route("/api/sync/files", get(sync_files_handler))
         .route("/api/sync/files/changed", post(sync_changed_files_handler))
         .route("/api/sync/media/{kind}", get(sync_media_list_handler))
@@ -898,7 +902,7 @@ mod tests {
     /// `spares sync cloud` learns where to copy files with its token, and finds the check value
     /// the answer names in the file it names. The web app's session can't ask.
     #[tokio::test]
-    async fn the_push_target_is_for_device_tokens() {
+    async fn the_push_target_and_config_are_for_device_tokens() {
         use axum::http::header::AUTHORIZATION;
         use axum::http::header::COOKIE;
         use axum::http::header::SET_COOKIE;
@@ -952,6 +956,54 @@ mod tests {
             checks.push(target.check);
         }
         assert_ne!(checks[0], checks[1]);
+
+        // The pushed config.toml replaces the server's but for its [sync] table.
+        let config_file = root.0.join("users/me/config/config.toml");
+        std::fs::write(&config_file, "[sync]\nreplica = 1\n").unwrap();
+        let laptop = "maximum_interval = 100\n\n[sync]\ntoken = \"spt_secret\"\nreplica = 0\n";
+        let put_config = |auth: (axum::http::HeaderName, String), body: &str| {
+            Request::builder()
+                .method("PUT")
+                .uri("/api/sync/push-config")
+                .header(auth.0, auth.1)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let response = router
+            .clone()
+            .oneshot(put_config((COOKIE, cookie.clone()), laptop))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        for changed in [true, false] {
+            let response = router
+                .clone()
+                .oneshot(put_config((AUTHORIZATION, token.clone()), laptop))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body["changed"], changed);
+        }
+        let written = std::fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("maximum_interval = 100"), "{written}");
+        assert!(
+            written.contains("render_browser_parsers = false"),
+            "{written}"
+        );
+        assert!(written.contains("replica = 1"), "{written}");
+        assert!(!written.contains("spt_secret"), "{written}");
+        let response = router
+            .clone()
+            .oneshot(put_config(
+                (AUTHORIZATION, token.clone()),
+                "maximum_interval = \"soon\"",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read_to_string(&config_file).unwrap(), written);
     }
 
     /// Sessions need their CSRF token to change anything, tokens can be revoked and limited to

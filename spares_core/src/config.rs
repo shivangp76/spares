@@ -1184,6 +1184,29 @@ pub fn server_config(contents: &str) -> Result<String, Error> {
     ))
 }
 
+/// The server's `config.toml` after `spares sync cloud` sends this machine's (`pushed`): the
+/// [`server_config`] of `pushed`, with the `[sync]` table of the server's own (`current`), which
+/// says how the server's copy syncs (its replica, and an upstream if it has one). Nothing of
+/// `pushed`'s `[sync]` table, such as its token, reaches the server. Fails if the result is not a
+/// valid config.
+pub fn merge_pushed_config(current: &str, pushed: &str) -> Result<String, Error> {
+    let invalid = |e: String| Error::Library(LibraryError::InvalidConfig(e));
+    let current = current
+        .parse::<DocumentMut>()
+        .map_err(|e| invalid(format!("the server's config.toml: {e}")))?;
+    let mut merged = server_config(pushed)?
+        .parse::<DocumentMut>()
+        .map_err(|e| invalid(e.to_string()))?;
+    if let Some(sync) = current.get("sync") {
+        merged.insert("sync", sync.clone());
+    }
+    let merged = merged.to_string();
+    let mut config: SparesExternalConfig =
+        toml_edit::de::from_str(&merged).map_err(|e| invalid(e.to_string()))?;
+    config.validate().map_err(invalid)?;
+    Ok(merged)
+}
+
 /// `contents` (a `config.toml`) with these keys of its `[sync]` table set, leaving the rest of the
 /// file, comments included, as it is. The table is added if it is missing.
 pub fn set_sync_values(
@@ -1237,6 +1260,42 @@ mod tests {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
         config.validate().unwrap();
         config
+    }
+
+    #[test]
+    fn a_pushed_config_keeps_the_servers_sync_table_and_none_of_its_own() {
+        let laptop = "maximum_interval = 100\n\n\
+                      [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
+                      token = \"spt_secret\"\nreplica = 0\n\n\
+                      [leech]\nlapses_threshold = 8\n";
+        let server = "render_browser_parsers = false\nmaximum_interval = 5\n\n\
+                      [sync] # the server's own\nreplica = 1\n";
+        let merged = merge_pushed_config(server, laptop).unwrap();
+        assert!(!merged.contains("spt_secret"), "{merged}");
+        assert!(!merged.contains("me@vps"), "{merged}");
+        assert!(merged.contains("# the server's own"), "{merged}");
+        let config = parse(&merged);
+        assert_eq!(config.maximum_interval, Duration::seconds(100));
+        assert_eq!(config.leech.lapses_threshold, 8);
+        assert!(!config.render_browser_parsers);
+        assert_eq!(config.sync.replica, Some(1));
+        assert_eq!(config.sync.url, None);
+        assert_eq!(config.sync.token, None);
+        // Pushing again changes nothing.
+        assert_eq!(merge_pushed_config(&merged, laptop).unwrap(), merged);
+
+        // A server with an upstream of its own keeps it.
+        let relaying = "[sync]\nurl = \"https://root\"\ntoken = \"spt_its_own\"\nreplica = 3\n";
+        let merged = merge_pushed_config(relaying, laptop).unwrap();
+        let config = parse(&merged);
+        assert_eq!(config.sync.url.as_deref(), Some("https://root"));
+        assert_eq!(config.sync.token.as_deref(), Some("spt_its_own"));
+        assert_eq!(config.sync.replica, Some(3));
+        // And one without a config yet gets no [sync] table.
+        assert!(!merge_pushed_config("", laptop).unwrap().contains("[sync]"));
+
+        assert!(merge_pushed_config("", "maximum_interval = \"soon\"").is_err());
+        assert!(merge_pushed_config("not toml [", laptop).is_err());
     }
 
     #[test]

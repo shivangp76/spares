@@ -12,7 +12,6 @@ use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
 use spares_core::config::read_external_config;
-use spares_core::config::server_config;
 use spares_core::ids::NoteId;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::RenderOutputDirectoryType;
@@ -68,6 +67,9 @@ pub(crate) async fn push_files(
     let excludes = [
         // The database, its WAL/SHM/journal files and local backups. The database is synced above.
         "--exclude=*.sqlite*".to_string(),
+        // config.toml has this machine's [sync] table, with its token and replica. Settings and
+        // templates go in pass 4.
+        "--exclude=/config/".to_string(),
         "--exclude=/notes/".to_string(),
         "--exclude=/cards/".to_string(),
         // The notes repository (see `spares vcs init`), what setting it up leaves behind, and
@@ -91,17 +93,20 @@ pub(crate) async fn push_files(
     println!("Syncing rendered files → {}", remote_host);
     sync_rendered_files(&remote_dir(remote_host, &target.files)?, &note_ids)?;
 
-    // Pass 4: Templates, and config.toml as the server needs it (see `server_config`), so reviews
-    // there are scheduled with the same settings.
+    // Pass 4: Templates, and config.toml, which the server merges with its own (keeping its
+    // `[sync]` table), so reviews there are scheduled with the same settings.
     println!("Syncing templates and settings → {}", remote_host);
-    let config_destination = remote_dir(remote_host, &target.config)?;
     run_rsync(&[
         "-avz",
         "--exclude=/config.toml",
+        "--exclude=/config.toml.*",
+        // Symlinks out of the config directory, such as one to pandoc's data directory, name
+        // paths of this machine. The files notes read from there are copied in pass 5.
+        "--safe-links",
         &dir_source(&get_config_dir())?,
-        &config_destination,
+        &remote_dir(remote_host, &target.config)?,
     ])?;
-    push_server_config(&format!("{config_destination}config.toml"))?;
+    push_config(&remote).await?;
 
     // Pass 5: Files the notes read, so the server can render notes edited there.
     println!("Syncing files read by notes → {}", remote_host);
@@ -285,24 +290,20 @@ fn check_target(
     Ok(())
 }
 
-/// Copies this machine's config.toml to the server, adapted by [`server_config`].
-fn push_server_config(destination: &str) -> Result<(), String> {
+/// Sends this machine's config.toml to the server, which keeps its own `[sync]` table, so the
+/// token, replica and addresses here never reach it.
+async fn push_config(remote: &HttpRemote) -> Result<(), String> {
     let path = get_external_config_file();
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let server = server_config(&contents).map_err(|e| e.to_string())?;
-    let staging = get_cache_dir().join("server-config.toml");
-    std::fs::write(&staging, server)
-        .map_err(|e| format!("Failed to write {}: {e}", staging.display()))?;
-    let result = run_rsync(&[
-        "-avz",
-        staging
-            .to_str()
-            .ok_or("The cache directory is not valid UTF-8")?,
-        destination,
-    ]);
-    let _ = std::fs::remove_file(&staging);
-    result
+    let changed = remote
+        .push_config(contents)
+        .await
+        .map_err(|e| format!("Failed to send {} to the server: {e}", path.display()))?;
+    if changed {
+        println!("Updated the server's config.toml");
+    }
+    Ok(())
 }
 
 /// Parsers whose notes the server renders.

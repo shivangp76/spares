@@ -16,9 +16,11 @@ use crate::Error;
 use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
 use crate::config::get_data_dir;
+use crate::config::get_external_config_file;
 use crate::config::get_files_dir;
 use crate::config::get_media_dir;
 use crate::config::get_replica;
+use crate::config::merge_pushed_config;
 
 /// `GET /api/sync/push-target`: where the collection's directories are on the server.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -71,6 +73,38 @@ pub fn push_target() -> Result<PushTarget, Error> {
         check_file,
         check,
     })
+}
+
+/// `PUT /api/sync/push-config`: replaces the current collection's `config.toml` with what
+/// `spares sync cloud` sent (`pushed`, that machine's), keeping this one's `[sync]` table (see
+/// [`merge_pushed_config`]). Returns whether the file changed.
+pub fn apply_pushed_config(pushed: &str) -> Result<bool, Error> {
+    let path = get_external_config_file();
+    let current = match std::fs::read_to_string(&path) {
+        Ok(current) => current,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            });
+        }
+    };
+    let merged = merge_pushed_config(&current, pushed)?;
+    if merged == current {
+        return Ok(false);
+    }
+    let io = |e| Error::Io {
+        description: format!("Failed to write {}", path.display()),
+        source: e,
+    };
+    std::fs::create_dir_all(get_config_dir()).map_err(io)?;
+    // Written whole, then renamed, so a render never reads half a file.
+    let staging = path.with_extension("toml.pushed");
+    std::fs::write(&staging, merged)
+        .and_then(|()| std::fs::rename(&staging, &path))
+        .map_err(io)?;
+    Ok(true)
 }
 
 /// Parsers rendered on this machine (not in the browser) whose programs it has.
