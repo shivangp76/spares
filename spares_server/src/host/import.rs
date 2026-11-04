@@ -467,17 +467,26 @@ pub fn add_read_dirs(root: &Path, dirs: &[PathBuf]) -> Result<(), Error> {
             read_dirs.push(dir.as_ref());
         }
     }
-    std::fs::write(&path, doc.to_string()).map_err(|e| io(&path, e))
+    let new = doc.to_string();
+    // Left alone if every directory was there already
+    if new == contents {
+        return Ok(());
+    }
+    std::fs::write(&path, new).map_err(|e| io(&path, e))
 }
 
 /// Writes `[sync] replica` into the collection's config.toml.
 pub fn set_replica(paths: &CollectionPaths, replica: Replica) -> Result<(), Error> {
     let path = paths.config_file();
-    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
     let contents = spares_core::config::set_sync_values(
-        &contents,
+        &old,
         [("replica", i64::from(replica.number()).into())],
     )?;
+    // Left alone if it has this replica already
+    if contents == old && path.exists() {
+        return Ok(());
+    }
     std::fs::create_dir_all(&paths.config).map_err(|e| io(&paths.config, e))?;
     std::fs::write(&path, contents).map_err(|e| io(&path, e))
 }
