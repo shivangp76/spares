@@ -21,10 +21,8 @@ use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
-use crate::platform::create_dir_all;
 use crate::platform::is_file;
 use crate::platform::read_to_string;
-use crate::platform::write;
 
 pub mod audio;
 mod cards;
@@ -64,9 +62,17 @@ pub enum RenderOutputDirectoryType {
     Card,
 }
 
+/// The templates a parser's files are made from, each a file in `<config dir>/<parser>/templates/`
+/// ([`Parseable::template_filepath`]) with a `spares: body` comment where the note's text goes.
+///
+/// A template without a file is [`Parseable::default_template`], which isn't written to the
+/// config directory, so a parser's default reaches every collection that hasn't changed it, and
+/// reading a template never writes to the config. `spares parser template <parser> <type>` writes
+/// a copy of the default to edit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TemplateType {
     Note,
+    /// The note template if it has no file
     Card,
     Export,
 }
@@ -403,38 +409,38 @@ pub trait Parseable: Send + Sync {
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));
         }
-        let mut templates_dir: PathBuf = get_config_dir();
-        templates_dir.push(self.get_parser_name());
-        templates_dir.push("templates");
-        let file_extension = self.file_extension();
-        let read_or_create_template = |name: &str| -> Result<String, std::io::Error> {
-            let path = templates_dir.join(format!("{name}.{file_extension}"));
-            if !is_file(&path) {
-                create_dir_all(&templates_dir)?;
-                write(&path, self.default_template())?;
-            }
-            read_to_string(&path)
+        let read_template = |template_type| -> Result<Option<String>, std::io::Error> {
+            let path = self.template_filepath(template_type);
+            is_file(&path).then(|| read_to_string(&path)).transpose()
         };
-        match template_type {
-            TemplateType::Note => Ok((read_or_create_template("note_template")?, body_placeholder)),
-            TemplateType::Card => {
-                let card_template_path =
-                    templates_dir.join(format!("card_template.{file_extension}"));
-                let card_template_contents = if is_file(&card_template_path) {
-                    read_to_string(&card_template_path)?
-                } else {
-                    read_or_create_template("note_template")?
-                };
-                Ok((card_template_contents, body_placeholder))
-            }
-            TemplateType::Export => Ok((
-                read_or_create_template("export_template")?,
-                body_placeholder,
-            )),
-        }
+        let contents = match template_type {
+            TemplateType::Note | TemplateType::Export => read_template(template_type)?,
+            TemplateType::Card => match read_template(TemplateType::Card)? {
+                Some(contents) => Some(contents),
+                None => read_template(TemplateType::Note)?,
+            },
+        };
+        Ok((
+            contents.unwrap_or_else(|| self.default_template().to_string()),
+            body_placeholder,
+        ))
     }
 
-    /// Contents written to a note or export template file that does not exist yet. Must contain the
+    /// Where the template of `template_type` is, if the user has one (see [`TemplateType`]).
+    fn template_filepath(&self, template_type: TemplateType) -> PathBuf {
+        let name = match template_type {
+            TemplateType::Note => "note_template",
+            TemplateType::Card => "card_template",
+            TemplateType::Export => "export_template",
+        };
+        let mut path = get_config_dir();
+        path.push(self.get_parser_name());
+        path.push("templates");
+        path.push(format!("{name}.{}", self.file_extension()));
+        path
+    }
+
+    /// The template of every type without a file (see [`TemplateType`]). Must contain the
     /// `spares: body` comment.
     fn default_template(&self) -> &'static str;
 
