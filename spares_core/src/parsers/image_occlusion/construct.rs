@@ -409,7 +409,8 @@ fn read_original_image(
 ) -> Result<OriginalImage, LibraryError> {
     if overlay {
         // Reads only the header
-        let (width, height) = image::image_dimensions(original_image_filepath)
+        let (width, height) = crate::platform::image_size(original_image_filepath)
+            .unwrap_or_else(|| Err("its size isn't known yet".to_string()))
             .map_err(|e| original_image_error(original_image_filepath, &e))?;
         Ok(OriginalImage::Size(width, height))
     } else {
@@ -439,17 +440,22 @@ fn original_image_error(original_image_filepath: &Path, e: &dyn std::fmt::Displa
 /// [`Parseable::image_occlusion_overlays`]): its clozes SVG, read and colored for the card, in an
 /// SVG the size of the original image (see [`overlay_svg_of_size`]). Of the original image
 /// only the header is read, for its size.
-#[cfg_attr(target_family = "wasm", allow(dead_code))]
+///
+/// `None` on a device that doesn't know the original image's size yet, since it reads images
+/// asynchronously (see [`crate::platform::image_size`]).
 pub fn image_occlusion_overlay(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     side: CardSide,
-) -> Result<Vec<u8>, Error> {
-    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new()).card_image(
-        cloze_indices,
-        image_occlusion_data,
-        side,
-    )
+) -> Result<Option<Vec<u8>>, Error> {
+    // Natively it is always known, and read below
+    #[cfg(target_family = "wasm")]
+    if crate::platform::image_size(&image_occlusion_data.original_image_filepath).is_none() {
+        return Ok(None);
+    }
+    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new())
+        .card_image(cloze_indices, image_occlusion_data, side)
+        .map(Some)
 }
 
 /// Writes the image `side` of the card shows for each of its image occlusions, drawn from
