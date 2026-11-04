@@ -827,7 +827,8 @@ async function downloadFiles(): Promise<void> {
     }
   }
   // The device can't look at its files, so it shows notes and cards with their HTML (`web_path`)
-  // only once it's here. An empty one means the rendered file instead.
+  // only once it's here. Without one, or with an empty one, which servers wrote before, the
+  // rendered file.
   if (session === started) {
     const webRenders = files.filter(
       (file) =>

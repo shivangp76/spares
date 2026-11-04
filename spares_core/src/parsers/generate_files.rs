@@ -837,7 +837,7 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Writes the HTML for web clients next to the rendered file, or an empty file if they should show
+/// Writes the HTML for web clients next to the rendered file, or removes it if they should show
 /// the rendered file instead (see [`web_render_filepath`]). Never fails the render, since the
 /// rendered file is always there to fall back to.
 fn create_web_render_file(
@@ -873,12 +873,13 @@ fn create_web_render_file(
                 output_rendered_filepath.display()
             );
         }
-        if let Err(e) = write(&output_web_filepath, "") {
-            warn!(
-                "[Note Id: {}] Failed to write {}: {e}",
+        match remove_file(&output_web_filepath) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => warn!(
+                "[Note Id: {}] Failed to remove {}: {e}",
                 note_id.letters(),
                 output_web_filepath.display()
-            );
+            ),
+            _ => {}
         }
     }
 }
@@ -924,8 +925,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_web_render_file_tombstones() {
-        let dir = std::env::temp_dir().join(format!("spares-web-tombstone-{}", std::process::id()));
+    fn test_create_web_render_file_removes_stale_html() {
+        let dir = std::env::temp_dir().join(format!("spares-web-stale-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let parser = MarkdownParser::new();
@@ -940,19 +941,22 @@ mod tests {
 
         render("Text", WebRenderMode::Auto);
         assert!(has_web_render_file(&rendered));
-        // A later render that decides on the rendered file replaces the HTML with an empty file
+        // A later render that decides on the rendered file removes the HTML
         render("Text", WebRenderMode::Pdf);
-        assert_eq!(metadata(&html).unwrap().len(), 0);
+        assert!(!html.exists());
         assert!(!has_web_render_file(&rendered));
+        // As does one with no HTML to remove
+        render("Text", WebRenderMode::Pdf);
+        assert!(!html.exists());
 
         render(tikz, WebRenderMode::Html);
         assert!(has_web_render_file(&rendered));
         render(tikz, WebRenderMode::Auto);
         assert!(!has_web_render_file(&rendered));
-        assert!(html.exists());
+        assert!(!html.exists());
         assert!(!dir.join("0001.html.tmp").exists());
 
-        // A failed render, here from a missing image, also leaves an empty file
+        // A failed render, here from a missing image, also removes it
         render("Text", WebRenderMode::Auto);
         render("![a](/nonexistent/spares/a.png)", WebRenderMode::Html);
         assert!(!has_web_render_file(&rendered));
