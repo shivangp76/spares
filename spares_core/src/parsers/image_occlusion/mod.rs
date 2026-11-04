@@ -108,9 +108,6 @@ pub struct ImageOcclusionConfig {
     pub cloze_hint_min_font_fraction: f64,
     /// Largest label, as a fraction of the image's longer side.
     pub cloze_hint_max_font_fraction: f64,
-    /// Largest label in the image's pixels, if set. Labels used to be this fixed size.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cloze_hint_font_size: Option<u32>,
     pub editor: ImageOcclusionEditorConfig,
 }
 
@@ -123,7 +120,6 @@ impl Default for ImageOcclusionConfig {
             cloze_hint_fill: 0.75,
             cloze_hint_min_font_fraction: 0.01,
             cloze_hint_max_font_fraction: 0.05,
-            cloze_hint_font_size: None,
             editor: ImageOcclusionEditorConfig::default(),
         }
     }

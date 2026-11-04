@@ -84,14 +84,11 @@ pub(crate) struct HintLimits {
 
 impl HintLimits {
     /// `image_size` is the width and height of the image, if known. Without it, hints are only
-    /// limited by their clozes and `cloze_hint_font_size`.
+    /// limited by their clozes.
     pub fn new(config: &ImageOcclusionConfig, image_size: Option<(f64, f64)>) -> Self {
         let longest_side = image_size.map(|(w, h)| w.max(h)).filter(|s| *s > 0.);
-        let mut max_font_size =
+        let max_font_size =
             longest_side.map_or(f64::INFINITY, |s| s * config.cloze_hint_max_font_fraction);
-        if let Some(size) = config.cloze_hint_font_size {
-            max_font_size = max_font_size.min(f64::from(size));
-        }
         let min_font_size = longest_side
             .map_or(0., |s| s * config.cloze_hint_min_font_fraction)
             .min(max_font_size);
@@ -770,13 +767,13 @@ mod tests {
         let config = ImageOcclusionConfig::default();
         let l = HintLimits::new(&config, Some((2000., 1000.)));
         assert!((l.min_font_size - 20.).abs() < 1e-9 && (l.max_font_size - 100.).abs() < 1e-9);
+        // The minimum never exceeds the maximum
         let config = ImageOcclusionConfig {
-            cloze_hint_font_size: Some(16),
+            cloze_hint_min_font_fraction: 0.1,
             ..Default::default()
         };
         let l = HintLimits::new(&config, Some((2000., 1000.)));
-        // The old fixed size is a ceiling, and the minimum never exceeds it
-        assert!((l.max_font_size - 16.).abs() < 1e-9 && (l.min_font_size - 16.).abs() < 1e-9);
+        assert!((l.max_font_size - 100.).abs() < 1e-9 && (l.min_font_size - 100.).abs() < 1e-9);
     }
 
     /// The hint renders inside its cloze with the bundled font: no ink outside the box.
