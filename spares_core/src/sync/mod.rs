@@ -162,8 +162,10 @@ mod tests;
 #[cfg(test)]
 mod tracking_tests;
 
-/// The `[sync]` table of `config.toml`. Only the machine that syncs uses it, so it is left out of
-/// the copy `spares sync cloud` makes for the server (see [`crate::config::server_config`]).
+/// The `[sync]` table of `config.toml`. It says how this host's copy syncs, so it never leaves
+/// this host: devices get the config without it ([`crate::config::server_config`]), and the
+/// server keeps its own when `spares sync cloud` sends this one
+/// ([`crate::config::merge_pushed_config`]).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SyncConfig {
@@ -187,8 +189,7 @@ pub struct SyncConfig {
     /// otherwise. With `url`, it is set when this host enrolls with the upstream.
     pub replica: Option<u8>,
     /// The device token for `url`, which this host got when it enrolled with it (`spares sync
-    /// login`). Never sent to devices: the whole `[sync]` table is left out of the config they get
-    /// (see [`crate::config::server_config`]).
+    /// login`). Never sent anywhere (see above).
     pub token: Option<String>,
 }
 
