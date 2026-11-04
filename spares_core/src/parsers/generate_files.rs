@@ -39,6 +39,7 @@ use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
+use crate::parsers::image_occlusion::read_image_occlusions;
 use crate::parsers::render_dependencies_filepath;
 use crate::parsers::web_render_filepath;
 use crate::schema::note::LinkedNote;
@@ -55,6 +56,59 @@ pub fn generates_render_files(
 
 fn blake3_hex(data: impl AsRef<[u8]>) -> String {
     blake3::hash(data.as_ref()).to_hex().to_string()
+}
+
+/// What decides whether a note's rendered files are up to date, besides their existing: the hash
+/// of its raw file, `file_contents`, and of the files its image occlusions are drawn from,
+/// `image_occlusion_sources` (see [`image_occlusion_sources_hash`]). So replacing an image
+/// occlusion's image or clozes file renders the note again, though its text is unchanged. Other
+/// files a note reads, like a template it includes, are left out, so editing them renders
+/// nothing again until the note changes or rendering is forced.
+///
+/// A note without image occlusions has the hash of its raw file, as before image occlusions were
+/// part of it, so those notes aren't rendered again after upgrading.
+fn render_key(file_contents: &str, image_occlusion_sources: Option<&str>) -> String {
+    match image_occlusion_sources {
+        None => blake3_hex(file_contents),
+        Some(sources) => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(file_contents.as_bytes());
+            hasher.update(&[0]);
+            hasher.update(sources.as_bytes());
+            hasher.finalize().to_hex().to_string()
+        }
+    }
+}
+
+/// The hash of the path and contents of each original image and clozes file of the image
+/// occlusions in `note_data`, in order, for [`render_key`]. A file that can't be read is hashed as
+/// missing, so the note is rendered again, and reports it, until it is back. `None` if the note
+/// has no image occlusions, or they can't be read, in which case rendering reports why.
+fn image_occlusion_sources_hash(parser: &dyn Parseable, note_data: &str) -> Option<String> {
+    let image_occlusions = read_image_occlusions(note_data, parser, false).ok()?;
+    if image_occlusions.is_empty() {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new();
+    for (_, image_occlusion) in &image_occlusions {
+        for path in [
+            &image_occlusion.original_image_filepath,
+            &image_occlusion.clozes_filepath,
+        ] {
+            hasher.update(path.as_os_str().as_encoded_bytes());
+            hasher.update(&[0]);
+            match std::fs::read(path) {
+                Ok(contents) => {
+                    hasher.update(b"file");
+                    hasher.update(blake3::hash(&contents).as_bytes());
+                }
+                Err(_) => {
+                    hasher.update(b"missing");
+                }
+            }
+        }
+    }
+    Some(hasher.finalize().to_hex().to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -97,12 +151,17 @@ pub enum RenderOutputType {
     Card(usize, CardSide),
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render key needs the image occlusion files beside the note"
+)]
 pub fn file_in_cache(
     render: bool,
     force_render: bool,
     output_raw_filepath: &Path,
     output_rendered_filepath: &Path,
     note_file_data: &str,
+    image_occlusion_sources: Option<&str>,
     note_id: NoteId,
     line_to_hash: impl Fn(&str) -> Option<String>,
 ) -> Result<bool, Error> {
@@ -146,7 +205,7 @@ pub fn file_in_cache(
         };
 
         if let Some(current_rendered_hash) = current_rendered_hash_opt {
-            let new_note_data_hash = blake3_hex(note_file_data);
+            let new_note_data_hash = render_key(note_file_data, image_occlusion_sources);
             if current_rendered_hash == new_note_data_hash {
                 // Also check that the current note data has the correct hash. This is because locally editing the notes file will cause the data to change, but not the hash. This ensures that syncing local files to the database rerenders the file if it was updated.
                 // Full read only happens here, on the rare path where hashes match.
@@ -161,7 +220,8 @@ pub fn file_in_cache(
                     .trim_end_matches('\n')
                     .rfind('\n')
                     .map_or(0, |i| i + 1);
-                let current_note_data_hash = blake3_hex(&current_raw_string[..content_end]);
+                let current_note_data_hash =
+                    render_key(&current_raw_string[..content_end], image_occlusion_sources);
                 if current_rendered_hash == current_note_data_hash {
                     info!(
                         "[Note Id: {}] Existing file is up to date. Skipping.",
@@ -326,12 +386,15 @@ fn create_note_files(
             .strip_prefix("hash: ")
             .map(|x| x.to_string())
     };
+    // Read before the cards are made, so a file replaced while they are is read again next time
+    let image_occlusion_sources = image_occlusion_sources_hash(parser, note_data);
+    let image_occlusion_sources = image_occlusion_sources.as_deref();
     let in_cache = if vcs_format {
         render
             && !force_render
             && output_rendered_filepath.exists()
             && notes_vcs::read_render_hash(parser.get_parser_name(), *note_id)
-                .is_some_and(|hash| hash == blake3_hex(&file_contents))
+                .is_some_and(|hash| hash == render_key(&file_contents, image_occlusion_sources))
             && std::fs::read(&output_text_filepath).is_ok_and(|raw| raw == file_contents.as_bytes())
     } else {
         file_in_cache(
@@ -340,6 +403,7 @@ fn create_note_files(
             &output_text_filepath,
             &output_rendered_filepath,
             &file_contents,
+            image_occlusion_sources,
             *note_id,
             line_to_hash,
         )?
@@ -418,7 +482,7 @@ fn create_note_files(
         // Add hash to file if:
         // - it is a note
         // - the note was rendered OR the note was created somewhere else for comparison purposes
-        let file_contents_hash = blake3_hex(&file_contents);
+        let file_contents_hash = render_key(&file_contents, image_occlusion_sources);
         if !vcs_format && (render || overridden_output_raw_dir.is_some()) {
             let file_contents_hash_str = format!("hash: {}", file_contents_hash);
             let hash_line = parser.construct_comment(&file_contents_hash_str);
@@ -683,12 +747,21 @@ fn create_web_render_file(
 #[cfg(test)]
 mod tests {
     use std::fs::metadata;
+    use std::fs::read_to_string;
     use std::fs::write;
+    use std::path::Path;
 
+    use super::GenerateNoteFilesRequest;
+    use super::GenerateNoteFilesRequests;
     use super::add_audio_dependencies;
+    use super::blake3_hex;
+    use super::create_note_files_bulk;
     use super::create_web_render_file;
     use super::generates_render_files;
+    use super::image_occlusion_sources_hash;
+    use super::render_key;
     use crate::config::SparesExternalConfig;
+    use crate::parsers::CustomData;
     use crate::parsers::WebRenderMode;
     use crate::parsers::has_web_render_file;
     use crate::parsers::impls::markdown::MarkdownParser;
@@ -786,6 +859,115 @@ mod tests {
         assert_eq!(
             dependencies.files,
             ["/m/a.ogg", "/m/b.mp3", "/m/figure.png"].map(std::path::PathBuf::from)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A note with an image occlusion drawn from `image` and `clozes`, then `rest`
+    fn image_occlusion_note(image: &Path, clozes: &Path, rest: &str) -> String {
+        format!(
+            "a\n<!--- spares: image occlusion start --->\n\
+             <!--- original_image_filepath = \"{}\" --->\n\
+             <!--- clozes_filepath = \"{}\" --->\n\
+             ![image]({})\n\
+             <!--- spares: image occlusion end --->\n{rest}",
+            image.display(),
+            clozes.display(),
+            image.display(),
+        )
+    }
+
+    #[test]
+    fn test_render_key_follows_image_occlusion_files() {
+        let dir = std::env::temp_dir().join(format!("spares-render-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (image, clozes) = (dir.join("a.png"), dir.join("a_clozes.svg"));
+        write(&image, "image").unwrap();
+        write(&clozes, "clozes").unwrap();
+        let parser = MarkdownParser::new();
+        let note = image_occlusion_note(&image, &clozes, "b");
+        let key = || {
+            render_key(
+                &note,
+                image_occlusion_sources_hash(&parser, &note).as_deref(),
+            )
+        };
+
+        // A note without image occlusions keeps the hash it had before they were in the key
+        assert_eq!(image_occlusion_sources_hash(&parser, "a {{b}}"), None);
+        assert_eq!(render_key("a {{b}}", None), blake3_hex("a {{b}}"));
+
+        let first = key();
+        assert_ne!(first, blake3_hex(&note));
+        assert_eq!(key(), first);
+        // Replacing either file, at the same path, changes the key
+        write(&image, "new image").unwrap();
+        let replaced_image = key();
+        assert_ne!(replaced_image, first);
+        write(&clozes, "new clozes").unwrap();
+        let replaced_clozes = key();
+        assert_ne!(replaced_clozes, replaced_image);
+        // As does a missing file, and its return
+        std::fs::remove_file(&image).unwrap();
+        assert_ne!(key(), replaced_clozes);
+        write(&image, "new image").unwrap();
+        assert_eq!(key(), replaced_clozes);
+        // Other files the note reads are not in the key
+        write(dir.join("header.tex"), "\\newcommand{\\x}{y}").unwrap();
+        assert_eq!(key(), replaced_clozes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_note_files_are_made_again_when_an_image_occlusion_file_is_replaced() {
+        let dir = std::env::temp_dir().join(format!("spares-io-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let (image, clozes) = (dir.join("a.png"), dir.join("a_clozes.svg"));
+        write(&image, "image").unwrap();
+        write(&clozes, "clozes").unwrap();
+        let parser = MarkdownParser::new();
+        let request = GenerateNoteFilesRequests {
+            requests: vec![GenerateNoteFilesRequest {
+                note_id: "aaa".parse().unwrap(),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                linked_notes: None,
+                note_data: image_occlusion_note(&image, &clozes, "b"),
+                custom_data: CustomData::new(),
+            }],
+            overridden_output_raw_dir: Some(out.clone()),
+            include_cards: false,
+            render: false,
+            force_render: false,
+            precomputed_cards: None,
+        };
+        // The raw note file, whose last line is its render key
+        let make = || {
+            let paths = create_note_files_bulk(&parser, &request).unwrap();
+            let path = paths.into_iter().next().unwrap().unwrap();
+            let raw = read_to_string(&path).unwrap();
+            let modified = metadata(&path).unwrap().modified().unwrap();
+            (raw, modified)
+        };
+
+        let (first, first_modified) = make();
+        let (again, again_modified) = make();
+        assert_eq!(again, first);
+        assert_eq!(
+            again_modified, first_modified,
+            "an unchanged note is skipped"
+        );
+
+        write(&image, "replaced").unwrap();
+        let (replaced, _) = make();
+        assert_ne!(replaced, first, "the note is made again with a new key");
+        assert_eq!(
+            replaced.lines().count(),
+            first.lines().count(),
+            "only the key changes"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
