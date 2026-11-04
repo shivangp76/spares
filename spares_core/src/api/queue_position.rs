@@ -120,8 +120,8 @@ pub async fn queue_positions(
         None => None,
     };
     unbury_cards_and_update_config(db).await?;
-    let review_filter = review_filter_of(db, filter, requested_date).await?;
     let config = read_external_config()?;
+    let review_filter = review_filter_of(db, &config, filter, requested_date).await?;
     let OrderedQueue { rows, skipped, .. } = ordered_queue(
         db,
         &review_filter,
@@ -275,6 +275,7 @@ fn invalid(message: String) -> Error {
 /// The review with `filter`, which for a query with `limit` is today's snapshot of it.
 async fn review_filter_of(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     filter: Option<GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
 ) -> Result<ReviewFilterQuery, Error> {
@@ -292,7 +293,7 @@ async fn review_filter_of(
         }
         filter => filter,
     };
-    build_review_filter_query(db, filter.as_ref(), requested_date, true)
+    build_review_filter_query(db, config, filter.as_ref(), requested_date, true)
         .await?
         .ok_or_else(|| invalid("No filtered tag has this id.".to_string()))
 }
