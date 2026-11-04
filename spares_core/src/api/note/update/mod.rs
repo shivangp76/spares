@@ -842,10 +842,11 @@ async fn generate_updated_note_files(
             render: false,
             force_render: false,
             precomputed_cards: Some(group_precomputed_cards),
+            render_states: HashMap::new(),
         };
-        let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+        for files in create_note_files_bulk(parser.as_ref(), &parse_notes_request)? {
+            files.result?;
+        }
     }
     Ok(())
 }

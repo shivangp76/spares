@@ -1,15 +1,10 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::fs::create_dir_all;
-use std::fs::read_to_string;
 use std::fs::remove_file;
 use std::fs::rename;
-use std::fs::write;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 #[cfg(not(target_family = "wasm"))]
 use indicatif::ParallelProgressIterator;
@@ -24,10 +19,8 @@ use web_time::Instant;
 use super::image_occlusion::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::config::SparesExternalConfig;
-use crate::config::get_cache_dir;
 use crate::helpers::write_if_changed;
 use crate::model::NoteId;
-use crate::notes_vcs;
 use crate::notes_vcs::note_write_dir;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
@@ -35,7 +28,9 @@ use crate::parsers::ConstructFileDataType;
 use crate::parsers::CustomData;
 use crate::parsers::NoteImportAction;
 use crate::parsers::Parseable;
+use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
+use crate::parsers::RenderedFile;
 use crate::parsers::TemplateType;
 use crate::parsers::WebRenderMode;
 use crate::parsers::get_cards;
@@ -101,22 +96,6 @@ fn card_render_key(
     hasher.finalize().to_hex().to_string()
 }
 
-/// Where the [`card_render_key`] of the card rendered to `output_rendered_filename` is kept: beside
-/// the notes' render hashes, in the cache, so that, like them, it isn't synced and goes when note
-/// ids are renumbered.
-pub(crate) fn card_render_key_path(
-    parser: &dyn Parseable,
-    output_rendered_filename: &str,
-) -> PathBuf {
-    let stem = Path::new(output_rendered_filename)
-        .file_stem()
-        .unwrap_or_default();
-    get_cache_dir()
-        .join("note-hashes")
-        .join(parser.get_parser_name())
-        .join(stem)
-}
-
 /// The hash of the path and contents of each original image and clozes file of the image
 /// occlusions in `note_data`, in order, for [`render_key`]. A file that can't be read is hashed as
 /// missing, so the note is rendered again, and reports it, until it is back. `None` if the note
@@ -173,107 +152,55 @@ pub struct GenerateNoteFilesRequests {
     /// `add_order_to_note_data` in the update path). Falls back to `get_cards` for notes absent
     /// from the map.
     pub precomputed_cards: Option<HashMap<NoteId, Vec<CardData>>>,
+    /// The notes' [`RenderStates`] from when they were last rendered here, to skip what is up to
+    /// date. A note without any is rendered.
+    pub render_states: HashMap<NoteId, RenderStates>,
 }
 
-#[derive(Clone, Debug, Copy, PartialEq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 pub enum CardSide {
     Front,
     Back,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RenderOutputType {
     Note,
     /// Card order
     Card(usize, CardSide),
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the render key needs the image occlusion files beside the note"
-)]
-pub fn file_in_cache(
-    render: bool,
-    force_render: bool,
-    output_raw_filepath: &Path,
-    output_rendered_filepath: &Path,
-    note_file_data: &str,
-    image_occlusion_sources: Option<&str>,
-    note_id: NoteId,
-    line_to_hash: impl Fn(&str) -> Option<String>,
-) -> Result<bool, Error> {
-    if !force_render
-        && output_raw_filepath.exists()
-        && (!render || output_rendered_filepath.exists())
-    {
-        // Read only the tail of the file to extract the last line's hash,
-        // avoiding a full multi-MB read for the common cache-miss path.
-        let current_rendered_hash_opt = {
-            let mut file = File::open(output_raw_filepath).map_err(|e| Error::Io {
-                description: format!("Failed to read {}", output_raw_filepath.display()),
-                source: e,
-            })?;
-            let file_len = file
-                .metadata()
-                .map_err(|e| Error::Io {
-                    description: format!(
-                        "Failed to read metadata for {}",
-                        output_raw_filepath.display()
-                    ),
-                    source: e,
-                })?
-                .len();
-            file.seek(SeekFrom::Start(file_len.saturating_sub(512)))
-                .map_err(|e| Error::Io {
-                    description: format!("Failed to seek in {}", output_raw_filepath.display()),
-                    source: e,
-                })?;
-            let mut tail_bytes = Vec::new();
-            file.read_to_end(&mut tail_bytes).map_err(|e| Error::Io {
-                description: format!("Failed to read {}", output_raw_filepath.display()),
-                source: e,
-            })?;
-            // Get the last non-empty line, handling any trailing newlines.
-            tail_bytes
-                .rsplit(|&b| b == b'\n')
-                .find(|line| !line.is_empty())
-                .and_then(|line_bytes| std::str::from_utf8(line_bytes).ok())
-                .and_then(line_to_hash)
-        };
+/// What rendering one of a note's outputs on this machine made, kept in the database (see
+/// `api::render_state`). It isn't synced: each machine renders its own files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RenderState {
+    /// What the rendered file was made from ([`render_key`] or [`card_render_key`]). The file is
+    /// up to date while it exists and rendering it would have the same key.
+    pub key: String,
+    pub dependencies: RenderDependencies,
+}
 
-        if let Some(current_rendered_hash) = current_rendered_hash_opt {
-            let new_note_data_hash = render_key(note_file_data, image_occlusion_sources);
-            if current_rendered_hash == new_note_data_hash {
-                // Also check that the current note data has the correct hash. This is because locally editing the notes file will cause the data to change, but not the hash. This ensures that syncing local files to the database rerenders the file if it was updated.
-                // Full read only happens here, on the rare path where hashes match.
-                let current_raw_string =
-                    read_to_string(output_raw_filepath).map_err(|e| Error::Io {
-                        description: format!("Failed to read {}", output_raw_filepath.display()),
-                        source: e,
-                    })?;
-                // Use rfind to locate the last line boundary without collecting all lines
-                // into a Vec or allocating a join buffer.
-                let content_end = current_raw_string
-                    .trim_end_matches('\n')
-                    .rfind('\n')
-                    .map_or(0, |i| i + 1);
-                let current_note_data_hash =
-                    render_key(&current_raw_string[..content_end], image_occlusion_sources);
-                if current_rendered_hash == current_note_data_hash {
-                    info!(
-                        "[Note Id: {}] Existing file is up to date. Skipping.",
-                        note_id.letters()
-                    );
-                    return Ok(true);
-                }
-                info!(
-                    "[Note Id: {}] Hash matches, but current file is not up to date, so generating files.",
-                    note_id.letters()
-                );
-            }
-        }
-    }
-    Ok(false)
+/// A note's [`RenderState`]s, by output
+pub type RenderStates = HashMap<RenderOutputType, RenderState>;
+
+/// What creating a note's files changed in its [`RenderStates`], for the caller to store
+#[derive(Debug, Default)]
+pub struct RenderStateChanges {
+    /// Outputs rendered again
+    pub rendered: Vec<(RenderOutputType, RenderState)>,
+    /// Outputs that failed to render, so that they're rendered again, or that the note no longer
+    /// has
+    pub removed: Vec<RenderOutputType>,
+}
+
+/// One note's files, made by [`create_note_files_bulk`]
+#[derive(Debug)]
+pub struct NoteFiles {
+    pub note_id: NoteId,
+    /// The raw note file
+    pub result: Result<PathBuf, Error>,
+    /// Recorded even if some of the note's files failed
+    pub render_states: RenderStateChanges,
 }
 
 // There is no reason to only render a single card from a note. Any changes to 1 card likely change the entire note, so other cards change as well. Thus, this function parses the entire note and all its cards.
@@ -282,14 +209,14 @@ pub fn file_in_cache(
 /// - a raw and rendered version of the notes in the notes directory
 /// - (optional) a raw and rendered version of each card in the cards
 ///
-/// Returns the file path of the raw note file.
+/// Returns each note's raw file and what changed in its [`RenderStates`], which the caller stores.
 ///
 /// Does nothing in a browser, which has no files: the server writes them once the browser's
 /// changes reach it (see [`crate::platform`]).
 pub fn create_note_files_bulk(
     parser: &dyn Parseable,
     request: &GenerateNoteFilesRequests,
-) -> Result<Vec<Result<PathBuf, Error>>, Error> {
+) -> Result<Vec<NoteFiles>, Error> {
     if cfg!(target_family = "wasm") {
         return Ok(Vec::new());
     }
@@ -346,15 +273,16 @@ pub fn create_note_files_bulk(
                 request.render,
                 request.force_render,
                 request.precomputed_cards.as_ref(),
-                // &Arc::clone(&counter),
-                // total_notes,
+                request
+                    .render_states
+                    .get(&create_note_files_request.note_id),
             )
         })
         .collect();
     Ok(result)
 }
 
-/// The raw note file, without the hash line added when rendering.
+/// The raw note file.
 pub fn construct_note_file_contents(
     parser: &dyn Parseable,
     note_template_contents: &str,
@@ -386,7 +314,6 @@ pub fn construct_card_file_contents(
 }
 
 #[allow(clippy::too_many_arguments, reason = "function is only called once")]
-#[expect(clippy::too_many_lines)]
 fn create_note_files(
     parser: &dyn Parseable,
     request: &GenerateNoteFilesRequest,
@@ -398,11 +325,74 @@ fn create_note_files(
     render: bool,
     force_render: bool,
     precomputed_cards: Option<&HashMap<NoteId, Vec<CardData>>>,
-    // _counter: &Arc<AtomicUsize>,
-    // _total_notes: usize,
-) -> Result<PathBuf, Error> {
+    render_states: Option<&RenderStates>,
+) -> NoteFiles {
     let start = Instant::now();
+    let changes = Mutex::new(RenderStateChanges::default());
+    let result = write_note_files(
+        parser,
+        request,
+        NoteTemplates {
+            note: note_template_contents,
+            card: card_template_contents,
+            body_placeholder,
+        },
+        overridden_output_raw_dir,
+        NoteFilesOptions {
+            include_cards,
+            render,
+            force_render,
+        },
+        precomputed_cards,
+        render_states,
+        &changes,
+    );
+    debug!(
+        "[Note Id: {}] Duration: {:?}",
+        request.note_id.letters(),
+        start.elapsed()
+    );
+    NoteFiles {
+        note_id: request.note_id,
+        result,
+        render_states: changes
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    }
+}
 
+#[derive(Clone, Copy)]
+struct NoteTemplates<'a> {
+    note: &'a str,
+    card: &'a str,
+    body_placeholder: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct NoteFilesOptions {
+    include_cards: bool,
+    render: bool,
+    force_render: bool,
+}
+
+/// [`create_note_files`], recording what it renders in `changes`
+#[expect(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines)]
+fn write_note_files(
+    parser: &dyn Parseable,
+    request: &GenerateNoteFilesRequest,
+    templates: NoteTemplates<'_>,
+    overridden_output_raw_dir: Option<&Path>,
+    options: NoteFilesOptions,
+    precomputed_cards: Option<&HashMap<NoteId, Vec<CardData>>>,
+    render_states: Option<&RenderStates>,
+    changes: &Mutex<RenderStateChanges>,
+) -> Result<PathBuf, Error> {
+    let NoteFilesOptions {
+        include_cards,
+        render,
+        force_render,
+    } = options;
     let GenerateNoteFilesRequest {
         note_id,
         note_data,
@@ -416,135 +406,131 @@ fn create_note_files(
         note_write_dir(parser.get_parser_name(), overridden_output_raw_dir);
     output_text_filepath.push(&output_rendered_filename);
     output_text_filepath.set_extension(parser.file_extension());
-    // Files in the notes repository carry no hash line, which would change on every render and
-    // conflict with users' edits. The hash of the content last compiled is kept beside the cache.
-    let vcs_format = overridden_output_raw_dir.is_none() && notes_vcs::enabled();
-    let output_rendered_dir = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
-    let mut output_rendered_filepath = output_rendered_dir.clone();
+    let mut output_rendered_filepath =
+        parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
     output_rendered_filepath.push(&output_rendered_filename);
 
     // Check cache
-    let mut file_contents =
-        construct_note_file_contents(parser, note_template_contents, body_placeholder, request);
-    let line_to_hash = |line: &str| -> Option<String> {
-        parser
-            .extract_comment(line)
-            .strip_prefix("hash: ")
-            .map(|x| x.to_string())
-    };
+    let file_contents =
+        construct_note_file_contents(parser, templates.note, templates.body_placeholder, request);
     // Read before the cards are made, so a file replaced while they are is read again next time
     let image_occlusion_sources = image_occlusion_sources_hash(parser, note_data);
     let image_occlusion_sources = image_occlusion_sources.as_deref();
-    let in_cache = if vcs_format {
-        render
-            && !force_render
-            && output_rendered_filepath.exists()
-            && notes_vcs::read_render_hash(parser.get_parser_name(), *note_id)
-                .is_some_and(|hash| hash == render_key(&file_contents, image_occlusion_sources))
-            && std::fs::read(&output_text_filepath).is_ok_and(|raw| raw == file_contents.as_bytes())
-    } else {
-        file_in_cache(
-            render,
-            force_render,
-            &output_text_filepath,
-            &output_rendered_filepath,
-            &file_contents,
-            image_occlusion_sources,
-            *note_id,
-            line_to_hash,
-        )?
+    let note_key = render_key(&file_contents, image_occlusion_sources);
+    let stored = |output| {
+        render_states
+            .filter(|_| !force_render)
+            .and_then(|states| states.get(&output))
+    };
+    // The raw file is also compared, since one edited by hand is rendered again when `spares sync`
+    // imports it
+    let in_cache = render
+        && output_rendered_filepath.exists()
+        && stored(RenderOutputType::Note).is_some_and(|state| state.key == note_key)
+        && std::fs::read(&output_text_filepath).is_ok_and(|raw| raw == file_contents.as_bytes());
+    if in_cache {
+        info!(
+            "[Note Id: {}] Existing file is up to date. Skipping.",
+            note_id.letters()
+        );
+        return Ok(output_text_filepath);
+    }
+
+    let record = |output, result: Result<(PathBuf, Option<RenderState>), Error>| {
+        let mut changes = crate::collection::lock(changes);
+        match result {
+            Ok((path, state)) => {
+                changes.rendered.extend(state.map(|state| (output, state)));
+                Ok(path)
+            }
+            Err(e) => {
+                changes.removed.push(output);
+                Err(e)
+            }
+        }
     };
 
-    let result = if in_cache {
-        Ok(output_text_filepath)
-    } else {
-        // Create card files
-        if include_cards {
-            let cards = match precomputed_cards.and_then(|m| m.get(note_id)) {
-                Some(cards) => cards.clone(),
-                None => get_cards(parser, None, note_data, false, true)?,
-            };
-            // The note's sources, for the cards' render keys, before the name is reused below
-            let sources_hash = image_occlusion_sources;
-            let card_key = |file_contents: &str| {
-                (!force_render)
-                    .then(|| card_render_key(file_contents, web_render_mode, sources_hash))
-            };
-            // Read once for all of the note's cards, and only if their images are made. Overlays
-            // are in the cards' sources instead.
-            let image_occlusion_sources = ImageOcclusionSources::read(
-                if render && !parser.image_occlusion_overlays() {
-                    &cards
-                } else {
-                    &[]
-                },
-                parser.image_occlusion_overlays(),
-            );
-            let context = crate::collection::capture();
-            cards
-                .par_iter()
-                .enumerate()
-                .try_for_each(|(i, card)| -> Result<(), Error> {
-                    let _collection = context.enter();
-                    let card_order = i + 1;
+    // Create card files
+    if include_cards {
+        let cards = match precomputed_cards.and_then(|m| m.get(note_id)) {
+            Some(cards) => cards.clone(),
+            None => get_cards(parser, None, note_data, false, true)?,
+        };
+        let sides = |card: &CardData| {
+            if matches!(card.back_type, BackType::CardFilePath) {
+                &[CardSide::Front, CardSide::Back][..]
+            } else {
+                &[CardSide::Front][..]
+            }
+        };
+        // Read once for all of the note's cards, and only if their images are made. Overlays
+        // are in the cards' sources instead.
+        let card_image_occlusion_sources = ImageOcclusionSources::read(
+            if render && !parser.image_occlusion_overlays() {
+                &cards
+            } else {
+                &[]
+            },
+            parser.image_occlusion_overlays(),
+        );
+        let context = crate::collection::capture();
+        cards
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(i, card)| -> Result<(), Error> {
+                let _collection = context.enter();
+                let card_order = i + 1;
+                for &side in sides(card) {
                     let file_contents = construct_card_file_contents(
                         parser,
-                        card_template_contents,
-                        body_placeholder,
+                        templates.card,
+                        templates.body_placeholder,
                         request,
                         card_order,
                         card,
-                        CardSide::Front,
+                        side,
                     );
-                    create_raw_and_rendered_file(
-                        parser,
-                        *note_id,
-                        ConstructFileDataType::Card(card_order, card, CardSide::Front),
-                        &file_contents,
-                        overridden_output_raw_dir,
-                        render,
-                        web_render_mode,
-                        Some(&image_occlusion_sources),
-                        card_key(&file_contents).as_deref(),
-                    )?;
-
-                    if matches!(card.back_type, BackType::CardFilePath) {
-                        let file_contents = construct_card_file_contents(
-                            parser,
-                            card_template_contents,
-                            body_placeholder,
-                            request,
-                            card_order,
-                            card,
-                            CardSide::Back,
-                        );
+                    let output = RenderOutputType::Card(card_order, side);
+                    // A card of a note that changed is rendered again only if it changed too
+                    let key =
+                        card_render_key(&file_contents, web_render_mode, image_occlusion_sources);
+                    record(
+                        output,
                         create_raw_and_rendered_file(
                             parser,
                             *note_id,
-                            ConstructFileDataType::Card(card_order, card, CardSide::Back),
+                            ConstructFileDataType::Card(card_order, card, side),
                             &file_contents,
                             overridden_output_raw_dir,
                             render,
                             web_render_mode,
-                            Some(&image_occlusion_sources),
-                            card_key(&file_contents).as_deref(),
-                        )?;
-                    }
-                    Ok(())
-                })?;
+                            Some(&card_image_occlusion_sources),
+                            &key,
+                            stored(output),
+                        ),
+                    )?;
+                }
+                Ok(())
+            })?;
+        // Forget the cards the note no longer has
+        if render && let Some(states) = render_states {
+            let has = |output: &RenderOutputType| match *output {
+                RenderOutputType::Note => true,
+                RenderOutputType::Card(order, side) => order
+                    .checked_sub(1)
+                    .and_then(|i| cards.get(i))
+                    .is_some_and(|card| sides(card).contains(&side)),
+            };
+            crate::collection::lock(changes)
+                .removed
+                .extend(states.keys().filter(|output| !has(output)));
         }
+    }
 
-        // Create note files
-        // Add hash to file if:
-        // - it is a note
-        // - the note was rendered OR the note was created somewhere else for comparison purposes
-        let file_contents_hash = render_key(&file_contents, image_occlusion_sources);
-        if !vcs_format && (render || overridden_output_raw_dir.is_some()) {
-            let file_contents_hash_str = format!("hash: {}", file_contents_hash);
-            let hash_line = parser.construct_comment(&file_contents_hash_str);
-            file_contents.push_str(hash_line.as_str());
-        }
-        let result = create_raw_and_rendered_file(
+    // Create note files
+    record(
+        RenderOutputType::Note,
+        create_raw_and_rendered_file(
             parser,
             *note_id,
             ConstructFileDataType::Note,
@@ -553,26 +539,10 @@ fn create_note_files(
             render,
             web_render_mode,
             None,
+            &note_key,
             None,
-        );
-        if vcs_format {
-            if render && result.is_ok() && output_rendered_filepath.exists() {
-                notes_vcs::write_render_hash(
-                    parser.get_parser_name(),
-                    *note_id,
-                    &file_contents_hash,
-                );
-            } else if result.is_err() {
-                notes_vcs::remove_render_hash(parser.get_parser_name(), *note_id);
-            }
-        }
-        result
-    };
-    // let done_count = counter.fetch_add(1, Ordering::SeqCst) + 1;
-    // info!("Parsed {} out of {} notes", done_count, total_notes);
-    let duration = start.elapsed();
-    debug!("[Note Id: {}] Duration: {:?}", note_id.letters(), duration);
-    result
+        ),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -587,10 +557,12 @@ fn create_raw_and_rendered_file(
     web_render_mode: WebRenderMode,
     // What a card's image occlusions are drawn from, read for the note's cards
     image_occlusion_sources: Option<&ImageOcclusionSources>,
-    // A card's `card_render_key`, to render it only if it changed. `None` for notes, which have
-    // their own cache, and when rendering is forced.
-    card_render_key: Option<&str>,
-) -> Result<PathBuf, Error> {
+    // What the rendered file is made from (see `RenderState::key`)
+    key: &str,
+    // From when it was last rendered, to render it only if it changed. `None` for notes, which
+    // are checked before their cards are made, and when rendering is forced.
+    stored: Option<&RenderState>,
+) -> Result<(PathBuf, Option<RenderState>), Error> {
     let render_output_type: RenderOutputType = match output_type {
         ConstructFileDataType::Note => RenderOutputType::Note,
         ConstructFileDataType::Card(order, _, side) => RenderOutputType::Card(order, side),
@@ -664,13 +636,15 @@ fn create_raw_and_rendered_file(
         let mut output_rendered_filepath = output_rendered_dir.clone();
         output_rendered_filepath.push(&output_rendered_filename);
 
-        // A card of a note that changed is rendered again only if it changed too
-        let key_path =
-            card_render_key.map(|_| card_render_key_path(parser, &output_rendered_filename));
-        if let (Some(key), Some(key_path)) = (card_render_key, &key_path)
-            && card_is_rendered(key, key_path, raw_changed, &output_rendered_filepath)
+        if stored.is_some_and(|stored| stored.key == key)
+            && !raw_changed
+            && output_rendered_filepath.exists()
         {
-            return Ok(output_text_filepath);
+            debug!(
+                "{} is up to date. Skipping.",
+                output_rendered_filepath.display()
+            );
+            return Ok((output_text_filepath, None));
         }
 
         let aux_dir = parser.get_aux_dir(render_output_type, note_id);
@@ -705,7 +679,10 @@ fn create_raw_and_rendered_file(
             }
         }
 
-        let output = parser.render_file(
+        let RenderedFile {
+            output,
+            mut dependencies,
+        } = parser.render_file(
             &aux_dir,
             &output_text_filepath,
             &output_rendered_dir,
@@ -738,45 +715,19 @@ fn create_raw_and_rendered_file(
                 &output_text_filepath,
                 &output_rendered_filepath,
                 web_render_mode,
+                &mut dependencies,
             );
         }
 
-        if let (Some(key), Some(key_path)) = (card_render_key, &key_path) {
-            let result = key_path
-                .parent()
-                .map_or(Ok(()), create_dir_all)
-                .and_then(|()| write(key_path, key));
-            if let Err(e) = result {
-                warn!("Failed to write {}: {e}", key_path.display());
-            }
-        }
+        dependencies.normalize();
+        let state = RenderState {
+            key: key.to_string(),
+            dependencies,
+        };
+        return Ok((output_text_filepath, Some(state)));
     }
 
-    Ok(output_text_filepath)
-}
-
-/// Whether a card's rendered file, `output_rendered_filepath`, is still what rendering it would
-/// make: its raw file did not change (`raw_changed`), and `key_path` holds its [`card_render_key`],
-/// `key`, from when it was last rendered. If not, the key is removed until it is rendered again,
-/// so that a render that fails does not leave it behind.
-fn card_is_rendered(
-    key: &str,
-    key_path: &Path,
-    raw_changed: bool,
-    output_rendered_filepath: &Path,
-) -> bool {
-    if !raw_changed
-        && output_rendered_filepath.exists()
-        && std::fs::read_to_string(key_path).is_ok_and(|old| old == key)
-    {
-        debug!(
-            "{} is up to date. Skipping.",
-            output_rendered_filepath.display()
-        );
-        return true;
-    }
-    let _ = remove_file(key_path);
-    false
+    Ok((output_text_filepath, None))
 }
 
 /// Puts a note's rendered file into the parser's directory in
@@ -846,6 +797,7 @@ fn create_web_render_file(
     output_text_filepath: &Path,
     output_rendered_filepath: &Path,
     mode: WebRenderMode,
+    dependencies: &mut RenderDependencies,
 ) {
     let output_web_filepath = web_render_filepath(output_rendered_filepath);
     let tmp_filepath = output_web_filepath.with_extension("html.tmp");
@@ -857,6 +809,7 @@ fn create_web_render_file(
                 output_rendered_filepath,
                 &tmp_filepath,
                 mode,
+                dependencies,
             )
             .map_err(Some)
             .and_then(|()| {
@@ -886,25 +839,20 @@ fn create_web_render_file(
 
 #[cfg(test)]
 mod tests {
-    use std::fs::metadata;
     use std::fs::read_to_string;
     use std::fs::remove_file;
     use std::fs::write;
     use std::path::Path;
 
-    use super::GenerateNoteFilesRequest;
-    use super::GenerateNoteFilesRequests;
     use super::blake3_hex;
-    use super::card_is_rendered;
     use super::card_render_key;
-    use super::create_note_files_bulk;
     use super::create_web_render_file;
     use super::generates_render_files;
     use super::image_occlusion_sources_hash;
     use super::link_into;
     use super::render_key;
     use crate::config::SparesExternalConfig;
-    use crate::parsers::CustomData;
+    use crate::parsers::RenderDependencies;
     use crate::parsers::WebRenderMode;
     use crate::parsers::has_web_render_file;
     use crate::parsers::impls::markdown::MarkdownParser;
@@ -936,7 +884,14 @@ mod tests {
         let tikz = "\\begin{tikzpicture}\n\\end{tikzpicture}\n";
         let render = |contents: &str, mode| {
             write(&text, contents).unwrap();
-            create_web_render_file(&parser, "aaa".parse().unwrap(), &text, &rendered, mode);
+            create_web_render_file(
+                &parser,
+                "aaa".parse().unwrap(),
+                &text,
+                &rendered,
+                mode,
+                &mut RenderDependencies::default(),
+            );
         };
 
         render("Text", WebRenderMode::Auto);
@@ -1041,61 +996,6 @@ mod tests {
     }
 
     #[test]
-    fn test_note_files_are_made_again_when_an_image_occlusion_file_is_replaced() {
-        // In the collection, where image occlusion files must be
-        let dir = crate::parsers::image_occlusion::get_image_occlusion_directory()
-            .join(format!("spares-io-cache-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let out = dir.join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let (image, clozes) = (dir.join("a.png"), dir.join("a_clozes.svg"));
-        write(&image, "image").unwrap();
-        write(&clozes, "clozes").unwrap();
-        let parser = MarkdownParser::new();
-        let request = GenerateNoteFilesRequests {
-            requests: vec![GenerateNoteFilesRequest {
-                note_id: "aaa".parse().unwrap(),
-                keywords: Vec::new(),
-                tags: Vec::new(),
-                linked_notes: None,
-                note_data: image_occlusion_note(&image, &clozes, "b"),
-                custom_data: CustomData::new(),
-            }],
-            overridden_output_raw_dir: Some(out.clone()),
-            include_cards: false,
-            render: false,
-            force_render: false,
-            precomputed_cards: None,
-        };
-        // The raw note file, whose last line is its render key
-        let make = || {
-            let paths = create_note_files_bulk(&parser, &request).unwrap();
-            let path = paths.into_iter().next().unwrap().unwrap();
-            let raw = read_to_string(&path).unwrap();
-            let modified = metadata(&path).unwrap().modified().unwrap();
-            (raw, modified)
-        };
-
-        let (first, first_modified) = make();
-        let (again, again_modified) = make();
-        assert_eq!(again, first);
-        assert_eq!(
-            again_modified, first_modified,
-            "an unchanged note is skipped"
-        );
-
-        write(&image, "replaced").unwrap();
-        let (replaced, _) = make();
-        assert_ne!(replaced, first, "the note is made again with a new key");
-        assert_eq!(
-            replaced.lines().count(),
-            first.lines().count(),
-            "only the key changes"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn test_card_render_key_follows_what_a_card_is_rendered_from() {
         let key = card_render_key("card", WebRenderMode::Auto, None);
         assert_eq!(card_render_key("card", WebRenderMode::Auto, None), key);
@@ -1106,33 +1006,6 @@ mod tests {
         ] {
             assert_ne!(other, key);
         }
-    }
-
-    #[test]
-    fn test_a_card_is_rendered_again_only_if_it_changed() {
-        let dir = std::env::temp_dir().join(format!("spares-card-key-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let (key_path, rendered) = (dir.join("aaa-1-front"), dir.join("aaa-1-front.pdf"));
-        let key = card_render_key("card", WebRenderMode::Auto, None);
-
-        // Never rendered
-        assert!(!card_is_rendered(&key, &key_path, false, &rendered));
-        write(&rendered, "pdf").unwrap();
-        write(&key_path, &key).unwrap();
-        assert!(card_is_rendered(&key, &key_path, false, &rendered));
-        // A changed raw file, or another key, renders it again, and the key goes until then
-        assert!(!card_is_rendered(&key, &key_path, true, &rendered));
-        assert!(!key_path.exists());
-        write(&key_path, &key).unwrap();
-        let other = card_render_key("card 2", WebRenderMode::Auto, None);
-        assert!(!card_is_rendered(&other, &key_path, false, &rendered));
-        assert!(!key_path.exists());
-        // As does a missing rendered file
-        write(&key_path, &key).unwrap();
-        std::fs::remove_file(&rendered).unwrap();
-        assert!(!card_is_rendered(&key, &key_path, false, &rendered));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
