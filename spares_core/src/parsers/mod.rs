@@ -202,6 +202,16 @@ pub trait Parseable: Send + Sync {
         output_type: ConstructImageOcclusionType,
     ) -> String;
 
+    /// Whether cards show an image occlusion as the original image with an SVG of the card's
+    /// clozes over it, rather than as a PNG of both (see
+    /// [`image_occlusion::get_image_occlusion_card_filepath`]). The original image is then shared
+    /// by every card of the note, and each card's SVG is small, which matters to web clients that
+    /// fetch the files a card reads to compile it themselves. Only for parsers whose output can
+    /// draw one image over another.
+    fn image_occlusion_overlays(&self) -> bool {
+        false
+    }
+
     /// Shows the image at `file_path`, an absolute path, where it is inserted into a note.
     fn construct_image(&self, file_path: &Path) -> String;
 

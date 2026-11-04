@@ -2,6 +2,7 @@ use std::fs::read_to_string;
 use std::fs::{self};
 use std::ops::Range;
 use std::path::Path;
+use std::path::PathBuf;
 
 use image::ImageFormat;
 use image::imageops;
@@ -30,6 +31,7 @@ use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::config::read_external_config;
 use crate::helpers::to_title_case;
+use crate::model::NoteId;
 use crate::parsers::BackReveal;
 use crate::parsers::CardData;
 use crate::parsers::ClozeData;
@@ -53,11 +55,7 @@ pub fn construct_image_occlusion_from_image(
     image_occlusion_data: &ImageOcclusionData,
     output_type: ConstructImageOcclusionType,
 ) -> String {
-    let caption = image_occlusion_data
-        .original_image_filepath
-        .file_stem()
-        .and_then(|x| x.to_str())
-        .map_or("Image Occlusion".to_string(), to_title_case);
+    let caption = image_occlusion_caption(image_occlusion_data);
     match output_type {
         ConstructImageOcclusionType::Note => {
             // Embed image in parser's preferred format so the user can preview it
@@ -86,22 +84,46 @@ pub fn construct_image_occlusion_from_image(
             note_id,
             card_order,
             image_occlusion_order,
-        } => {
-            let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
-            output_rendered_filepath.push(
-                parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
-            );
-            construct_image_fn(
-                get_image_occlusion_card_filepath(
-                    &output_rendered_filepath,
-                    side,
-                    image_occlusion_order,
-                )
-                .as_path(),
-                &caption,
-            )
-        }
+        } => construct_image_fn(
+            &image_occlusion_card_image_filepath(
+                parser,
+                side,
+                note_id,
+                card_order,
+                image_occlusion_order,
+            ),
+            &caption,
+        ),
     }
+}
+
+/// The caption of an image occlusion: its original image's name.
+pub fn image_occlusion_caption(image_occlusion_data: &ImageOcclusionData) -> String {
+    image_occlusion_data
+        .original_image_filepath
+        .file_stem()
+        .and_then(|x| x.to_str())
+        .map_or("Image Occlusion".to_string(), to_title_case)
+}
+
+/// The image that `side` of card `card_order` of note `note_id` shows for its
+/// `image_occlusion_order`th image occlusion (see [`get_image_occlusion_card_filepath`]).
+pub fn image_occlusion_card_image_filepath(
+    parser: &(impl Parseable + ?Sized),
+    side: CardSide,
+    note_id: NoteId,
+    card_order: usize,
+    image_occlusion_order: usize,
+) -> PathBuf {
+    let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
+    output_rendered_filepath
+        .push(parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id));
+    get_image_occlusion_card_filepath(
+        &output_rendered_filepath,
+        side,
+        image_occlusion_order,
+        parser.image_occlusion_overlays(),
+    )
 }
 
 pub fn update_cloze_settings(
@@ -182,10 +204,13 @@ pub fn update_cloze_settings(
     Ok(())
 }
 
+/// Writes the image `side` of the card shows for each of its image occlusions: a PNG, or, if
+/// `overlay`, an SVG to show over the original image (see [`get_image_occlusion_card_filepath`]).
 pub fn create_image_occlusion_cards(
     card_data: &CardData,
     side: CardSide,
     image_occlusion_output_rendered_filepath: &Path,
+    overlay: bool,
 ) -> Result<(), LibraryError> {
     // Collect image occlusion data first
     let image_occlusions = card_data
@@ -217,6 +242,7 @@ pub fn create_image_occlusion_cards(
                 image_occlusion_output_rendered_filepath,
                 side,
                 image_occlusion_order_in_card,
+                overlay,
             );
             create_image_occlusion_card(
                 cloze_indices,
@@ -224,6 +250,7 @@ pub fn create_image_occlusion_cards(
                 &card_filepath,
                 side,
                 &config.image_occlusion,
+                overlay,
             )
             .map_err(|e| match e {
                 Error::Library(le) => le,
@@ -380,19 +407,45 @@ fn set_cloze_fill_opacity(cloze: &mut Element, cloze_emphasis_fill_opacity: f64)
     );
 }
 
+/// Writes the image of `image_occlusion_data` that `side` of a card shows to `card_filepath`: the
+/// card's clozes drawn over the original image as a PNG, or, if `overlay`, as an SVG to show over
+/// the original image (see [`image_occlusion_overlay_svg`]).
 pub(crate) fn create_image_occlusion_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     card_filepath: &Path,
     side: CardSide,
     config: &ImageOcclusionConfig,
+    overlay: bool,
 ) -> Result<(), Error> {
+    let clozes_svg_element = card_clozes_svg(cloze_indices, image_occlusion_data, side, config)?;
+    let original_image_filepath = &image_occlusion_data.original_image_filepath;
+    let contents = if overlay {
+        image_occlusion_overlay_svg(&clozes_svg_element, original_image_filepath)?
+    } else {
+        compose_image_occlusion_card(&clozes_svg_element, original_image_filepath)?
+    };
+    fs::write(card_filepath, contents).map_err(|e| {
+        Error::Library(LibraryError::Note(NoteErrorKind::Other {
+            description: format!("Failed to save {}: {}", card_filepath.display(), e),
+        }))
+    })
+}
+
+/// The clozes SVG of `image_occlusion_data` as `side` of a card shows it: its clozes recolored,
+/// hidden or labeled with hints (see [`modify_clozes_for_card`]), and its markup as it is.
+fn card_clozes_svg(
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+    config: &ImageOcclusionConfig,
+) -> Result<Element, Error> {
     let ImageOcclusionData {
-        original_image_filepath,
         clozes_filepath,
         front_conceal,
         back_reveal,
         back_emphasis,
+        ..
     } = image_occlusion_data;
     let clozes_file_contents = read_to_string(clozes_filepath).map_err(|_| {
         LibraryError::Note(NoteErrorKind::Other {
@@ -421,14 +474,61 @@ pub(crate) fn create_image_occlusion_card(
         side,
         config,
     );
+    Ok(clozes_svg_element)
+}
 
+/// `clozes_svg`, from [`card_clozes_svg`], as an image the size of the original image at
+/// `original_image_filepath`, so that a card shows it over the original image by giving both the
+/// same width.
+///
+/// It is drawn as [`compose_image_occlusion_card`] draws it: at its own size, from the top left
+/// corner of the original image, and clipped to it. So it is nested in an SVG whose size and
+/// coordinates are the original image's pixels.
+pub(crate) fn image_occlusion_overlay_svg(
+    clozes_svg: &Element,
+    original_image_filepath: &Path,
+) -> Result<Vec<u8>, Error> {
+    let (width, height) = image::image_dimensions(original_image_filepath).map_err(|e| {
+        Error::Library(LibraryError::Note(NoteErrorKind::Other {
+            description: format!(
+                "Failed to open input image {}: {}",
+                original_image_filepath.display(),
+                e
+            ),
+        }))
+    })?;
+    let mut clozes = Vec::new();
+    clozes_svg
+        .write_with_config(
+            &mut clozes,
+            EmitterConfig::new().write_document_declaration(false),
+        )
+        .map_err(|e| {
+            Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                description: format!("Failed to serialize clozes as svg: {}", e),
+            }))
+        })?;
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">"#
+    )
+    .into_bytes();
+    svg.extend_from_slice(&clozes);
+    svg.extend_from_slice(b"</svg>\n");
+    Ok(svg)
+}
+
+/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg`], drawn over the
+/// original image at `original_image_filepath`.
+fn compose_image_occlusion_card(
+    clozes_svg: &Element,
+    original_image_filepath: &Path,
+) -> Result<Vec<u8>, Error> {
     // Get card's clozes as bytes
     let mut clozes_file_contents_buffer: Vec<u8> = Vec::new();
-    let _ = clozes_svg_element.write_with_config(
+    let _ = clozes_svg.write_with_config(
         &mut clozes_file_contents_buffer,
         EmitterConfig::new().perform_indent(true),
     );
-    // let clozes_file_contents = String::from_utf8(clozes_file_contents_buffer.clone()).unwrap();
 
     // - x and y: The top-left position (in pixels) where the rendered SVG is placed on the base image. Measured in the base image’s pixel coordinate space. Defaults: 0, 0.
     // - width and height: The output pixel size to render the SVG before compositing.
@@ -465,22 +565,15 @@ pub(crate) fn create_image_occlusion_card(
     // imageops::overlay performs alpha blending using unpremultiplied RGBA
     imageops::overlay(&mut base_img, &overlay_img, x.into(), y.into());
 
-    // Save to file as PNG
+    let mut png = Vec::new();
     base_img
-        .save_with_format(card_filepath, ImageFormat::Png)
+        .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
         .map_err(|e| {
             Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!("Failed to save PNG {}: {}", card_filepath.display(), e),
+                description: format!("Failed to encode PNG: {}", e),
             }))
         })?;
-
-    if !card_filepath.exists() {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "Failed to compose clozes and original image to create card file."
-                .to_string(),
-        })));
-    }
-    Ok(())
+    Ok(png)
 }
 
 /// Combines consecutive image occlusion clozes since they all need to be rendered as a part of the same image

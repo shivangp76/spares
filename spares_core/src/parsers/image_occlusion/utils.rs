@@ -29,10 +29,14 @@ pub fn get_image_occlusion_rendered_directory() -> PathBuf {
     image_occlusions_dir
 }
 
+/// The image a card shows for its `image_occlusion_order_in_card`th image occlusion: a PNG of the
+/// card's clozes drawn over the original image, or, if `overlay`, an SVG of only the clozes, which
+/// the card shows over the original image (see [`crate::parsers::Parseable::image_occlusion_overlays`]).
 pub fn get_image_occlusion_card_filepath(
     output_rendered_filepath: &Path,
     _side: CardSide,
     image_occlusion_order_in_card: usize,
+    overlay: bool,
 ) -> PathBuf {
     // `output_rendered_filepath` is the directory from `get_image_occlusion_renderd_directory()`
     // combined with the card's rendered filename. The card's rendered output directory is not used
@@ -45,7 +49,7 @@ pub fn get_image_occlusion_card_filepath(
     // `CardSide`.
     let image_occlusion_stem = format!("-io-{}", image_occlusion_order_in_card);
     result = append_to_stem(&result, &image_occlusion_stem);
-    result.set_extension("png");
+    result.set_extension(if overlay { "svg" } else { "png" });
     result
 }
 

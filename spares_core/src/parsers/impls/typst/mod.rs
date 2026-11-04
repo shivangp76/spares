@@ -38,6 +38,8 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::image_occlusion::image_occlusion_caption;
+use crate::parsers::image_occlusion::image_occlusion_card_image_filepath;
 use crate::parsers::render_command_output;
 use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
@@ -345,12 +347,46 @@ impl Parseable for TypstParser {
                 caption,
             )
         }
+        if let ConstructImageOcclusionType::Card {
+            side,
+            note_id,
+            card_order,
+            image_occlusion_order,
+        } = output_type
+        {
+            // The clozes over the original image, scaled to the same width (see
+            // `image_occlusion_overlay_svg`). `std` in case a note or preamble shadows these.
+            let overlay = image_occlusion_card_image_filepath(
+                self,
+                side,
+                note_id,
+                card_order,
+                image_occlusion_order,
+            );
+            return format!(
+                indoc! { r#"#figure(
+                  std.box(width: 80%, {{
+                    std.image("{}", width: 100%)
+                    std.place(std.top + std.left, std.image("{}", format: "svg", width: 100%))
+                  }}),
+                  caption: [{}],
+                )
+                "#},
+                image_occlusion_data.original_image_filepath.display(),
+                overlay.display(),
+                image_occlusion_caption(image_occlusion_data),
+            );
+        }
         construct_image_occlusion_from_image(
             self,
             construct_image,
             image_occlusion_data,
             output_type,
         )
+    }
+
+    fn image_occlusion_overlays(&self) -> bool {
+        true
     }
 
     fn construct_image(&self, file_path: &Path) -> String {

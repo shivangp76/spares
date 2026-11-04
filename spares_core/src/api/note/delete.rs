@@ -175,13 +175,17 @@ pub fn delete_card_files(
                     note_id,
                 ));
                 let image_occlusion_order_in_card = i + 1;
-                let image_occlusion_card_filepath = get_image_occlusion_card_filepath(
-                    &output_rendered_filepath,
-                    side,
-                    image_occlusion_order_in_card,
-                );
-                if image_occlusion_card_filepath.exists() {
-                    delete_file(&image_occlusion_card_filepath)?;
+                // Both kinds, in case the note was rendered by a parser that makes the other
+                for overlay in [false, true] {
+                    let image_occlusion_card_filepath = get_image_occlusion_card_filepath(
+                        &output_rendered_filepath,
+                        side,
+                        image_occlusion_order_in_card,
+                        overlay,
+                    );
+                    if image_occlusion_card_filepath.exists() {
+                        delete_file(&image_occlusion_card_filepath)?;
+                    }
                 }
             }
         }
