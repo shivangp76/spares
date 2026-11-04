@@ -175,7 +175,7 @@ pub async fn receive_media(remote: &HttpRemote) -> Result<ReceivedMedia, Error> 
             let stored = async {
                 let contents = remote.download_media(kind, name).await?;
                 match replaced {
-                    None => media::store_media_from_host(kind, name, &contents).map(|_| false),
+                    None => media::store_media(kind, name, &contents).map(|_| false),
                     Some(replaced) => media::replace_media(kind, name, &contents, replaced)
                         .map(|(_, replaced)| replaced == Replaced::Replaced),
                 }
