@@ -35,6 +35,11 @@ use super::utils::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::LibraryError;
 use crate::NoteErrorKind;
+use crate::api::image_occlusion::has_hash_suffix;
+use crate::api::image_occlusion::image_extension;
+use crate::api::image_occlusion::sanitized_stem;
+use crate::api::image_occlusion::strip_hash_suffix;
+use crate::api::image_occlusion::unused_names;
 use crate::config::read_external_config;
 use crate::helpers::to_title_case;
 use crate::model::NoteId;
@@ -109,12 +114,14 @@ pub fn construct_image_occlusion_from_image(
     }
 }
 
-/// The caption of an image occlusion: its original image's name.
+/// The caption of an image occlusion: its original image's name, without the suffix it was stored
+/// with.
 pub fn image_occlusion_caption(image_occlusion_data: &ImageOcclusionData) -> String {
     image_occlusion_data
         .original_image_filepath
         .file_stem()
         .and_then(|x| x.to_str())
+        .map(strip_hash_suffix)
         .map_or("Image Occlusion".to_string(), to_title_case)
 }
 
@@ -969,7 +976,9 @@ pub fn read_image_occlusion_data(
             }));
         }
     }
-    // Move image files
+    // Move the files into the image occlusion directory, named as stored files are there (see
+    // `store_image_occlusion_files`). A file named otherwise, as a note written by hand may name
+    // one, gets a new name with a suffix, which hosts need to send it to each other.
     // Cases to check: 2 different image occlusions that have:
     // - different original image file and different cloze file: Main case
     // - different original image file and same cloze file
@@ -980,13 +989,44 @@ pub fn read_image_occlusion_data(
     let original_image_filename = image_occlusion_data
         .original_image_filepath
         .file_name()
+        .and_then(|name| name.to_str())
         .ok_or(LibraryError::Note(NoteErrorKind::Other {
             description: format!(
                 "Failed to get file name: {}",
                 image_occlusion_data.original_image_filepath.display()
             ),
         }))?;
-    let new_image_filepath = get_image_occlusion_directory().join(original_image_filename);
+    let directory = get_image_occlusion_directory();
+    let stored_name = Path::new(original_image_filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(has_hash_suffix);
+    let new_image_filepath = if stored_name {
+        directory.join(original_image_filename)
+    } else {
+        let extension = image_extension(original_image_filename).map_err(|e| {
+            LibraryError::Note(NoteErrorKind::InvalidSettings {
+                description: e.to_string(),
+                advice: None,
+                src: data.to_string(),
+                at: image_occlusion_capture_range.clone().into(),
+            })
+        })?;
+        let stem = sanitized_stem(original_image_filename, "image_occlusion");
+        let seed = image_occlusion_data
+            .original_image_filepath
+            .as_os_str()
+            .as_encoded_bytes();
+        unused_names(&directory, &stem, &extension, &[seed])
+            .ok_or_else(|| {
+                LibraryError::Note(NoteErrorKind::Other {
+                    description: format!(
+                        "Failed to find an unused image occlusion file name for {original_image_filename}"
+                    ),
+                })
+            })?
+            .0
+    };
     let move_original_image_file =
         image_occlusion_data.original_image_filepath != new_image_filepath;
     if move_original_image_file {

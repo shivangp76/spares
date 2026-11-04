@@ -86,7 +86,7 @@ pub(crate) fn other_error(description: String) -> Error {
 
 /// Removes a suffix added by [`store_image_occlusion_files`], so editing a stored image occlusion
 /// does not keep growing its name.
-fn strip_hash_suffix(stem: &str) -> &str {
+pub(crate) fn strip_hash_suffix(stem: &str) -> &str {
     match stem.rsplit_once('-') {
         Some((base, hash))
             if !base.is_empty()
@@ -97,6 +97,43 @@ fn strip_hash_suffix(stem: &str) -> &str {
         }
         _ => stem,
     }
+}
+
+/// Whether `stem` ends in a suffix added by [`store_image_occlusion_files`], as the names of stored
+/// image occlusion files do.
+pub(crate) fn has_hash_suffix(stem: &str) -> bool {
+    strip_hash_suffix(stem) != stem
+}
+
+/// Unused names in `directory` for an image occlusion's image and clozes SVG:
+/// `<stem>-<suffix>.<extension>` and `<stem>-<suffix>_clozes.svg`, with a suffix of
+/// [`HASH_LENGTH`] hex digits from `seed` and the time. `None` if none was found.
+pub(crate) fn unused_names(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    seed: &[&[u8]],
+) -> Option<(PathBuf, PathBuf)> {
+    let nanos = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    (0u32..1000)
+        .map(|attempt| {
+            let mut hasher = blake3::Hasher::new();
+            for part in seed {
+                hasher.update(part);
+            }
+            hasher.update(&nanos.to_le_bytes());
+            hasher.update(&attempt.to_le_bytes());
+            let suffix = hasher.finalize().to_hex();
+            let image_path =
+                directory.join(format!("{stem}-{}.{extension}", &suffix[..HASH_LENGTH]));
+            let mut clozes_path = append_to_stem(&image_path, "_clozes");
+            clozes_path.set_extension("svg");
+            (image_path, clozes_path)
+        })
+        .find(|(image_path, clozes_path)| !is_file(image_path) && !is_file(clozes_path))
 }
 
 /// The lowercase extension of `image_filename`, if it is an image format cards can show.
@@ -170,30 +207,17 @@ fn store_image_occlusion_files(
         description: format!("Failed to create {}", directory.display()),
         source: e,
     })?;
-    let nanos = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let (image_path, clozes_path) = (0u32..1000)
-        .map(|attempt| {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(image);
-            hasher.update(clozes_svg.as_bytes());
-            hasher.update(&nanos.to_le_bytes());
-            hasher.update(&attempt.to_le_bytes());
-            let suffix = hasher.finalize().to_hex();
-            let image_path =
-                directory.join(format!("{stem}-{}.{extension}", &suffix[..HASH_LENGTH]));
-            let mut clozes_path = append_to_stem(&image_path, "_clozes");
-            clozes_path.set_extension("svg");
-            (image_path, clozes_path)
-        })
-        .find(|(image_path, clozes_path)| !is_file(image_path) && !is_file(clozes_path))
-        .ok_or_else(|| {
-            other_error(format!(
-                "Failed to find an unused image occlusion file name for {image_filename}"
-            ))
-        })?;
+    let (image_path, clozes_path) = unused_names(
+        &directory,
+        &stem,
+        &extension,
+        &[image, clozes_svg.as_bytes()],
+    )
+    .ok_or_else(|| {
+        other_error(format!(
+            "Failed to find an unused image occlusion file name for {image_filename}"
+        ))
+    })?;
 
     write(&image_path, image).map_err(|e| Error::Io {
         description: format!("Failed to write {}", image_path.display()),
@@ -584,6 +608,142 @@ mod tests {
         let _ = std::fs::remove_file(&moved);
         let _ = std::fs::remove_file(append_to_stem(&moved, "_clozes"));
         std::fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// A note written by hand may name image occlusion files that weren't stored by spares, as
+    /// `roster.png`. Saving the note renames them as stored files are named, since hosts send
+    /// each other only such names, and points the note at them. Its caption stays.
+    #[sqlx::test]
+    async fn test_saving_a_note_names_its_image_occlusion_files_as_stored(pool: SqlitePool) -> () {
+        let directory = get_image_occlusion_directory();
+        let stem = format!("roster_{}", uuid::Uuid::new_v4().simple());
+        let (image, clozes) = (
+            directory.join(format!("{stem}.svg")),
+            directory.join(format!("{stem}_clozes.svg")),
+        );
+        std::fs::write(&image, IMAGE).unwrap();
+        std::fs::write(&clozes, clozes_svg(RECT_1)).unwrap();
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let data = MarkdownParser::new().construct_image_occlusion(
+            &ImageOcclusionData {
+                original_image_filepath: image.clone(),
+                clozes_filepath: clozes.clone(),
+                front_conceal: FrontConceal::image_occlusion_default(),
+                back_reveal: BackReveal::image_occlusion_default(),
+                back_emphasis: back_emphasis_image_occlusion_default(),
+            },
+            ConstructImageOcclusionType::Note,
+        );
+        let notes = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data,
+                    keywords: Vec::new(),
+                    tags: Vec::new(),
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap();
+        let note_id = notes.notes[0].id;
+
+        let stored = list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()
+            .remove(0);
+        let stored_stem = stored
+            .original_image_filepath
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(has_hash_suffix(stored_stem), "{stored_stem}");
+        assert_eq!(strip_hash_suffix(stored_stem), stem);
+        assert_eq!(stored.original_image_filepath.parent().unwrap(), directory);
+        let mut expected_clozes = append_to_stem(&stored.original_image_filepath, "_clozes");
+        expected_clozes.set_extension("svg");
+        assert_eq!(stored.clozes_filepath, expected_clozes);
+        assert!(stored.original_image_filepath.is_file() && stored.clozes_filepath.is_file());
+        assert!(!image.exists() && !clozes.exists());
+        let data = &notes.notes[0].data;
+        assert!(!data.contains(&format!("{stem}.svg")), "{data}");
+        assert!(
+            data.contains(&crate::helpers::to_title_case(&stem)),
+            "the caption keeps the name: {data}"
+        );
+        assert_eq!(get_cards(&pool, note_id).await.unwrap().len(), 1);
+
+        // Saved again, a stored name stays
+        let again = update_notes(
+            &pool,
+            UpdateNotesRequest {
+                selector: NotesSelector::Ids(vec![note_id]),
+                parser_id: None,
+                data: Some(data.clone()),
+                keywords: None,
+                tags: UpdateTags::None,
+                custom_data: None,
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(&again.notes[0].data, data);
+
+        // A note saved before then still names such files until it is edited. Its old text is
+        // parsed as it is, so the files it names stay for its undo
+        std::fs::copy(&stored.original_image_filepath, &image).unwrap();
+        std::fs::copy(&stored.clozes_filepath, &clozes).unwrap();
+        let old_data = data
+            .replace(
+                &stored.original_image_filepath.display().to_string(),
+                &image.display().to_string(),
+            )
+            .replace(
+                &stored.clozes_filepath.display().to_string(),
+                &clozes.display().to_string(),
+            );
+        sqlx::query(r"UPDATE note SET data = ? WHERE id = ?")
+            .bind(&old_data)
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        update_note_image_occlusion(
+            &pool,
+            note_id,
+            0,
+            &clozes_svg(RECT_2),
+            Utc::now(),
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        assert!(image.is_file() && clozes.is_file());
+        let edited = list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()
+            .remove(0);
+        assert_ne!(edited.original_image_filepath, image);
+        for path in [
+            &stored.original_image_filepath,
+            &stored.clozes_filepath,
+            &image,
+            &clozes,
+            &edited.original_image_filepath,
+            &edited.clozes_filepath,
+        ] {
+            std::fs::remove_file(path).unwrap();
+        }
     }
 
     #[sqlx::test]
