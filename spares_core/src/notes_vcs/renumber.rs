@@ -64,7 +64,8 @@ pub async fn renumber_note_files(
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
         }
-        std::fs::write(&path, contents).map_err(|e| io_error(&path, e))?;
+        // Only the renumbered notes' files, and those linking to them, change
+        crate::helpers::write_if_changed(&path, contents).map_err(|e| io_error(&path, e))?;
     }
 
     let parser_dirs: Vec<PathBuf> = parser_dirs
