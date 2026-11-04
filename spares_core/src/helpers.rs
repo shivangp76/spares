@@ -35,6 +35,26 @@ pub(crate) async fn pool_with_regexp(
         .unwrap()
 }
 
+/// Writes `contents` to `path` unless it already holds exactly them, and returns whether it wrote.
+///
+/// A file written again with the same contents still gets a new modification time, which is taken
+/// as a change by rsync (`spares sync cloud`), by the digests of files devices download (see
+/// [`crate::sync::media`]), and by editors, PDF viewers and file watchers. The file is only read if
+/// it has the size of `contents`.
+pub(crate) fn write_if_changed(
+    path: impl AsRef<std::path::Path>,
+    contents: impl AsRef<[u8]>,
+) -> std::io::Result<bool> {
+    let (path, contents) = (path.as_ref(), contents.as_ref());
+    let unchanged = std::fs::metadata(path).is_ok_and(|m| m.len() == contents.len() as u64)
+        && std::fs::read(path).is_ok_and(|old| old == contents);
+    if unchanged {
+        return Ok(false);
+    }
+    std::fs::write(path, contents)?;
+    Ok(true)
+}
+
 pub fn get_or_compile_regex(pattern: &str) -> Result<Arc<fancy_regex::Regex>, fancy_regex::Error> {
     type Cache = Mutex<HashMap<String, Arc<fancy_regex::Regex>>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();
@@ -255,6 +275,32 @@ pub fn to_title_case(s: &str) -> String {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn write_if_changed_leaves_a_file_with_the_same_contents_alone() {
+        use super::write_if_changed;
+
+        let dir =
+            std::env::temp_dir().join(format!("spares-write-if-changed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file");
+        assert!(write_if_changed(&path, "a").unwrap());
+        let old = std::time::SystemTime::UNIX_EPOCH;
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(!write_if_changed(&path, "a").unwrap());
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), old);
+        // Same size, other contents
+        assert!(write_if_changed(&path, "b").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "b");
+        assert!(write_if_changed(&path, "longer").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "longer");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     use super::*;
 
     #[test]
