@@ -297,6 +297,10 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/sync/push-config",
             put(crate::handlers::sync::sync_push_config_handler),
         )
+        .route(
+            "/api/sync/render",
+            post(crate::handlers::sync::sync_render_handler),
+        )
         .route("/api/sync/files", get(sync_files_handler))
         .route("/api/sync/files/changed", post(sync_changed_files_handler))
         .route("/api/sync/media/{kind}", get(sync_media_list_handler))
@@ -902,6 +906,7 @@ mod tests {
     /// `spares sync cloud` learns where to copy files with its token, and finds the check value
     /// the answer names in the file it names. The web app's session can't ask.
     #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one scenario")]
     async fn the_push_target_and_config_are_for_device_tokens() {
         use axum::http::header::AUTHORIZATION;
         use axum::http::header::COOKIE;
@@ -1004,6 +1009,22 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(std::fs::read_to_string(&config_file).unwrap(), written);
+
+        // Rendering again after the push starts in the background.
+        let (status, _, _) = send(
+            &router,
+            post("/api/sync/render").header(COOKIE, &cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _, _) = send(
+            &router,
+            post("/api/sync/render").header(AUTHORIZATION, &token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
     }
 
     /// Sessions need their CSRF token to change anything, tokens can be revoked and limited to
