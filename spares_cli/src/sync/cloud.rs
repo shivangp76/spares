@@ -11,24 +11,54 @@ use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
+use spares_core::config::read_external_config;
 use spares_core::config::server_config;
 use spares_core::ids::NoteId;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::RenderOutputDirectoryType;
 use spares_core::parsers::get_all_parsers;
 use spares_core::parsers::get_image_occlusion_rendered_directory;
+use spares_core::sync::http::HttpRemote;
+use spares_core::sync::http::RemoteAuth;
+use spares_core::sync::push::PushTarget;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
-/// The server's config directory, relative to the remote home directory. Matches `setup_vps.sh`.
-const REMOTE_CONFIG_DIR: &str = ".config/spares";
-
 /// Copies everything but the database to `remote_host`: the data files the server does not
-/// generate itself, rendered files, templates and the files the notes read.
-pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> Result<(), String> {
-    let data_dir = get_data_dir();
+/// generate itself, rendered files, templates and the files the notes read. First asks the
+/// server at `url` where they go, and checks over SSH that `remote_host` is that server (see
+/// [`check_target`]).
+pub(crate) async fn push_files(
+    remote_host: &str,
+    url: &str,
+    token: Option<String>,
+) -> Result<(), String> {
+    let remote = HttpRemote::new(url, RemoteAuth::token(token)).map_err(|e| e.to_string())?;
+    let target = remote
+        .push_target()
+        .await
+        .map_err(|e| format!("Failed to ask {url} where to copy files: {e}"))?;
+    let home = std::env::home_dir().ok_or("Failed to find the home directory")?;
     let note_ids = server_rendered_note_ids(&spares_core::collection::paths().database()).await?;
-    let local = data_dir.to_str().unwrap();
+    let dependencies = plan_dependency_sync(&home, render_dependency_files(&note_ids));
+    let facts = remote_facts(remote_host, &target, &home)?;
+    let local = LocalSide {
+        root: get_data_dir(),
+        replica: read_external_config()
+            .map_err(|e| e.to_string())?
+            .sync
+            .replica,
+        home: home.clone(),
+    };
+    check_target(
+        remote_host,
+        url,
+        &local,
+        &target,
+        &facts,
+        !dependencies.files.is_empty(),
+    )?;
+    let local = data_dir_source()?;
 
     // Pass 2: Everything else (image occlusions, render assets). The server reads notes from the
     // database, so raw note and card files are not needed: it writes them when it renders. Without
@@ -50,39 +80,213 @@ pub(crate) async fn push_files(remote_host: &str, remote_rendered_dir: &str) -> 
         "--exclude=/.notes-spares-init/".to_string(),
         "--exclude=/.notes-clone-tmp/".to_string(),
     ];
-    let source = format!("{}/", local);
-    let destination = format!("{}:{}/", remote_host, local);
+    let destination = remote_dir(remote_host, &target.root)?;
     let mut args = vec!["-avz"];
     args.extend(excludes.iter().map(String::as_str));
-    args.extend([source.as_str(), destination.as_str()]);
+    args.extend([local.as_str(), destination.as_str()]);
     run_rsync(&args)?;
 
     // Pass 3: Rendered files, so the server does not have to render notes again, but not over
     // its newer ones (see `sync_rendered_files`).
     println!("Syncing rendered files → {}", remote_host);
-    sync_rendered_files(remote_host, remote_rendered_dir, &note_ids)?;
+    sync_rendered_files(&remote_dir(remote_host, &target.files)?, &note_ids)?;
 
     // Pass 4: Templates, and config.toml as the server needs it (see `server_config`), so reviews
     // there are scheduled with the same settings.
     println!("Syncing templates and settings → {}", remote_host);
+    let config_destination = remote_dir(remote_host, &target.config)?;
     run_rsync(&[
         "-avz",
         "--exclude=/config.toml",
         &dir_source(&get_config_dir())?,
-        &format!("{remote_host}:{REMOTE_CONFIG_DIR}/"),
+        &config_destination,
     ])?;
-    push_server_config(remote_host)?;
+    push_server_config(&format!("{config_destination}config.toml"))?;
 
     // Pass 5: Files the notes read, so the server can render notes edited there.
     println!("Syncing files read by notes → {}", remote_host);
-    sync_render_dependencies(remote_host, &note_ids)?;
+    sync_render_dependencies(remote_host, &home, &dependencies)?;
 
     println!("Done.");
     Ok(())
 }
 
+/// The collection's directory as an rsync source that copies its contents.
+fn data_dir_source() -> Result<String, String> {
+    dir_source(&get_data_dir())
+}
+
+/// `dir` on `remote_host`, as an rsync destination for a directory's contents.
+fn remote_dir(remote_host: &str, dir: &Path) -> Result<String, String> {
+    let dir = dir
+        .to_str()
+        .filter(|dir| !dir.contains('\n') && dir.starts_with('/'))
+        .ok_or_else(|| format!("The server named {} to copy files to", dir.display()))?;
+    Ok(format!("{remote_host}:{}/", dir.trim_end_matches('/')))
+}
+
+/// This machine's side of [`check_target`].
+#[derive(Debug)]
+struct LocalSide {
+    /// The collection's directory
+    root: PathBuf,
+    /// The collection's replica here, from `[sync] replica`
+    replica: Option<u8>,
+    home: PathBuf,
+}
+
+/// What `remote_host` says over SSH, to compare with the server's [`PushTarget`].
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RemoteFacts {
+    /// The contents of [`PushTarget::check_file`]
+    check: Option<String>,
+    /// The SSH user's home directory, without symlinks: where the files notes read are copied
+    home: Option<PathBuf>,
+    /// This machine's home directory as a path there, without symlinks, if it exists there
+    local_home: Option<PathBuf>,
+    /// Whether [`PushTarget::root`] is a directory there
+    root_exists: bool,
+}
+
+/// Asks `remote_host` over SSH for the [`RemoteFacts`] about `target`.
+fn remote_facts(
+    remote_host: &str,
+    target: &PushTarget,
+    local_home: &Path,
+) -> Result<RemoteFacts, String> {
+    let script = facts_script(target, local_home)?;
+    let output = Command::new("ssh")
+        .arg(remote_host)
+        .arg(script)
+        .output()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ssh to {remote_host} exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(parse_remote_facts(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// The shell script whose output [`parse_remote_facts`] reads.
+fn facts_script(target: &PushTarget, local_home: &Path) -> Result<String, String> {
+    let quoted = |path: &Path| {
+        path.to_str()
+            .map(shell_quote)
+            .ok_or_else(|| format!("{} is not valid UTF-8", path.display()))
+    };
+    Ok(format!(
+        "printf 'check=%s\\n' \"$(cat -- {check} 2>/dev/null)\"; \
+         printf 'home=%s\\n' \"$(cd && pwd -P)\"; \
+         printf 'local_home=%s\\n' \"$(cd -- {local_home} 2>/dev/null && pwd -P)\"; \
+         if [ -d {root} ]; then echo root=yes; fi",
+        check = quoted(&target.check_file)?,
+        local_home = quoted(local_home)?,
+        root = quoted(&target.root)?,
+    ))
+}
+
+fn parse_remote_facts(output: &str) -> RemoteFacts {
+    let mut facts = RemoteFacts::default();
+    let non_empty = |value: &str| (!value.is_empty()).then(|| value.to_string());
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "check" => facts.check = non_empty(value),
+            "home" => facts.home = non_empty(value).map(PathBuf::from),
+            "local_home" => facts.local_home = non_empty(value).map(PathBuf::from),
+            "root" => facts.root_exists = value == "yes",
+            _ => {}
+        }
+    }
+    facts
+}
+
+/// Checks, before anything is copied, that `remote_host` reaches the collection the server at
+/// `url` serves, at the paths the copies assume:
+///
+/// - the check value the server just wrote is in its check file there, so `remote_host` is the
+///   server's machine and its user can read the collection's files;
+/// - the collection is in the same directory as here, since notes name their images and the files
+///   they read by absolute path;
+/// - the server's replica isn't this one;
+/// - the directories the server named are in the collection's;
+/// - if files the notes read are copied (to the same paths relative to the SSH user's home),
+///   this machine's home directory leads there, as `setup_vps.sh --local-home` sets up.
+fn check_target(
+    remote_host: &str,
+    url: &str,
+    local: &LocalSide,
+    target: &PushTarget,
+    facts: &RemoteFacts,
+    copies_home_files: bool,
+) -> Result<(), String> {
+    if facts.check.as_deref() != Some(target.check.as_str()) {
+        return Err(format!(
+            "{remote_host} doesn't reach the collection {url} serves: {} there doesn't hold the \
+             value the server just wrote to it. Set `sync.remote_host` in config.toml to the \
+             server's machine, as the user the server runs as.",
+            target.check_file.display()
+        ));
+    }
+    if !facts.root_exists {
+        return Err(format!(
+            "{} is not a directory on {remote_host}",
+            target.root.display()
+        ));
+    }
+    if target.root != local.root {
+        return Err(format!(
+            "The server keeps this collection in {}, but here it is in {}. Notes name their \
+             images and the files they read by absolute path, so it must be the same path on \
+             both (`spares deploy` sets the server up so).",
+            target.root.display(),
+            local.root.display()
+        ));
+    }
+    if local.replica == Some(target.replica) {
+        return Err(format!(
+            "The server's copy of the collection is replica {}, like this one. Log in to it \
+             again with `spares sync login`, which gives this copy a number of its own.",
+            target.replica
+        ));
+    }
+    for dir in [&target.config, &target.media, &target.render_assets] {
+        if !dir.starts_with(&target.root) {
+            return Err(format!(
+                "The server named {} to copy files to, which is not in its collection's \
+                 directory {}",
+                dir.display(),
+                target.root.display()
+            ));
+        }
+    }
+    if copies_home_files && (facts.local_home.is_none() || facts.local_home != facts.home) {
+        let leads_to = facts.local_home.as_ref().map_or_else(
+            || "doesn't exist".to_string(),
+            |path| format!("leads to {}", path.display()),
+        );
+        let home = facts
+            .home
+            .as_ref()
+            .map_or_else(|| "?".to_string(), |path| path.display().to_string());
+        return Err(format!(
+            "On {remote_host}, {} {leads_to}, not to {home}, the home directory the files your \
+             notes read are copied to, so the server would not find them. Make it a symlink to \
+             it, as `setup_vps.sh --local-home {}` does.",
+            local.home.display(),
+            local.home.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Copies this machine's config.toml to the server, adapted by [`server_config`].
-fn push_server_config(remote_host: &str) -> Result<(), String> {
+fn push_server_config(destination: &str) -> Result<(), String> {
     let path = get_external_config_file();
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -95,7 +299,7 @@ fn push_server_config(remote_host: &str) -> Result<(), String> {
         staging
             .to_str()
             .ok_or("The cache directory is not valid UTF-8")?,
-        &format!("{remote_host}:{REMOTE_CONFIG_DIR}/config.toml"),
+        destination,
     ]);
     let _ = std::fs::remove_file(&staging);
     result
@@ -164,7 +368,7 @@ fn dir_source(dir: &Path) -> Result<String, String> {
     Ok(format!("{dir}/"))
 }
 
-/// Copies the rendered files of the notes the server renders into `remote_rendered_dir`, along
+/// Copies the rendered files of the notes the server renders into `destination`, along
 /// with rendered image occlusions.
 ///
 /// Files newer on the server are kept (`--update`). A note created or edited here isn't rendered
@@ -174,11 +378,9 @@ fn dir_source(dir: &Path) -> Result<String, String> {
 /// take the older files for its own, and devices would keep theirs, since the mtime is older. This
 /// needs the two clocks to roughly agree.
 fn sync_rendered_files(
-    remote_host: &str,
-    remote_rendered_dir: &str,
+    destination: &str,
     note_ids: &HashMap<&'static str, HashSet<NoteId>>,
 ) -> Result<(), String> {
-    let destination = format!("{remote_host}:{remote_rendered_dir}/");
     // Rendered files can share a directory with other files (`aux/`, files rendered outside
     // spares), so only those of existing notes are copied, by name.
     let mut dirs: BTreeMap<PathBuf, HashSet<NoteId>> = BTreeMap::new();
@@ -209,7 +411,7 @@ fn sync_rendered_files(
             &names.join("\n"),
             &["-avz", "--update"],
             &dir_source(&dir)?,
-            &destination,
+            destination,
         )?;
     }
     run_rsync(&[
@@ -229,10 +431,9 @@ fn sync_rendered_files(
 /// on the server is not copied until the note is rendered locally.
 fn sync_render_dependencies(
     remote_host: &str,
-    note_ids: &HashMap<&'static str, HashSet<NoteId>>,
+    home: &Path,
+    plan: &DependencySync,
 ) -> Result<(), String> {
-    let home = std::env::home_dir().ok_or("Failed to find the home directory")?;
-    let plan = plan_dependency_sync(&home, render_dependency_files(note_ids));
     for path in &plan.skipped {
         eprintln!(
             "Not syncing {}, since it is outside {}",
@@ -252,7 +453,7 @@ fn sync_render_dependencies(
     run_rsync_files_from(
         &contents,
         &["-avzR"],
-        &dir_source(&home)?,
+        &dir_source(home)?,
         &format!("{remote_host}:"),
     )?;
     if !plan.symlinks.is_empty() {
@@ -433,10 +634,170 @@ mod tests {
 
     use spares_core::ids::NoteId;
 
+    use super::LocalSide;
+    use super::PushTarget;
+    use super::RemoteFacts;
     use super::SymlinkTarget;
+    use super::check_target;
+    use super::parse_remote_facts;
     use super::plan_dependency_sync;
     use super::rendered_file_note_id;
     use super::symlinks_command;
+
+    fn target() -> PushTarget {
+        let root = PathBuf::from("/home/me/.local/share/spares/users/me");
+        PushTarget {
+            config: root.join("config"),
+            media: root.join("media"),
+            files: PathBuf::from("/home/me/.cache/spares/users/me/files"),
+            render_assets: root.join("render_assets"),
+            root,
+            replica: 1,
+            renders: vec!["markdown".to_string()],
+            check_file: PathBuf::from("/home/me/.cache/spares/users/me/sync/push-check"),
+            check: "abc".to_string(),
+        }
+    }
+
+    fn local() -> LocalSide {
+        LocalSide {
+            root: target().root,
+            replica: Some(0),
+            home: PathBuf::from("/Users/me"),
+        }
+    }
+
+    fn facts() -> RemoteFacts {
+        RemoteFacts {
+            check: Some("abc".to_string()),
+            home: Some(PathBuf::from("/home/me")),
+            local_home: Some(PathBuf::from("/home/me")),
+            root_exists: true,
+        }
+    }
+
+    fn check(local: &LocalSide, target: &PushTarget, facts: &RemoteFacts) -> Result<(), String> {
+        check_target("me@vps", "https://vps", local, target, facts, true)
+    }
+
+    #[test]
+    fn the_remote_host_must_reach_the_collection_the_server_serves() {
+        check(&local(), &target(), &facts()).unwrap();
+        for check_value in [None, Some("other".to_string())] {
+            let facts = RemoteFacts {
+                check: check_value,
+                ..facts()
+            };
+            let error = check(&local(), &target(), &facts).unwrap_err();
+            assert!(error.contains("doesn't reach the collection"), "{error}");
+        }
+        let facts = RemoteFacts {
+            root_exists: false,
+            ..facts()
+        };
+        assert!(check(&local(), &target(), &facts).is_err());
+    }
+
+    #[test]
+    fn the_collection_must_be_at_the_same_path_with_another_replica() {
+        let moved = LocalSide {
+            root: PathBuf::from("/Users/me/.local/share/spares/users/me"),
+            ..local()
+        };
+        let error = check(&moved, &target(), &facts()).unwrap_err();
+        assert!(error.contains("same path"), "{error}");
+        let same_replica = LocalSide {
+            replica: Some(1),
+            ..local()
+        };
+        let error = check(&same_replica, &target(), &facts()).unwrap_err();
+        assert!(error.contains("replica 1"), "{error}");
+        // A collection that has no number yet
+        let unnumbered = LocalSide {
+            replica: None,
+            ..local()
+        };
+        check(&unnumbered, &target(), &facts()).unwrap();
+    }
+
+    #[test]
+    fn directories_outside_the_collection_are_refused() {
+        let target = PushTarget {
+            render_assets: PathBuf::from("/etc"),
+            ..target()
+        };
+        let error = check(&local(), &target, &facts()).unwrap_err();
+        assert!(error.contains("/etc"), "{error}");
+    }
+
+    #[test]
+    fn files_in_the_home_directory_need_the_local_home_to_lead_there() {
+        for local_home in [None, Some(PathBuf::from("/home/other"))] {
+            let facts = RemoteFacts {
+                local_home,
+                ..facts()
+            };
+            let error = check(&local(), &target(), &facts).unwrap_err();
+            assert!(error.contains("--local-home /Users/me"), "{error}");
+            // Nothing is copied there
+            check_target("me@vps", "https://vps", &local(), &target(), &facts, false).unwrap();
+        }
+    }
+
+    #[test]
+    fn remote_facts_are_read_from_the_script_output() {
+        let facts =
+            parse_remote_facts("check=abc\nhome=/home/me\nlocal_home=\nroot=yes\nunrelated line\n");
+        assert_eq!(
+            facts,
+            RemoteFacts {
+                check: Some("abc".to_string()),
+                home: Some(PathBuf::from("/home/me")),
+                local_home: None,
+                root_exists: true,
+            }
+        );
+        assert_eq!(parse_remote_facts(""), RemoteFacts::default());
+    }
+
+    #[test]
+    fn the_facts_script_runs_in_sh() {
+        let dir = std::env::temp_dir().join(format!("spares-facts-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = dir.join("home me");
+        let root = home.join("it's the root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&home, dir.join("local")).unwrap();
+        let check_file = home.join("check");
+        std::fs::write(&check_file, "abc").unwrap();
+        let target = PushTarget {
+            root,
+            check_file,
+            ..target()
+        };
+        let run = |local_home: &std::path::Path| {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(super::facts_script(&target, local_home).unwrap())
+                .env("HOME", &home)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            parse_remote_facts(&String::from_utf8(output.stdout).unwrap())
+        };
+        let home = home.canonicalize().unwrap();
+        assert_eq!(
+            run(&dir.join("local")),
+            RemoteFacts {
+                check: Some("abc".to_string()),
+                home: Some(home.clone()),
+                local_home: Some(home.clone()),
+                root_exists: true,
+            }
+        );
+        assert_eq!(run(&dir.join("missing")).local_home, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn only_files_named_after_a_note_are_rendered_files() {

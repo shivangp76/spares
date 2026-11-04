@@ -227,6 +227,32 @@ pub(crate) async fn sync_config_handler() -> Result<impl IntoResponse, HandlerEr
     Ok(Json(devices::device_config().map_err(error_to_response)?))
 }
 
+/// Where `spares sync cloud` copies files to, over SSH (`spares_core::sync::push`). Only for a
+/// device token: the web app has no use for the server's paths.
+#[cfg(not(target_family = "wasm"))]
+#[allow(clippy::unused_async, reason = "an axum handler")]
+pub(crate) async fn sync_push_target_handler(
+    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
+) -> Result<impl IntoResponse, HandlerError> {
+    require_device_token(auth.as_ref().map(|auth| &auth.0))?;
+    Ok(Json(
+        spares_core::sync::push::push_target().map_err(error_to_response)?,
+    ))
+}
+
+/// Refuses the web app's session, for the requests only `spares sync cloud` makes. A host without
+/// accounts has no [`Auth`](crate::handlers::auth::Auth) to check.
+#[cfg(not(target_family = "wasm"))]
+fn require_device_token(auth: Option<&crate::handlers::auth::Auth>) -> Result<(), HandlerError> {
+    if auth.is_some_and(|auth| auth.device.is_none()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "message": "Only a device token can do this" })),
+        ));
+    }
+    Ok(())
+}
+
 /// Every rendered file a device can show offline (`spares_core::sync::media`).
 #[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn sync_files_handler() -> Result<impl IntoResponse, HandlerError> {
