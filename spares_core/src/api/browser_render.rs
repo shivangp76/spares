@@ -4,8 +4,8 @@
 //!
 //! - The raw sources are generated from the database on demand ([`add_browser_render_sources`]).
 //! - Files the sources read (preambles, figures, image occlusions' images, ...) are discovered
-//!   when rendering locally. Rendering writes a [`RenderDependencies`] file next to each rendered
-//!   file, and [`sync_render_assets`] copies the files it lists into a content-addressed store in
+//!   when rendering locally. Rendering records them for each rendered file (see
+//!   [`super::render_state`]), and [`sync_render_assets`] copies them into a content-addressed store in
 //!   the data directory, which `spares sync cloud` copies to the server, but for the copies of
 //!   media, which the server stores from its own media files (see [`get_render_asset`]). Files
 //!   are stored by the absolute path sources read them by. No source reads a rendered image
@@ -22,7 +22,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::create_dir_all;
 use std::fs::read_dir;
-use std::fs::read_to_string;
 use std::fs::remove_file;
 use std::fs::rename;
 use std::fs::write;
@@ -41,13 +40,13 @@ use crate::LibraryError;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
+use crate::api::render_state::read_render_dependencies;
 use crate::api::review::relative_to_files_dir;
 use crate::api::review::web_render_path;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::CardData;
 use crate::parsers::Parseable;
-use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::TemplateType;
 use crate::parsers::find_parser;
@@ -269,7 +268,7 @@ pub async fn sync_render_assets<S: BuildHasher>(
 ) -> Result<(), Error> {
     // Other parsers' cards are shown rendered, so web clients only need their audio clips
     let (mut files, packages) = if parser.renders_in_browser() {
-        read_render_dependencies(parser, note_ids)
+        read_render_dependencies(db, parser.get_parser_name(), note_ids).await?
     } else {
         Default::default()
     };
@@ -385,60 +384,6 @@ async fn audio_clips<S: BuildHasher>(
         .map(|audio_ref| PathBuf::from(audio_ref.path))
         .filter(|path| path.is_absolute())
         .collect())
-}
-
-/// Collects the dependency files written next to `parser`'s rendered files of `note_ids` (all
-/// notes if `None`).
-pub fn read_render_dependencies<S: BuildHasher>(
-    parser: &dyn Parseable,
-    note_ids: Option<&HashSet<NoteId, S>>,
-) -> (BTreeSet<PathBuf>, BTreeSet<String>) {
-    let mut files = BTreeSet::new();
-    let mut packages = BTreeSet::new();
-    let rendered_dirs: BTreeSet<PathBuf> = [
-        RenderOutputDirectoryType::Note,
-        RenderOutputDirectoryType::Card,
-    ]
-    .into_iter()
-    .map(|t| parser.get_output_rendered_dir(t))
-    .collect();
-    for dir in rendered_dirs {
-        let Ok(entries) = read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let Some(file_name) = file_name.to_str() else {
-                continue;
-            };
-            if !file_name.ends_with(".deps.json") {
-                continue;
-            }
-            // Rendered files are named `<note id>.<ext>` or `<note id>-<order>-<side>.<ext>`.
-            if let Some(note_ids) = note_ids {
-                let note_id = file_name
-                    .split(['-', '.'])
-                    .next()
-                    .and_then(|id| id.parse::<NoteId>().ok());
-                if !note_id.is_some_and(|id| note_ids.contains(&id)) {
-                    continue;
-                }
-            }
-            let path = entry.path();
-            match read_to_string(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|s| {
-                    serde_json::from_str::<RenderDependencies>(&s).map_err(|e| e.to_string())
-                }) {
-                Ok(dependencies) => {
-                    files.extend(dependencies.files);
-                    packages.extend(dependencies.packages);
-                }
-                Err(e) => warn!("Failed to read {}: {e}", path.display()),
-            }
-        }
-    }
-    (files, packages)
 }
 
 /// Copies `path` into `store_dir` and returns its hash.

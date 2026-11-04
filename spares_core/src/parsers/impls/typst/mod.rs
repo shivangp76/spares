@@ -26,6 +26,7 @@ use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
 use crate::parsers::audio::regex_ranges;
@@ -38,7 +39,6 @@ use crate::parsers::image_occlusion::image_occlusion_caption;
 use crate::parsers::image_occlusion::image_occlusion_card_image_filepath;
 use crate::parsers::image_occlusion::image_occlusion_overlay;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
@@ -439,7 +439,7 @@ impl Parseable for TypstParser {
         output_text_filepath: &Path,
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
+    ) -> Result<RenderedFile, Error> {
         // Notes import and include files by their absolute paths, which Typst resolves in its
         // root, so the root is `/`. What a render may read is the sandbox's to limit (see
         // `crate::render`).
@@ -451,10 +451,9 @@ impl Parseable for TypstParser {
             })
         };
         let output_text_filepath = to_absolute(output_text_filepath)?;
-        let dependencies_filepath =
-            render_dependencies_filepath(&to_absolute(output_rendered_filepath)?);
-        let mut raw_dependencies_filepath = dependencies_filepath.clone();
-        raw_dependencies_filepath.set_extension("raw.json");
+        // Read right after, then removed
+        let raw_dependencies_filepath =
+            to_absolute(output_rendered_filepath)?.with_extension("deps.raw.json");
         let mut command = Command::new("typst");
         command
             .arg("compile")
@@ -467,20 +466,23 @@ impl Parseable for TypstParser {
             .arg(&output_text_filepath)
             .arg(output_rendered_filepath)
             .current_dir("/");
-        let output = render_command_output(&mut command, "typst")?;
+        let output = render_command_output(&mut command, "typst");
         // The raw dependency list holds every file of every package, so only a summary is kept.
-        if let Err(e) = summarize_dependencies(
-            &raw_dependencies_filepath,
-            &output_text_filepath,
-            &dependencies_filepath,
-        ) {
-            warn!(
-                "Failed to record dependencies of {}: {e}",
-                output_text_filepath.display()
-            );
-        }
+        let dependencies = output.as_ref().ok().map(|_| {
+            summarize_dependencies(&raw_dependencies_filepath, &output_text_filepath)
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "Failed to record dependencies of {}: {e}",
+                        output_text_filepath.display()
+                    );
+                    RenderDependencies::default()
+                })
+        });
         let _ = remove_file(&raw_dependencies_filepath);
-        Ok(output)
+        Ok(RenderedFile {
+            output: output?,
+            dependencies: dependencies.unwrap_or_default(),
+        })
     }
 
     fn renders_in_browser(&self) -> bool {
@@ -515,8 +517,7 @@ struct TypstDependencies {
 fn summarize_dependencies(
     raw_dependencies_filepath: &Path,
     main_filepath: &Path,
-    dependencies_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let raw = read_to_string(raw_dependencies_filepath).map_err(|e| e.to_string())?;
     let TypstDependencies { inputs } = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let mut dependencies = RenderDependencies::default();
@@ -532,7 +533,7 @@ fn summarize_dependencies(
             None => dependencies.files.push(input),
         }
     }
-    dependencies.write(dependencies_filepath)
+    Ok(dependencies)
 }
 
 /// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid

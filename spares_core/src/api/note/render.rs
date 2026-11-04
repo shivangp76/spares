@@ -21,6 +21,8 @@ use crate::api::note::keyword_distance::NormalizedKeyword;
 use crate::api::note::keyword_distance::keyword_distance;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
+use crate::api::render_state::read_render_states;
+use crate::api::render_state::write_render_states;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
@@ -479,6 +481,15 @@ async fn render_note_groups(
         let generate_files = overridden_output_raw_dir.is_some()
             || generates_render_files(parser.as_ref(), external_config);
         let render = generate_rendered && generate_files;
+        let render_states = if render {
+            let note_ids: Vec<NoteId> = generate_note_files_request
+                .iter()
+                .map(|request| request.note_id)
+                .collect();
+            read_render_states(db, &note_ids).await?
+        } else {
+            HashMap::new()
+        };
         let generate_note_files_requests = GenerateNoteFilesRequests {
             requests: generate_note_files_request,
             overridden_output_raw_dir: overridden_output_raw_dir.cloned(),
@@ -486,18 +497,22 @@ async fn render_note_groups(
             render,
             force_render: force_generate_rendered,
             precomputed_cards: None,
+            render_states,
         };
-        let (parser, card_paths) = run_blocking(move || {
-            let card_paths = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests);
-            (parser, card_paths)
+        let (parser, files) = run_blocking(move || {
+            let files = create_note_files_bulk(parser.as_ref(), &generate_note_files_requests);
+            (parser, files)
         })
         .await;
-        let card_paths = card_paths?.into_iter().collect::<Result<Vec<_>, _>>();
-        // Record dependencies even if some notes failed to render.
+        let files = files?;
+        // Record what rendered, and its dependencies, even if some notes failed to render.
+        write_render_states(db, &files).await?;
         if render && overridden_output_raw_dir.is_none() {
             sync_render_assets(db, parser.as_ref(), requested_note_ids).await?;
         }
-        let _card_paths = card_paths?;
+        for files in files {
+            files.result?;
+        }
     }
     Ok(())
 }

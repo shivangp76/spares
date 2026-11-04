@@ -38,11 +38,11 @@ pub fn get_output_raw_dir(
 }
 
 /// What compiling a rendered file read, besides the raw file itself and files the renderer ships
-/// with (e.g. a TeX distribution). Written next to each rendered file (see
-/// [`render_dependencies_filepath`]). For parsers that
+/// with (e.g. a TeX distribution). Kept in the database with the file's render key (see
+/// [`crate::parsers::generate_files::RenderState`]). For parsers that
 /// [render in the browser](crate::parsers::Parseable::renders_in_browser), the files are shipped to
 /// web clients. For the others, `spares sync cloud` copies them to the server so it can render too.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RenderDependencies {
     /// Absolute paths of local files.
     pub files: Vec<PathBuf>,
@@ -51,35 +51,22 @@ pub struct RenderDependencies {
 }
 
 impl RenderDependencies {
-    /// Sorts and deduplicates the dependencies, then writes them to `dependencies_filepath`, unless
-    /// it already holds them: a render that reads the same files leaves its modification time, so
-    /// `spares sync cloud` doesn't copy it again.
-    pub fn write(mut self, dependencies_filepath: &Path) -> Result<(), String> {
+    /// Sorts and deduplicates the dependencies.
+    pub fn normalize(&mut self) {
         self.files.sort();
         self.files.dedup();
         self.packages.sort();
         self.packages.dedup();
-        let contents = serde_json::to_string(&self).map_err(|e| e.to_string())?;
-        crate::helpers::write_if_changed(dependencies_filepath, contents)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
     }
 }
 
-pub fn render_dependencies_filepath(output_rendered_filepath: &Path) -> PathBuf {
-    output_rendered_filepath.with_extension("deps.json")
-}
-
-impl RenderDependencies {
-    /// Adds `files` to the dependencies already written to `dependencies_filepath`, if any.
-    pub fn extend_file(dependencies_filepath: &Path, files: Vec<PathBuf>) -> Result<(), String> {
-        let mut dependencies = match std::fs::read_to_string(dependencies_filepath) {
-            Ok(contents) => serde_json::from_str(&contents).map_err(|e| e.to_string())?,
-            Err(_) => Self::default(),
-        };
-        dependencies.files.extend(files);
-        dependencies.write(dependencies_filepath)
-    }
+/// What [`crate::parsers::Parseable::render_file`] made: the renderer's output, and what it read.
+/// A parser that fails to find out what it read logs why and returns none, since the rendered file
+/// is there all the same.
+#[derive(Debug)]
+pub struct RenderedFile {
+    pub output: Output,
+    pub dependencies: RenderDependencies,
 }
 
 /// The HTML written for web clients next to a rendered file by parsers with a
