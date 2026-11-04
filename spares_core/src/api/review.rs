@@ -759,13 +759,13 @@ pub(crate) struct ReviewFilterQuery {
 /// Returns `Ok(Some(…))` on success.
 pub(crate) async fn build_review_filter_query(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
     learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
     let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let config = read_external_config()?;
-    let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
+    let limits_left = daily_limits_left_with(db, config, requested_date).await?;
     let cards = cards_with_preset(&config.queue.presets);
     let preset_sql = if limited_preset_sql(&config.queue) == "NULL" {
         "NULL"
@@ -1032,9 +1032,10 @@ pub async fn get_review_card(
     // Unbury cards, if needed
     unbury_cards_and_update_config(db).await?;
 
+    let config = read_external_config()?;
     // Build the filter query for matching cards
     let Some(review_filter) =
-        build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+        build_review_filter_query(db, &config, filter.as_ref(), requested_date, true).await?
     else {
         return Ok(None);
     };
@@ -1050,7 +1051,6 @@ pub async fn get_review_card(
         ..
     } = review_filter;
 
-    let config = read_external_config()?;
     let order_by = queue_order_by(
         &config,
         requested_date,
@@ -1100,10 +1100,11 @@ pub async fn next_review_card_available_at(
     GetReviewCardRequest { filter }: GetReviewCardRequest,
     requested_date: DateTime<Utc>,
 ) -> Result<Option<DateTime<Utc>>, Error> {
+    let config = read_external_config()?;
     let Some(ReviewFilterQuery {
         held_back_clause: Some(held_back_clause),
         ..
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+    }) = build_review_filter_query(db, &config, filter.as_ref(), requested_date, true).await?
     else {
         return Ok(None);
     };
@@ -1113,7 +1114,7 @@ pub async fn next_review_card_available_at(
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let learn_ahead_limit = read_external_config()?.queue.learn_ahead_limit;
+    let learn_ahead_limit = config.queue.learn_ahead_limit;
     Ok(due
         .and_then(|due| DateTime::from_timestamp(due, 0))
         .map(|due| (due - learn_ahead_limit).max(requested_date)))
@@ -1217,14 +1218,21 @@ pub async fn get_review_card_by_id(
     match review_card_opt {
         Some(review_card) => {
             // Compute cards_left_by_state and time_estimate using the same filter as the review session
-            let (cards_left_by_state, time_estimate) =
-                match build_review_filter_query(db, filter, requested_date, true).await? {
-                    Some(review_filter) => {
-                        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?
-                    }
-                    // Tag not found — no cards left to review under this filter
-                    None => (HashMap::new(), Duration::zero()),
-                };
+            let (cards_left_by_state, time_estimate) = match build_review_filter_query(
+                db,
+                &read_external_config()?,
+                filter,
+                requested_date,
+                true,
+            )
+            .await?
+            {
+                Some(review_filter) => {
+                    get_cards_left_by_state_and_time_estimate(db, &review_filter).await?
+                }
+                // Tag not found — no cards left to review under this filter
+                None => (HashMap::new(), Duration::zero()),
+            };
 
             let response = review_card_response(
                 db,
