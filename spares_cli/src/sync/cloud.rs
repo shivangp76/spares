@@ -6,12 +6,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+use spares_core::api::browser_render::get_render_assets_dir;
 use spares_core::api::browser_render::read_render_dependencies;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
 use spares_core::config::get_files_dir;
+use spares_core::config::get_media_dir;
 use spares_core::config::read_external_config;
 use spares_core::ids::NoteId;
 use spares_core::parsers::Parseable;
@@ -85,34 +87,20 @@ pub(crate) async fn push_files(
         &facts,
         !dependencies.files.is_empty(),
     )?;
-    let local = data_dir_source()?;
 
-    // Everything else (render assets). The server reads notes from the database, so raw note
-    // and card files are not needed: it writes them when it renders.
-    println!("Copying files → {remote_host}");
-    let excludes = [
-        // The database, its WAL/SHM/journal files and local backups, which the sync carries
-        "--exclude=*.sqlite*".to_string(),
-        // config.toml has this machine's [sync] table, with its token and replica. Settings and
-        // templates are sent below.
-        "--exclude=/config/".to_string(),
-        "--exclude=/notes/".to_string(),
-        "--exclude=/cards/".to_string(),
-        // The notes repository (see `spares vcs init`), what setting it up leaves behind, and
-        // its interrupted setup
-        format!(
-            "--exclude=/{}/",
-            spares_core::collection::NOTES_REPO_DIR_NAME
-        ),
-        "--exclude=/notes.pre-vcs-*/".to_string(),
-        "--exclude=/.notes-spares-init/".to_string(),
-        "--exclude=/.notes-clone-tmp/".to_string(),
-    ];
-    let destination = remote_dir(remote_host, &target.root)?;
-    let mut args = vec!["-az"];
-    args.extend(excludes.iter().map(String::as_str));
-    args.extend([local.as_str(), destination.as_str()]);
-    run_rsync(&args)?;
+    // Render assets: the stored copies of the files Typst cards read, which web clients compile
+    // them with. Of the collection's directory, only these: the database and media go with the
+    // sync, settings and templates below, and the rest (notes, backups, ...) stay here.
+    println!("Copying render assets → {remote_host}");
+    let assets = render_assets_to_copy(&spares_core::collection::paths().database()).await?;
+    if !assets.is_empty() {
+        run_rsync_files_from(
+            &assets.join("\n"),
+            &["-az", "--ignore-existing"],
+            &dir_source(&get_render_assets_dir())?,
+            &remote_dir(remote_host, &target.render_assets)?,
+        )?;
+    }
 
     // Templates, and config.toml, which the server merges with its own (keeping its `[sync]`
     // table), so reviews there are scheduled with the same settings.
@@ -158,9 +146,40 @@ pub(crate) async fn push_files(
     })
 }
 
-/// The collection's directory as an rsync source that copies its contents.
-fn data_dir_source() -> Result<String, String> {
-    dir_source(&get_data_dir())
+/// The names of the render assets to copy: every stored copy a `render_asset` row names, but
+/// those only of media, which the sync gives the server and it stores itself when asked for them
+/// (see `spares_core::api::browser_render::get_render_asset`). Stored copies are named by their
+/// hash, so one already there is the same, and isn't copied again.
+async fn render_assets_to_copy(database: &Path) -> Result<Vec<String>, String> {
+    let mut connection = SqliteConnectOptions::new()
+        .filename(database)
+        .read_only(true)
+        .connect()
+        .await
+        .map_err(|e| format!("Failed to open {}: {e}", database.display()))?;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT path, hash FROM render_asset")
+        .fetch_all(&mut connection)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to read render assets from {}: {e}",
+                database.display()
+            )
+        })?;
+    let store = get_render_assets_dir();
+    Ok(assets_to_copy(rows, &get_media_dir())
+        .into_iter()
+        .filter(|hash| store.join(hash).is_file())
+        .collect())
+}
+
+/// The hashes of `rows` (`render_asset`'s paths and hashes) whose files are not in `media`.
+fn assets_to_copy(rows: Vec<(String, String)>, media: &Path) -> BTreeSet<String> {
+    rows.into_iter()
+        .filter(|(path, _)| !Path::new(path).starts_with(media))
+        .map(|(_, hash)| hash)
+        .filter(|hash| !hash.is_empty() && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        .collect()
 }
 
 /// `dir` on `remote_host`, as an rsync destination for a directory's contents.
@@ -711,6 +730,7 @@ mod tests {
     use super::PushTarget;
     use super::RemoteFacts;
     use super::SymlinkTarget;
+    use super::assets_to_copy;
     use super::check_target;
     use super::copied_files;
     use super::parse_remote_facts;
@@ -872,6 +892,25 @@ mod tests {
         );
         assert_eq!(run(&dir.join("missing")).local_home, None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn render_assets_of_media_are_not_copied() {
+        let media = std::path::Path::new("/home/me/collection/media");
+        let row = |path: &str, hash: &str| (path.to_string(), hash.to_string());
+        let hashes = assets_to_copy(
+            vec![
+                row("/home/me/collection/media/images/a.png", "aa"),
+                row("/home/me/figures/b.png", "bb"),
+                row("@image-occlusions/aab-1-front-io-1.png", "cc"),
+                // The same contents as a media file, but read from elsewhere too
+                row("/home/me/collection/media/images/d.png", "dd"),
+                row("/home/me/figures/d.png", "dd"),
+                row("/home/me/figures/bad.png", "../x"),
+            ],
+            media,
+        );
+        assert_eq!(hashes.into_iter().collect::<Vec<_>>(), ["bb", "cc", "dd"]);
     }
 
     #[test]
