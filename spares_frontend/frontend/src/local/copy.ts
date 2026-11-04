@@ -41,6 +41,7 @@ import {
   inCopyTab,
   isCopyElsewhere,
   LocalError,
+  onCollectionProgress,
   onCopyTab,
   onLocalWrite,
   openCopy,
@@ -52,6 +53,7 @@ import {
   usesLocalCopy,
 } from "./transport";
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from "./pandoc";
+import type { CollectionProgress } from "./worker";
 
 /** Syncs once nothing changed for this long */
 const IDLE_MS = 30 * 1000;
@@ -63,6 +65,8 @@ const BUSY_RETRY_MS = 10 * 60 * 1000;
 const BUSY_WAIT_MS = 15 * 1000;
 /** Files downloaded at once */
 const DOWNLOAD_CONCURRENCY = 4;
+/** How often the bytes downloaded are shown while a file comes */
+const PROGRESS_MS = 250;
 
 // What has been downloaded, by path: a rendered file's mtime, and a render asset's hash. Only
 // `dropCopy` removes them, along with the caches they describe.
@@ -98,8 +102,10 @@ export interface LocalStatus {
   fullSyncRequired: boolean;
   /** The server no longer has this device enrolled, so the copy has to be set up again */
   notEnrolled: boolean;
-  /** Files being downloaded */
-  downloading: { done: number; total: number } | null;
+  /** The server's collection, while a full download receives it */
+  collection: CollectionProgress | null;
+  /** Files being downloaded, and the bytes received of them so far */
+  downloading: { done: number; total: number; bytes: number } | null;
   /** Notes changed here that the server hasn't rendered yet */
   pendingNotes: ReadonlySet<number>;
 }
@@ -114,6 +120,7 @@ const OFF: LocalStatus = {
   error: null,
   fullSyncRequired: false,
   notEnrolled: false,
+  collection: null,
   downloading: null,
   pendingNotes: new Set(),
 };
@@ -126,6 +133,28 @@ function setStatus(update: Partial<LocalStatus>): void {
   for (const listener of listeners) listener();
   tellOtherTabs("status", status);
 }
+
+function megabytes(bytes: number): string {
+  return `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+/**
+ * What the copy is downloading, as the app shows it, or `null`. Counted in bytes as well as files,
+ * so that on a slow link it is seen to go on, through a large file such as pandoc.wasm too.
+ */
+export function describeDownload(local: LocalStatus): string | null {
+  const { collection, downloading } = local;
+  if (collection) {
+    return `Downloading the collection, ${collection.total === null ? megabytes(collection.received) : `${megabytes(collection.received)} of ${megabytes(collection.total)}`}`;
+  }
+  if (downloading && downloading.total > 0) {
+    return `Downloading files ${downloading.done}/${downloading.total}${downloading.bytes > 0 ? `, ${megabytes(downloading.bytes)}` : ""}`;
+  }
+  return null;
+}
+
+// A full download's progress, from this tab's worker
+onCollectionProgress((collection) => setStatus({ collection }));
 
 // Another tab, which has the copy, syncs it and downloads its files, so this one shows its status
 handleInCopyTab("status", () => status);
@@ -270,7 +299,8 @@ function syncHere(
       });
       throw e;
     } finally {
-      setStatus({ syncing: false });
+      // Also when the download stopped half way
+      setStatus({ syncing: false, collection: null });
       await refreshStatus().catch(console.error);
       syncing = null;
     }
@@ -460,7 +490,11 @@ export async function enableLocalCopy(
     state.replica ?? (await call<number>("enroll", serverUrl, csrfToken, name));
   setLocalCopy({ serverUrl, replica, ready: false });
   onStep("Downloading the collection");
-  await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
+  try {
+    await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
+  } finally {
+    setStatus({ collection: null });
+  }
   setLocalCopy({ serverUrl, replica, ready: true });
   clearCaches();
   await globalThis.caches
@@ -693,7 +727,51 @@ async function downloadFiles(): Promise<void> {
   };
   save();
 
-  const tasks = [
+  let next = 0;
+  let done = 0;
+  let bytes = 0;
+  const showProgress = () =>
+    setStatus({ downloading: { done, total: tasks.length, bytes } });
+  // `response` with its body counted in `bytes` as `cache.put` reads it
+  const counted = (response: Response): Response => {
+    if (!response.body) return response;
+    let shownAt = 0;
+    const body = response.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          bytes += chunk.byteLength;
+          if (Date.now() - shownAt >= PROGRESS_MS) {
+            shownAt = Date.now();
+            showProgress();
+          }
+          controller.enqueue(chunk);
+        },
+      }),
+    );
+    // Which no longer describe the body, which the browser has decoded
+    const kept = new Headers(response.headers);
+    kept.delete("Content-Length");
+    kept.delete("Content-Encoding");
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: kept,
+    });
+  };
+
+  const tasks: (() => Promise<void>)[] = [];
+  // The build's, which names its version. An earlier build's goes once this one's is here. First,
+  // since it is the largest by far (about 11 MB), so the other files come meanwhile.
+  const pandocWasms = await pandocCache.keys();
+  if (!pandocWasms.some((request) => request.url === PANDOC_WASM_URL)) {
+    tasks.push(async () => {
+      const response = await fetch(PANDOC_WASM_URL, { cache: "no-cache" });
+      if (!response.ok) return;
+      await pandocCache.put(PANDOC_WASM_URL, counted(response));
+      for (const request of pandocWasms) await pandocCache.delete(request);
+    });
+  }
+  tasks.push(
     ...files
       .filter((file) => knownFiles[file.path] !== file.mtime)
       .map((file) => async () => {
@@ -701,7 +779,7 @@ async function downloadFiles(): Promise<void> {
         const response = await fetch(url, { headers, cache: "no-cache" });
         // A file that went away meanwhile is left for the next time
         if (!response.ok) return;
-        await filesCache.put(url, response);
+        await filesCache.put(url, counted(response));
         knownFiles[file.path] = file.mtime;
       }),
     ...assets
@@ -715,33 +793,21 @@ async function downloadFiles(): Promise<void> {
         // the version the device has, if any, is kept. Otherwise the 404 is, so that offline the
         // file isn't asked for.
         if (response.ok) {
-          await assetsCache.put(url, response);
+          await assetsCache.put(url, counted(response));
           knownAssets[asset.path] = asset.hash;
           changedAssets.add(asset.path);
         } else if (!(await assetsCache.match(url, { ignoreVary: true }))) {
           await assetsCache.put(url, response);
         }
       }),
-  ];
-  // The build's, which names its version. An earlier build's goes once this one's is here.
-  const pandocWasms = await pandocCache.keys();
-  if (!pandocWasms.some((request) => request.url === PANDOC_WASM_URL)) {
-    tasks.push(async () => {
-      const response = await fetch(PANDOC_WASM_URL, { cache: "no-cache" });
-      if (!response.ok) return;
-      await pandocCache.put(PANDOC_WASM_URL, response);
-      for (const request of pandocWasms) await pandocCache.delete(request);
-    });
-  }
-  let next = 0;
-  let done = 0;
-  setStatus({ downloading: { done, total: tasks.length } });
+  );
+  showProgress();
   const worker = async () => {
     // Stops when the copy pauses
     while (next < tasks.length && session === started) {
       await tasks[next++]();
       done += 1;
-      setStatus({ downloading: { done, total: tasks.length } });
+      showProgress();
       if (done % 20 === 0) save();
     }
   };
