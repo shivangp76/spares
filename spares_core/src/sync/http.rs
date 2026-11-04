@@ -247,6 +247,14 @@ impl HttpRemote {
             .unwrap_or(true))
     }
 
+    /// Has the server render every note whose files are out of date, in the background (see
+    /// [`super::push`]).
+    pub async fn render_all(&self) -> Result<(), Error> {
+        self.send(self.request(reqwest::Method::POST, "/api/sync/render", QUICK_TIMEOUT))
+            .await?;
+        Ok(())
+    }
+
     /// The server's files of `kind` (see [`super::media`]).
     pub async fn list_media(&self, kind: MediaKind) -> Result<Vec<MediaFile>, Error> {
         Ok(self
