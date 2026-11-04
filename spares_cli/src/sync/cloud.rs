@@ -933,7 +933,7 @@ mod tests {
             vec![
                 row("/home/me/collection/media/images/a.png", "aa"),
                 row("/home/me/figures/b.png", "bb"),
-                row("@image-occlusions/aab-1-front-io-1.png", "cc"),
+                row("/home/me/preamble.typ", "cc"),
                 // The same contents as a media file, but read from elsewhere too
                 row("/home/me/collection/media/images/d.png", "dd"),
                 row("/home/me/figures/d.png", "dd"),
