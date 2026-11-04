@@ -10,6 +10,8 @@ mod shell;
 
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
 
 use bundle::Bundle;
 use bundle::REMOTE_DIR;
@@ -73,7 +75,10 @@ pub(crate) enum DeployCommands {
         no_latex: bool,
     },
     /// Builds this checkout and installs it on the server (with sudo there, which `init` lets
-    /// your user use without a password).
+    /// your user use without a password), upgrading the server's packages and Tailscale first.
+    ///
+    /// It removes what the upgrade no longer needs, such as old kernels, and says when the server
+    /// needs a reboot to finish it.
     ///
     /// Restart the local server at the same time: the two refuse to sync across database
     /// versions.
@@ -180,6 +185,7 @@ async fn update() -> Result<(), Error> {
     progress.run(command, Some(""))?;
     progress.end_step();
     progress.finish();
+    let needs_reboot = wait_for_tailscale_upgrade(&ssh, &remote_host)?;
     // This host's copy needs a token there, after this machine moved into a host
     let url = match config.sync.url.clone() {
         Some(url) => url,
@@ -197,7 +203,43 @@ async fn update() -> Result<(), Error> {
         "\n{}",
         "Restart spares_server here too, so both sides run the same version.".yellow()
     );
+    if needs_reboot {
+        println!(
+            "{}",
+            format!("Reboot the server to finish its upgrade: ssh {remote_host} sudo reboot")
+                .yellow()
+        );
+    }
     Ok(())
+}
+
+/// Waits for the upgrade of Tailscale that `setup_vps.sh` leaves running on `host` (as
+/// user@host), which restarts it and so ends SSH connections over the tailnet. Returns whether
+/// the server then needs a reboot to finish upgrading.
+fn wait_for_tailscale_upgrade(ssh: &Ssh, host: &str) -> Result<bool, Error> {
+    const CHECK: &str = "systemctl is-active --quiet spares-tailscale-upgrade && echo upgrading; \
+                         test -f /var/run/reboot-required && echo reboot; true";
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut said = false;
+    loop {
+        // Fails while Tailscale restarts
+        match ssh.output(host, CHECK) {
+            Ok(output) if !output.contains("upgrading") => return Ok(output.contains("reboot")),
+            _ if Instant::now() > deadline => {
+                return Err(miette!(
+                    "Tailscale on {host} did not finish upgrading in 3 minutes. See `journalctl -u \
+                     spares-tailscale-upgrade` there."
+                ));
+            }
+            _ => {
+                if !said {
+                    println!("Waiting for Tailscale to upgrade on {host}…");
+                    said = true;
+                }
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        }
+    }
 }
 
 /// Copies `bundle` to [`REMOTE_DIR`] on `server` (as user@host), sending only what changed since
