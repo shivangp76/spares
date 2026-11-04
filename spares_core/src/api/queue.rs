@@ -105,14 +105,32 @@ fn desc(expr: impl Into<String>) -> Key {
 }
 
 /// A pseudorandom number in `0..1_000_003` for `id_expr`, the same all day and different the next.
-/// The multiplier changes with the day, rather than an offset, so each day is a different
-/// permutation rather than a rotation of the same one. Products stay below 2^40, so they cannot
-/// overflow.
+///
+/// `x = (id * multiplier + offset) mod p` alone orders ids by the fractional part of
+/// `id * multiplier / p`, which takes few orders for a few dozen ids, so a small collection would
+/// often get the same order on two days, or its ids in order. Raising `x` to the 5th power mod `p`
+/// mixes them, and is still one-to-one, as 5 does not divide `p - 1`. The multiplier and offset
+/// come from a hash of the day, so the next day's have nothing in common with today's. Products
+/// stay below 2^40, so they cannot overflow.
 fn daily_hash(id_expr: &str, now: DateTime<Utc>) -> String {
-    const PRIME: i64 = 1_000_003;
-    let day = i64::from(now.with_timezone(&Local).date_naive().num_days_from_ce());
-    let multiplier = (day * 7919 + 48271) % (PRIME - 1) + 1;
-    format!("((({id_expr}) % {PRIME}) * {multiplier}) % {PRIME}")
+    const PRIME: u64 = 1_000_003;
+    let day = now.with_timezone(&Local).date_naive().num_days_from_ce();
+    let seed = splitmix64(u64::from(day.unsigned_abs()));
+    let multiplier = seed % (PRIME - 1) + 1;
+    let offset = (seed >> 32) % PRIME;
+    let x = format!("((({id_expr}) % {PRIME}) * {multiplier} + {offset}) % {PRIME}");
+    let x2 = format!("({x} * {x}) % {PRIME}");
+    format!("((({x2} * {x2}) % {PRIME}) * {x}) % {PRIME}")
+}
+
+/// The output function of `SplitMix64`: spreads nearby inputs, like consecutive days, over all of
+/// `u64`. Written out rather than taken from a crate, so the days' orders don't change with an
+/// upgrade.
+fn splitmix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// When the card was last reviewed. `review_log(card_id, reviewed_at)` is indexed, so this is a
@@ -936,16 +954,15 @@ pub(crate) mod tests {
             NewCardOrder::Random,
             NewReviewMix::Interleaved,
         );
-        let today = ordered(&pool, &random, now, QueueCaps::default()).await;
-        let tomorrow = ordered(
-            &pool,
-            &random,
-            now + Duration::days(1),
-            QueueCaps::default(),
-        )
-        .await;
-        assert_ne!(today, tomorrow);
-        assert_ne!(today, ids);
+        // A month of days, so that a weak shuffle can't pass on the day the test runs
+        let mut previous = ordered(&pool, &random, now, QueueCaps::default()).await;
+        for days in 1..=30 {
+            let day = now + Duration::days(days);
+            let order = ordered(&pool, &random, day, QueueCaps::default()).await;
+            assert_ne!(order, previous, "{day}: the same as the day before");
+            assert_ne!(order, ids, "{day}: in the order of the cards");
+            previous = order;
+        }
     }
 
     #[sqlx::test]
