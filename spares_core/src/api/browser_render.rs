@@ -6,8 +6,9 @@
 //! - Files the sources read (preambles, figures, rendered image occlusions, ...) are discovered
 //!   when rendering locally. Rendering writes a [`RenderDependencies`] file next to each rendered
 //!   file, and [`sync_render_assets`] copies the files it lists into a content-addressed store in
-//!   the data directory, which is synced to the server along with the database. Files are stored
-//!   by the absolute path sources read them by, except rendered image occlusions (see
+//!   the data directory, which `spares sync cloud` copies to the server, but for the copies of
+//!   media, which the server stores from its own media files (see [`get_render_asset`]). Files
+//!   are stored by the absolute path sources read them by, except rendered image occlusions (see
 //!   [`IMAGE_OCCLUSION_ASSET_PREFIX`]). A device that keeps a copy of the collection makes those
 //!   itself instead (see `parsers::read_device_card`, wasm only).
 //! - Audio clips (see [`crate::parsers::audio`]) are stored the same way for every parser, since
@@ -496,17 +497,56 @@ async fn remove_unreferenced_render_assets(db: &SqlitePool, store_dir: &Path) ->
 }
 
 /// The stored copy of the file a source refers to as `path`, and its hash.
+///
+/// `spares sync cloud` doesn't copy the stored copies of media (images, audio and image
+/// occlusions), since the sync gives the server the files themselves. The first time one is
+/// asked for, it is stored from the media file at its path, if that has the recorded contents.
 pub async fn get_render_asset(
     db: &SqlitePool,
     path: &str,
 ) -> Result<Option<(PathBuf, String)>, Error> {
     let key = render_asset_key(Path::new(path));
+    let key = key.as_deref().unwrap_or(path);
     let hash: Option<String> = sqlx::query_scalar("SELECT hash FROM render_asset WHERE path = ?")
-        .bind(key.as_deref().unwrap_or(path))
+        .bind(key)
         .fetch_optional(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(hash.map(|hash| (get_render_assets_dir().join(&hash), hash)))
+    let Some(hash) = hash else {
+        return Ok(None);
+    };
+    let store_dir = get_render_assets_dir();
+    let stored = store_dir.join(&hash);
+    if !stored.exists() {
+        store_from_media(&render_asset_local_path(key), &hash, &store_dir);
+    }
+    Ok(Some((stored, hash)))
+}
+
+/// Stores the file at `path` as the render asset `hash`, if it is in the media directory and
+/// has that hash. Any other file stays unread, so a request can't learn about it.
+fn store_from_media(path: &Path, hash: &str, store_dir: &Path) {
+    let media = crate::config::get_media_dir();
+    let in_media = path
+        .canonicalize()
+        .ok()
+        .zip(media.canonicalize().ok())
+        .is_some_and(|(path, media)| path.starts_with(media));
+    if !in_media || create_dir_all(store_dir).is_err() {
+        return;
+    }
+    match std::fs::read(path) {
+        Ok(contents) if blake3::hash(&contents).to_hex().as_str() == hash => {
+            if let Err(e) = store_render_asset(path, store_dir) {
+                warn!("Failed to store {} as a render asset: {e}", path.display());
+            }
+        }
+        Ok(_) => warn!(
+            "{} differs from the render asset recorded for it",
+            path.display()
+        ),
+        Err(_) => {}
+    }
 }
 
 /// Stored Typst files, e.g. preambles. Most sources read the same few, so web clients load them
@@ -535,6 +575,7 @@ mod tests {
 
     use super::IMAGE_OCCLUSION_ASSET_PREFIX;
     use super::get_render_asset;
+    use super::get_render_assets_dir;
     use super::render_asset_key;
     use super::render_asset_local_path;
     use super::sync_render_assets;
@@ -559,6 +600,56 @@ mod tests {
 
     /// Rendered image occlusions stored by their absolute path are keyed again, so a server whose
     /// image occlusion directory differs finds them.
+    /// `spares sync cloud` doesn't copy render assets of media, which the server stores from its
+    /// own media files when asked for them, but no other file.
+    #[sqlx::test]
+    async fn render_assets_of_media_are_stored_when_asked_for(pool: SqlitePool) {
+        let unique = format!("{}-{}", std::process::id(), line!());
+        let media = crate::config::get_media_dir().join("images");
+        std::fs::create_dir_all(&media).unwrap();
+        let outside = std::env::temp_dir().join(format!("spares-outside-{unique}"));
+        let mut paths = Vec::new();
+        for (path, contents) in [
+            (media.join(format!("in-media-{unique}.png")), "in media"),
+            (media.join(format!("changed-{unique}.png")), "changed"),
+            (outside.join("figure.png"), "outside"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, format!("{contents} {unique}")).unwrap();
+            let hash = blake3::hash(format!("{contents} {unique}").as_bytes())
+                .to_hex()
+                .to_string();
+            sqlx::query("INSERT INTO render_asset (path, hash, mtime, size) VALUES (?, ?, 0, 0)")
+                .bind(path.to_str().unwrap())
+                .bind(&hash)
+                .execute(&pool)
+                .await
+                .unwrap();
+            paths.push((path, hash));
+        }
+        std::fs::write(&paths[1].0, "edited since").unwrap();
+
+        let stored = |i: usize| get_render_assets_dir().join(&paths[i].1).exists();
+        for (path, hash) in &paths {
+            let (stored_path, found) = get_render_asset(&pool, path.to_str().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&found, hash);
+            assert_eq!(stored_path, get_render_assets_dir().join(hash));
+        }
+        assert!(stored(0));
+        assert!(!stored(1), "not with other contents");
+        assert!(!stored(2), "not from outside the media directory");
+        assert_eq!(get_render_asset(&pool, "/nowhere.png").await.unwrap(), None);
+
+        for (path, hash) in &paths {
+            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(get_render_assets_dir().join(hash));
+        }
+        let _ = std::fs::remove_dir_all(outside);
+    }
+
     #[sqlx::test]
     async fn test_sync_rekeys_image_occlusions(pool: SqlitePool) {
         let image = get_image_occlusion_rendered_directory().join("abc-1-front-io-1.png");
