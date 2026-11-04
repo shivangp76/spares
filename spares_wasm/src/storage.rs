@@ -127,6 +127,7 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
             .await
             .map_err(sqlx_error)?;
     }
+    crate::media::migrate(&device).await?;
     let db = connect(DB_FILE).await?;
     sqlx::migrate!("../spares_core/migrations")
         .run(&db)

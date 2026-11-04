@@ -274,7 +274,7 @@ pub async fn render_assets() -> Result<JsValue, JsValue> {
 
 /// The image, clip or image occlusion file at `path`, as notes name it, if the device has it: the
 /// web app shows one added here from it until the server has it. Also the image of a card's image
-/// occlusion, which the device makes for the sources of Typst cards
+/// occlusion, which the device makes for the sources of Markdown cards
 /// (`spares_core::parsers::read_device_card`).
 #[wasm_bindgen]
 pub async fn media_file(path: String) -> Result<Option<Vec<u8>>, JsValue> {

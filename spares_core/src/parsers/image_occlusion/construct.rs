@@ -137,14 +137,12 @@ pub fn image_occlusion_card_image_filepath(
     image_occlusion_order: usize,
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
 ) -> PathBuf {
-    // A device renders no cards, so it names the image it makes itself
+    // A device renders no cards, so it names the image it makes itself. Cards with overlays have
+    // them in their source instead.
     #[cfg(target_family = "wasm")]
-    if let Some(path) = super::device::card_filepath(
-        cloze_indices,
-        image_occlusion_data,
-        side,
-        parser.image_occlusion_overlays(),
-    ) {
+    if !parser.image_occlusion_overlays()
+        && let Some(path) = super::device::card_filepath(cloze_indices, image_occlusion_data, side)
+    {
         return path;
     }
     #[cfg(not(target_family = "wasm"))]
@@ -261,7 +259,7 @@ pub(super) struct ClozesSvg {
 
 /// What a card needs of an original image
 enum OriginalImage {
-    /// Its width and height, for an overlay (see [`image_occlusion_overlay_svg`])
+    /// Its width and height, for an overlay (see [`overlay_svg_of_size`])
     Size(u32, u32),
     /// Decoded, for a PNG to draw clozes over (see [`compose_image_occlusion_card`])
     Decoded(RgbaImage),
@@ -410,7 +408,7 @@ fn read_original_image(
     if overlay {
         // Reads only the header
         let (width, height) = crate::platform::image_size(original_image_filepath)
-            .unwrap_or_else(|| Err("its size isn't known yet".to_string()))
+            .unwrap_or_else(|| Err("the device doesn't have it".to_string()))
             .map_err(|e| original_image_error(original_image_filepath, &e))?;
         Ok(OriginalImage::Size(width, height))
     } else {
@@ -441,21 +439,18 @@ fn original_image_error(original_image_filepath: &Path, e: &dyn std::fmt::Displa
 /// SVG the size of the original image (see [`overlay_svg_of_size`]). Of the original image
 /// only the header is read, for its size.
 ///
-/// `None` on a device that doesn't know the original image's size yet, since it reads images
-/// asynchronously (see [`crate::platform::image_size`]).
+/// A device knows the size of every image it has without reading it (see
+/// [`crate::platform::image_size`]).
 pub fn image_occlusion_overlay(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     side: CardSide,
-) -> Result<Option<Vec<u8>>, Error> {
-    // Natively it is always known, and read below
-    #[cfg(target_family = "wasm")]
-    if crate::platform::image_size(&image_occlusion_data.original_image_filepath).is_none() {
-        return Ok(None);
-    }
-    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new())
-        .card_image(cloze_indices, image_occlusion_data, side)
-        .map(Some)
+) -> Result<Vec<u8>, Error> {
+    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new()).card_image(
+        cloze_indices,
+        image_occlusion_data,
+        side,
+    )
 }
 
 /// Writes the image `side` of the card shows for each of its image occlusions, drawn from
@@ -634,7 +629,7 @@ fn set_cloze_fill_opacity(cloze: &mut Element, cloze_emphasis_fill_opacity: f64)
 
 /// Writes the image of `image_occlusion_data` that `side` of a card shows to `card_filepath`: the
 /// card's clozes drawn over the original image as a PNG, or, if `overlay`, as an SVG to show over
-/// the original image (see [`image_occlusion_overlay_svg`]).
+/// the original image (see [`overlay_svg_of_size`]).
 #[cfg(test)]
 pub(crate) fn create_image_occlusion_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
@@ -743,23 +738,6 @@ fn svg_size(svg: &Element) -> Option<(f64, f64)> {
             .filter(|v| v.is_finite() && *v > 0.)
     };
     Some((length("width")?, length("height")?))
-}
-
-/// `clozes_svg`, from [`card_clozes_svg`], as an image the size of `original_image`, in any format
-/// the `image` crate reads, so that a card shows it over the original image by giving both the
-/// same width (see [`overlay_svg_of_size`]).
-// For a device, which makes the images itself (see `device.rs`)
-#[cfg(any(test, target_family = "wasm"))]
-pub(crate) fn image_occlusion_overlay_svg(
-    original_image: &[u8],
-    clozes_svg: &[u8],
-) -> Result<Vec<u8>, String> {
-    let size = image::ImageReader::new(std::io::Cursor::new(original_image))
-        .with_guessed_format()
-        .map_err(|e| e.to_string())
-        .and_then(|reader| reader.into_dimensions().map_err(|e| e.to_string()))
-        .map_err(|e| format!("Failed to open input image: {}", e))?;
-    Ok(overlay_svg_of_size(clozes_svg, size))
 }
 
 /// `clozes_svg`, from [`card_clozes_svg`], as an image the size of the original image,

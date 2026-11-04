@@ -36,7 +36,6 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::image_occlusion::image_occlusion_caption;
-use crate::parsers::image_occlusion::image_occlusion_card_image_filepath;
 use crate::parsers::image_occlusion::image_occlusion_overlay;
 use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
@@ -346,10 +345,8 @@ impl Parseable for TypstParser {
         }
         if let ConstructImageOcclusionType::Card {
             side,
-            note_id,
-            card_order,
-            image_occlusion_order,
             cloze_indices,
+            ..
         } = output_type
         {
             // The clozes over the original image, scaled to the same width (see
@@ -357,25 +354,9 @@ impl Parseable for TypstParser {
             // card fetches only the original image, which the note's cards share. `std` in case a
             // note or preamble shadows these.
             let overlay = match image_occlusion_overlay(cloze_indices, image_occlusion_data, side) {
-                Ok(Some(svg)) => format!(
+                Ok(svg) => format!(
                     r#"std.image(bytes({}), format: "svg", width: 100%)"#,
                     typst_string(&String::from_utf8_lossy(&svg))
-                ),
-                // A device that doesn't know the original image's size yet names an overlay that
-                // it makes when the web app asks for it, which reads the image, so the device
-                // knows its size from then on (see `platform::image_size`)
-                Ok(None) => format!(
-                    r#"std.image("{}", format: "svg", width: 100%)"#,
-                    image_occlusion_card_image_filepath(
-                        self,
-                        image_occlusion_data,
-                        side,
-                        note_id,
-                        card_order,
-                        image_occlusion_order,
-                        cloze_indices,
-                    )
-                    .display()
                 ),
                 // The card fails to compile with the reason, where it would show the clozes
                 Err(e) => format!("std.panic({})", typst_string(&e.to_string())),

@@ -21,10 +21,10 @@
 //!
 //! A browser never writes note or card files, nor renders them: the server does that after the
 //! device's changes reach it (see [`crate::sync`]). Its Typst cards have their image occlusions'
-//! overlays in their sources, which need the size of the original image, and [`image_size`] has
-//! it once the image has been in memory. Until then, and for other cards, it makes their images,
-//! in memory, when the web app asks for them (see `parsers::read_device_card`, wasm only). They
-//! aren't kept in the device's storage. In iOS Safari (2026-10-31, before [`image_size`]), a card
+//! overlays in their sources, which need the size of the original image: the device keeps the size
+//! of each image with it, and [`image_size`] has it (`load_sizes`, wasm only). For Markdown cards it
+//! makes their images, in memory, when the web app asks for them (see `parsers::read_device_card`,
+//! wasm only). They aren't kept in the device's storage. In iOS Safari (2026-10-31, before [`image_size`]), a card
 //! of a 4000×3000 image occlusion took 2.9–3.4 s the first time and 0.7–0.8 s after, and one of a
 //! 254 KB JPEG 1.1–1.2 s. If that is too slow on a phone, keep the images made in `device.sqlite`.
 //! The web app downloads the rendered files, and tells the device
@@ -57,6 +57,8 @@ pub use memory::files;
 #[cfg(target_family = "wasm")]
 pub use memory::has_web_render;
 #[cfg(target_family = "wasm")]
+pub use memory::image_dimensions;
+#[cfg(target_family = "wasm")]
 pub use memory::image_size;
 #[cfg(target_family = "wasm")]
 pub use memory::is_file;
@@ -64,6 +66,8 @@ pub use memory::is_file;
 pub use memory::load_dir;
 #[cfg(target_family = "wasm")]
 pub use memory::load_files;
+#[cfg(target_family = "wasm")]
+pub use memory::load_sizes;
 #[cfg(target_family = "wasm")]
 pub use memory::load_stored;
 #[cfg(target_family = "wasm")]
@@ -141,8 +145,7 @@ mod memory {
     static WEB_RENDERS: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
     static LOADER: Mutex<Option<Loader>> = Mutex::new(None);
     static MEDIA_DIRS: Mutex<Option<MediaDirs>> = Mutex::new(None);
-    /// The width and height of each image whose contents have been in memory since they last
-    /// changed, by absolute path, for [`image_size`]
+    /// The width and height of each image the device has, by absolute path, for [`image_size`]
     static SIZES: Mutex<BTreeMap<PathBuf, (u32, u32)>> = Mutex::new(BTreeMap::new());
     /// See [`version`]
     static VERSION: AtomicU64 = AtomicU64::new(0);
@@ -184,18 +187,29 @@ mod memory {
         )
     }
 
+    /// The width and height of the image `contents`, from its header, if it is one.
+    pub fn image_dimensions(contents: &[u8]) -> Option<(u32, u32)> {
+        image::ImageReader::new(io::Cursor::new(contents))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok())
+    }
+
     /// Records the size of the image at `path` from `contents`, its new contents, or forgets it if
     /// they aren't an image.
     fn remember_size(path: &Path, contents: &[u8]) {
-        let size = image::ImageReader::new(io::Cursor::new(contents))
-            .with_guessed_format()
-            .ok()
-            .and_then(|reader| reader.into_dimensions().ok());
+        let size = image_dimensions(contents);
         let mut sizes = lock(&SIZES);
         match size {
             Some(size) => sizes.insert(path.to_path_buf(), size),
             None => sizes.remove(path),
         };
+    }
+
+    /// Adds the sizes of images the device keeps in its storage, which it records when it stores
+    /// them, so that [`image_size`] has them without reading the images.
+    pub fn load_sizes(sizes: impl IntoIterator<Item = (PathBuf, (u32, u32))>) {
+        lock(&SIZES).extend(sizes);
     }
 
     /// Replaces the files under `dir` with `files`, which are under it too.
@@ -279,18 +293,14 @@ mod memory {
         }
         let loader = *lock(&LOADER);
         match loader {
-            Some(loader) if lock(&STORED).contains(path) => {
-                let contents = loader(path.to_path_buf()).await?;
-                remember_size(path, &contents);
-                Ok(contents)
-            }
+            Some(loader) if lock(&STORED).contains(path) => loader(path.to_path_buf()).await,
             _ => Err(not_found(path)),
         }
     }
 
-    /// The width and height of the image at `path`, if its contents have been in memory since
-    /// they last changed: written, loaded or read. The parser needs them synchronously, but the
-    /// device's storage is read asynchronously, and keeping every image in memory, or reading
+    /// The width and height of the image at `path`, if the device has it: written or loaded here,
+    /// or in its storage with its size (`load_sizes`). The parser needs them synchronously, but
+    /// the device's storage is read asynchronously, and keeping every image in memory, or reading
     /// them all when the device opens its copy, would cost more than it saves.
     pub fn image_size(path: &Path) -> Option<Result<(u32, u32), String>> {
         lock(&SIZES).get(path).copied().map(Ok)
@@ -428,7 +438,7 @@ mod memory {
             assert_eq!(take_written(), [(path.clone(), b"x".to_vec())]);
 
             // An image's size is known once its contents have been in memory, and until they
-            // change
+            // change, or once loaded
             let original = Path::new("/srv/spares/image_occlusions/cell.png");
             assert_eq!(image_size(original), None);
             load_files([(original.to_path_buf(), png(4, 3))]);
@@ -444,8 +454,12 @@ mod memory {
             set_loader(load_image_from_storage);
             load_stored([original.to_path_buf()]);
             assert_eq!(image_size(original), None);
-            read(original).await.unwrap();
+            load_sizes([(original.to_path_buf(), (7, 6))]);
             assert_eq!(image_size(original), Some(Ok((7, 6))));
+            assert_eq!(
+                image_dimensions(&read(original).await.unwrap()),
+                Some((7, 6))
+            );
             write(&path, "x").unwrap();
 
             write(&path, [0xff]).unwrap();
