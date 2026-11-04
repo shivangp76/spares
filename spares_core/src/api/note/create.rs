@@ -305,6 +305,7 @@ pub async fn create_notes(
         render: false,
         force_render: false,
         precomputed_cards: None,
+        render_states: HashMap::new(),
     };
     let generated = create_note_files_bulk(parser.as_ref(), &parse_notes_request);
     // Commit whatever was written, even if some files failed.
@@ -312,7 +313,9 @@ pub async fn create_notes(
         &notes_vcs::note_rel_paths(parser.get_parser_name(), &created_ids),
         &notes_vcs::commit_message("create", &created_ids),
     );
-    let _card_paths = generated?.into_iter().collect::<Result<Vec<_>, _>>()?;
+    for files in generated? {
+        files.result?;
+    }
 
     // Update config — only invalidate linked-note cache if any note has keywords or note links
     let has_keywords = note_keyword_entries.iter().any(|(_, ks)| !ks.is_empty());

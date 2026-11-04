@@ -48,7 +48,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Output;
 use std::sync::LazyLock;
 
 use data_parser::KEYWORD_CMD;
@@ -72,6 +71,7 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
@@ -80,7 +80,6 @@ use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -236,14 +235,9 @@ impl Parseable for LatexParserNote {
         aux_dir: &Path,
         output_text_filepath: &Path,
         output_rendered_dir: &Path,
-        output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
-        render_file(
-            aux_dir,
-            output_text_filepath,
-            output_rendered_dir,
-            output_rendered_filepath,
-        )
+        _output_rendered_filepath: &Path,
+    ) -> Result<RenderedFile, Error> {
+        render_file(aux_dir, output_text_filepath, output_rendered_dir)
     }
 }
 
@@ -566,8 +560,7 @@ fn render_file(
     aux_dir: &Path,
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
-    output_rendered_filepath: &Path,
-) -> Result<Output, Error> {
+) -> Result<RenderedFile, Error> {
     // This is currently the same `pdflatex` command that `latexmk` ends up running.
     // let output = Command::new("pdflatex")
     //     .arg("-shell-escape") // for svg package
@@ -603,29 +596,28 @@ fn render_file(
         // Current directory is changed to ensure first vimtex compilation is fast.
         .current_dir(output_text_filepath.parent().unwrap());
     let output = render_command_output(&mut command, "latexmk")?;
-    if let Err(e) = record_dependencies(
-        aux_dir,
-        output_text_filepath,
-        output_rendered_dir,
-        output_rendered_filepath,
-    ) {
-        warn!(
-            "Failed to record dependencies of {}: {e}",
-            output_text_filepath.display()
-        );
-    }
-    Ok(output)
+    let dependencies = record_dependencies(aux_dir, output_text_filepath, output_rendered_dir)
+        .unwrap_or_else(|e| {
+            warn!(
+                "Failed to record dependencies of {}: {e}",
+                output_text_filepath.display()
+            );
+            RenderDependencies::default()
+        });
+    Ok(RenderedFile {
+        output,
+        dependencies,
+    })
 }
 
-/// Writes the [`RenderDependencies`] of a rendered file from the recorder file (`.fls`) that
-/// `latexmk` has `pdflatex` write to the aux directory. It is kept when `latexmk` skips an
-/// up-to-date file, so it always describes the last compilation.
+/// The [`RenderDependencies`] of a rendered file, from the recorder file (`.fls`) that `latexmk`
+/// has `pdflatex` write to the aux directory. It is kept when `latexmk` skips an up-to-date file,
+/// so it always describes the last compilation.
 fn record_dependencies(
     aux_dir: &Path,
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
-    output_rendered_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let output_text_filepath =
         std::path::absolute(output_text_filepath).map_err(|e| e.to_string())?;
     let file_name = output_text_filepath
@@ -640,11 +632,10 @@ fn record_dependencies(
         .into_iter()
         .filter(|path| *path != output_text_filepath)
         .collect();
-    RenderDependencies {
+    Ok(RenderDependencies {
         files,
         packages: Vec::new(),
-    }
-    .write(&render_dependencies_filepath(output_rendered_filepath))
+    })
 }
 
 /// Absolute paths of the files read according to a recorder file, except files it also wrote and

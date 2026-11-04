@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::RandomState;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use spares_core::api::browser_render::get_render_assets_dir;
-use spares_core::api::browser_render::read_render_dependencies;
+use spares_core::api::render_state::read_render_dependencies;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
@@ -28,6 +29,7 @@ use spares_core::sync::http::RemoteAuth;
 use spares_core::sync::push::PushTarget;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::sqlite::SqlitePoolOptions;
 
 /// Set by `spares sync cloud --dry-run`: rsync only lists what it would copy, and nothing else is
 /// changed on the server.
@@ -91,8 +93,9 @@ pub(crate) async fn push_files(
         .await
         .map_err(|e| format!("Failed to ask {url} where to copy files: {e}"))?;
     let home = std::env::home_dir().ok_or("Failed to find the home directory")?;
-    let note_ids = server_rendered_note_ids(&spares_core::collection::paths().database()).await?;
-    let dependencies = plan_dependency_sync(&home, render_dependency_files(&note_ids));
+    let database = spares_core::collection::paths().database();
+    let note_ids = server_rendered_note_ids(&database).await?;
+    let dependencies = plan_dependency_sync(&home, render_dependency_files(&database).await?);
     let facts = remote_facts(remote_host, &target, &home)?;
     let local = LocalSide {
         root: get_data_dir(),
@@ -629,8 +632,17 @@ fn sync_render_dependencies(
 }
 
 /// Existing files read by rendered notes of parsers the server renders, except those synced by
-/// other passes or written by rendering. Records left by deleted notes are ignored.
-fn render_dependency_files(note_ids: &HashMap<&'static str, HashSet<NoteId>>) -> BTreeSet<PathBuf> {
+/// other passes or written by rendering.
+async fn render_dependency_files(database: &Path) -> Result<BTreeSet<PathBuf>, String> {
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(database)
+                .read_only(true),
+        )
+        .await
+        .map_err(|e| format!("Failed to open {}: {e}", database.display()))?;
     let excluded_dirs: Vec<PathBuf> = [
         get_data_dir(),
         get_cache_dir(),
@@ -639,12 +651,18 @@ fn render_dependency_files(note_ids: &HashMap<&'static str, HashSet<NoteId>>) ->
     .into_iter()
     .chain(rendered_dirs())
     .collect();
-    server_rendered_parsers()
-        .flat_map(|parser| {
-            read_render_dependencies(parser.as_ref(), Some(&note_ids[parser.get_parser_name()])).0
-        })
-        .filter(|path| path.is_file() && !excluded_dirs.iter().any(|dir| path.starts_with(dir)))
-        .collect()
+    let mut files = BTreeSet::new();
+    for parser in server_rendered_parsers() {
+        let (read, _) =
+            read_render_dependencies::<RandomState>(&db, parser.get_parser_name(), None)
+                .await
+                .map_err(|e| format!("Failed to read what notes read: {e}"))?;
+        files.extend(read.into_iter().filter(|path| {
+            path.is_file() && !excluded_dirs.iter().any(|dir| path.starts_with(dir))
+        }));
+    }
+    db.close().await;
+    Ok(files)
 }
 
 #[derive(Debug, PartialEq)]

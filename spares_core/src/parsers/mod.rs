@@ -385,13 +385,15 @@ pub trait Parseable: Send + Sync {
         }
     }
 
+    /// Compiles the raw file `output_text_filepath` to `output_rendered_filepath`. Temporary files
+    /// go next to the rendered file, named after it.
     fn render_file(
         &self,
         aux_dir: &Path,
         output_text_filepath: &Path,
         output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error>;
+    ) -> Result<RenderedFile, Error>;
 
     // fn comment_regex(&self) -> Option<Regex> {
     //     None
@@ -452,7 +454,7 @@ pub trait Parseable: Send + Sync {
 
     /// Whether web clients compile this parser's cards themselves from the raw source instead of
     /// displaying the rendered file. The files their sources need are shipped to the client from the
-    /// [`RenderDependencies`] file written next to each rendered file, so such parsers must write it.
+    /// [`RenderDependencies`] that [`Self::render_file`] returns, so such parsers must find them.
     fn renders_in_browser(&self) -> bool {
         false
     }
@@ -464,14 +466,16 @@ pub trait Parseable: Send + Sync {
     }
 
     /// Writes HTML for web clients to `output_web_filepath`, after [`Self::render_file`] wrote
-    /// `output_rendered_filepath`. Returns why web clients should show the rendered file instead,
-    /// either since rendering failed or, in [`WebRenderMode::Auto`], since the HTML loses content.
+    /// `output_rendered_filepath`, and adds the files it read to `dependencies`. Returns why web
+    /// clients should show the rendered file instead, either since rendering failed or, in
+    /// [`WebRenderMode::Auto`], since the HTML loses content.
     fn render_web_file(
         &self,
         _output_text_filepath: &Path,
         _output_rendered_filepath: &Path,
         _output_web_filepath: &Path,
         _mode: WebRenderMode,
+        _dependencies: &mut RenderDependencies,
     ) -> Result<(), String> {
         Err(format!(
             "the {} parser has no web render",

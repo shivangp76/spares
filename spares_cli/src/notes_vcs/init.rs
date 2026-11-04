@@ -208,10 +208,7 @@ pub(crate) async fn init_vcs(
             .json()
             .await
             .map_err(|e| miette!("{}", e))?;
-        println!(
-            "Committed {} notes ({} rendered files stay valid).",
-            init.note_count, init.render_hashes_kept
-        );
+        println!("Committed {} notes.", init.note_count);
     }
 
     install_hooks(&dirs.repo, base_url)?;

@@ -8,6 +8,7 @@ pub mod parser;
 pub(crate) mod preset;
 pub(crate) mod queue;
 pub mod queue_position;
+pub mod render_state;
 pub mod review;
 pub mod saved_search;
 pub mod scheduler;
