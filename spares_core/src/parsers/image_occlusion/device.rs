@@ -3,15 +3,14 @@
 //! A device renders no cards, so no PNG of a card's image occlusion is ever written on it. And the
 //! PNGs the laptop renders are named by the card, so after a change made on the device they show
 //! the clozes from before it until the laptop renders the card again. Instead, a card's source
-//! names the image by what it's made from ([`card_filepath`]), and the device makes it when the web
-//! app asks for it ([`read_card`]): a PNG, or the SVG of the clozes that cards of parsers with
-//! [`crate::parsers::Parseable::image_occlusion_overlays`] show over the original image. Those
-//! cards only name an SVG until the device knows the original image's size, which making one
-//! reads; from then on the SVG is in their source (see [`crate::platform::image_size`]). An image
-//! named this way is never out of date, so the web app can keep it as long as it likes. The web app
-//! shows it in Typst cards, which it compiles, and in Markdown cards changed on the device, which
-//! it shows from their source until the server renders them
-//! (`api::browser_render::add_device_sources`).
+//! names the image by what it's made from ([`card_filepath`]), and the device makes the PNG when
+//! the web app asks for it ([`read_card`]). An image named this way is never out of date, so the
+//! web app can keep it as long as it likes. The web app shows it in Markdown cards changed on the
+//! device, which it shows from their source until the server renders them
+//! (`api::browser_render::add_device_sources`). Cards of parsers with
+//! [`crate::parsers::Parseable::image_occlusion_overlays`], such as Typst's, have the clozes in
+//! their source instead, which only needs the original image's size, and the device knows the size
+//! of every image it has (see [`crate::platform::image_size`]).
 //!
 //! Compiled natively under tests, to test it.
 
@@ -26,7 +25,6 @@ use super::ImageOcclusionConfig;
 use super::ImageOcclusionData;
 use super::construct::card_clozes_svg;
 use super::construct::compose_image_occlusion_card;
-use super::construct::image_occlusion_overlay_svg;
 use super::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::LibraryError;
@@ -42,8 +40,6 @@ static CARDS: Mutex<BTreeMap<PathBuf, CardImage>> = Mutex::new(BTreeMap::new());
 struct CardImage {
     original_image_filepath: PathBuf,
     clozes_svg: Vec<u8>,
-    /// An overlay instead of a PNG (see [`image_occlusion_overlay_svg`])
-    overlay: bool,
 }
 
 /// The `[image_occlusion]` table of `config.toml`. Each card's image is made with it, and on a
@@ -80,8 +76,8 @@ fn cards() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, CardImage>> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Where a card's source finds `image_occlusion_data` as `side` of the card shows it, as a PNG or,
-/// if `overlay`, an SVG to show over the original image: a path in
+/// Where a card's source finds `image_occlusion_data` as `side` of the card shows it, as a PNG: a
+/// path in
 /// [`get_image_occlusion_rendered_directory`] named by the hash of the original image's path and
 /// the card's clozes SVG. `None` if the clozes can't be read, so the card names the laptop's image
 /// instead, and shows like any card whose image is missing.
@@ -89,7 +85,6 @@ pub(crate) fn card_filepath(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     side: CardSide,
-    overlay: bool,
 ) -> Option<PathBuf> {
     let made = image_occlusion_config()
         .and_then(|config| card_clozes_svg(cloze_indices, image_occlusion_data, side, &config));
@@ -108,17 +103,13 @@ pub(crate) fn card_filepath(
     hasher.update(original_image_filepath.as_os_str().as_encoded_bytes());
     hasher.update(&[0]);
     hasher.update(&clozes_svg);
-    let path = get_image_occlusion_rendered_directory().join(format!(
-        "{}.{}",
-        hasher.finalize().to_hex(),
-        if overlay { "svg" } else { "png" }
-    ));
+    let path = get_image_occlusion_rendered_directory()
+        .join(format!("{}.png", hasher.finalize().to_hex()));
     cards().insert(
         path.clone(),
         CardImage {
             original_image_filepath,
             clozes_svg,
-            overlay,
         },
     );
     Some(path)
@@ -133,9 +124,6 @@ pub async fn read_card(path: &Path) -> Option<Result<Vec<u8>, Error>> {
         |description| Error::Library(LibraryError::Note(NoteErrorKind::Other { description }));
     Some(
         match crate::platform::read(original_image_filepath).await {
-            Ok(original_image) if card.overlay => {
-                image_occlusion_overlay_svg(&original_image, &card.clozes_svg)
-            }
             Ok(original_image) => compose_image_occlusion_card(&original_image, &card.clozes_svg),
             Err(e) => Err(format!("Failed to open input image: {e}")),
         }
@@ -186,18 +174,18 @@ mod tests {
         let first = [(0, ClozeHiddenReplacement::ToAnswer { hint: None })];
         let second = [(1, ClozeHiddenReplacement::ToAnswer { hint: None })];
 
-        let path = card_filepath(&first, &data, CardSide::Front, false).unwrap();
+        let path = card_filepath(&first, &data, CardSide::Front).unwrap();
         assert_eq!(
             path.parent().unwrap(),
             get_image_occlusion_rendered_directory()
         );
         assert_eq!(
-            card_filepath(&first, &data, CardSide::Front, false),
+            card_filepath(&first, &data, CardSide::Front),
             Some(path.clone())
         );
         let others = [
-            card_filepath(&second, &data, CardSide::Front, false).unwrap(),
-            card_filepath(&first, &data, CardSide::Back, false).unwrap(),
+            card_filepath(&second, &data, CardSide::Front).unwrap(),
+            card_filepath(&first, &data, CardSide::Back).unwrap(),
         ];
         assert!(!others.contains(&path));
         assert_ne!(others[0], others[1]);
@@ -209,28 +197,11 @@ mod tests {
             .unwrap();
         assert_eq!(made, std::fs::read(&rendered).unwrap());
 
-        // Likewise the overlay, which is named apart from the PNG
-        let overlay_path = card_filepath(&first, &data, CardSide::Front, true).unwrap();
-        assert_eq!(overlay_path, path.with_extension("svg"));
-        let made = read_card(&overlay_path).await.unwrap().unwrap();
-        let rendered_overlay = dir.join("device-card-test-rendered.svg");
-        create_image_occlusion_card(
-            &first,
-            &data,
-            &rendered_overlay,
-            CardSide::Front,
-            &config,
-            true,
-        )
-        .unwrap();
-        assert_eq!(made, std::fs::read(&rendered_overlay).unwrap());
-
         assert!(read_card(&dir.join("unknown.png")).await.is_none());
         for path in [
             &data.original_image_filepath,
             &data.clozes_filepath,
             &rendered,
-            &rendered_overlay,
         ] {
             std::fs::remove_file(path).unwrap();
         }
