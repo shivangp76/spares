@@ -6,7 +6,10 @@
 //
 // pandoc runs in a worker of its own (pandoc.worker.ts), started when a card is first asked for
 // and stopped after `IDLE_MS` without one, which frees its memory. Browsers without a copy, cards
-// the server has rendered, and Typst and LaTeX cards never start it.
+// the server has rendered, and Typst and LaTeX cards never start it. Starting it takes 2–2.7 s in
+// iOS Safari (0.2 s of it compiling pandoc.wasm, the rest starting pandoc), and a card after that
+// 0.3–0.4 s, so a review asks for its cards ahead (src/nextCard.ts): the first while the review's
+// filter is picked, and each next one while the one before is shown.
 import { useEffect, useState } from "react";
 import type { PandocRequest, PandocResponse } from "./pandoc.worker";
 import { call } from "./transport";
