@@ -637,7 +637,7 @@ mod tests {
                 % back_reveal = "only_answered"
                 % back_emphasis = false
                 \begin{figure}
-                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-1.svg
+                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]{/tmp/spares/data/image_occlusions/test-convert-parser-1.svg}
                 \end{figure}
                 % spares: image occlusion end
                 b
@@ -648,7 +648,7 @@ mod tests {
                 % back_reveal = "only_answered"
                 % back_emphasis = false
                 \begin{figure}
-                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-2.svg
+                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]{/tmp/spares/data/image_occlusions/test-convert-parser-2.svg}
                 \end{figure}
                 % spares: image occlusion end
                 c"#};

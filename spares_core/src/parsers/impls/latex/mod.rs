@@ -217,19 +217,7 @@ impl Parseable for LatexParserNote {
     }
 
     fn construct_image(&self, file_path: &Path) -> String {
-        // `graphicx` cannot include SVGs. The `svg` package can, as for image occlusions.
-        let command = if file_path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-        {
-            "includesvg"
-        } else {
-            "includegraphics"
-        };
-        format!(
-            "\\{command}[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{{{}}}",
-            file_path.display()
-        )
+        include_image(file_path)
     }
 
     fn get_output_rendered_dir(&self, output_type: RenderOutputDirectoryType) -> PathBuf {
@@ -521,6 +509,23 @@ fn construct_cloze_replacement(
     }
 }
 
+/// Includes the image at `file_path`: with `graphicx`, or, since it cannot include SVGs, with the
+/// `svg` package for an SVG.
+fn include_image(file_path: &Path) -> String {
+    let command = if file_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+    {
+        "includesvg"
+    } else {
+        "includegraphics"
+    };
+    format!(
+        "\\{command}[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{{{}}}",
+        file_path.display()
+    )
+}
+
 fn construct_image_occlusion(
     parser: &impl Parseable,
     image_occlusion_data: &ImageOcclusionData,
@@ -529,10 +534,7 @@ fn construct_image_occlusion(
     fn construct_image(file_path: &Path, _caption: &str) -> String {
         [
             r"\begin{figure}".to_string(),
-            format!(
-                "  \\includesvg[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{}",
-                file_path.display()
-            ),
+            format!("  {}", include_image(file_path)),
             r"\end{figure}".to_string(),
             String::new(),
         ]
@@ -869,5 +871,49 @@ mod tests {
                 PathBuf::from("/notes/figures/plot.pdf"),
             ]
         );
+    }
+
+    /// An image occlusion's image is included like any other: with braces around its path, and with
+    /// `\includegraphics` unless it is an SVG. Its cards show a PNG.
+    #[test]
+    fn test_image_occlusion_includes_its_image() {
+        use crate::parsers::ConstructImageOcclusionType;
+        use crate::parsers::generate_files::CardSide;
+        use crate::parsers::image_occlusion::ImageOcclusionData;
+
+        let parser = LatexParserNote::new();
+        let data = ImageOcclusionData {
+            original_image_filepath: PathBuf::from("/images/piston.gif"),
+            clozes_filepath: PathBuf::from("/images/piston_clozes.svg"),
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+        };
+        let include =
+            "\\includegraphics[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]";
+
+        let note = parser.construct_image_occlusion(&data, ConstructImageOcclusionType::Note);
+        assert!(
+            note.contains(&format!("{include}{{/images/piston.gif}}")),
+            "{note}"
+        );
+
+        assert!(!parser.image_occlusion_overlays());
+        let card = parser.construct_image_occlusion(
+            &data,
+            ConstructImageOcclusionType::Card {
+                side: CardSide::Front,
+                note_id: "zzzx".parse().unwrap(),
+                card_order: 1,
+                image_occlusion_order: 1,
+            },
+        );
+        let line = card
+            .lines()
+            .find(|line| line.contains("include"))
+            .unwrap()
+            .trim();
+        assert!(line.starts_with(&format!("{include}{{")), "{card}");
+        assert!(line.ends_with("-io-1.png}"), "{card}");
     }
 }
