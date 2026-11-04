@@ -15,6 +15,53 @@ export type WorkerResponse =
   | { id: number; result: unknown }
   | { id: number; error: { message: string; full_sync_required: boolean; not_enrolled: boolean; unreachable: boolean; busy: boolean } };
 
+/** How much of the server's collection a full download has received, in bytes, sent while it runs */
+export interface CollectionProgress {
+  received: number;
+  /** From `Content-Length`, unless the body turns out longer, as when it was compressed */
+  total: number | null;
+}
+
+export type WorkerMessage = WorkerResponse | { progress: CollectionProgress | null };
+
+/** How often a full download's progress is sent */
+const PROGRESS_MS = 250;
+
+// spares_wasm reads the whole collection of a full download at once (`HttpRemote::download_bytes`,
+// with reqwest over `fetch`), which on a slow link takes minutes, so its body is counted here as
+// it comes.
+const fetchFromServer = self.fetch.bind(self);
+self.fetch = async (input, init) => {
+  const response = await fetchFromServer(input, init);
+  const request = input instanceof Request ? input : null;
+  const url = new URL(request?.url ?? String(input), self.location.href);
+  if ((init?.method ?? request?.method ?? 'GET') !== 'GET' || !url.pathname.endsWith('/api/sync/full') || !response.ok || !response.body) {
+    return response;
+  }
+  const length = Number(response.headers.get('Content-Length'));
+  let total = length > 0 ? length : null;
+  let received = 0;
+  let sentAt = 0;
+  const counted = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      if (total !== null && received > total) total = null;
+      if (Date.now() - sentAt >= PROGRESS_MS) {
+        sentAt = Date.now();
+        self.postMessage({ progress: { received, total } } satisfies WorkerMessage);
+      }
+      controller.enqueue(chunk);
+    },
+    flush() {
+      self.postMessage({ progress: null } satisfies WorkerMessage);
+    },
+  }));
+  const replaced = new Response(counted, { status: response.status, statusText: response.statusText, headers: response.headers });
+  // Which reqwest reads, and a new response has empty
+  Object.defineProperty(replaced, 'url', { value: response.url });
+  return replaced;
+};
+
 const calls = {
   open: spares.open,
   status: spares.status,

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isNetworkError, listSyncDevices, removeSyncDevice, type SyncDevice } from '../api/client';
 import { useServerReachable } from '../api/reachability';
-import { disableLocalCopy, enableLocalCopy, useLocalStatus, type SetupStep } from '../local/copy';
+import { describeDownload, disableLocalCopy, enableLocalCopy, useLocalStatus, type SetupStep } from '../local/copy';
 import { canKeepCopy, getLocalCopy } from '../local/transport';
 import { errorMessage, sectionLabel } from '../utils';
 
@@ -181,7 +181,7 @@ export default function LocalCopySettings() {
         <button onClick={enable} disabled={step !== null}>
           {copy && !copy.ready ? 'Finish Setting Up' : 'Keep a Copy on This Device'}
         </button>
-        {step && <span role="status" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{step}…</span>}
+        {step && <span role="status" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{(step !== 'Registering this device' && describeDownload(local)) || step}…</span>}
       </div>
     </>
   );
@@ -192,7 +192,7 @@ export default function LocalCopySettings() {
       <>
         <p style={{ margin: 0, color: 'var(--warning)' }}>The server no longer has this device, e.g. because it was removed there. Its copy has to be set up again.</p>
         <button onClick={setUpAgain} disabled={step !== null} style={{ marginTop: 8 }}>Set Up Again</button>
-        {step && <span role="status" style={{ fontSize: 13, color: 'var(--text-secondary)', marginLeft: 12 }}>{step}…</span>}
+        {step && <span role="status" style={{ fontSize: 13, color: 'var(--text-secondary)', marginLeft: 12 }}>{(step !== 'Registering this device' && describeDownload(local)) || step}…</span>}
       </>
     );
   } else if (local.active) {

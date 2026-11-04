@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useServerReachable } from '../api/reachability';
-import { useLocalStatus } from '../local/copy';
+import { describeDownload, useLocalStatus } from '../local/copy';
 
 /**
  * Whether the server can be reached. On a device that keeps a copy of the collection, also its
@@ -15,7 +15,7 @@ export default function OfflineIndicator() {
   const parts = [
     !online && 'Offline',
     local.active && local.dirty > 0 && `${local.dirty} unsynced`,
-    local.downloading && local.downloading.total > 0 && `Downloading files ${local.downloading.done}/${local.downloading.total}`,
+    describeDownload(local),
   ].filter(Boolean);
   if (parts.length === 0) return null;
   const offlineTitle = local.active
