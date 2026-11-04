@@ -3,14 +3,15 @@
 //! sources read, not a raw and rendered file per card.
 //!
 //! - The raw sources are generated from the database on demand ([`add_browser_render_sources`]).
-//! - Files the sources read (preambles, figures, rendered image occlusions, ...) are discovered
+//! - Files the sources read (preambles, figures, image occlusions' images, ...) are discovered
 //!   when rendering locally. Rendering writes a [`RenderDependencies`] file next to each rendered
 //!   file, and [`sync_render_assets`] copies the files it lists into a content-addressed store in
 //!   the data directory, which `spares sync cloud` copies to the server, but for the copies of
 //!   media, which the server stores from its own media files (see [`get_render_asset`]). Files
-//!   are stored by the absolute path sources read them by, except rendered image occlusions (see
-//!   [`IMAGE_OCCLUSION_ASSET_PREFIX`]). A device that keeps a copy of the collection makes those
-//!   itself instead (see `parsers::read_device_card`, wasm only).
+//!   are stored by the absolute path sources read them by. No source reads a rendered image
+//!   occlusion: a Typst card has its clozes in its source, over the original image (see
+//!   [`Parseable::image_occlusion_overlays`]), and a device that keeps a copy of the collection
+//!   makes the images of its Markdown cards itself (see `parsers::read_device_card`, wasm only).
 //! - Audio clips (see [`crate::parsers::audio`]) are stored the same way for every parser, since
 //!   web clients play them outside the rendered card.
 
@@ -56,7 +57,6 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::generate_files::construct_card_file_contents;
 use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_cards;
-use crate::parsers::get_image_occlusion_rendered_directory;
 use crate::schema::note::NoteRenderResponse;
 use crate::schema::review::BrowserRenderSources;
 use crate::schema::review::CardBackRenderedPath;
@@ -67,32 +67,6 @@ pub fn get_render_assets_dir() -> PathBuf {
     let mut dir = get_data_dir();
     dir.push("render_assets");
     dir
-}
-
-/// Prefix of the `render_asset` keys of rendered image occlusions, followed by their path in
-/// [`get_image_occlusion_rendered_directory`]. Card sources read them in that directory, which is
-/// in the cache directory of whichever machine generated the source: the client's when it rendered
-/// the card, the server's when a web client compiles it. So they are stored by a path that is the
-/// same on both.
-pub const IMAGE_OCCLUSION_ASSET_PREFIX: &str = "@image-occlusions/";
-
-/// The `render_asset` key of the file at `path`, or `None` if `path` is not UTF-8.
-fn render_asset_key(path: &Path) -> Option<String> {
-    match path.strip_prefix(get_image_occlusion_rendered_directory()) {
-        Ok(relative) => Some(format!(
-            "{IMAGE_OCCLUSION_ASSET_PREFIX}{}",
-            relative.to_str()?
-        )),
-        Err(_) => path.to_str().map(str::to_owned),
-    }
-}
-
-/// Where the file stored as `key` is on this machine (see [`render_asset_key`]).
-fn render_asset_local_path(key: &str) -> PathBuf {
-    match key.strip_prefix(IMAGE_OCCLUSION_ASSET_PREFIX) {
-        Some(relative) => get_image_occlusion_rendered_directory().join(relative),
-        None => PathBuf::from(key),
-    }
 }
 
 /// The note of `response`'s card, as rendering it needs, and the card parsed from it.
@@ -309,32 +283,14 @@ pub async fn sync_render_assets<S: BuildHasher>(
             .map_err(|e| Error::Sqlx { source: e })?;
     let mut changed = false;
     let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
-    let mut by_key: HashMap<String, RenderAssetRow> = HashMap::with_capacity(existing.len());
-    for mut row in existing {
-        // Rendered image occlusions were stored by their absolute path before
-        // `IMAGE_OCCLUSION_ASSET_PREFIX`, which web clients asking the server cannot find.
-        if let Some(key) = render_asset_key(Path::new(&row.path))
-            && key != row.path
-        {
-            sqlx::query("UPDATE OR REPLACE render_asset SET path = ? WHERE path = ?")
-                .bind(&key)
-                .bind(&row.path)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-            row.path = key;
-        }
-        by_key.insert(row.path.clone(), row);
-    }
-    let existing = by_key;
+    let existing: HashMap<String, RenderAssetRow> = existing
+        .into_iter()
+        .map(|row| (row.path.clone(), row))
+        .collect();
     let paths: BTreeMap<String, PathBuf> = files
         .iter()
-        .filter_map(|path| Some((render_asset_key(path)?, path.clone())))
-        .chain(
-            existing
-                .keys()
-                .map(|key| (key.clone(), render_asset_local_path(key))),
-        )
+        .filter_map(|path| Some((path.to_str()?.to_owned(), path.clone())))
+        .chain(existing.keys().map(|key| (key.clone(), PathBuf::from(key))))
         .collect();
 
     let store_dir = get_render_assets_dir();
@@ -505,10 +461,8 @@ pub async fn get_render_asset(
     db: &SqlitePool,
     path: &str,
 ) -> Result<Option<(PathBuf, String)>, Error> {
-    let key = render_asset_key(Path::new(path));
-    let key = key.as_deref().unwrap_or(path);
     let hash: Option<String> = sqlx::query_scalar("SELECT hash FROM render_asset WHERE path = ?")
-        .bind(key)
+        .bind(path)
         .fetch_optional(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -518,7 +472,7 @@ pub async fn get_render_asset(
     let store_dir = get_render_assets_dir();
     let stored = store_dir.join(&hash);
     if !stored.exists() {
-        store_from_media(&render_asset_local_path(key), &hash, &store_dir);
+        store_from_media(Path::new(path), &hash, &store_dir);
     }
     Ok(Some((stored, hash)))
 }
@@ -568,38 +522,12 @@ pub async fn list_render_packages(db: &SqlitePool) -> Result<Vec<String>, Error>
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::path::Path;
 
     use sqlx::sqlite::SqlitePool;
 
-    use super::IMAGE_OCCLUSION_ASSET_PREFIX;
     use super::get_render_asset;
     use super::get_render_assets_dir;
-    use super::render_asset_key;
-    use super::render_asset_local_path;
-    use super::sync_render_assets;
-    use crate::model::NoteId;
-    use crate::parsers::get_image_occlusion_rendered_directory;
-    use crate::parsers::impls::typst::TypstParser;
 
-    #[test]
-    fn test_render_asset_key() {
-        let image = get_image_occlusion_rendered_directory().join("abc-1-front-io-1.png");
-        let key = render_asset_key(&image).unwrap();
-        assert_eq!(
-            key,
-            format!("{IMAGE_OCCLUSION_ASSET_PREFIX}abc-1-front-io-1.png")
-        );
-        assert_eq!(render_asset_local_path(&key), image);
-
-        let preamble = Path::new("/home/me/preamble.typ");
-        assert_eq!(render_asset_key(preamble).unwrap(), "/home/me/preamble.typ");
-        assert_eq!(render_asset_local_path("/home/me/preamble.typ"), preamble);
-    }
-
-    /// Rendered image occlusions stored by their absolute path are keyed again, so a server whose
-    /// image occlusion directory differs finds them.
     /// `spares sync cloud` doesn't copy render assets of media, which the server stores from its
     /// own media files when asked for them, but no other file.
     #[sqlx::test]
@@ -648,64 +576,6 @@ mod tests {
             let _ = std::fs::remove_file(get_render_assets_dir().join(hash));
         }
         let _ = std::fs::remove_dir_all(outside);
-    }
-
-    #[sqlx::test]
-    async fn test_sync_rekeys_image_occlusions(pool: SqlitePool) {
-        let image = get_image_occlusion_rendered_directory().join("abc-1-front-io-1.png");
-        for (path, hash) in [
-            (image.to_str().unwrap(), "h1"),
-            ("/home/me/preamble.typ", "h2"),
-        ] {
-            sqlx::query("INSERT INTO render_asset (path, hash, mtime, size) VALUES (?, ?, 0, 0)")
-                .bind(path)
-                .bind(hash)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
-
-        // No notes, so only the stored rows are looked at. Neither file exists here.
-        sync_render_assets(&pool, &TypstParser::new(), Some(&HashSet::<NoteId>::new()))
-            .await
-            .unwrap();
-
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT path, hash FROM render_asset ORDER BY path")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            rows,
-            [
-                ("/home/me/preamble.typ".to_string(), "h2".to_string()),
-                (
-                    format!("{IMAGE_OCCLUSION_ASSET_PREFIX}abc-1-front-io-1.png"),
-                    "h1".to_string()
-                ),
-            ]
-        );
-        let hash = |path: String| {
-            let pool = pool.clone();
-            async move {
-                get_render_asset(&pool, &path)
-                    .await
-                    .unwrap()
-                    .map(|(_, h)| h)
-            }
-        };
-        assert_eq!(
-            hash(image.to_str().unwrap().to_string()).await.as_deref(),
-            Some("h1")
-        );
-        assert_eq!(
-            hash("/home/me/preamble.typ".to_string()).await.as_deref(),
-            Some("h2")
-        );
-        assert_eq!(
-            hash("/elsewhere/abc-1-front-io-1.png".to_string()).await,
-            None
-        );
     }
 
     /// A Markdown card's sources hide the card's own cloze on the front. A server leaves them out
