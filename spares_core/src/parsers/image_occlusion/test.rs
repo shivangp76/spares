@@ -1205,15 +1205,17 @@ fn test_update_cloze_settings_skips_unchanged_file() {
 }
 
 /// A Typst card shows the original image with an SVG of the card's clozes over it, the size of
-/// the original image, instead of a PNG of both.
+/// the original image, instead of a PNG of both. The SVG is in the card's source, so the card
+/// reads no file but the original image.
 #[test]
 fn test_typst_card_shows_clozes_over_original_image() {
     use image::Rgba;
     use image::RgbaImage;
 
     use crate::parsers::ConstructImageOcclusionType;
-    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+    use crate::parsers::image_occlusion::image_occlusion_overlay;
     use crate::parsers::impls::typst::TypstParser;
+    use crate::parsers::impls::typst::typst_string;
 
     let dir = get_image_occlusion_directory();
     let original_image_filepath = dir.join("test-overlay.png");
@@ -1246,19 +1248,41 @@ fn test_typst_card_shows_clozes_over_original_image() {
         back_emphasis: true,
     };
     let config = ImageOcclusionConfig::default();
+    let cloze_indices = [
+        (0, ClozeHiddenReplacement::ToAnswer { hint: None }),
+        (1, ClozeHiddenReplacement::NotToAnswer),
+    ];
 
     let parser = TypstParser::new();
     assert!(parser.image_occlusion_overlays());
     let note_id: NoteId = "zzzy".parse().unwrap();
-    let source = parser.construct_image_occlusion(
-        &data,
-        ConstructImageOcclusionType::Card {
-            side: CardSide::Front,
-            note_id,
-            card_order: 1,
-            image_occlusion_order: 1,
-        },
+    let card_source = |data: &ImageOcclusionData| {
+        parser.construct_image_occlusion(
+            data,
+            ConstructImageOcclusionType::Card {
+                side: CardSide::Front,
+                note_id,
+                card_order: 1,
+                image_occlusion_order: 1,
+                cloze_indices: &cloze_indices,
+            },
+        )
+    };
+    let source = card_source(&data);
+    assert!(source.contains(&format!(
+        r#"std.image("{}", width: 100%)"#,
+        original_image_filepath.display()
+    )));
+    let overlay = image_occlusion_overlay(&cloze_indices, &data, CardSide::Front).unwrap();
+    let svg = String::from_utf8(overlay).unwrap();
+    assert!(
+        source.contains(&format!(
+            r#"std.image(bytes({}), format: "svg", width: 100%)"#,
+            typst_string(&svg)
+        )),
+        "{source}"
     );
+    // No file is written for it
     let overlay_filepath = get_image_occlusion_rendered_directory().join(format!(
         "{}-io-1.svg",
         PathBuf::from(
@@ -1269,35 +1293,15 @@ fn test_typst_card_shows_clozes_over_original_image() {
         .to_str()
         .unwrap()
     ));
-    assert!(source.contains(&format!(
-        r#"std.image("{}", width: 100%)"#,
-        original_image_filepath.display()
-    )));
-    assert!(source.contains(&format!(
-        r#"std.image("{}", format: "svg", width: 100%)"#,
-        overlay_filepath.display()
-    )));
+    assert!(!source.contains(&overlay_filepath.display().to_string()));
 
-    create_image_occlusion_card(
-        &[
-            (0, ClozeHiddenReplacement::ToAnswer { hint: None }),
-            (1, ClozeHiddenReplacement::NotToAnswer),
-        ],
-        &data,
-        &overlay_filepath,
-        CardSide::Front,
-        &config,
-        true,
-    )
-    .unwrap();
-    let overlay = Element::parse(std::fs::read(&overlay_filepath).unwrap().as_slice()).unwrap();
+    let overlay = Element::parse(svg.as_bytes()).unwrap();
     assert_eq!(overlay.attributes["width"], "400");
     assert_eq!(overlay.attributes["height"], "200");
     assert_eq!(overlay.attributes["viewBox"], "0 0 400 200");
     // The clozes SVG at its own size, as the PNG draws it
     let clozes = overlay.get_child("svg").unwrap();
     assert_eq!(clozes.attributes["width"], "1024");
-    let svg = String::from_utf8(std::fs::read(&overlay_filepath).unwrap()).unwrap();
     assert!(
         svg.contains(r##"stroke="#1565C0""##),
         "markup is kept: {svg}"
@@ -1305,9 +1309,63 @@ fn test_typst_card_shows_clozes_over_original_image() {
     assert!(svg.contains(&config.cloze_to_answer_color), "{svg}");
     assert!(svg.contains(&config.cloze_not_to_answer_color), "{svg}");
 
-    for path in [original_image_filepath, clozes_filepath, overlay_filepath] {
+    for path in [original_image_filepath, clozes_filepath] {
         std::fs::remove_file(path).unwrap();
     }
+}
+
+/// A Typst card whose image occlusion can't be drawn fails to compile, saying why.
+#[test]
+fn test_typst_card_without_its_image_fails() {
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let clozes_filepath = dir.join("test-overlay-missing_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="20" width="30" y="10" id="svg_1" x="10" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: dir.join("test-overlay-missing.png"),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let source = TypstParser::new().construct_image_occlusion(
+        &data,
+        ConstructImageOcclusionType::Card {
+            side: CardSide::Front,
+            note_id: "zzzy".parse().unwrap(),
+            card_order: 1,
+            image_occlusion_order: 1,
+            cloze_indices: &[(0, ClozeHiddenReplacement::ToAnswer { hint: None })],
+        },
+    );
+    assert!(
+        source.contains("std.panic(\"Failed to open input image"),
+        "{source}"
+    );
+    assert!(source.contains("test-overlay-missing.png"), "{source}");
+    std::fs::remove_file(clozes_filepath).unwrap();
+}
+
+/// Typst reads `typst_string`'s literals back as the strings they were made from.
+#[test]
+fn test_typst_string_escapes() {
+    use crate::parsers::impls::typst::typst_string;
+
+    assert_eq!(
+        typst_string("a \"b\" \\ c\nd\te"),
+        r#""a \"b\" \\ c\nd\te""#
+    );
 }
 
 /// A note's cards draw their image occlusions from files read once for all of them: the clozes

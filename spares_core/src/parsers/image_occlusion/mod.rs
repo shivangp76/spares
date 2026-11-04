@@ -73,7 +73,7 @@ pub use construct::combine_image_occlusion_clozes;
 pub use construct::construct_image_occlusion_from_image;
 pub use construct::create_image_occlusion_cards;
 pub use construct::image_occlusion_caption;
-pub use construct::image_occlusion_card_image_filepath;
+pub use construct::image_occlusion_overlay;
 pub use construct::update_cloze_settings;
 pub use utils::append_to_stem;
 pub use utils::get_image_occlusion_card_filepath;
@@ -263,7 +263,7 @@ pub struct ParsedImageOcclusionCloze {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum ConstructImageOcclusionType {
+pub enum ConstructImageOcclusionType<'a> {
     Note,
     Card {
         side: CardSide,
@@ -271,6 +271,8 @@ pub enum ConstructImageOcclusionType {
         card_order: usize,
         /// Order within the card
         image_occlusion_order: usize,
+        /// The clozes the card asks for (see [`super::NotePart::ImageOcclusion`])
+        cloze_indices: &'a [(usize, ClozeHiddenReplacement)],
     },
 }
 
