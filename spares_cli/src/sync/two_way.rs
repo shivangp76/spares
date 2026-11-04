@@ -101,6 +101,21 @@ pub(crate) async fn sync_cloud(
     Ok(())
 }
 
+/// `spares sync cloud --dry-run`: checks where the files would go and lists what would be copied,
+/// without syncing or changing anything.
+pub(crate) async fn preview_sync_cloud() -> Result<(), String> {
+    let config = read_external_config().map_err(|e| e.to_string())?;
+    let (Some(remote_host), Some(url)) = (&config.sync.remote_host, &config.sync.url) else {
+        return Err(
+            "Nothing to copy: `sync.remote_host` or `sync.url` is not set in config.toml."
+                .to_string(),
+        );
+    };
+    super::cloud::preview_files(remote_host, url, config.sync.token.clone()).await?;
+    println!("Would then sync the database. Nothing was copied or synced.");
+    Ok(())
+}
+
 fn mode_name(mode: SyncMode) -> &'static str {
     match mode {
         SyncMode::Normal => "two-way",
