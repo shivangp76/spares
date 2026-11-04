@@ -203,7 +203,7 @@ impl Parseable for LatexParserNote {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         construct_image_occlusion(self, image_occlusion_data, output_type)
     }
@@ -529,7 +529,7 @@ fn include_image(file_path: &Path) -> String {
 fn construct_image_occlusion(
     parser: &impl Parseable,
     image_occlusion_data: &ImageOcclusionData,
-    output_type: ConstructImageOcclusionType,
+    output_type: ConstructImageOcclusionType<'_>,
 ) -> String {
     fn construct_image(file_path: &Path, _caption: &str) -> String {
         [
@@ -906,6 +906,7 @@ mod tests {
                 note_id: "zzzx".parse().unwrap(),
                 card_order: 1,
                 image_occlusion_order: 1,
+                cloze_indices: &[],
             },
         );
         let line = card

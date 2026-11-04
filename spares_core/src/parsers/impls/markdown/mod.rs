@@ -374,7 +374,7 @@ impl Parseable for MarkdownParser {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         fn construct_image(file_path: &Path, caption: &str) -> String {
             format!("![{}]({})\n", caption, file_path.display())

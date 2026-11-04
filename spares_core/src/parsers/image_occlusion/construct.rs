@@ -61,7 +61,7 @@ pub fn construct_image_occlusion_from_image(
     parser: &impl Parseable,
     construct_image_fn: fn(file_path: &Path, caption: &str) -> String,
     image_occlusion_data: &ImageOcclusionData,
-    output_type: ConstructImageOcclusionType,
+    output_type: ConstructImageOcclusionType<'_>,
 ) -> String {
     let caption = image_occlusion_caption(image_occlusion_data);
     match output_type {
@@ -92,6 +92,7 @@ pub fn construct_image_occlusion_from_image(
             note_id,
             card_order,
             image_occlusion_order,
+            ..
         } => construct_image_fn(
             &image_occlusion_card_image_filepath(
                 parser,
@@ -399,6 +400,23 @@ fn original_image_error(original_image_filepath: &Path, e: &image::ImageError) -
             e
         ),
     })
+}
+
+/// The SVG that `side` of a card shows over the original image of `image_occlusion_data`, with
+/// `cloze_indices` of its clozes, for parsers that put it in the card's source (see
+/// [`Parseable::image_occlusion_overlays`]): its clozes SVG, read and colored for the card, in an
+/// SVG the size of the original image (see [`image_occlusion_overlay_svg`]). Of the original image
+/// only the header is read, for its size.
+pub fn image_occlusion_overlay(
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+) -> Result<Vec<u8>, Error> {
+    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new()).card_image(
+        cloze_indices,
+        image_occlusion_data,
+        side,
+    )
 }
 
 /// Writes the image `side` of the card shows for each of its image occlusions, drawn from

@@ -354,9 +354,14 @@ fn create_note_files(
                 Some(cards) => cards.clone(),
                 None => get_cards(parser, None, note_data, false, true)?,
             };
-            // Read once for all of the note's cards, and only if their images are made
+            // Read once for all of the note's cards, and only if their images are made. Overlays
+            // are in the cards' sources instead.
             let image_occlusion_sources = ImageOcclusionSources::read(
-                if render { &cards } else { &[] },
+                if render && !parser.image_occlusion_overlays() {
+                    &cards
+                } else {
+                    &[]
+                },
                 parser.image_occlusion_overlays(),
             );
             cards
@@ -534,9 +539,10 @@ fn create_raw_and_rendered_file(
 
         let aux_dir = parser.get_aux_dir(render_output_type, note_id);
 
-        // Render Image Occlusions
+        // Render Image Occlusions, unless the card's source has them as overlays
         match output_type {
             ConstructFileDataType::Note => {}
+            ConstructFileDataType::Card(..) if parser.image_occlusion_overlays() => {}
             ConstructFileDataType::Card(card_order, card_data, side) => {
                 let mut image_occlusion_output_rendered_filepath =
                     get_image_occlusion_rendered_directory();

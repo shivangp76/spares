@@ -199,15 +199,17 @@ pub trait Parseable: Send + Sync {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String;
 
     /// Whether cards show an image occlusion as the original image with an SVG of the card's
-    /// clozes over it, rather than as a PNG of both (see
-    /// [`image_occlusion::get_image_occlusion_card_filepath`]). The original image is then shared
-    /// by every card of the note, and each card's SVG is small, which matters to web clients that
-    /// fetch the files a card reads to compile it themselves. Only for parsers whose output can
-    /// draw one image over another.
+    /// clozes over it, written into the card's source (see
+    /// [`image_occlusion::image_occlusion_overlay`]), rather than as a PNG of both (see
+    /// [`image_occlusion::get_image_occlusion_card_filepath`]). The original image is then the
+    /// only file a card reads for it, shared by every card of the note, which matters to web
+    /// clients that fetch the files a card reads to compile it themselves: each file costs them a
+    /// request and a compile that fails for want of it. Only for parsers whose output can draw an
+    /// SVG given in the source over another image.
     fn image_occlusion_overlays(&self) -> bool {
         false
     }
@@ -521,7 +523,10 @@ pub fn construct_card_data(
                 parser.construct_cloze_replacement(&replacement, side, id_opt)
             }
             NotePart::SurroundingData(d) => d.clone(),
-            NotePart::ImageOcclusion { data, .. } => {
+            NotePart::ImageOcclusion {
+                data,
+                cloze_indices,
+            } => {
                 let image_occlusion = parser.construct_image_occlusion(
                     data,
                     ConstructImageOcclusionType::Card {
@@ -529,6 +534,7 @@ pub fn construct_card_data(
                         note_id,
                         card_order,
                         image_occlusion_order,
+                        cloze_indices,
                     },
                 );
                 image_occlusion_order += 1;

@@ -39,7 +39,7 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::image_occlusion::image_occlusion_caption;
-use crate::parsers::image_occlusion::image_occlusion_card_image_filepath;
+use crate::parsers::image_occlusion::image_occlusion_overlay;
 use crate::parsers::render_command_output;
 use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
@@ -334,7 +334,7 @@ impl Parseable for TypstParser {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         fn construct_image(file_path: &Path, caption: &str) -> String {
             format!(
@@ -349,31 +349,33 @@ impl Parseable for TypstParser {
         }
         if let ConstructImageOcclusionType::Card {
             side,
-            note_id,
-            card_order,
-            image_occlusion_order,
+            cloze_indices,
+            ..
         } = output_type
         {
             // The clozes over the original image, scaled to the same width (see
-            // `image_occlusion_overlay_svg`). `std` in case a note or preamble shadows these.
-            let overlay = image_occlusion_card_image_filepath(
-                self,
-                side,
-                note_id,
-                card_order,
-                image_occlusion_order,
-            );
+            // `image_occlusion_overlay`). In the source, so that a web client that compiles the
+            // card fetches only the original image, which the note's cards share. `std` in case a
+            // note or preamble shadows these.
+            let overlay = match image_occlusion_overlay(cloze_indices, image_occlusion_data, side) {
+                Ok(svg) => format!(
+                    r#"std.image(bytes({}), format: "svg", width: 100%)"#,
+                    typst_string(&String::from_utf8_lossy(&svg))
+                ),
+                // The card fails to compile with the reason, where it would show the clozes
+                Err(e) => format!("std.panic({})", typst_string(&e.to_string())),
+            };
             return format!(
                 indoc! { r#"#figure(
                   std.box(width: 80%, {{
                     std.image("{}", width: 100%)
-                    std.place(std.top + std.left, std.image("{}", format: "svg", width: 100%))
+                    std.place(std.top + std.left, {})
                   }}),
                   caption: [{}],
                 )
                 "#},
                 image_occlusion_data.original_image_filepath.display(),
-                overlay.display(),
+                overlay,
                 image_occlusion_caption(image_occlusion_data),
             );
         }
@@ -481,6 +483,24 @@ impl Parseable for TypstParser {
     fn renders_in_browser(&self) -> bool {
         true
     }
+}
+
+/// `s` as a Typst string literal.
+pub(crate) fn typst_string(s: &str) -> String {
+    let mut literal = String::with_capacity(s.len() + 2);
+    literal.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[derive(Deserialize)]
