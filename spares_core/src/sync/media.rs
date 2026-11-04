@@ -21,7 +21,12 @@
 //!   ([`list_media`], [`read_media`]) after each sync, and a clozes SVG again when the server
 //!   rewrote it. One made on a device is named as on the server too, and uploaded like an image
 //!   once a note names it: saving the note parses it, which writes card orders into the SVG, and
-//!   the server never replaces a file. Where a device keeps them: `spares_wasm`'s `media`.
+//!   a device never replaces a file. Where a device keeps them: `spares_wasm`'s `media`.
+//!   A host, such as the laptop, compares its image occlusions with its upstream's by their
+//!   [hashes](MediaFile::hash) at each sync, since their files change under one name: parsing a
+//!   note rewrites a clozes SVG, and an image can be replaced with another. Of two that differ, the
+//!   one changed last replaces the other ([`replace_media`]), and the notes naming it are rendered
+//!   again (see [`super::files::sync_now`]).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -307,9 +312,9 @@ fn check_media(
 
 /// Stores a file a device added, under `name` in the server's directory for `kind`, and returns
 /// its path there. `name` is as the device named it (see `check_media`). A file that is already
-/// there is kept: the server never replaces one.
+/// there is kept: the server never replaces one this way (see [`replace_media`]).
 pub fn store_media(kind: MediaKind, name: &str, contents: &[u8]) -> Result<PathBuf, Error> {
-    store(kind, name, contents, false)
+    store(kind, name, contents, false, None).map(|(path, _)| path)
 }
 
 /// [`store_media`] for another host's copy of the collection, which may also send image
@@ -319,7 +324,43 @@ pub fn store_media_from_host(
     name: &str,
     contents: &[u8],
 ) -> Result<PathBuf, Error> {
-    store(kind, name, contents, true)
+    store(kind, name, contents, true, None).map(|(path, _)| path)
+}
+
+/// What [`replace_media`] did
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Replaced {
+    /// The file wasn't there, so it was stored
+    Stored,
+    /// The file had the contents it replaces, and now has the new ones
+    Replaced,
+    /// The file already had the new contents
+    Unchanged,
+}
+
+/// Replaces the image occlusion file `name` with `contents`, if it still has the contents whose
+/// [`hash`](MediaFile::hash) is `replaces`, as when it was listed. Its files change under one name:
+/// parsing a note writes card orders into a clozes SVG, and an image can be replaced. Fails, and
+/// keeps the file, if it changed since, so the newer file is never replaced by an older one.
+/// Images and clips are named by their contents, so they are never replaced. Checked as by
+/// [`store_media_from_host`], as only hosts replace files.
+pub fn replace_media(
+    kind: MediaKind,
+    name: &str,
+    contents: &[u8],
+    replaces: &str,
+) -> Result<(PathBuf, Replaced), Error> {
+    if kind != MediaKind::ImageOcclusion {
+        return Err(invalid(format!(
+            "`{name}` is named by its contents, so it can't be replaced"
+        )));
+    }
+    store(kind, name, contents, true, Some(replaces))
+}
+
+/// The hash of a media file's contents, as [`MediaFile::hash`] has it
+fn contents_hash(contents: &[u8]) -> String {
+    blake3::hash(contents).to_hex().to_string()
 }
 
 fn store(
@@ -327,7 +368,8 @@ fn store(
     name: &str,
     contents: &[u8],
     legacy_names: bool,
-) -> Result<PathBuf, Error> {
+    replaces: Option<&str>,
+) -> Result<(PathBuf, Replaced), Error> {
     if contents.len() > kind.max_size() {
         return Err(invalid(format!(
             "{name} is larger than {} MB",
@@ -344,17 +386,32 @@ fn store(
         source: e,
     })?;
     let path = directory.join(name);
-    if !path.exists() {
-        // Write then rename, so a partly written file is never used
-        let temp_path = directory.join(format!(".{name}.tmp"));
-        std::fs::write(&temp_path, contents)
-            .and_then(|()| std::fs::rename(&temp_path, &path))
-            .map_err(|e| Error::Io {
-                description: format!("Failed to write {}", path.display()),
+    let outcome = match (replaces, std::fs::read(&path)) {
+        (_, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Replaced::Stored,
+        (_, Err(e)) => {
+            return Err(Error::Io {
+                description: format!("Failed to read {}", path.display()),
                 source: e,
-            })?;
-    }
-    Ok(path)
+            });
+        }
+        (None, Ok(_)) => return Ok((path, Replaced::Unchanged)),
+        (Some(_), Ok(current)) if current == contents => return Ok((path, Replaced::Unchanged)),
+        (Some(replaces), Ok(current)) if contents_hash(&current) == replaces => Replaced::Replaced,
+        (Some(_), Ok(_)) => {
+            return Err(invalid(format!(
+                "`{name}` changed since it was listed, so it was kept"
+            )));
+        }
+    };
+    // Write then rename, so a partly written file is never used
+    let temp_path = directory.join(format!(".{name}.tmp"));
+    std::fs::write(&temp_path, contents)
+        .and_then(|()| std::fs::rename(&temp_path, &path))
+        .map_err(|e| Error::Io {
+            description: format!("Failed to write {}", path.display()),
+            source: e,
+        })?;
+    Ok((path, outcome))
 }
 
 /// `GET /api/sync/media/{kind}`: a file in the server's directory for a kind.
@@ -365,6 +422,12 @@ pub struct MediaFile {
     /// When it last changed, as Unix time. The server rewrites an image occlusion's clozes SVG
     /// when a note's settings change, so a device downloads it again then.
     pub mtime: i64,
+    /// The blake3 hash of its contents, as hex, for image occlusions only. Their files change under
+    /// one name (see [`replace_media`]), so a sync compares them by it. Images and clips are named
+    /// by their hash already, so their names are compared, without reading every one at each
+    /// sync. `None` from a server from before it was listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 /// The files in the server's directory for `kind`, by name.
@@ -385,10 +448,20 @@ pub fn list_media(kind: MediaKind) -> Result<Vec<MediaFile>, Error> {
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
             let metadata = entry.metadata().ok()?;
-            (is_plain(&name) && metadata.is_file()).then(|| MediaFile {
+            if !is_plain(&name) || !metadata.is_file() {
+                return None;
+            }
+            let hash = if kind == MediaKind::ImageOcclusion {
+                // A file that can't be read is left out, as one being written
+                Some(contents_hash(&std::fs::read(entry.path()).ok()?))
+            } else {
+                None
+            };
+            Some(MediaFile {
                 name,
                 size: metadata.len(),
                 mtime: mtime(&metadata),
+                hash,
             })
         })
         .collect();
@@ -498,6 +571,71 @@ mod tests {
         }
         std::fs::remove_file(&image_path).unwrap();
         std::fs::remove_file(&clozes_path).unwrap();
+    }
+
+    #[test]
+    fn replaces_image_occlusion_files_it_still_has() {
+        let svg = |width: u32| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg"><g class="layer" id="clozes-group"><rect id="a" x="1" y="1" width="{width}" height="2"/></g></svg>"#
+            )
+        };
+        let kind = MediaKind::ImageOcclusion;
+        let (image, clozes) = ("spares-replace-test.png", "spares-replace-test_clozes.svg");
+        // Left by a failed run
+        for name in [image, clozes] {
+            let _ = std::fs::remove_file(kind.directory().join(name));
+        }
+        let hash = |name: &str| {
+            list_media(kind)
+                .unwrap()
+                .into_iter()
+                .find(|f| f.name == name)
+                .and_then(|f| f.hash)
+        };
+
+        // Stored if it isn't there, whatever it replaces
+        let (path, replaced) = replace_media(kind, image, b"first", "none").unwrap();
+        assert_eq!(replaced, Replaced::Stored);
+        let first = hash(image).unwrap();
+        assert_eq!(first, contents_hash(b"first"));
+        // Replaced only if it still has what it replaces
+        assert_eq!(
+            replace_media(kind, image, b"second", &first).unwrap().1,
+            Replaced::Replaced
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert!(
+            replace_media(kind, image, b"third", &first).is_err(),
+            "a stale listing"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(
+            replace_media(kind, image, b"second", &first).unwrap().1,
+            Replaced::Unchanged
+        );
+        // Clozes are checked as when stored
+        let clozes_path = store_media_from_host(kind, clozes, svg(2).as_bytes()).unwrap();
+        let old = hash(clozes).unwrap();
+        assert!(replace_media(kind, clozes, b"<svg/>", &old).is_err());
+        replace_media(kind, clozes, svg(3).as_bytes(), &old).unwrap();
+        assert_eq!(std::fs::read_to_string(&clozes_path).unwrap(), svg(3));
+        // Without a replacement in mind, a file is still never replaced
+        store_media_from_host(kind, clozes, svg(4).as_bytes()).unwrap();
+        assert_eq!(std::fs::read_to_string(&clozes_path).unwrap(), svg(3));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&clozes_path).unwrap();
+
+        // Images and clips are named by their contents, so never replaced, nor hashed when listed
+        let contents = b"spares replace test image";
+        let name = named("diagram", contents, "png");
+        let path = store_media(MediaKind::Image, &name, contents).unwrap();
+        let listed = list_media(MediaKind::Image).unwrap();
+        assert_eq!(listed.iter().find(|f| f.name == name).unwrap().hash, None);
+        let hash = contents_hash(contents);
+        assert!(replace_media(MediaKind::Image, &name, b"other", &hash).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), contents);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
