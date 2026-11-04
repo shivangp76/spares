@@ -600,6 +600,18 @@ pub(crate) mod tests {
     pub(crate) const REVIEW: i64 = 2;
     pub(crate) const RELEARNING: i64 = 3;
 
+    /// Noon today, local time, for tests that need hours of today on either side of now, which
+    /// `Utc::now()` doesn't have late in the evening or just after midnight.
+    pub(crate) fn local_midday() -> DateTime<Utc> {
+        Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .to_utc()
+    }
+
     /// Creates `n` notes of one card each, the `i`th note created `i` hours after the first, and
     /// returns their cards in the order of their notes.
     pub(crate) async fn create_cards(
@@ -1265,6 +1277,7 @@ mod learn_ahead_tests {
     use super::tests::LEARNING;
     use super::tests::REVIEW;
     use super::tests::create_cards;
+    use super::tests::local_midday;
     use super::tests::set_card;
     use super::*;
     use crate::api::review::get_review_card;
@@ -1321,13 +1334,7 @@ mod learn_ahead_tests {
     #[sqlx::test]
     async fn learning_cards_wait_for_the_learn_ahead_limit(pool: SqlitePool) {
         // Midday, so that an hour later is still today
-        let now = Local::now()
-            .date_naive()
-            .and_hms_opt(12, 0, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .unwrap()
-            .to_utc();
+        let now = local_midday();
         let ids = create_cards(&pool, 1, now - Duration::days(1)).await;
         let card = ids[0];
 
