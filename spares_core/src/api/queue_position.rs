@@ -451,6 +451,7 @@ mod tests {
     use crate::api::queue::tests::REVIEW;
     use crate::api::queue::tests::add_review;
     use crate::api::queue::tests::create_cards;
+    use crate::api::queue::tests::local_midday;
     use crate::api::queue::tests::set_card;
     use crate::api::queue::waiting_on_links;
     use crate::api::review::get_review_card;
@@ -600,7 +601,8 @@ mod tests {
 
     #[sqlx::test]
     async fn learning_cards_beyond_the_learn_ahead_limit_are_held_back(pool: SqlitePool) {
-        let now = Utc::now();
+        // Midday, so that an hour later is still today
+        let now = local_midday();
         let ids = setup(&pool, now).await;
         let due = now + Duration::hours(1);
         set_card(&pool, ids[3], LEARNING, due, 1.0, 5.0).await;
