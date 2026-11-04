@@ -21,8 +21,12 @@ use super::ImageOcclusionConfig;
 use super::ImageOcclusionData;
 use super::ParsedImageOcclusionCloze;
 use super::SvgClozeType;
+use super::hint::HintLimits;
+use super::hint::cloze_bounds;
+use super::hint::hint_element;
+use super::hint::layout_hint;
+use super::hint::text_areas;
 use super::utils::append_to_stem;
-use super::utils::get_center_of_shape;
 use super::utils::get_image_occlusion_card_filepath;
 use super::utils::get_image_occlusion_directory;
 use super::utils::get_image_occlusion_rendered_directory;
@@ -266,6 +270,9 @@ pub fn create_image_occlusion_cards(
     Ok(())
 }
 
+/// Colors, hides and labels `clozes` for `side` of a card. `image_size` is the width and height
+/// of the image the clozes are drawn on, which limits how large hints are (see [`HintLimits`]).
+#[allow(clippy::too_many_arguments)]
 pub fn modify_clozes_for_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     clozes: &mut [&mut Element],
@@ -274,14 +281,15 @@ pub fn modify_clozes_for_card(
     back_emphasis: bool,
     side: CardSide,
     image_occlusion_config: &ImageOcclusionConfig,
+    image_size: Option<(f64, f64)>,
 ) {
     let ImageOcclusionConfig {
         cloze_to_answer_color,
         cloze_not_to_answer_color,
-        cloze_hint_font_size,
         cloze_emphasis_fill_opacity,
         ..
     } = image_occlusion_config;
+    let hint_limits = HintLimits::new(image_occlusion_config, image_size);
     // NOTE: We cannot use the original image in any case since there may be markup present in the clozes file that should be shown.
     for (i, cloze) in &mut clozes.iter_mut().enumerate() {
         // Find relevant cloze
@@ -293,16 +301,12 @@ pub fn modify_clozes_for_card(
                         ClozeHiddenReplacement::ToAnswer { hint } => {
                             set_cloze_color(cloze, cloze_to_answer_color);
                             if let Some(hint) = hint {
-                                add_text_to_cloze(cloze, hint, *cloze_hint_font_size);
+                                add_text_to_cloze(cloze, hint, &hint_limits);
                             }
                         }
                         ClozeHiddenReplacement::NotToAnswer => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
-                            add_text_to_cloze(
-                                cloze,
-                                CLOZE_NOT_TO_ANSWER_TEXT,
-                                *cloze_hint_font_size,
-                            );
+                            add_text_to_cloze(cloze, CLOZE_NOT_TO_ANSWER_TEXT, &hint_limits);
                         }
                     }
                 } else {
@@ -310,11 +314,7 @@ pub fn modify_clozes_for_card(
                         FrontConceal::OnlyGrouping => hide_cloze_mask(cloze),
                         FrontConceal::AllGroupings => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
-                            add_text_to_cloze(
-                                cloze,
-                                CLOZE_NOT_TO_ANSWER_TEXT,
-                                *cloze_hint_font_size,
-                            );
+                            add_text_to_cloze(cloze, CLOZE_NOT_TO_ANSWER_TEXT, &hint_limits);
                         }
                     }
                 }
@@ -337,11 +337,10 @@ pub fn modify_clozes_for_card(
     }
 }
 
-fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
-    let cloze_type_opt: Option<SvgClozeType> = cloze.name.as_str().parse().ok();
-    let (center_x, center_y) = cloze_type_opt.map_or((0., 0.), |cloze_type| {
-        get_center_of_shape(cloze_type, cloze)
-    });
+/// Wraps `cloze` in a `<g>` with `text` drawn over it, sized to fit it (see [`layout_hint`]).
+fn add_text_to_cloze(cloze: &mut Element, text: &str, limits: &HintLimits) {
+    let layout = cloze_bounds(cloze)
+        .and_then(|bounds| layout_hint(text, &text_areas(cloze, bounds, limits.image), limits));
     let current_cloze = cloze.clone();
     cloze.name = "g".to_string();
     cloze.attributes.clear();
@@ -349,29 +348,12 @@ fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
     cloze
         .children
         .push(xmltree::XMLNode::Element(current_cloze));
-    let mut hint_element = cloze.clone();
-    hint_element.name = "text".to_string();
-    hint_element.children.clear();
-    hint_element.attributes.clear();
-    hint_element
-        .attributes
-        .insert("font-size".to_string(), text_font_size.to_string());
-    hint_element
-        .attributes
-        .insert("text-anchor".to_string(), "middle".to_string());
-    hint_element
-        .attributes
-        .insert("dominant-baseline".to_string(), "middle".to_string());
-    hint_element
-        .attributes
-        .insert("x".to_string(), center_x.to_string());
-    hint_element
-        .attributes
-        .insert("y".to_string(), center_y.to_string());
-    hint_element
-        .children
-        .push(xmltree::XMLNode::Text(text.to_string()));
-    cloze.children.push(xmltree::XMLNode::Element(hint_element));
+    // Without bounds there is nowhere sensible to put the text
+    if let Some(layout) = layout {
+        cloze
+            .children
+            .push(xmltree::XMLNode::Element(hint_element(&layout)));
+    }
 }
 
 fn set_cloze_color(cloze: &mut Element, cloze_color: &str) {
@@ -457,6 +439,7 @@ fn card_clozes_svg(
             description: format!("Failed to parse clozes file data as svg: {}", e),
         })
     })?;
+    let image_size = svg_size(&clozes_svg_element);
     let mut clozes = get_clozes_from_svg(&mut clozes_svg_element).map_err(|(e, advice)| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: e,
@@ -473,8 +456,24 @@ fn card_clozes_svg(
         *back_emphasis,
         side,
         config,
+        image_size,
     );
     Ok(clozes_svg_element)
+}
+
+/// The width and height of `svg` from its attributes, which the image occlusion editor sets to
+/// the size of the original image.
+fn svg_size(svg: &Element) -> Option<(f64, f64)> {
+    let length = |key: &str| {
+        svg.attributes
+            .get(key)?
+            .trim()
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.)
+    };
+    Some((length("width")?, length("height")?))
 }
 
 /// `clozes_svg`, from [`card_clozes_svg`], as an image the size of the original image at

@@ -368,7 +368,7 @@ mod tests {
         )
         .unwrap();
         let config = config.image_occlusion;
-        assert_eq!(config.cloze_hint_font_size, 24);
+        assert_eq!(config.cloze_hint_font_size, Some(24));
         assert_eq!(config.editor.fill_color, "#123456");
         assert_eq!(config.editor.stroke_color, "#000000");
         assert_eq!(config.editor.initial_tool, "rect");
