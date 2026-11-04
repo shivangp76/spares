@@ -22,7 +22,7 @@ use crate::parsers::get_file_notes;
 use crate::schema::note::LinkedNote;
 
 /// What importing a note file sets on the note. Two files describing the same note are equal here
-/// even if they differ in formatting, the hash line or the linked-notes section.
+/// even if they differ in formatting or the linked-notes section.
 #[derive(Debug, PartialEq)]
 pub struct NoteFields {
     pub data: String,
@@ -248,8 +248,8 @@ pub fn file_note_fields(
         .map(|parsed| parsed.fields(parser))
 }
 
-/// The raw file the server writes for a note: without the hash line, with the linked-notes section
-/// from `linked_notes_map`.
+/// The raw file the server writes for a note, with the linked-notes section from
+/// `linked_notes_map`.
 pub fn construct_db_note_file(
     parser: &dyn Parseable,
     row: &RenderNoteData,

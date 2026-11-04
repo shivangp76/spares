@@ -22,8 +22,6 @@
 //!   directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is
 //!   not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so
 //!   notes using them show their PDF; define macros in the note itself to have them apply to both.
-//! - Notes rendered before upgrading show their PDF until they are rendered again, e.g. with
-//!   `spares note generate --render --force-render`.
 //! - A browser that keeps a copy of the collection converts the cards of notes changed there with
 //!   pandoc's WebAssembly build, of the server's version, until the server renders them after the
 //!   next sync (`src/local/pandoc.ts` in the web app). It gets the web defaults file at each sync,

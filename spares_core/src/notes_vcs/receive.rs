@@ -438,8 +438,7 @@ fn add_existing(repo: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, Error> {
 /// Undoes the import's events, newest first, then regenerates its notes from the database. Returns
 /// a description of the outcome for the user.
 ///
-/// The import's events form one group, so the first undo reverts them all. Journals written before
-/// imports were grouped hold one ungrouped event per note, which the later iterations revert.
+/// The import's events form one group, so the first undo reverts them all.
 async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
     // Undoing reconciles the notes it changes, which would save created files as written by
     // someone else. If the undo fails, reconciling writes them again.

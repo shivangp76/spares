@@ -462,9 +462,9 @@ impl SrsAdapter for SparesAdapter {
                         .await
                         .map_err(Error::ApiRequest)?;
                     let response = self.handle_response(response).await?;
-                    // A server from before deletes returned their event responds with no body
-                    let response: Option<DeleteNotesResponse> = response.json().await.ok();
-                    event_ids.extend(response.and_then(|r| r.event_id));
+                    let response: DeleteNotesResponse =
+                        response.json().await.map_err(Error::ApiRequest)?;
+                    event_ids.extend(response.event_id);
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
                     let response = delete_notes(pool, request, &get_all_parsers(), true).await?;
