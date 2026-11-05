@@ -3,6 +3,7 @@ import { fetchFile } from '../api/client';
 import { audioLinkPath } from '../audio';
 import { scrollClozesIntoView } from '../clozeScroll';
 import { useResolvedTheme } from '../theme';
+import { openableUrl } from '../links';
 import { errorMessage, parseNoteId } from '../utils';
 
 interface Props {
@@ -180,6 +181,10 @@ function onClick(
   }
   const noteLink = NOTE_LINK.exec(href);
   const noteId = noteLink ? parseNoteId(noteLink[1]) : null;
-  if (noteId !== null) onOpenNote?.(noteId);
-  else window.open(href, '_blank', 'noopener,noreferrer');
+  if (noteId !== null) {
+    onOpenNote?.(noteId);
+    return;
+  }
+  const url = openableUrl(href, window.location.href);
+  if (url !== null) window.open(url, '_blank', 'noopener,noreferrer');
 }
