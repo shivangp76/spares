@@ -50,6 +50,26 @@ spares import --to-parser="markdown" aaa.tex aab.tex
 
 See `spares import --help` for converting notes kept in a git or jj repository.
 
+## Sharing notes
+
+Notes can be shared like Anki's shared decks. Export the ones matching a query to share:
+```sh
+spares note export 'tag=oceans' --share -o shared
+```
+This writes one file per parser into `shared` (such as `shared/export.md`), using the parser's export template. Each note keeps its tags and keywords, so links between the shared notes still work. What is private or only means something in your collection is left out (see `spares_core::api::note::export`):
+- Notes tagged `private`, or a tag under it such as `private:health`. The tag is `private_tag_name` in `config.toml`.
+- The notes' ids, so they are imported as new notes.
+- The tags that say how a note is doing rather than what it is about: the flagged and leech tags, `sync-conflict`, and the `live:` tags of live notes.
+- Custom data, and clozes' `id:` keys.
+- Scheduling and review history.
+
+The recipient adds the parser if their collection doesn't have it yet (`spares parser add -n markdown`), then imports the file, which adds the notes as new ones:
+```sh
+spares import --parser markdown shared/export.md
+```
+
+Without `--share`, the file names each note by its id in your collection, so importing it updates those notes. That is for editing notes in bulk and importing them back, and another collection's import fails on those ids.
+
 ## Putting cards off until after an exam
 
 While reviewing a tag for an exam, some cards, such as long proofs, matter in the long run but not for the exam. On the Review page, **Bury Card Until After…** (`d`) asks for the exam's date the first time, then sets the card due the day after it. The date is remembered in this browser for the query or tag being reviewed, so the next card it is pressed on is put off without asking, and the button sits beside Bury Card and Bury Note above the answer on phones. Since the cards come back on a set date rather than after a set number of days, they land after the exam however close it gets. Change Date picks another one, and a date that has passed is forgotten.
