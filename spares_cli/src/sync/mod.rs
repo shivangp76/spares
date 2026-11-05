@@ -29,8 +29,13 @@ pub(crate) enum SyncSubcommand {
     /// recorded the notes as reading (preambles, pandoc defaults, ...), and the rendered files
     /// of parsers the server has no programs for. It first checks that `remote_host` reaches the
     /// collection `sync.url` serves, at the same path as here. Settings go to the server too,
-    /// which keeps its own `[sync]` table. Afterwards, if what rendering reads changed, the server
-    /// renders again the notes it affects.
+    /// which keeps its own `[sync]` table. What is gone here goes there too: templates removed
+    /// here, and files it copied that no note reads any more. The server itself removes the
+    /// render assets no note reads any more, and the files of the notes and cards the sync
+    /// deletes. Afterwards, if what rendering reads changed, the server renders again the notes
+    /// it affects.
+    ///
+    /// Images and audio stay, whether or not a note names them.
     Cloud {
         /// Replace the server's database with this one
         #[arg(long, conflicts_with = "full_download")]
@@ -38,8 +43,8 @@ pub(crate) enum SyncSubcommand {
         /// Replace this database with the server's
         #[arg(long)]
         full_download: bool,
-        /// Check where the files would go and list what would be copied, without copying or
-        /// syncing anything
+        /// Check where the files would go and list what would be copied or removed, without
+        /// copying, removing or syncing anything
         #[arg(long, conflicts_with_all = ["full_upload", "full_download"])]
         dry_run: bool,
     },

@@ -129,7 +129,7 @@ pub(crate) async fn push_files(
     }
 
     // Templates, and config.toml, which the server merges with its own (keeping its `[sync]`
-    // table), so reviews there are scheduled with the same settings.
+    // table), so reviews there are scheduled with the same settings. What is gone here goes there.
     println!("Copying templates and settings → {remote_host}");
     let templates = run_rsync(&[
         "-az",
@@ -141,11 +141,17 @@ pub(crate) async fn push_files(
         &dir_source(&get_config_dir())?,
         &remote_dir(remote_host, &target.config)?,
     ])?;
+    let removed_templates = stale_config_files(
+        &get_config_dir(),
+        remote_entries(remote_host, &target.config)?,
+    );
+    remove_remote_files(remote_host, &target.config, &removed_templates)?;
     let config_changed = push_config(&remote).await?;
 
-    // Files the notes read, so the server can render notes edited there.
+    // Files the notes read, so the server can render notes edited there, and not those they no
+    // longer read.
     println!("Copying files read by notes → {remote_host}");
-    let read = sync_render_dependencies(remote_host, &home, &dependencies)?;
+    let read = sync_render_dependencies(remote_host, &home, &dependencies, &target)?;
 
     // The rendered files of parsers the server can't render, for want of their programs (see
     // `setup_vps.sh --no-latex`), but not over its newer ones (see `sync_rendered_files`). The
@@ -164,7 +170,10 @@ pub(crate) async fn push_files(
 
     Ok(Pushed {
         remote,
-        render_inputs_changed: !templates.is_empty() || config_changed || !read.is_empty(),
+        render_inputs_changed: !templates.is_empty()
+            || !removed_templates.is_empty()
+            || config_changed
+            || !read.is_empty(),
     })
 }
 
@@ -522,7 +531,8 @@ fn stale_web_renders(dir: &Path, names: &[String], web_ids: &HashSet<NoteId>) ->
         .collect()
 }
 
-/// Removes the files `names` from `dir` on `remote_host`, if they are there.
+/// Removes the files `names` (relative paths) from `dir` on `remote_host`, if they are there, and
+/// the directories they leave empty.
 fn remove_remote_files(remote_host: &str, dir: &Path, names: &[String]) -> Result<(), String> {
     if names.is_empty() {
         return Ok(());
@@ -536,31 +546,87 @@ fn remove_remote_files(remote_host: &str, dir: &Path, names: &[String]) -> Resul
     let dir = dir
         .to_str()
         .ok_or_else(|| format!("{} is not valid UTF-8", dir.display()))?;
-    let mut child = Command::new("ssh")
-        .arg(remote_host)
-        .arg(format!("cd {} && xargs -0 rm -f --", shell_quote(dir)))
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to run ssh: {e}"))?;
     let mut input = String::new();
     for name in names {
+        println!("  removed {name}");
         input.push_str(name);
         input.push('\0');
     }
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|e| format!("Failed to write to ssh: {e}"))?;
-    }
-    let status = child
-        .wait()
+    run_ssh_with_input(remote_host, &remove_command(dir), &input)
+}
+
+/// The command [`remove_remote_files`] runs, which reads the paths to remove from its input.
+fn remove_command(dir: &str) -> String {
+    // `sh` is the script's `$0`, so that every path is in `$@`
+    format!(
+        "cd {} && xargs -0 sh -c {} sh",
+        shell_quote(dir),
+        shell_quote(REMOVE_SCRIPT)
+    )
+}
+
+/// Removes the files given as arguments, and their parent directories while they are empty, but
+/// not the current one: `rmdir -p` stops at the first component of a relative path.
+const REMOVE_SCRIPT: &str = r#"for f; do
+  rm -f -- "$f"
+  d=$(dirname -- "$f")
+  if [ "$d" != . ]; then rmdir -p -- "$d" 2>/dev/null; fi
+done
+true"#;
+
+/// The files and symlinks in `dir` on `remote_host`, by their paths relative to it.
+fn remote_entries(remote_host: &str, dir: &Path) -> Result<Vec<String>, String> {
+    let dir = dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", dir.display()))?;
+    let output = Command::new("ssh")
+        .arg(remote_host)
+        .arg(format!(
+            "if cd {} 2>/dev/null; then find . ! -type d -print0; fi",
+            shell_quote(dir)
+        ))
+        .stderr(std::process::Stdio::inherit())
+        .output()
         .map_err(|e| format!("Failed to run ssh: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("ssh to {remote_host} exited with {status}"))
+    if !output.status.success() {
+        return Err(format!(
+            "Listing {dir} on {remote_host} failed: ssh exited with {}",
+            output.status
+        ));
     }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter_map(|entry| entry.strip_prefix("./"))
+        .map(str::to_string)
+        .collect())
+}
+
+/// Of `remote`, the files and symlinks in the server's config directory (relative to it), those
+/// that aren't in `local`, this machine's: templates removed here, say. Not the server's
+/// `config.toml`, which it keeps, nor what rsync leaves alone, under a symlink here that it
+/// doesn't copy (see `--safe-links`) or a file where the server has a directory.
+fn stale_config_files(local: &Path, remote: Vec<String>) -> Vec<String> {
+    let mut stale: Vec<String> = remote
+        .into_iter()
+        .filter(|path| {
+            let top = Path::new(path).components().count() == 1;
+            if top && (path == "config.toml" || path.starts_with("config.toml.")) {
+                return false;
+            }
+            let mut here = local.to_path_buf();
+            for component in Path::new(path).components() {
+                here.push(component);
+                match here.symlink_metadata() {
+                    Err(_) => return true,
+                    Ok(metadata) if metadata.is_dir() => {}
+                    Ok(_) => return false,
+                }
+            }
+            false
+        })
+        .collect();
+    stale.sort();
+    stale
 }
 
 /// The names of the rendered files in `dir` of the notes `ids`.
@@ -589,10 +655,14 @@ fn rendered_files_of(dir: &Path, ids: &HashSet<NoteId>) -> Vec<String> {
 ///
 /// Only files read by a local render are known, so a file a note starts reading after being edited
 /// on the server is not copied until the note is rendered locally.
+///
+/// The files and symlinks it copied are listed on the server (see [`CopiedDependencies`]), so
+/// those of an earlier sync that the notes no longer read are removed there.
 fn sync_render_dependencies(
     remote_host: &str,
     home: &Path,
     plan: &DependencySync,
+    target: &PushTarget,
 ) -> Result<Vec<String>, String> {
     for path in &plan.skipped {
         eprintln!(
@@ -601,6 +671,24 @@ fn sync_render_dependencies(
             home.display()
         );
     }
+    let list_file = copied_dependencies_file(target);
+    let before = read_remote_file(remote_host, &list_file)?;
+    let before = CopiedDependencies::parse(&before);
+    let now = CopiedDependencies::of(plan);
+    remove_stale_dependencies(remote_host, &before, &now)?;
+    let copied = copy_dependencies(remote_host, home, plan)?;
+    if now != before && !dry_run() {
+        write_remote_file(remote_host, &list_file, &now.to_string())
+            .map_err(|e| format!("Recording the files copied failed: {e}"))?;
+    }
+    Ok(copied)
+}
+
+fn copy_dependencies(
+    remote_host: &str,
+    home: &Path,
+    plan: &DependencySync,
+) -> Result<Vec<String>, String> {
     if plan.files.is_empty() {
         return Ok(Vec::new());
     }
@@ -760,6 +848,176 @@ fn symlinks_command(symlinks: &BTreeMap<PathBuf, SymlinkTarget>) -> String {
         .join("; ")
 }
 
+/// The files and symlinks [`sync_render_dependencies`] copied to the server, relative to the home
+/// directory there. Kept on the server, next to [`PushTarget::check_file`], as lines of `f <path>`
+/// and `l <path>`: paths with a newline are never copied (see [`plan_dependency_sync`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CopiedDependencies {
+    files: BTreeSet<PathBuf>,
+    symlinks: BTreeSet<PathBuf>,
+}
+
+impl CopiedDependencies {
+    fn of(plan: &DependencySync) -> Self {
+        Self {
+            files: plan.files.clone(),
+            symlinks: plan.symlinks.keys().cloned().collect(),
+        }
+    }
+
+    fn parse(contents: &str) -> Self {
+        let mut copied = Self::default();
+        for line in contents.lines() {
+            match line.split_once(' ') {
+                Some(("f", path)) if !path.is_empty() => {
+                    copied.files.insert(PathBuf::from(path));
+                }
+                Some(("l", path)) if !path.is_empty() => {
+                    copied.symlinks.insert(PathBuf::from(path));
+                }
+                _ => {}
+            }
+        }
+        copied
+    }
+}
+
+impl std::fmt::Display for CopiedDependencies {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (kind, paths) in [("f", &self.files), ("l", &self.symlinks)] {
+            for path in paths {
+                writeln!(f, "{kind} {}", path.display())?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where the server keeps its [`CopiedDependencies`]: in its cache, with the check file, since
+/// what the list names is of the collection there.
+fn copied_dependencies_file(target: &PushTarget) -> PathBuf {
+    target.check_file.with_file_name("copied-dependencies")
+}
+
+/// Removes from the server what `before` lists and `now` doesn't: files only if they are still
+/// files, symlinks only if they are still symlinks, then the directories they leave empty.
+fn remove_stale_dependencies(
+    remote_host: &str,
+    before: &CopiedDependencies,
+    now: &CopiedDependencies,
+) -> Result<(), String> {
+    let files: Vec<&PathBuf> = before.files.difference(&now.files).collect();
+    let symlinks: Vec<&PathBuf> = before.symlinks.difference(&now.symlinks).collect();
+    if files.is_empty() && symlinks.is_empty() {
+        return Ok(());
+    }
+    if dry_run() {
+        for path in files.iter().chain(&symlinks) {
+            println!(
+                "  would remove ~/{}, which no note reads any more",
+                path.display()
+            );
+        }
+        return Ok(());
+    }
+    for path in files.iter().chain(&symlinks) {
+        println!(
+            "  removed ~/{}, which no note reads any more",
+            path.display()
+        );
+    }
+    run_ssh_with_input(
+        remote_host,
+        "sh",
+        &stale_dependencies_script(&files, &symlinks),
+    )
+    .map_err(|e| format!("Removing files no note reads failed: {e}"))
+}
+
+/// The script [`remove_stale_dependencies`] runs from the remote home directory.
+fn stale_dependencies_script(files: &[&PathBuf], symlinks: &[&PathBuf]) -> String {
+    let quoted = |paths: &[&PathBuf]| {
+        paths
+            .iter()
+            .filter_map(|path| path.to_str())
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    format!(
+        r#"prune() {{ d=$(dirname -- "$1"); if [ "$d" != . ]; then rmdir -p -- "$d" 2>/dev/null; fi; }}
+for f in {files}; do if [ -f "$f" ] && [ ! -L "$f" ]; then rm -f -- "$f"; prune "$f"; fi; done
+for f in {symlinks}; do if [ -L "$f" ]; then rm -f -- "$f"; prune "$f"; fi; done
+true
+"#,
+        files = quoted(files),
+        symlinks = quoted(symlinks),
+    )
+}
+
+/// The contents of `path` on `remote_host`, empty if it doesn't exist.
+fn read_remote_file(remote_host: &str, path: &Path) -> Result<String, String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", path.display()))?;
+    let output = Command::new("ssh")
+        .arg(remote_host)
+        .arg(format!(
+            "if [ -f {0} ]; then cat -- {0}; fi",
+            shell_quote(path)
+        ))
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Reading {path} on {remote_host} failed: ssh exited with {}",
+            output.status
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Writes `contents` to `path` on `remote_host`, whole, then renamed into place.
+fn write_remote_file(remote_host: &str, path: &Path, contents: &str) -> Result<(), String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", path.display()))?;
+    let staging = shell_quote(&format!("{path}.new"));
+    run_ssh_with_input(
+        remote_host,
+        &format!(
+            "cat > {staging} && mv -f -- {staging} {}",
+            shell_quote(path)
+        ),
+        contents,
+    )
+}
+
+/// Runs `command` on `remote_host` with `input` on its standard input.
+fn run_ssh_with_input(remote_host: &str, command: &str, input: &str) -> Result<(), String> {
+    let mut child = Command::new("ssh")
+        .arg(remote_host)
+        .arg(command)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("Failed to write to ssh: {e}"))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to run ssh: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("ssh to {remote_host} exited with {status}"))
+    }
+}
+
 /// Quotes `s` as a single POSIX shell word.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
@@ -835,6 +1093,7 @@ mod tests {
 
     use spares_core::ids::NoteId;
 
+    use super::CopiedDependencies;
     use super::LocalSide;
     use super::PushTarget;
     use super::RemoteFacts;
@@ -846,6 +1105,8 @@ mod tests {
     use super::plan_dependency_sync;
     use super::rendered_file_note_id;
     use super::rendered_files_of;
+    use super::stale_config_files;
+    use super::stale_dependencies_script;
     use super::stale_web_renders;
     use super::symlinks_command;
 
@@ -1195,5 +1456,170 @@ mod tests {
         assert!(defaults.is_file());
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("spares-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+
+    /// Every file and symlink under `dir`, and every directory, relative to it
+    fn tree(dir: &std::path::Path) -> Vec<String> {
+        let output = Command::new("find")
+            .arg(".")
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        let mut entries: Vec<String> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.strip_prefix("./"))
+            .map(str::to_string)
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    /// The server's templates and settings that are gone here are removed there, but not its
+    /// config.toml, nor what is under a symlink rsync doesn't copy.
+    #[test]
+    fn config_files_removed_here_are_stale_there() {
+        let local = scratch_dir("stale-config-test");
+        write(&local.join("config.toml"));
+        write(&local.join("latex/templates/card.tex"));
+        std::os::unix::fs::symlink("/elsewhere/pandoc", local.join("pandoc")).unwrap();
+        std::os::unix::fs::symlink("latex", local.join("latex-link")).unwrap();
+        let remote = [
+            "config.toml",
+            "config.toml.pushed",
+            "latex/templates/card.tex",
+            "latex/templates/old.tex",
+            "markdown/templates/note_template.md",
+            "pandoc/defaults/web.yaml",
+            "latex-link",
+            "latex/config.toml",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        assert_eq!(
+            stale_config_files(&local, remote),
+            [
+                "latex/config.toml",
+                "latex/templates/old.tex",
+                "markdown/templates/note_template.md"
+            ]
+        );
+        std::fs::remove_dir_all(&local).unwrap();
+    }
+
+    /// The command that removes files reads their paths, removes each, and the directories they
+    /// leave empty, but not the one it runs in.
+    #[test]
+    fn the_remove_command_runs_in_sh() {
+        let dir = scratch_dir("remove-command-test");
+        let root = dir.join("it's the config");
+        for path in ["a/b/old.tex", "a/keep.tex", "c/d/old.tex", "top.tex"] {
+            write(&root.join(path));
+        }
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(super::remove_command(root.to_str().unwrap()))
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin
+                .write_all(b"a/b/old.tex\0c/d/old.tex\0missing/file\0top.tex\0")
+                .unwrap();
+        }
+        assert!(child.wait().unwrap().success());
+        assert_eq!(tree(&root), ["a", "a/keep.tex"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copied_dependencies_are_listed_one_per_line() {
+        let copied = CopiedDependencies {
+            files: [".pandoc/defaults.yaml", "notes/a b/figure.png"]
+                .map(PathBuf::from)
+                .into(),
+            symlinks: [".pandoc"].map(PathBuf::from).into(),
+        };
+        let listed = copied.to_string();
+        assert_eq!(
+            listed,
+            "f .pandoc/defaults.yaml\nf notes/a b/figure.png\nl .pandoc\n"
+        );
+        assert_eq!(CopiedDependencies::parse(&listed), copied);
+        assert_eq!(
+            CopiedDependencies::parse("x y\nf \n\n"),
+            CopiedDependencies::default()
+        );
+    }
+
+    /// Files the notes no longer read are removed, if they are still files, and symlinks if they
+    /// are still symlinks, with the directories they leave empty.
+    #[test]
+    fn the_stale_dependencies_script_runs_in_sh() {
+        let home = scratch_dir("stale-dependencies-test");
+        for path in ["notes/old/figure.png", "notes/kept.png", "it's/old.tex"] {
+            write(&home.join(path));
+        }
+        // Once a file, now a directory, and once a file, now a symlink
+        write(&home.join("now-a-dir/inside"));
+        std::os::unix::fs::symlink("notes/kept.png", home.join("now-a-link")).unwrap();
+        std::os::unix::fs::symlink("notes", home.join("old-link")).unwrap();
+        // Once a symlink, now a directory
+        write(&home.join("was-a-link/inside"));
+        let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let files = paths(&[
+            "notes/old/figure.png",
+            "it's/old.tex",
+            "now-a-dir",
+            "now-a-link",
+            "missing.png",
+        ]);
+        let symlinks = paths(&["old-link", "was-a-link"]);
+        let script = stale_dependencies_script(
+            &files.iter().collect::<Vec<_>>(),
+            &symlinks.iter().collect::<Vec<_>>(),
+        );
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .current_dir(&home)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            tree(&home),
+            [
+                "notes",
+                "notes/kept.png",
+                "now-a-dir",
+                "now-a-dir/inside",
+                "now-a-link",
+                "was-a-link",
+                "was-a-link/inside"
+            ]
+        );
+        // Nothing to remove of one kind
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(stale_dependencies_script(&[], &[]))
+            .current_dir(&home)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }
