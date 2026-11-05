@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { buildId } from './build-id.ts'
 import wasm from 'vite-plugin-wasm'
 
 const SVGEDIT_EDITOR_DIR = fileURLToPath(new URL('./svgedit/src/editor', import.meta.url))
@@ -175,7 +176,7 @@ export default defineConfig({
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
   },
-  plugins: [react(), wasm(), copySvgeditAssets(), serviceWorker(), precompress(), imageOcclusionEditorConfig(), {
+  plugins: [react(), wasm(), copySvgeditAssets(), buildId(), serviceWorker(), precompress(), imageOcclusionEditorConfig(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files

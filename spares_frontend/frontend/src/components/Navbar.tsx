@@ -10,6 +10,7 @@ import OfflineIndicator from './OfflineIndicator';
 import PageHelp from './PageHelp';
 import SavedCopiesNotice from './SavedCopiesNotice';
 import SyncButton from './SyncButton';
+import UpdateIndicator from './UpdateIndicator';
 import { errorMessage } from '../utils';
 
 /** The help of a page that opens it itself, with `?`, and has shortcuts of its own. */
@@ -133,6 +134,7 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
             )}
           </div>
           <div className="navbar-actions">
+            <UpdateIndicator />
             <OfflineIndicator />
             <SavedCopiesNotice />
             <SyncButton onStatus={setUndoStatus} />

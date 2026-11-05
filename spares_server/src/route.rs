@@ -262,6 +262,8 @@ pub(crate) fn create_router(
     files_dir: PathBuf,
     frontend_dir: Option<PathBuf>,
 ) -> Router {
+    crate::version::init();
+    let served_frontend = frontend_dir.clone();
     let protected = Router::new()
         // Parser
         .route("/api/parsers", post(create_parser_handler))
@@ -377,6 +379,10 @@ pub(crate) fn create_router(
 
     let mut router = Router::new()
         .route("/api/healthcheck", get(health_check_handler))
+        .route(
+            "/api/version",
+            get(move || crate::version::version_handler(served_frontend)),
+        )
         .merge(protected)
         .with_state(app_state);
 

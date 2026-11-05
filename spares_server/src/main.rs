@@ -1,6 +1,7 @@
 mod auto_sync;
 mod handlers;
 mod route;
+mod version;
 
 use std::path::PathBuf;
 use std::str::FromStr;

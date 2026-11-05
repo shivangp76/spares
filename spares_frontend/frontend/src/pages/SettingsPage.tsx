@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import VersionSettings from '../components/VersionSettings';
 import { useAuth } from '../hooks/useAuth';
 import {
   CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, LINE_WRAPPING_LABELS, LINE_WRAPPINGS, PAGE_WIDTH_LABELS,
@@ -288,6 +289,8 @@ export default function SettingsPage() {
           Type the closing bracket or quote along with the opening one
         </label>
       </fieldset>
+
+      <VersionSettings />
     </div>
   );
 }
