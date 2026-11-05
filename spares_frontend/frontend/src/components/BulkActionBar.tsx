@@ -6,7 +6,8 @@ import ActionResult, { type ActionOutcome } from './ActionResult';
 /** What an action asks for before it runs. */
 export type BulkInput =
   | { kind: 'tags'; suggestions: () => Promise<string[]> }
-  | { kind: 'choice'; options: () => Promise<{ value: string; label: string }[]> }
+  /** `initial` is chosen to start with; without it, nothing is. */
+  | { kind: 'choice'; options: () => Promise<{ value: string; label: string }[]>; initial?: string }
   | { kind: 'text'; placeholder: string }
   | { kind: 'datetime' }
   | { kind: 'number'; placeholder: string; min: number; max: number; step: number };
@@ -151,7 +152,8 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   function choose(action: BulkAction) {
     setError(null);
     if (!action.input) { void run(action, []); return; }
-    setPending({ action, tags: [], text: '', suggestions: [], options: [] });
+    const text = action.input.kind === 'choice' ? action.input.initial ?? '' : '';
+    setPending({ action, tags: [], text, suggestions: [], options: [] });
     if (action.input.kind === 'tags') {
       action.input.suggestions().then(
         suggestions => setPending(prev => (prev?.action === action ? { ...prev, suggestions } : prev)),

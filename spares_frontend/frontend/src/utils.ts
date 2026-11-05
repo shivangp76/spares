@@ -8,7 +8,12 @@ export function errorMessage(e: unknown): string {
 
 /** Saves `text` as a file named `name`, as the browser saves downloads. */
 export function downloadText(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  downloadBlob(name, new Blob([text], { type: 'text/plain' }));
+}
+
+/** Saves `blob` as a file named `name`, as the browser saves downloads. */
+export function downloadBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
