@@ -1416,6 +1416,50 @@ async fn a_device_follows_the_render_assets_and_never_sends_them() {
     assert_eq!(render_assets(&replicas.server).await, second);
 }
 
+/// The laptop sends every render asset it has, so the server removes those it no longer sends,
+/// unless another host syncs with it, whose notes may read them.
+#[tokio::test]
+async fn the_server_drops_render_assets_the_laptop_no_longer_has() {
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    exec(
+        &replicas.laptop,
+        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/kept.typ', 'k', 1, 1), ('/t/gone.typ', 'g', 1, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/kept:0.1.0'), ('@preview/gone:0.1.0')",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await.0.len(), 2);
+
+    exec(
+        &replicas.laptop,
+        "DELETE FROM render_asset WHERE path = '/t/gone.typ';
+         DELETE FROM render_package WHERE spec = '@preview/gone:0.1.0'",
+    )
+    .await;
+    // Another host that syncs with the server keeps them
+    exec(
+        &replicas.server,
+        "INSERT INTO sync_client (replica, last_usn, last_sync_at) VALUES (5, 0, 0)",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await.0.len(), 2);
+
+    exec(
+        &replicas.server,
+        "DELETE FROM sync_client WHERE replica = 5",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(
+        render_assets(&replicas.server).await,
+        (
+            vec![("/t/kept.typ".to_string(), "k".to_string())],
+            vec!["@preview/kept:0.1.0".to_string()]
+        )
+    );
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines, reason = "one scenario")]
 async fn a_device_has_to_enroll_and_its_number_is_its_own() {
