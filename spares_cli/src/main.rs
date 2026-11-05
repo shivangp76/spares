@@ -18,6 +18,7 @@ mod review;
 mod saved_search;
 mod search;
 mod statistics;
+mod steps;
 mod sync;
 mod tag;
 mod tree;

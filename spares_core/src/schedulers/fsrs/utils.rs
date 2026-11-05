@@ -107,6 +107,15 @@ pub fn retrievability(elapsed_days: f64, stability: f64, decay: f32) -> f64 {
     ))
 }
 
+/// The days after which a card with `stability` falls to `retention` on the forgetting curve with
+/// `decay`: the inverse of [`retrievability`]. Like the model's intervals, but not rounded or
+/// clamped to a day, so it also fits steps of minutes.
+pub fn days_until_retrievability(stability: f64, retention: f64, decay: f32) -> f64 {
+    let decay = f64::from(decay);
+    let factor = 0.9f64.powf(-1.0 / decay) - 1.0;
+    stability / factor * (retention.powf(-1.0 / decay) - 1.0)
+}
+
 /// The range of intervals around `interval` that FSRS considers interchangeable, as in Anki and
 /// `fsrs4anki-helper`.
 pub fn get_fuzz_range(
@@ -164,6 +173,25 @@ pub fn get_fuzz_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn days_until_retrievability_inverts_the_forgetting_curve() {
+        let decay = decay(&SparesExternalConfig::default());
+        for (stability, retention) in [(0.002, 0.9), (0.01, 0.85), (3.0, 0.95), (40.0, 0.7)] {
+            let days = days_until_retrievability(stability, retention, decay);
+            assert!((retrievability(days, stability, decay) - retention).abs() < 1e-4);
+            // The same as the model's interval, before it is rounded
+            let model = f64::from(FSRS::default().next_interval(
+                Some(stability as f32),
+                retention as f32,
+                1,
+            ));
+            assert!(
+                (days - model).abs() < 1e-4 * days.max(1.0),
+                "{days} {model}"
+            );
+        }
+    }
 
     #[test]
     fn fuzz_range_is_measured_on_the_clamped_interval() {

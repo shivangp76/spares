@@ -8,9 +8,14 @@
 //!   card in review is rated or rescheduled. See [`crate::schedulers::placement`].
 //! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
 //! - Remedy hard misuse: Unsupported.
+//! - FSRS stats: Supported. Daily load and the average retrievability and stability of the cards
+//!   in review are among the statistics' distributions
+//!   ([`Distributions`](crate::schema::statistics::Distributions)).
+//! - Steps stats: Supported, see the `steps_stats` module and `spares card steps`.
 mod optimize;
 mod reposition;
 mod steps;
+pub(crate) mod steps_stats;
 pub(crate) mod utils;
 
 use async_trait::async_trait;

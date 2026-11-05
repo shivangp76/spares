@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { advanceCards, ApiError, getReviewHistory, getStatistics, getStatisticsGraphs, isNetworkError, postponeCards } from '../api/client';
+import { advanceCards, ApiError, getReviewHistory, getStatistics, getStatisticsGraphs, getStepsStats, isNetworkError, postponeCards } from '../api/client';
 import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import BarChart from '../components/charts/BarChart';
 import { cumulative, daysBetween, fillDays, HOUR_LABELS, percent, toSeries, type Series } from '../components/charts/chartData';
@@ -29,6 +29,8 @@ import {
   type ReviewHistoryResponse,
   type StatisticsGraphsResponse,
   type StatisticsResponse,
+  type StepsGroupKind,
+  type StepsStatsResponse,
 } from '../types/spares';
 import { errorMessage, formatDuration, td, th } from '../utils';
 
@@ -435,6 +437,110 @@ function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) 
   );
 }
 
+const STEPS_GROUP_LABELS: Record<StepsGroupKind, string> = {
+  again: 'Again',
+  hard: 'Hard',
+  good: 'Good',
+  again_then_good: 'Again, then Good',
+  relearning: 'Lapse (Again)',
+};
+
+/** A step at a useful precision: `45s`, `12m`, `2.5h` or `1.3d`. */
+function formatStep(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+const formatSteps = (steps: (number | null)[]) => (steps.length === 0 ? 'none' : steps.map(step => (step === null ? '?' : formatStep(step))).join(' '));
+
+/** Steps stats for one preset's cards, fetched on their own since they need no query or date. */
+function StepsSection({ periodDays, enabled }: { periodDays: number | null; enabled: boolean }) {
+  // '' for the cards that use no preset
+  const [preset, setPreset] = useState('');
+  const [stats, setStats] = useState<StepsStatsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    getStepsStats({ preset: preset || null, period_days: periodDays })
+      .then(s => { if (!cancelled) { setStats(s); setError(null); } })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); });
+    return () => { cancelled = true; };
+  }, [preset, periodDays, enabled]);
+
+  if (!enabled && !stats) return <p style={note}>{OFFLINE_HINT}</p>;
+  const retention = stats ? formatPercent(stats.desired_retention) : '';
+  const r = stats?.recommended;
+  return (
+    <>
+      <label style={{ fontSize: 14 }}>
+        Preset{' '}
+        <select value={preset} onChange={e => setPreset(e.target.value)} style={input} aria-label="Preset">
+          <option value="">No preset</option>
+          {stats?.presets.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      {error && <div style={{ color: 'var(--error)', marginTop: 8 }}>{error}</div>}
+      {stats && r && (
+        <>
+          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr>
+                  <th style={th}>After</th>
+                  <th style={th}>Reviews</th>
+                  <th style={th}>Recalled</th>
+                  <th style={th}>Stability</th>
+                  <th style={th}>Falls to {retention} after</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.groups.map(g => (
+                  <tr key={g.kind}>
+                    <td style={td}>{STEPS_GROUP_LABELS[g.kind]}</td>
+                    <td style={numeric}>{g.reviews}{g.reviews > 0 && g.reviews < stats.min_reviews ? ' (too few)' : ''}</td>
+                    <td style={numeric}>{g.reviews > 0 ? formatPercent(g.recalled / g.reviews) : '–'}</td>
+                    <td style={numeric}>{g.stability === null ? '–' : formatStep(g.stability * 86400)}</td>
+                    <td style={numeric}>{g.interval === null ? '–' : formatStep(g.interval)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <table style={{ borderCollapse: 'collapse', fontSize: 14, marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th style={th}></th>
+                <th style={th}>Now</th>
+                <th style={th}>Recommended</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={td}>Learning steps</td>
+                <td style={td}>{formatSteps(stats.learning_steps)}</td>
+                <td style={td}>{formatSteps([r.first_learning_step, r.second_learning_step])}</td>
+              </tr>
+              <tr>
+                <td style={td}>Relearning steps</td>
+                <td style={td}>{formatSteps(stats.relearning_steps)}</td>
+                <td style={td}>{formatSteps([r.relearning_step])}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={note}>
+            Each review in a step is paired with the card’s next review within a day, and each group is fitted the stability that best predicts which were recalled. A step is the time recall takes to fall to {retention}. ? means fewer than{' '}
+            {stats.min_reviews} reviews in its groups; a step of a day or more can go. Not affected by the search query.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
@@ -653,6 +759,9 @@ export default function StatisticsPage() {
               <DistributionsSection graphs={graphs} />
             </>
           )}
+
+          <div style={sectionTitle}>Learning steps</div>
+          <StepsSection periodDays={view.periodDays} enabled={serverReachable} />
 
           {statistics && (
             <>

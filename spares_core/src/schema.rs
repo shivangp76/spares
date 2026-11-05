@@ -1600,6 +1600,79 @@ pub mod statistics {
         /// The mean of every value, `None` when there are none.
         pub mean: Option<f64>,
     }
+
+    /// `POST /api/statistics/steps`: how quickly cards are forgotten in their learning and
+    /// relearning steps, and the steps that would fit, like fsrs4anki-helper's Steps Stats. FSRS
+    /// only. See `schedulers::fsrs::steps_stats` for how they are estimated.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct StepsStatsRequest {
+        /// The [preset](crate::config::QueuePreset) whose cards to look at, since steps are set
+        /// per preset. `None` for the cards that use none, which have the top-level steps.
+        pub preset: Option<String>,
+        /// Only cards first reviewed in the last this many days, and lapses in them. `None` for
+        /// all time.
+        pub period_days: Option<u32>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct StepsStatsResponse {
+        /// The names of every preset, in order, to choose from.
+        pub presets: Vec<String>,
+        /// The mean desired retention of the preset's cards, which the steps aim for.
+        pub desired_retention: f64,
+        /// A group's fewest reviews for it to count toward a recommendation.
+        pub min_reviews: u32,
+        /// Every [`StepsGroupKind`], in order, empty groups included.
+        pub groups: Vec<StepsGroup>,
+        /// The preset's steps now, in seconds.
+        pub learning_steps: Vec<i64>,
+        pub relearning_steps: Vec<i64>,
+        pub recommended: RecommendedSteps,
+    }
+
+    /// A step's reviews, and the next review of the same card within a day.
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum StepsGroupKind {
+        /// A new card's first rating was Again.
+        Again,
+        Hard,
+        Good,
+        /// Again, then Good on the next review, measured from the Good.
+        AgainThenGood,
+        /// A card in review was rated Again.
+        Relearning,
+    }
+
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct StepsGroup {
+        pub kind: StepsGroupKind,
+        /// The pairs of reviews in the group: the step's review and the next one.
+        pub reviews: u32,
+        /// Of `reviews`, how many next reviews were rated above Again.
+        pub recalled: u32,
+        /// The fitted stability, in days. `None` without reviews, or when the reviews do not pin
+        /// it down, as when every one was recalled.
+        pub stability: Option<f64>,
+        /// In seconds, the time after which recall falls to the desired retention with
+        /// `stability`: the step this group alone suggests.
+        pub interval: Option<i64>,
+    }
+
+    /// Steps in seconds, from the groups with at least
+    /// [`min_reviews`](StepsStatsResponse::min_reviews). `None` without enough reviews. A step of
+    /// a day or more means the step can go: the next review can wait for the card to graduate.
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct RecommendedSteps {
+        /// [`StepsGroupKind::Again`]'s interval.
+        pub first_learning_step: Option<i64>,
+        /// The shortest of the intervals of [`StepsGroupKind::AgainThenGood`] and
+        /// [`StepsGroupKind::Good`], and of twice [`StepsGroupKind::Hard`]'s less the first step,
+        /// since Hard waits halfway between the first two steps.
+        pub second_learning_step: Option<i64>,
+        /// [`StepsGroupKind::Relearning`]'s interval.
+        pub relearning_step: Option<i64>,
+    }
 }
 
 pub mod undo {
