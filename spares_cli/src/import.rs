@@ -197,6 +197,8 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
+use spares_core::api::note::share_bundle::read_bundle;
+use spares_core::api::note::share_bundle::refuse_note_ids;
 use spares_core::api::note::shared_media::bundled_media_references;
 use spares_core::config::SparesExternalConfig;
 use spares_core::config::read_external_config;
@@ -684,6 +686,57 @@ impl MediaUploader<'_> {
         result.push_str(&contents[last..]);
         Ok(result)
     }
+}
+
+/// `files`, with each zip of shared notes (`spares note export --share --zip`) unpacked into a
+/// directory of its own under `dir`, as `--share` without `--zip` writes them: its files of notes
+/// in place of the zip, next to their `media`.
+///
+/// `dir` is created, and must not be there yet, so no one else can have put anything in it: on
+/// Unix, only this user can read or write it. A zip whose files name notes by id is refused (see
+/// [`refuse_note_ids`]), so a shared zip only ever adds notes.
+pub(crate) fn unpack_bundles(files: &[PathBuf], dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut unpacked = Vec::new();
+    let mut created = false;
+    for (i, file) in files.iter().enumerate() {
+        if file
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("zip"))
+        {
+            unpacked.push(file.clone());
+            continue;
+        }
+        let io = |path: &Path, e| Error::Io {
+            description: format!("Failed to unpack {}", path.display()),
+            source: e,
+        };
+        let bytes = std::fs::read(file).map_err(|e| io(file, e))?;
+        let bundle = read_bundle(&bytes)?;
+        refuse_note_ids(&bundle, &get_all_parsers())?;
+        if !created {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(dir).map_err(|e| io(dir, e))?;
+            created = true;
+        }
+        let out = dir.join(i.to_string());
+        let write = |name: &str, contents: &[u8]| -> Result<PathBuf, Error> {
+            let path = out.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+            }
+            std::fs::write(&path, contents).map_err(|e| io(&path, e))?;
+            Ok(path)
+        };
+        for (name, contents) in &bundle.media {
+            write(name, contents)?;
+        }
+        for (name, contents) in &bundle.files {
+            unpacked.push(write(name, contents.as_bytes())?);
+        }
+    }
+    Ok(unpacked)
 }
 
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
@@ -2349,5 +2402,51 @@ mod tests {
         assert_eq!(note_count, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A zip is unpacked into a directory made for it, which no one else can have filled, and one
+    /// whose notes are named by id is refused.
+    #[test]
+    fn test_unpack_bundles_into_a_new_private_directory() {
+        use spares_core::api::note::share_bundle::write_bundle;
+        use spares_core::schema::note::ExportNotesResponse;
+
+        let base = std::env::temp_dir().join(format!("spares-unpack-test-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let shared = "<!--- spares: start --->\n\n<!--- # action: add --->\n<!--- spares: note start --->\n{{ Paris }} is the capital\n<!--- spares: note end --->\n\n<!--- spares: end --->\n";
+        let zip_of = |text: &str, name: &str| {
+            let export = ExportNotesResponse {
+                files: std::collections::HashMap::from([("md".to_string(), text.to_string())]),
+                ..ExportNotesResponse::default()
+            };
+            let path = base.join(name);
+            std::fs::write(&path, write_bundle(&export).unwrap()).unwrap();
+            path
+        };
+        let zip = zip_of(shared, "shared.zip");
+
+        let dir = base.join("unpacked");
+        let files = unpack_bundles(std::slice::from_ref(&zip), &dir).unwrap();
+        assert_eq!(files, [dir.join("0").join("export.md")]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        // Not into a directory that is already there
+        assert!(unpack_bundles(std::slice::from_ref(&zip), &dir).is_err());
+
+        let by_id = zip_of(
+            &shared.replace("# action: add", "# note-id: aaaa"),
+            "by_id.zip",
+        );
+        let error = unpack_bundles(&[by_id], &base.join("by_id")).unwrap_err();
+        assert!(
+            error.to_string().contains("names notes by their ids"),
+            "{error}"
+        );
+        assert!(!base.join("by_id").exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
