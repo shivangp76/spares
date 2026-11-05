@@ -139,6 +139,7 @@ pub mod tag {
 }
 
 pub mod note {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use chrono::DateTime;
@@ -160,6 +161,19 @@ pub mod note {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ExportNotesRequest {
         pub query: String,
+        /// Export the notes to share with someone else, as [`crate::api::note::export`] describes.
+        /// Without this, the file updates the notes in this collection when imported.
+        #[serde(default)]
+        pub share: bool,
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+    pub struct ExportNotesResponse {
+        /// Each file's contents, by the file extension of its parser.
+        pub files: HashMap<String, String>,
+        /// How many of the notes the query found were left out for being private (see
+        /// [`crate::config::SparesExternalConfig::private_tag_name`]). Only when sharing.
+        pub private_notes_left_out: usize,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

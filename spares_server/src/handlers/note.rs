@@ -25,6 +25,7 @@ use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
 use spares_core::api::note::search_page;
 use spares_core::api::note::update_notes;
+use spares_core::config::read_external_config;
 use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
@@ -230,7 +231,8 @@ pub(crate) async fn export_notes_handler(
     axum::extract::State(data): axum::extract::State<Arc<AppState>>,
     Json(body): Json<ExportNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let result = export_notes(&data.db, body, &get_all_parsers())
+    let config = read_external_config().map_err(error_to_response)?;
+    let result = export_notes(&data.db, body, &config, &get_all_parsers())
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))

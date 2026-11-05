@@ -9,6 +9,7 @@ use spares_core::schema::note::CreateNoteRequest;
 use spares_core::schema::note::CreateNotesRequest;
 use spares_core::schema::note::DeleteNotesRequest;
 use spares_core::schema::note::ExportNotesRequest;
+use spares_core::schema::note::ExportNotesResponse;
 use spares_core::schema::note::NoteResponse;
 use spares_core::schema::note::NotesResponse;
 use spares_core::schema::note::NotesSelector;
@@ -229,6 +230,7 @@ pub(crate) async fn handle(
         NoteCommands::Export(export_args) => {
             let request = ExportNotesRequest {
                 query: export_args.query,
+                share: export_args.share,
             };
             let url = format!("{}/api/notes/export", base_url);
             let response = client
@@ -238,12 +240,15 @@ pub(crate) async fn handle(
                 .await
                 .map_err(|e| miette!("{}", e))?;
             let response = ensure_ok(response).await?;
-            let result: std::collections::HashMap<String, String> =
+            let result: ExportNotesResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             tokio::fs::create_dir_all(&export_args.output_dir)
                 .await
                 .into_diagnostic()?;
-            for (extension, content) in &result {
+            if result.private_notes_left_out > 0 {
+                println!("Left out {} private notes", result.private_notes_left_out);
+            }
+            for (extension, content) in &result.files {
                 let filename = format!("export.{}", extension);
                 let path = export_args.output_dir.join(&filename);
                 tokio::fs::write(&path, content).await.into_diagnostic()?;

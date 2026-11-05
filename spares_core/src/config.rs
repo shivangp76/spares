@@ -926,6 +926,9 @@ pub struct SparesExternalConfig {
     /// a backlog of reviews stops new cards from adding to it.
     pub new_cards_ignore_review_limit: bool,
     pub flagged_tag_name: String,
+    /// The tag of notes that are never shared: `spares note export --share` leaves out the notes
+    /// with it or a tag under it, such as `private:health`. Defaults to `"private"`.
+    pub private_tag_name: String,
     /// Delays between the same-day reviews of a new card before it graduates to review, in
     /// seconds. Each must be shorter than a day, in increasing order. Empty to graduate on the
     /// first answer. A [preset](QueuePreset::learning_steps) can have its own.
@@ -985,6 +988,7 @@ impl Default for SparesExternalConfig {
             reviews_daily_limit: u32::MAX,
             new_cards_ignore_review_limit: false,
             flagged_tag_name: "flagged".to_string(),
+            private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],
             fsrs_parameters: Vec::new(),
