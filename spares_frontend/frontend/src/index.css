@@ -240,11 +240,14 @@ button:disabled {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* The links take the first row and the buttons the next, so the Sync button appearing once its
+   status loads can't push the buttons from beside the links onto a row of their own */
 .navbar-links {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
+  flex-basis: 100%;
 }
 
 .navbar-link,
@@ -699,7 +702,6 @@ html:has(.review-answer-bar) {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
-    flex-basis: 100%;
   }
 
   .navbar-links::-webkit-scrollbar {
