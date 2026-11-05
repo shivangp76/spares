@@ -6,13 +6,13 @@
 - Advance and Postpone (`fsrs/reposition.rs`).
 - Load balancing, easy days (by weekday and specific dates) and sibling dispersal, as one placement step (`schedulers/placement.rs`).
 - True retention (`statistics/graphs.rs`).
+- FSRS stats: daily load, and the average retrievability and stability of the cards in review, in the statistics' distributions (`Distributions`, `statistics/graphs.rs`).
+- Steps stats: `spares card steps`, `POST /api/statistics/steps` and the statistics page's Learning steps section (`fsrs/steps_stats.rs`).
 
-Four things are missing, in the order to build them:
+Two things are missing, in the order to build them:
 
 1. Reschedule overwrites due dates that were set by hand. A bug more than a missing feature.
-2. Summary numbers for FSRS: daily load, and average retrievability and stability.
-3. Schedule a break.
-4. Steps stats: recommended learning and relearning steps.
+2. Schedule a break.
 
 The last section lists what is left out on purpose.
 
@@ -43,19 +43,7 @@ In `api/scheduling_tests.rs`:
 - Other cards are placed around a pinned card. For example, with `load_balance`, a pinned card counts toward its day.
 - Undoing a due date set by hand removes its row.
 
-## 2. Daily load, average retrievability and average stability
-
-The helper's FSRS Stats report three numbers:
-
-- **Daily load:** the sum of `1 / max(1, interval in days)` over the cards in review. It estimates how many reviews a day the collection costs once it settles (SuperMemo calls this *burden*).
-- **Average retrievability** of the cards in review today.
-- **Average stability.**
-
-`summarize_cards` (`api/statistics/graphs.rs`) already loops over these cards with their intervals, stabilities and recall. It already returns `total_knowledge` (the sum of recall) and histograms. Add `daily_load`, `average_retrievability` and `average_stability` to `Distributions`, computed in the same loop. They are `None` when no scheduler has a forgetting curve, like `total_knowledge`. Show them in the statistics summary on the CLI (`spares_cli/src/statistics.rs`) and on `StatisticsPage.tsx`. Update `types/spares.ts` too.
-
-Test it in `api/statistics/tests.rs` with a few cards whose intervals and stabilities are known.
-
-## 3. Schedule a break
+## 2. Schedule a break
 
 You say you will be away from day `A` for `n` days, and that the reviews should be spread over the `m` days after you return. The helper moves every card that is overdue or due before `A + n` onto `[A + n, A + n + m)`. Its cost function keeps each card as close to its original date as possible.
 
@@ -89,33 +77,9 @@ Not in the first version: advancing some cards to the days *before* a break that
 - Undo restores every card.
 - With §1 in place, `reschedule_all_cards` afterwards keeps the cards where the break put them.
 
-## 4. Steps stats
-
-The helper's Steps Stats estimate how quickly a new card is forgotten after its first rating, and from that recommend learning steps:
-
-- **First learning step:** from S(Again), the stability after a first rating of Again.
-- **Second learning step:** from the smallest of these, since a Hard step is halfway between the two steps:
-  - S(Again then Good)
-  - S(Good)
-  - 2 × S(Hard) − the first step
-- **Relearning step:** from the stability after Again on a card in review.
-
-A recommended step is the time at which recall falls to the desired retention: `optimal_interval_days` (`fsrs/mod.rs`) applied to that stability, but in seconds.
-
-### Design
-
-`spares_core::schedulers::fsrs::steps_stats`:
-
-- **Group the reviews.** For each card, pair each review with the next one. Group by the first rating, or the first two for Again then Good, and by whether the card was new or in review. Only cards first reviewed in the chosen period, and only pairs where the next review comes before a day has passed: that is what steps are for. Crams and `Reschedule` rows are left out, as everywhere.
-- **Fit a stability per group.** Find the one value of S whose forgetting curve, with the configured decay (`utils::retrievability`), gives the lowest log loss on (seconds elapsed, recalled) pairs. Recalled means rated above Again. A one-dimensional search over a log-spaced grid is enough. Report the number of reviews in each group, and no recommendation for groups that are too small (fewer than 100, say).
-- **Scope.** Group by preset: steps are set per `QueuePreset`, so a preset's cards are fitted together, like the helper's "decks sharing a preset".
-- **Show it.** `spares card steps [--preset NAME] [--days 365]` prints a table: group, count, fitted S, recommended step, and the current step next to it. The statistics page shows the same table when a preset is chosen.
-
-Test it with a generated log whose recall follows a known stability, and check that the fitted value comes back within a tolerance.
-
 ## Left out on purpose
 
-- **Flatten.** Cap reviews per day by postponing the excess. As `fsrs/mod.rs` says, load balancing covers most of it, and a hard cap delays cards with no regard for the harm. The break (§3) and postpone cover the cases where a cap is wanted.
+- **Flatten.** Cap reviews per day by postponing the excess. As `fsrs/mod.rs` says, load balancing covers most of it, and a hard cap delays cards with no regard for the harm. The break (§2) and postpone cover the cases where a cap is wanted.
 - **Remedy Hard misuse.** Rewriting Hard to Again in the review log changes history that sync, undo and the optimizer treat as fixed. If it is ever wanted, it should be a filter in the optimizer's training set (`fsrs/optimize.rs`), not an edit to the log.
 - **Reschedule only recently reviewed cards.** Placement needs every card's due date to balance against. The helper needed it to fix cards after syncing reviews from apps without FSRS, which cannot happen here: the server schedules every review.
 - **Auto-reschedule or disperse after sync.** Same reason.
