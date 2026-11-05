@@ -1576,6 +1576,17 @@ pub mod statistics {
         pub retrievability: Option<Histogram>,
         /// The sum of every card's retrievability: how many of them you would recall now.
         pub total_knowledge: Option<f64>,
+        /// The reviews a day the cards in review cost once the collection settles: the sum of
+        /// `1 / max(1, interval in days)`, also known as the burden. The cards in review are
+        /// those in a review state that are not suspended (buried cards count), with a review to
+        /// measure their interval from.
+        pub daily_load: f64,
+        /// The mean retrievability of the cards in review, now. `None` if the scheduler has no
+        /// forgetting curve, or there are no such cards.
+        pub average_retrievability: Option<f64>,
+        /// The mean stability of the cards in review, in days. `None` like
+        /// `average_retrievability`.
+        pub average_stability: Option<f64>,
     }
 
     /// Cards counted into buckets: bucket `i` holds the values from `edges[i]` up to

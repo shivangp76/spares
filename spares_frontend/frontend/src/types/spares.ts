@@ -42,8 +42,8 @@ export interface CliReviewInfo {
 
 // Internally-tagged serde enum
 export type TypeAnswer =
-  | { kind: 'diff'; ignore_case: boolean; ignore_combining: boolean }
-  | { kind: 'manual' };
+  | { kind: "diff"; ignore_case: boolean; ignore_combining: boolean }
+  | { kind: "manual" };
 
 export interface TypedBlank {
   expected: string;
@@ -100,7 +100,7 @@ export interface RatingSubmission {
   card_id: number;
   rating: number;
   recall_duration: number; // seconds
-  rate_duration: number;   // seconds
+  rate_duration: number; // seconds
   tag_id: number | null;
 }
 
@@ -121,7 +121,8 @@ export interface SubmitStudyActionResponse {
 }
 
 // Externally-tagged serde enum
-export type ReviewFilter = { Query: string } | { FilteredTag: { tag_id: number } };
+export type ReviewFilter =
+  { Query: string } | { FilteredTag: { tag_id: number } };
 
 export interface ReviewQueueRequest {
   filter: ReviewFilter | null;
@@ -175,10 +176,10 @@ export interface HeldBackCard extends QueueCard {
 
 // Externally-tagged serde enum
 export type NotShownReason =
-  | 'Suspended'
-  | 'Buried'
-  | 'NotDue'
-  | 'WaitingOnLinkedNote'
+  | "Suspended"
+  | "Buried"
+  | "NotDue"
+  | "WaitingOnLinkedNote"
   | { NewLimit: { preset: string | null } }
   | { ReviewLimit: { preset: string | null } };
 
@@ -201,7 +202,8 @@ export interface QueuePositionResponse {
 }
 
 // The study actions that can be performed offline
-export type OfflineStudyActionKind = { Rate: RatingSubmission } | { Bury: { card_id: number } };
+export type OfflineStudyActionKind =
+  { Rate: RatingSubmission } | { Bury: { card_id: number } };
 
 export interface OfflineStudyAction {
   // Unique per action, so a resent action is not applied twice
@@ -217,7 +219,7 @@ export interface SyncOfflineActionsRequest {
 
 export type OfflineActionOutcome =
   | { Applied: { event_id: number | null } }
-  | 'Duplicate'
+  | "Duplicate"
   | { Rejected: { message: string } };
 
 export interface SyncOfflineActionsResponse {
@@ -276,8 +278,10 @@ export interface ParserResponse {
   name: string;
 }
 
-export type SpecialState = 'Suspended' | 'UserBuried' | 'SchedulerBuried' | 'BuriedUntilLaterToday';
-export type SpecialStateUpdate = 'Suspended' | 'Buried' | 'BuriedUntilLaterToday';
+export type SpecialState =
+  "Suspended" | "UserBuried" | "SchedulerBuried" | "BuriedUntilLaterToday";
+export type SpecialStateUpdate =
+  "Suspended" | "Buried" | "BuriedUntilLaterToday";
 
 export interface CardResponse {
   id: number;
@@ -318,7 +322,7 @@ export interface ForgetCardResponse {
 export interface CardReviewEntry {
   id: number;
   /** `Cram` is a rating in a filtered tag that does not reschedule, which left the card's schedule alone. `Reschedule` is a postponement or advance, which moved the due date without a review. */
-  kind: 'Review' | 'Forget' | 'Cram' | 'Reschedule';
+  kind: "Review" | "Forget" | "Cram" | "Reschedule";
   reviewed_at: string;
   /** Relative to `scheduler_name`. */
   rating: number | null;
@@ -326,7 +330,7 @@ export interface CardReviewEntry {
   previous_state: number;
   scheduled_time: number | null; // seconds
   recall_duration: number | null; // seconds
-  rate_duration: number | null;   // seconds
+  rate_duration: number | null; // seconds
   tag_id: number | null;
   /** Replayed with the scheduler's current parameters. `null` after a forget. A cram keeps the one before it. */
   stability: number | null;
@@ -357,7 +361,7 @@ export interface RedoEventResponse {
 }
 
 /** What spares treats a card state as, whatever its scheduler calls it. */
-export type StateRole = 'New' | 'Learning' | 'Review' | 'Relearning';
+export type StateRole = "New" | "Learning" | "Review" | "Relearning";
 
 /** A state a scheduler can put a card in, from `getSchedulerStates`. */
 export interface CardState {
@@ -408,7 +412,11 @@ export interface TodayStats {
   cram_seconds: number;
 }
 
-export interface ForecastDay { date: string; learning: number; review: number }
+export interface ForecastDay {
+  date: string;
+  learning: number;
+  review: number;
+}
 
 export interface ReviewDay {
   date: string;
@@ -429,7 +437,10 @@ export interface ReviewsSummary {
   daily_average: number;
 }
 
-export interface PassFail { passed: number; failed: number }
+export interface PassFail {
+  passed: number;
+  failed: number;
+}
 
 export interface RetentionRow {
   label: string;
@@ -453,7 +464,12 @@ export interface AnswerButtons {
   mature: AnswerGroup;
 }
 
-export interface HourStats { reviews: number; passed: number; crams: number; crams_passed: number }
+export interface HourStats {
+  reviews: number;
+  passed: number;
+  crams: number;
+  crams_passed: number;
+}
 
 export interface CardCounts {
   /** Cards neither suspended nor buried, by state id. */
@@ -466,7 +482,11 @@ export interface CardCounts {
 }
 
 /** Bucket `i` holds the values from `edges[i]` to `edges[i + 1]`; the last bucket can be wider, holding the tail. */
-export interface Histogram { edges: number[]; counts: number[]; mean: number | null }
+export interface Histogram {
+  edges: number[];
+  counts: number[];
+  mean: number | null;
+}
 
 export interface Distributions {
   interval: Histogram;
@@ -475,6 +495,11 @@ export interface Distributions {
   /** `null` if the scheduler has no forgetting curve. */
   retrievability: Histogram | null;
   total_knowledge: number | null;
+  /** Reviews a day the cards in review cost once the collection settles: the sum of 1 / max(1, interval in days). */
+  daily_load: number;
+  /** Over the cards in review, neither new, learning nor suspended. `null` without a forgetting curve or such cards. */
+  average_retrievability: number | null;
+  average_stability: number | null;
 }
 
 export interface StatisticsGraphsResponse {
@@ -576,7 +601,8 @@ export interface GraphNode {
 }
 
 /** Why a note is in a graph: the query found it, a note found builds on it, or it builds on one. */
-export type GraphRelation = 'found' | 'prerequisite' | 'dependent' | 'unmatched';
+export type GraphRelation =
+  "found" | "prerequisite" | "dependent" | "unmatched";
 
 export interface UnmatchedLink {
   /** The note with the link. */
@@ -607,7 +633,7 @@ export interface LinkedNote {
 }
 
 // Externally-tagged serde enum
-export type NotesSelector = { Ids: number[] } | { Query: string } | 'All';
+export type NotesSelector = { Ids: number[] } | { Query: string } | "All";
 
 export interface CreateNoteRequest {
   data: string;

@@ -16,6 +16,7 @@ use crate::api::queue::tests::create_cards;
 use crate::config::SparesExternalConfig;
 use crate::config::StatisticsConfig;
 use crate::model::CardId;
+use crate::schedulers::get_scheduler_from_string;
 use crate::schema::statistics::AddedDay;
 use crate::schema::statistics::ForecastDay;
 use crate::schema::statistics::HourStats;
@@ -475,6 +476,34 @@ async fn every_section_over_all_time(pool: SqlitePool) {
         (knowledge - retrievability.mean.unwrap() * 5.0).abs() < 1e-9,
         "{knowledge}"
     );
+
+    // The cards in review are c1, c2 and c5, which is buried, with intervals of 14, 40 and 4
+    // days, last reviewed 9 days 3 hours, 4 hours and 6 days 1 hour ago. Suspended c4 and
+    // learning c3 are left out.
+    let load = 1.0 / 14.0 + 1.0 / 40.0 + 1.0 / 4.0;
+    assert!(
+        (distributions.daily_load - load).abs() < 1e-9,
+        "{distributions:?}"
+    );
+    assert_eq!(distributions.average_stability, Some(10.0));
+    let curve = get_scheduler_from_string("fsrs")
+        .unwrap()
+        .retrievability(&config(21))
+        .unwrap();
+    let recall =
+        (curve(10.0, 9.0 + 3.0 / 24.0) + curve(10.0, 4.0 / 24.0) + curve(10.0, 6.0 + 1.0 / 24.0))
+            / 3.0;
+    let average = distributions.average_retrievability.unwrap();
+    assert!((average - recall).abs() < 1e-9, "{average} {recall}");
+}
+
+#[sqlx::test]
+async fn daily_load_counts_an_interval_under_a_day_as_one_day(pool: SqlitePool) {
+    let [card] = create_cards(&pool, 1, now()).await.try_into().unwrap();
+    set_card(&pool, card, REVIEW, at(0, 18, 0), None, at(-1, 9, 0)).await;
+    review(&pool, card, at(0, 6, 0), AGAIN, REVIEW, 0).await;
+    let response = graphs(&pool, &config(21), request(None, None)).await;
+    assert!((response.distributions.daily_load - 1.0).abs() < 1e-9);
 }
 
 #[sqlx::test]
@@ -581,6 +610,9 @@ async fn a_query_matching_nothing_gives_zeros(pool: SqlitePool) {
     assert_eq!(retrievability.counts.iter().sum::<u32>(), 0);
     assert_eq!(retrievability.mean, None);
     assert_eq!(response.distributions.total_knowledge, Some(0.0));
+    assert!(response.distributions.daily_load.abs() < f64::EPSILON);
+    assert_eq!(response.distributions.average_retrievability, None);
+    assert_eq!(response.distributions.average_stability, None);
 }
 
 #[sqlx::test]
