@@ -70,7 +70,9 @@ The recipient adds the parser if their collection doesn't have it yet (`spares p
 spares import --parser markdown shared/export.md
 ```
 
-To send one file, add `--zip`: `spares note export 'tag=oceans' --share --zip -o oceans.zip` writes the notes' files and their media into `oceans.zip`, which `spares import --parser markdown oceans.zip` imports the same way (see `spares_core::api::note::share_bundle`).
+In the web app, select the notes on the Notes page and choose **Export…**, then **To share**. It says how many notes and files it holds, which private notes it leaves out and which paths have no file, then downloads `shared.zip`. **To edit and import back** downloads the files as without `--share`. The recipient imports a zip, or a file of shared notes, with **Import** on the Notes page, which also adds the parsers their collection doesn't have. On a phone that keeps a copy of the collection, the server exports and imports them, and the copy syncs afterwards.
+
+To send one file from the command line, add `--zip`: `spares note export 'tag=oceans' --share --zip -o oceans.zip` writes the notes' files and their media into `oceans.zip`, which `spares import --parser markdown oceans.zip` imports the same way (see `spares_core::api::note::share_bundle`).
 
 Without `--share`, the file names each note by its id in your collection, so importing it updates those notes. That is for editing notes in bulk and importing them back, and another collection's import fails on those ids.
 

@@ -10,6 +10,8 @@ import type {
   ForgetCardResponse,
   GetReviewCardResponse,
   ImageOcclusionData,
+  ImportSharedResponse,
+  ShareSummary,
   ImageOcclusionEditorConfig,
   MatchedKeywordResponse,
   NoteGraphRequest,
@@ -189,6 +191,11 @@ async function cacheListPage<T>(
 function authHeaders(body?: RequestInit["body"]): HeadersInit {
   const { csrfToken } = getCredentials();
   if (body instanceof FormData) return { "X-CSRF-Token": csrfToken };
+  if (body instanceof Blob)
+    return {
+      "X-CSRF-Token": csrfToken,
+      "Content-Type": "application/octet-stream",
+    };
   return {
     "X-CSRF-Token": csrfToken,
     "Content-Type": "application/json",
@@ -1155,6 +1162,32 @@ export async function exportNotes(
     { method: "POST", body: JSON.stringify({ query }) },
   );
   return body.files;
+}
+
+/** What the notes `query` finds would be shared as (see `spares_core::api::note::export`). Always the server's: a device's copy may not have every file the notes name. */
+export async function shareSummary(query: string): Promise<ShareSummary> {
+  return apiFetch("Share summary", "/api/notes/share/summary", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+}
+
+/** The notes `query` finds, exported to share, as a zip of their files and media (see `spares_core::api::note::share_bundle`). */
+export async function shareBundle(query: string): Promise<Blob> {
+  const res = await apiSend("Export to share", "/api/notes/share/bundle", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+  return res.blob();
+}
+
+/** Adds shared notes, from a file of them or a zip of them with their media, as new notes. On the server, since it stores the media. */
+export async function importShared(file: File): Promise<ImportSharedResponse> {
+  return apiFetch(
+    "Import",
+    `/api/notes/share/import?name=${encodeURIComponent(file.name)}`,
+    { method: "POST", body: file },
+  );
 }
 
 // Cards
