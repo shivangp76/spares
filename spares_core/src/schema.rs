@@ -174,6 +174,14 @@ pub mod note {
         /// How many of the notes the query found were left out for being private (see
         /// [`crate::config::SparesExternalConfig::private_tag_name`]). Only when sharing.
         pub private_notes_left_out: usize,
+        /// The images, audio and image occlusions the notes name, to go with them. Only when
+        /// sharing (see [`crate::api::note::shared_media`]).
+        #[serde(default)]
+        pub media: Vec<crate::api::note::shared_media::SharedMedia>,
+        /// Paths of images and audio the notes name, with no file there, so they are left as
+        /// they are. Only when sharing.
+        #[serde(default)]
+        pub missing_media: Vec<String>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
