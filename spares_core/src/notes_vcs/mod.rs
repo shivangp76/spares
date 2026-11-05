@@ -51,6 +51,7 @@ pub use note_file::ParsedNewNoteFile;
 pub use note_file::ParsedNoteFile;
 pub use note_file::file_note_fields;
 pub use note_file::fill_linked_notes;
+pub(crate) use note_file::is_warning;
 pub use note_file::parse_new_note_file;
 pub use note_file::parse_note_file;
 pub use note_file::same_note;

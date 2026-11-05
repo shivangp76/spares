@@ -199,19 +199,28 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 base_url: &base_url,
                 client: &client,
             });
-            import::import_files(
-                adapter.as_mut(),
-                parser.as_deref(),
-                to_parser_opt.as_deref(),
-                files.as_slice(),
-                dry_run,
-                false,
-                strip_liveness,
-                media_uploader.as_ref(),
-            )
-            .await
-            .into_diagnostic()
-            .map_err(|e| miette!("{:?}", e))?;
+            let unpack_dir = std::env::temp_dir().join(format!(
+                "spares-import-{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ));
+            let imported = async {
+                let files = import::unpack_bundles(&files, &unpack_dir)?;
+                import::import_files(
+                    adapter.as_mut(),
+                    parser.as_deref(),
+                    to_parser_opt.as_deref(),
+                    files.as_slice(),
+                    dry_run,
+                    false,
+                    strip_liveness,
+                    media_uploader.as_ref(),
+                )
+                .await
+            }
+            .await;
+            let _ = std::fs::remove_dir_all(&unpack_dir);
+            imported.into_diagnostic().map_err(|e| miette!("{:?}", e))?;
             Ok(())
         }
     }

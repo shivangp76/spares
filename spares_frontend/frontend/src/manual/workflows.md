@@ -70,6 +70,8 @@ The recipient adds the parser if their collection doesn't have it yet (`spares p
 spares import --parser markdown shared/export.md
 ```
 
+To send one file, add `--zip`: `spares note export 'tag=oceans' --share --zip -o oceans.zip` writes the notes' files and their media into `oceans.zip`, which `spares import --parser markdown oceans.zip` imports the same way (see `spares_core::api::note::share_bundle`).
+
 Without `--share`, the file names each note by its id in your collection, so importing it updates those notes. That is for editing notes in bulk and importing them back, and another collection's import fails on those ids.
 
 ## Putting cards off until after an exam
