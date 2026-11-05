@@ -63,6 +63,8 @@ This writes one file per parser into `shared` (such as `shared/export.md`), usin
 - Custom data, and clozes' `id:` keys.
 - Scheduling and review history.
 
+The images, audio clips and image occlusions the notes name go with them, into `shared/media`, and the notes name them there. Importing the file uploads them to the recipient's host, and names them by their paths there. Only files in your collection's media directory go with them, so that on a host no one can export another account's files. A path the export found no such file at, such as one with a space or one elsewhere on your computer, is left as it is, and printed: check that it names nothing private before you share the file. See `spares_core::api::note::shared_media`.
+
 The recipient adds the parser if their collection doesn't have it yet (`spares parser add -n markdown`), then imports the file, which adds the notes as new ones:
 ```sh
 spares import --parser markdown shared/export.md

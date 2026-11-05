@@ -194,7 +194,12 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .transpose()
                 .map_err(|e| miette!("{:?}", e))?;
 
-            import::import_from_files(
+            // Into spares, the images, audio and image occlusions of shared files go to the host
+            let media_uploader = (adapter_string == "spares").then_some(import::MediaUploader {
+                base_url: &base_url,
+                client: &client,
+            });
+            import::import_files(
                 adapter.as_mut(),
                 parser.as_deref(),
                 to_parser_opt.as_deref(),
@@ -202,6 +207,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 dry_run,
                 false,
                 strip_liveness,
+                media_uploader.as_ref(),
             )
             .await
             .into_diagnostic()
