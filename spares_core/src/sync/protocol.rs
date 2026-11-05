@@ -114,7 +114,8 @@ pub struct PullResponse {
 }
 
 /// A `render_asset` row. Assets are found on the laptop, which sends all of them on every push,
-/// and their files are copied separately. A device gets them from the server (see
+/// so the server drops those it no longer sends (see [`super::server::push`]), and their files are
+/// copied separately. A device gets them from the server (see
 /// [`PullResponse::render_assets`]), and sends none, so its copies never replace newer ones.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
 pub struct RenderAssetRecord {
