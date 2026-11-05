@@ -7,16 +7,21 @@
 //! since the pull, so a phone edit made while the client merges is never overwritten.
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::Utc;
+use log::error;
+use log::info;
 use rand::RngExt;
+use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 
 use super::SYNC_EPOCH_KEY;
 use super::SYNC_USN_KEY;
 use super::apply::Applied;
 use super::apply::apply_changes;
+use super::devices::DEVICE_REPLICAS;
 use super::devices::check_enrolled;
 use super::full;
 use super::get_state;
@@ -28,6 +33,7 @@ use super::protocol::PullRequest;
 use super::protocol::PullResponse;
 use super::protocol::PushRequest;
 use super::protocol::PushResponse;
+use super::protocol::RenderAssetRecord;
 use super::prune_received;
 use super::read_counts;
 use super::records::Selection;
@@ -39,6 +45,8 @@ use super::set_applying;
 use super::set_state;
 use super::stamp_dirty;
 use crate::Error;
+use crate::api::browser_render::RenderReads;
+use crate::api::browser_render::remove_unread_render_assets;
 use crate::config::get_replica;
 use crate::model::NoteId;
 
@@ -165,6 +173,8 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
         .await
         .map_err(sqlx_error)?;
     let applied = apply_changes(&mut tx, &request.changes, new_usn).await?;
+    let prune_render_assets = prunes_render_assets(&mut tx, request.replica).await?;
+    let orphaned = replaces_a_hash(&mut tx, &request.render_assets).await?;
     // Not over a newer file's: a client's rows may be older than another's, as a device's were
     // before it stopped sending them
     for asset in &request.render_assets {
@@ -217,6 +227,9 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
     let counts = read_counts(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
+    if prune_render_assets {
+        remove_unpushed_render_assets(db, &request, orphaned).await;
+    }
     Ok((
         PushResponse {
             usn: new_usn,
@@ -224,6 +237,65 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
         },
         applied,
     ))
+}
+
+/// Whether `replica`'s push removes the render assets it no longer sends. A host sends every one
+/// it has, so those it doesn't are no longer read, unless the notes of another host that sends
+/// them read them: the rows don't say which host sent them, so then they all stay.
+async fn prunes_render_assets(conn: &mut SqliteConnection, replica: u8) -> Result<bool, Error> {
+    if DEVICE_REPLICAS.contains(&replica) {
+        return Ok(false);
+    }
+    let other_hosts: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sync_client WHERE replica != ?1 AND replica NOT BETWEEN ?2 AND ?3)",
+    )
+    .bind(i64::from(replica))
+    .bind(i64::from(*DEVICE_REPLICAS.start()))
+    .bind(i64::from(*DEVICE_REPLICAS.end()))
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    Ok(!other_hosts)
+}
+
+/// Whether the push of `assets` replaces a row's hash, so no row may name its old stored copy.
+async fn replaces_a_hash(
+    conn: &mut SqliteConnection,
+    assets: &[RenderAssetRecord],
+) -> Result<bool, Error> {
+    let rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT path, hash, mtime FROM render_asset")
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(sqlx_error)?;
+    let rows: HashMap<String, (String, i64)> = rows
+        .into_iter()
+        .map(|(path, hash, mtime)| (path, (hash, mtime)))
+        .collect();
+    // As the push applies them, not over a newer row
+    Ok(assets.iter().any(|asset| {
+        rows.get(&asset.path)
+            .is_some_and(|(hash, mtime)| *hash != asset.hash && asset.mtime >= *mtime)
+    }))
+}
+
+/// Removes the render assets that `request`'s host no longer sends and no note here reads (see
+/// [`remove_unread_render_assets`]). The push is in, so a failure is only logged: it leaves files
+/// behind until the next push.
+async fn remove_unpushed_render_assets(db: &SqlitePool, request: &PushRequest, orphaned: bool) {
+    let pushed = RenderReads {
+        files: request
+            .render_assets
+            .iter()
+            .map(|asset| asset.path.clone())
+            .collect(),
+        packages: request.render_packages.iter().cloned().collect(),
+    };
+    match remove_unread_render_assets(db, Some(&pushed), orphaned).await {
+        Ok(0) => {}
+        Ok(removed) => info!("Removed {removed} render assets no note reads any more"),
+        Err(e) => error!("Failed to remove render assets no note reads: {e}"),
+    }
 }
 
 /// Writes the server's database to `path`, for a client's full download.
