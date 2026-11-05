@@ -242,12 +242,30 @@ pub(crate) async fn handle(
             let response = ensure_ok(response).await?;
             let result: ExportNotesResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
-            tokio::fs::create_dir_all(&export_args.output_dir)
-                .await
-                .into_diagnostic()?;
             if result.private_notes_left_out > 0 {
                 println!("Left out {} private notes", result.private_notes_left_out);
             }
+            for path in &result.missing_media {
+                println!("No file at {path}, so the notes still name it");
+            }
+            if export_args.zip {
+                let zip = spares_core::api::note::share_bundle::write_bundle(&result)
+                    .map_err(|e| miette!("{e}"))?;
+                tokio::fs::write(&export_args.output_dir, zip)
+                    .await
+                    .into_diagnostic()?;
+                println!(
+                    "Wrote {} with {} files of notes and {} images, audio clips and image \
+                     occlusion files",
+                    export_args.output_dir.display(),
+                    result.files.len(),
+                    result.media.len()
+                );
+                return Ok(());
+            }
+            tokio::fs::create_dir_all(&export_args.output_dir)
+                .await
+                .into_diagnostic()?;
             for (extension, content) in &result.files {
                 let filename = format!("export.{}", extension);
                 let path = export_args.output_dir.join(&filename);
@@ -269,9 +287,6 @@ pub(crate) async fn handle(
                     result.media.len(),
                     spares_core::api::note::shared_media::SHARED_MEDIA_DIR
                 );
-            }
-            for path in &result.missing_media {
-                println!("No file at {path}, so the notes still name it");
             }
         }
         NoteCommands::Generate(GenerateArgs {

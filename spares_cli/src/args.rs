@@ -608,6 +608,11 @@ pub(crate) struct ExportArgs {
     /// the notes in this collection.
     #[arg(long)]
     pub(crate) share: bool,
+    /// With `--share`, write the notes' files and their media into one zip, named by
+    /// `--output-dir`, such as `-o shared.zip`, to send as one file. `spares import` and the web
+    /// app import it.
+    #[arg(long, requires = "share")]
+    pub(crate) zip: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -47,6 +47,7 @@ diffy = "0.5.2"
 unicode-normalization = "0.1.26"
 chrono-tz = "0.10.4"
 web-time = "1.1"
+zip = { version = "2.2.3", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 indicatif = { version = "0.18.6", features = ["rayon"] }

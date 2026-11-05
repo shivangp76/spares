@@ -90,6 +90,7 @@ impl Limits {
             || path == "/api/images"
             || path == "/api/audio"
             || path == "/api/image-occlusions"
+            || path == "/api/notes/share/import"
         {
             Some(self.media_body_mb.saturating_mul(MB))
         } else {
@@ -106,7 +107,8 @@ impl Limits {
                 || path == "/api/images"
                 || path == "/api/images/url"
                 || path == "/api/audio"
-                || path == "/api/image-occlusions")
+                || path == "/api/image-occlusions"
+                || path == "/api/notes/share/import")
     }
 
     /// Whether `path` searches, which [`Limits::search_seconds`] applies to.
@@ -317,6 +319,9 @@ mod tests {
         assert_eq!(user.body_limit("/api/notes"), None);
         assert!(Limits::stores("/api/sync/media/image/a.png", &Method::PUT));
         assert!(!Limits::stores("/api/sync/media/image/a.png", &Method::GET));
+        // Shared notes bring their files
+        assert_eq!(user.body_limit("/api/notes/share/import"), Some(5 * MB));
+        assert!(Limits::stores("/api/notes/share/import", &Method::POST));
         assert!(Limits::searches("/api/notes/search/page"));
     }
 

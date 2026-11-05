@@ -47,7 +47,7 @@ fn is_tag_or_under(tag: &str, name: &str) -> bool {
 }
 
 /// Whether `tag` says how a note is doing in this collection, rather than what it is about.
-fn is_state_tag(tag: &str, config: &SparesExternalConfig) -> bool {
+pub(crate) fn is_state_tag(tag: &str, config: &SparesExternalConfig) -> bool {
     tag == config.flagged_tag_name
         || tag == config.leech.tag_name
         || tag == SYNC_CONFLICT_TAG

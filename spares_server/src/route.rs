@@ -177,6 +177,21 @@ fn media_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/images/url", post(create_image_from_url_handler))
         // Files read by sources that clients compile themselves
         .route("/api/render-assets", get(get_render_asset_handler))
+        // Shared notes name files a browser's copy may not have
+        .route(
+            "/api/notes/share/summary",
+            post(crate::handlers::share::share_summary_handler),
+        )
+        .route(
+            "/api/notes/share/bundle",
+            post(crate::handlers::share::share_bundle_handler),
+        )
+        .route(
+            "/api/notes/share/import",
+            post(crate::handlers::share::import_shared_handler).layer(DefaultBodyLimit::max(
+                crate::handlers::share::IMPORT_BODY_LIMIT,
+            )),
+        )
 }
 
 /// Images and audio added to notes, and image occlusions. A browser's copy stores the files it
@@ -589,6 +604,9 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .merge(shared_routes())
         .route("/api/images/url", post(needs_server))
         .route("/api/render-assets", get(needs_server))
+        .route("/api/notes/share/summary", post(needs_server))
+        .route("/api/notes/share/bundle", post(needs_server))
+        .route("/api/notes/share/import", post(needs_server))
         .route("/api/notes/vcs/status", get(needs_server))
         .route("/api/notes/vcs/saved-copies/remove", post(needs_server))
         .route("/api/sync/devices", get(needs_server))
@@ -729,6 +747,9 @@ mod tests {
         for (method, uri) in [
             ("POST", "/api/images/url"),
             ("GET", "/api/render-assets?path=/a.typ"),
+            ("POST", "/api/notes/share/summary"),
+            ("POST", "/api/notes/share/bundle"),
+            ("POST", "/api/notes/share/import?name=a.zip"),
             ("GET", "/api/notes/vcs/status"),
             ("POST", "/api/notes/vcs/saved-copies/remove"),
             ("GET", "/api/sync/devices"),

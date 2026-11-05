@@ -8,6 +8,7 @@ mod keyword_distance;
 mod live;
 mod render;
 mod search;
+pub mod share_bundle;
 pub mod shared_media;
 pub(crate) mod update;
 pub use basic::*;

@@ -27,6 +27,8 @@ pub(crate) mod render_asset;
 pub(crate) mod review;
 pub(crate) mod saved_search;
 pub(crate) mod scheduler;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod share;
 pub(crate) mod sync;
 pub(crate) mod tag;
 pub(crate) mod undo;
