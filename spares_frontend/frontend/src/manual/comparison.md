@@ -40,4 +40,4 @@ These are the issues in Anki that spares was built to address, and how it does.
 
 - Spares is in alpha, so expect breaking changes.
 - Cards cannot be flagged on their own. Flagging tags the whole note (`flagged_tag_name` on `spares_core::config::SparesExternalConfig`).
-- There are no add-ons, and no site for finding shared decks. Notes can still be shared as files: export them with `spares note export --share` and import them in another collection (see [Sharing notes](workflows.md#sharing-notes)). Anki decks can be imported with `spares migrate`.
+- There are no add-ons, and no site for finding shared decks. Notes can still be shared as files: export them to share from the Notes page of the web app, or with `spares note export --share` (`--zip` for one file), and import them in another collection with **Import** on its Notes page or `spares import`. Their images, audio and image occlusions go with them, and **Import** also adds the parsers the collection doesn't have (see [Sharing notes](workflows.md#sharing-notes)). Anki decks can be imported with `spares migrate`.
