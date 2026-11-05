@@ -779,7 +779,8 @@ export async function changeNotesParser(selector: NotesSelector, parserId: numbe
 
 /** The notes `query` finds, as files to import, keyed by their file extension, as `spares note export` writes them. */
 export async function exportNotes(query: string): Promise<Record<string, string>> {
-  return apiFetch('Export notes', '/api/notes/export', { method: 'POST', body: JSON.stringify({ query }) });
+  const body: { files: Record<string, string> } = await apiFetch('Export notes', '/api/notes/export', { method: 'POST', body: JSON.stringify({ query }) });
+  return body.files;
 }
 
 // Cards

@@ -554,6 +554,12 @@ pub(crate) struct ExportArgs {
     pub(crate) query: String,
     #[arg(short, long)]
     pub(crate) output_dir: PathBuf,
+    /// Export the notes to share with someone else: another collection imports them as new notes,
+    /// and what is private or only means something here is left out, such as notes tagged
+    /// `private` (see `spares_core::api::note::export`). Without this, importing the file updates
+    /// the notes in this collection.
+    #[arg(long)]
+    pub(crate) share: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -381,7 +381,12 @@ fn construct_file_data(
                 // "\n".to_string(),
                 "\n".to_string(),
                 action_string,
-                parser.construct_setting(&note_id_string),
+                // A note to add has no id yet: importing one with an id is an error.
+                if matches!(note_import_action, NoteImportAction::Add) {
+                    String::new()
+                } else {
+                    parser.construct_setting(&note_id_string)
+                },
                 parser.construct_setting(&keywords_string),
                 parser.construct_setting(&tags_string),
                 custom_data_str,

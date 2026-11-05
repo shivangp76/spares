@@ -602,4 +602,49 @@ mod tests {
             all_parser_names.iter().unique().count()
         );
     }
+    /// A note written to be added has no id, so importing it adds a note, as a note written to be
+    /// updated imports as an update of its own note (see `spares note export --without-ids`).
+    #[test]
+    fn test_construct_file_data_round_trips_action() {
+        let adapter = crate::adapters::get_adapter_from_string("spares").unwrap();
+        let note_id: crate::model::NoteId = "aak".parse().unwrap();
+        let request = GenerateNoteFilesRequest {
+            note_id,
+            keywords: vec!["k".to_string()],
+            tags: vec!["t".to_string()],
+            linked_notes: None,
+            note_data: "a".to_string(),
+            custom_data: CustomData::default(),
+        };
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let name = parser.get_parser_name();
+            for action in [NoteImportAction::Add, NoteImportAction::Update(note_id)] {
+                let data = parser
+                    .construct_full_file_data(&[(ConstructFileDataType::Note, &request)], &action);
+                assert_eq!(
+                    data.contains("note-id"),
+                    action != NoteImportAction::Add,
+                    "{name}: {data}"
+                );
+                let notes =
+                    get_notes(parser.as_ref(), None, &data, adapter.as_ref(), false, None).unwrap();
+                assert_eq!(notes.len(), 1, "{name}: {data}");
+                let (settings, _) = &notes[0];
+                // Only the settings matter here: LaTeX reads a note without clozes as an error.
+                let settings_errors = settings
+                    .errors_and_warnings
+                    .iter()
+                    .filter(|e| matches!(e, crate::LibraryError::Note(_)))
+                    .collect::<Vec<_>>();
+                assert!(
+                    settings_errors.is_empty(),
+                    "{name}: {settings_errors:?}\n{data}"
+                );
+                assert_eq!(settings.action, action, "{name}: {data}");
+                assert_eq!(settings.tags, ["t"], "{name}: {data}");
+                assert_eq!(settings.keywords, ["k"], "{name}: {data}");
+            }
+        }
+    }
 }
