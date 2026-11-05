@@ -475,6 +475,11 @@ export interface Distributions {
   /** `null` if the scheduler has no forgetting curve. */
   retrievability: Histogram | null;
   total_knowledge: number | null;
+  /** Reviews a day the cards in review cost once the collection settles: the sum of 1 / max(1, interval in days). */
+  daily_load: number;
+  /** Over the cards in review, neither new, learning nor suspended. `null` without a forgetting curve or such cards. */
+  average_retrievability: number | null;
+  average_stability: number | null;
 }
 
 export interface StatisticsGraphsResponse {

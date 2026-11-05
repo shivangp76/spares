@@ -394,10 +394,11 @@ function AddedSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
 }
 
 const formatPercent = (v: number) => `${Math.round(v * 100)}%`;
+const formatAverage = (v: number) => (v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(2));
 
 function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
   const d = graphs.distributions;
-  const average = (mean: number | null, unit = '') => (mean === null ? null : <p style={note}>Average {mean >= 100 ? Math.round(mean).toLocaleString() : mean.toFixed(2)}{unit}</p>);
+  const average = (mean: number | null, unit = '') => (mean === null ? null : <p style={note}>Average {formatAverage(mean)}{unit}</p>);
   return (
     <>
       <h3 style={{ fontSize: 14, margin: '8px 0' }}>Interval</h3>
@@ -420,6 +421,16 @@ function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) 
           <p style={note}>Total knowledge is the sum of every card’s retrievability: about how many of them you would recall now.</p>
         </>
       )}
+      <h3 style={{ fontSize: 14, margin: '20px 0 8px' }}>Cards in review</h3>
+      <div style={tiles}>
+        <Tile value={formatAverage(d.daily_load)} label="Daily load (reviews a day)" />
+        {d.average_retrievability !== null && <Tile value={formatPercent(d.average_retrievability)} label="Average retrievability" />}
+        {d.average_stability !== null && <Tile value={`${formatAverage(d.average_stability)} days`} label="Average stability" />}
+      </div>
+      <p style={note}>
+        Over the cards in review, leaving out learning and suspended cards. The daily load is about how many reviews a day they will cost once the collection settles: the sum of 1 / interval in days, an interval under a day counting
+        as one.
+      </p>
     </>
   );
 }
