@@ -767,3 +767,23 @@ export interface SavedSearch {
   name: string;
   query: string;
 }
+
+/** `POST /api/notes/share/summary`: `spares_core::schema::note::ExportNotesResponse` of an export to share, with its media's names but not their contents. */
+export interface ShareSummary {
+  /** Each file of notes, by its parser's file extension */
+  files: Record<string, string>;
+  private_notes_left_out: number;
+  media: { kind: "image" | "audio" | "image-occlusion"; name: string }[];
+  /** Paths the notes name with no file there, which stay as they are */
+  missing_media: string[];
+}
+
+/** `spares_core::api::note::share_bundle::ImportSharedResponse` */
+export interface ImportSharedResponse {
+  note_count: number;
+  event_ids: number[];
+  parsers_added: string[];
+  media_count: number;
+  missing_media: string[];
+  skipped_files: string[];
+}
