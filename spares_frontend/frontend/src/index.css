@@ -240,11 +240,14 @@ button:disabled {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* The links take the first row and the buttons the next, so the Sync button appearing once its
+   status loads can't push the buttons from beside the links onto a row of their own */
 .navbar-links {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
+  flex-basis: 100%;
 }
 
 .navbar-link,
@@ -254,7 +257,9 @@ button:disabled {
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 15px;
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .navbar-link:hover {
@@ -286,7 +291,9 @@ button:disabled {
   font: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .navbar-button:hover {
@@ -317,7 +324,12 @@ mark.search-match {
    Narrow screens are phones; a coarse pointer without hover is a touchscreen. */
 
 /* Remove the double-tap-to-zoom delay on taps */
-button, a, summary, label, input[type="radio"], input[type="checkbox"] {
+button,
+a,
+summary,
+label,
+input[type="radio"],
+input[type="checkbox"] {
   touch-action: manipulation;
 }
 
@@ -407,7 +419,8 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
     flex-wrap: wrap;
   }
 
-  .search-row > input, .search-row > .search-input {
+  .search-row > input,
+  .search-row > .search-input {
     flex-basis: 100% !important;
     max-width: none !important;
   }
@@ -510,11 +523,15 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 }
 
 @keyframes audio-recorder-pulse {
-  50% { opacity: 0.3; }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .audio-recorder-dot { animation: none; }
+  .audio-recorder-dot {
+    animation: none;
+  }
 }
 
 .help-dialog-content {
@@ -585,7 +602,8 @@ kbd {
   right: 0;
   bottom: 0;
   z-index: 1;
-  padding: 12px max(24px, (100% - 800px) / 2) calc(12px + env(safe-area-inset-bottom));
+  padding: 12px max(24px, (100% - 800px) / 2)
+    calc(12px + env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--border-subtle);
 }
@@ -684,7 +702,9 @@ html:has(.review-answer-bar) {
 
   /* iOS zooms into inputs with text smaller than 16px when they are focused. `!important`
      overrides the inline font sizes. */
-  input, select, textarea {
+  input,
+  select,
+  textarea {
     font-size: 16px !important;
   }
 
@@ -699,7 +719,6 @@ html:has(.review-answer-bar) {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
-    flex-basis: 100%;
   }
 
   .navbar-links::-webkit-scrollbar {
@@ -783,7 +802,8 @@ html:has(.review-answer-bar) {
     flex-wrap: wrap;
   }
 
-  .search-row > input, .search-row > .search-input {
+  .search-row > input,
+  .search-row > .search-input {
     flex-basis: 100% !important;
     max-width: none !important;
   }
@@ -988,6 +1008,10 @@ html:has(.review-answer-bar) {
 }
 
 @keyframes loading-delayed-appear {
-  from { visibility: hidden; }
-  to { visibility: visible; }
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
 }
