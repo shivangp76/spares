@@ -16,6 +16,7 @@ use spares_core::api::review::submit_study_action;
 use spares_core::api::statistics::get_review_history;
 use spares_core::api::statistics::get_statistics;
 use spares_core::api::statistics::get_statistics_graphs;
+use spares_core::api::statistics::get_steps_stats;
 use spares_core::config::read_external_config;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
@@ -29,6 +30,7 @@ use spares_core::schema::review::StatisticsRequest;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::schema::review::SyncOfflineActionsRequest;
 use spares_core::schema::statistics::StatisticsGraphsRequest;
+use spares_core::schema::statistics::StepsStatsRequest;
 
 use crate::AppState;
 use crate::handlers::error_to_response;
@@ -148,6 +150,16 @@ pub(crate) async fn get_statistics_graphs_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(graphs))
+}
+
+pub(crate) async fn get_steps_stats_handler(
+    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Json(body): Json<StepsStatsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let stats = get_steps_stats(&data.db, body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(stats))
 }
 
 pub(crate) async fn get_review_config_handler()

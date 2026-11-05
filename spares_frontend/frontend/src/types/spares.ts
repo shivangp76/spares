@@ -502,6 +502,43 @@ export interface Distributions {
   average_stability: number | null;
 }
 
+export interface StepsStatsRequest {
+  /** `null` for the cards that use no preset. */
+  preset: string | null;
+  period_days: number | null;
+}
+
+export type StepsGroupKind =
+  "again" | "hard" | "good" | "again_then_good" | "relearning";
+
+export interface StepsGroup {
+  kind: StepsGroupKind;
+  reviews: number;
+  recalled: number;
+  /** Days. `null` when the reviews do not pin it down. */
+  stability: number | null;
+  /** Seconds until recall falls to the desired retention. */
+  interval: number | null;
+}
+
+/** Seconds; `null` without enough reviews. */
+export interface RecommendedSteps {
+  first_learning_step: number | null;
+  second_learning_step: number | null;
+  relearning_step: number | null;
+}
+
+export interface StepsStatsResponse {
+  presets: string[];
+  desired_retention: number;
+  min_reviews: number;
+  groups: StepsGroup[];
+  /** Seconds. */
+  learning_steps: number[];
+  relearning_steps: number[];
+  recommended: RecommendedSteps;
+}
+
 export interface StatisticsGraphsResponse {
   mature_threshold_days: number;
   /** The local date of the request's `date`. */

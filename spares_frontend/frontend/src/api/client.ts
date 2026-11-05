@@ -38,6 +38,8 @@ import type {
   StatisticsGraphsRequest,
   StatisticsGraphsResponse,
   StatisticsResponse,
+  StepsStatsRequest,
+  StepsStatsResponse,
   SubmitStudyActionRequest,
   SubmitStudyActionResponse,
   SyncOfflineActionsRequest,
@@ -788,6 +790,16 @@ export async function getStatisticsGraphs(
     tz: localTimeZone(),
   };
   return apiFetch("Statistics graphs fetch", "/api/statistics/graphs", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+/** How quickly a preset's cards are forgotten in their steps, and the steps that fit. */
+export async function getStepsStats(
+  request: StepsStatsRequest,
+): Promise<StepsStatsResponse> {
+  return apiFetch("Steps stats fetch", "/api/statistics/steps", {
     method: "POST",
     body: JSON.stringify(request),
   });

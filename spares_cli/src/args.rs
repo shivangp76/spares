@@ -428,6 +428,22 @@ pub(crate) enum CardCommands {
     /// `spares card reschedule`, this cannot be undone, so it asks for confirmation. Optimizing
     /// again every month or so keeps the parameters in step with your history.
     Optimize(OptimizeArgs),
+    /// Recommend learning and relearning steps from how quickly cards are forgotten in them
+    ///
+    /// Like fsrs4anki-helper's Steps Stats. Each review in a step is paired with the card's next
+    /// review, if it came within a day, and grouped by what came before: a new card's first rating
+    /// of Again, Hard or Good, Again then Good, or a lapse. Each group is fitted the stability whose
+    /// forgetting curve best predicts which of the next reviews were recalled. A step is the time it
+    /// takes recall to fall to the cards' desired retention:
+    ///
+    /// - first learning step: after Again
+    /// - second learning step: the shortest of Again then Good, Good, and twice Hard less the first
+    ///   step (Hard waits halfway between the first two steps)
+    /// - relearning step: after a lapse
+    ///
+    /// Steps are set per preset, so this looks at one preset's cards at a time. Groups with fewer
+    /// than 100 reviews recommend nothing. It changes nothing: set the steps in config.toml.
+    Steps(StepsArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
     /// Unbury all cards
@@ -618,6 +634,17 @@ pub(crate) struct OptimizeArgs {
     /// Skip the confirmation prompt for `--apply`
     #[arg(short, long)]
     pub(crate) yes: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct StepsArgs {
+    /// The preset (`[queue.presets.<name>]`) whose cards to look at. Without it, the cards that use
+    /// no preset, which have the top-level steps.
+    #[arg(short, long)]
+    pub(crate) preset: Option<String>,
+    /// Only cards first reviewed in the last this many days, and lapses in them. 0 for all time.
+    #[arg(short, long, default_value_t = 365)]
+    pub(crate) days: u32,
 }
 
 #[derive(Args, Debug)]
