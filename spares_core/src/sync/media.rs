@@ -190,7 +190,7 @@ fn mtime(metadata: &std::fs::Metadata) -> i64 {
 
 /// The files of `/api/sync/media/{kind}`: those a device adds, and image occlusions, which it
 /// also downloads.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MediaKind {
     Image,

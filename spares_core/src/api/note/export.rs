@@ -12,6 +12,8 @@
 //!   [`SYNC_CONFLICT_TAG`] and the `live:` tags of live notes.
 //! - Custom data is left out, such as a live note's `live_sync_name` and an Anki note's id.
 //! - Clozes' `id:` keys, which only live notes here use, are left out.
+//! - The images, audio and image occlusions the notes name go with them, and the notes name them
+//!   there (see [`super::shared_media`]).
 //!
 //! Links to other notes are kept, since they are written as keywords, so the shared notes link to
 //! each other again once imported.
@@ -23,6 +25,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::Error;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
+use crate::api::note::shared_media::MediaBundle;
 use crate::config::SparesExternalConfig;
 use crate::model::CustomData;
 use crate::parsers::ConstructFileDataType;
@@ -56,10 +59,12 @@ fn to_share(
     parser: &dyn Parseable,
     mut request: GenerateNoteFilesRequest,
     config: &SparesExternalConfig,
+    media: &mut MediaBundle,
 ) -> Result<GenerateNoteFilesRequest, Error> {
     request.tags.retain(|tag| !is_state_tag(tag, config));
     request.custom_data = CustomData::default();
     request.note_data = remove_cloze_uid_from_note_data(parser, &request.note_data)?.0;
+    request.note_data = media.bundle(&request.note_data)?;
     Ok(request)
 }
 
@@ -79,6 +84,7 @@ pub async fn export_notes(
     let notes_data = get_render_note_data(db, Some(note_ids)).await?;
 
     let mut private_notes_left_out = 0;
+    let mut media = MediaBundle::default();
     let mut grouped_requests: HashMap<&str, Vec<GenerateNoteFilesRequest>> = HashMap::new();
     for render_note_data in &notes_data {
         let request = render_note_data_to_generate_files_request::<std::hash::RandomState>(
@@ -95,7 +101,7 @@ pub async fn export_notes(
                 continue;
             }
             let parser = find_parser(&render_note_data.parser_name, all_parsers)?;
-            to_share(parser.as_ref(), request, config)?
+            to_share(parser.as_ref(), request, config, &mut media)?
         } else {
             request
         };
@@ -133,9 +139,12 @@ pub async fn export_notes(
         let rendered = export_template_contents.replace(&body_placeholder, &file_data);
         files.insert(parser.file_extension().to_string(), rendered);
     }
+    let (media, missing_media) = media.finish();
     Ok(ExportNotesResponse {
         files,
         private_notes_left_out,
+        media,
+        missing_media,
     })
 }
 

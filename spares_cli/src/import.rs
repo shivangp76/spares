@@ -197,6 +197,7 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
+use spares_core::api::note::shared_media::bundled_media_references;
 use spares_core::config::SparesExternalConfig;
 use spares_core::config::read_external_config;
 use spares_core::model::NoteId;
@@ -607,8 +608,85 @@ async fn aggregate_note_into_parser_group(
     Ok(())
 }
 
+/// Uploads the images, audio and image occlusions bundled with a shared file (see
+/// `spares_core::api::note::shared_media`) to the host, so its notes name them there.
+pub(crate) struct MediaUploader<'a> {
+    pub(crate) base_url: &'a str,
+    pub(crate) client: &'a reqwest::Client,
+}
+
+impl MediaUploader<'_> {
+    /// `contents` of the file at `file_path`, naming the files of the bundle next to it by their
+    /// paths on the host, once they are uploaded. In a dry run, nothing is uploaded and
+    /// `contents` is unchanged.
+    async fn upload_bundled(
+        &self,
+        file_path: &Path,
+        contents: String,
+        dry_run: bool,
+    ) -> Result<String, Error> {
+        let references = bundled_media_references(&contents)
+            .into_iter()
+            .filter(|r| r.path(file_path).is_file())
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return Ok(contents);
+        }
+        let mut uploaded: HashMap<PathBuf, String> = HashMap::new();
+        for reference in &references {
+            let path = reference.path(file_path);
+            if dry_run || uploaded.contains_key(&path) {
+                continue;
+            }
+            let body = std::fs::read(&path).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            })?;
+            let url = format!(
+                "{}/api/sync/media/{}/{}",
+                self.base_url,
+                reference.kind.as_str(),
+                reference.name
+            );
+            let response = self.client.put(url).body(body).send().await?;
+            let status = response.status();
+            let answer: Value = response.json().await?;
+            let host_path = answer.get("path").and_then(Value::as_str);
+            let Some(host_path) = host_path.filter(|_| status.is_success()) else {
+                let message = answer
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| status.to_string(), ToString::to_string);
+                return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                    description: format!("Failed to upload {}: {message}", path.display()),
+                })));
+            };
+            uploaded.insert(path, host_path.to_string());
+        }
+        if dry_run {
+            println!(
+                "Would upload {} images, audio clips and image occlusion files",
+                references
+                    .iter()
+                    .map(|r| r.path(file_path))
+                    .collect::<HashSet<_>>()
+                    .len()
+            );
+            return Ok(contents);
+        }
+        let mut result = String::with_capacity(contents.len());
+        let mut last = 0;
+        for reference in &references {
+            result.push_str(&contents[last..reference.range.start]);
+            result.push_str(&uploaded[&reference.path(file_path)]);
+            last = reference.range.end;
+        }
+        result.push_str(&contents[last..]);
+        Ok(result)
+    }
+}
+
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
-#[expect(clippy::too_many_lines)]
 pub(crate) async fn import_from_files<P>(
     adapter: &mut dyn SrsAdapter,
     parser_opt: Option<&dyn Parseable>,
@@ -617,6 +695,35 @@ pub(crate) async fn import_from_files<P>(
     dry_run: bool,
     quiet: bool,
     strip_liveness: bool,
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
+    import_files(
+        adapter,
+        parser_opt,
+        to_parser_opt,
+        file_paths,
+        dry_run,
+        quiet,
+        strip_liveness,
+        None,
+    )
+    .await
+}
+
+/// [`import_from_files`], uploading the files bundled with shared files with `media_uploader`.
+#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn import_files<P>(
+    adapter: &mut dyn SrsAdapter,
+    parser_opt: Option<&dyn Parseable>,
+    to_parser_opt: Option<&dyn Parseable>,
+    file_paths: &[P],
+    dry_run: bool,
+    quiet: bool,
+    strip_liveness: bool,
+    media_uploader: Option<&MediaUploader<'_>>,
 ) -> Result<(), Error>
 where
     P: AsRef<Path>,
@@ -655,6 +762,14 @@ where
             description: format!("Failed to read {}", file_path.as_ref().display()),
             source: e,
         })?;
+        let file_contents = match media_uploader {
+            Some(uploader) => {
+                uploader
+                    .upload_bundled(file_path.as_ref(), file_contents, dry_run)
+                    .await?
+            }
+            None => file_contents,
+        };
 
         let parse_result = guess_and_parse_notes(
             &file_contents,

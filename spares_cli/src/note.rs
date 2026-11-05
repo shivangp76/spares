@@ -254,6 +254,25 @@ pub(crate) async fn handle(
                 tokio::fs::write(&path, content).await.into_diagnostic()?;
                 println!("Wrote {}", filename);
             }
+            for media in &result.media {
+                let path = export_args.output_dir.join(media.relative_path());
+                if let Some(dir) = path.parent() {
+                    tokio::fs::create_dir_all(dir).await.into_diagnostic()?;
+                }
+                tokio::fs::write(&path, &media.contents)
+                    .await
+                    .into_diagnostic()?;
+            }
+            if !result.media.is_empty() {
+                println!(
+                    "Wrote {} images, audio clips and image occlusion files into {}",
+                    result.media.len(),
+                    spares_core::api::note::shared_media::SHARED_MEDIA_DIR
+                );
+            }
+            for path in &result.missing_media {
+                println!("No file at {path}, so the notes still name it");
+            }
         }
         NoteCommands::Generate(GenerateArgs {
             query,
