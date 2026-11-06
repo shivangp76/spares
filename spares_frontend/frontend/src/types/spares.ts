@@ -805,6 +805,51 @@ export interface ShareSummary {
   missing_media: string[];
 }
 
+/** `spares_core::api::note::import::ImportRequestOptions`: `spares import`'s options. */
+export interface ImportRequestOptions {
+  /** Without one, each file's parser is the one that finds notes in it */
+  parser: string | null;
+  to_parser: string | null;
+  dry_run: boolean;
+  strip_liveness: boolean;
+}
+
+/** `spares_core::api::note::import::ImportNoteSummary` */
+export interface ImportNoteSummary {
+  file: string;
+  parser: string;
+  action: "add" | "update" | "delete";
+  note_id: number | null;
+  card_count: number;
+  tags: string[];
+  keywords: string[];
+  is_suspended: boolean;
+  live: boolean;
+  warnings: string[];
+  data: string;
+}
+
+/** `spares_core::api::note::import::RewrittenFile` */
+export interface RewrittenFile {
+  file: number;
+  name: string;
+  contents: string;
+}
+
+/** `spares_core::api::note::import::ImportResponse` */
+export interface ImportResponse {
+  dry_run: boolean;
+  notes: ImportNoteSummary[];
+  skipped_note_count: number;
+  deleted_live_note_ids: number[];
+  rewritten_files: RewrittenFile[];
+  /** The import's first event: undoing it with its group reverts the import */
+  event_id: number | null;
+  media_count: number;
+  missing_media: string[];
+  skipped_files: string[];
+}
+
 /** `spares_core::api::note::share_bundle::ImportSharedResponse` */
 export interface ImportSharedResponse {
   note_count: number;
