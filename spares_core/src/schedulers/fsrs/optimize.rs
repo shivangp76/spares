@@ -61,7 +61,7 @@ pub fn training_set(review_logs: &[ReviewLog]) -> TrainingSet {
     training_set
 }
 
-/// The training items for one card, one per review that has an earlier review on a previous day.
+/// The training items for one card, one per review on a later day than the card's previous review.
 fn card_items(review_logs: &[ReviewLog]) -> Vec<FSRSItem> {
     // Reviews before a forget were discarded by the user and say nothing about the memory the card
     // has now.
@@ -106,12 +106,13 @@ fn card_items(review_logs: &[ReviewLog]) -> Vec<FSRSItem> {
         });
         previous_day = Some(day);
         history.push(FSRSReview { rating, delta_t });
-        let item = FSRSItem {
-            reviews: history.clone(),
-        };
-        // An item needs a review on a later day to say anything about long-term memory.
-        if item.long_term_review_cnt() > 0 {
-            items.push(item);
+        // Only a review on a later day than the previous one says anything about long-term
+        // memory. A same-day review, such as a relearning step after a lapse, stays in the history
+        // of the items after it, but `FSRS::evaluate` cannot score it as an item of its own.
+        if delta_t > 0 {
+            items.push(FSRSItem {
+                reviews: history.clone(),
+            });
         }
     }
     items
@@ -260,6 +261,28 @@ mod tests {
                 vec![(3, 0), (3, 1), (1, 3), (4, 6)],
             ]
         );
+    }
+
+    #[test]
+    fn a_same_day_review_after_a_later_day_gives_no_item() {
+        let mut relearn = review(1, 5, 4, 3);
+        relearn.id = 6;
+        relearn.reviewed_at = at(5, 13);
+        let logs = vec![
+            review(1, 0, 1, 0),
+            review(1, 5, 1, 2),
+            relearn,
+            review(1, 8, 3, 2),
+        ];
+        let set = training_set(&logs);
+        assert_eq!(
+            set.items.iter().map(deltas).collect::<Vec<_>>(),
+            vec![vec![(1, 0), (1, 5)], vec![(1, 0), (1, 5), (4, 0), (3, 3)],],
+            "the relearning step is kept in the history but is not an item"
+        );
+        // `FSRS::evaluate` refuses the whole set if any item ends on a same-day review.
+        let parameters = check_and_fill_parameters(&[]).unwrap();
+        assert!(evaluate(&parameters, set.items).is_ok());
     }
 
     #[test]
