@@ -144,6 +144,8 @@ spares import --parser markdown ./notes.md
 ```
 (See `spares import --help` for more options)
 
+In the web app, **Import** on the Notes page does the same: pick the files (or zips of shared notes), and the parser and other options, and it shows what the import would add, update and delete before importing. Undo reverts the whole import.
+
 ## Linked Notes
 
 Note the usage of `[Pacific](li)` in the first note. This is a linked note. The keyword "Pacific" will be searched for across all other notes and the note with the closest match will be linked in that note document. In this case, the second note has the keyword "Pacific Ocean". Since this is the only other note, this is the closest match. This linking will be done when notes are rendered (see below).

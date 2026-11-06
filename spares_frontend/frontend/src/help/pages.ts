@@ -120,6 +120,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       'Tags group notes, as in `tag=spanish`. Keywords name what a note is about, as in `keyword="Irregular verbs"`, so that other notes can link to it.',
       "Check notes to act on them at once: add or remove tags, change their parser, export them to a file to import, or delete them. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.",
       "Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.",
+      "Import brings in files of notes: shared notes, added as new notes, or files of this collection's notes, such as an export to edit them or live notes, which it previews before importing. Undo reverts the whole import.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS, ...NOTE_EDITOR_SHORTCUTS],
     docs: [
@@ -131,6 +132,11 @@ export const PAGE_HELP: Record<string, PageHelp> = {
         label: "Editing notes",
         file: "getting_started.md",
         heading: "Editing notes",
+      },
+      {
+        label: "Importing notes",
+        file: "getting_started.md",
+        heading: "Adding notes",
       },
     ],
   },

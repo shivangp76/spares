@@ -10,6 +10,8 @@ import type {
   ForgetCardResponse,
   GetReviewCardResponse,
   ImageOcclusionData,
+  ImportRequestOptions,
+  ImportResponse,
   ImportSharedResponse,
   ShareSummary,
   ImageOcclusionEditorConfig,
@@ -1219,6 +1221,28 @@ export async function importShared(file: File): Promise<ImportSharedResponse> {
     "Import",
     `/api/notes/share/import?name=${encodeURIComponent(file.name)}`,
     { method: "POST", body: file },
+  );
+}
+
+/**
+ * Imports files of notes, or zips of them with their media, as `spares import` does: adding,
+ * updating and deleting the notes they say to. On the server, which renders the notes and stores
+ * the media. With `dry_run`, says what it would do and changes nothing.
+ */
+export async function importFiles(
+  files: File[],
+  options: ImportRequestOptions,
+): Promise<ImportResponse> {
+  const form = new FormData();
+  form.append("options", JSON.stringify(options));
+  for (const file of files) form.append("file", file, file.name);
+  return apiFetch(
+    options.dry_run ? "Import preview" : "Import",
+    "/api/notes/import",
+    {
+      method: "POST",
+      body: form,
+    },
   );
 }
 
