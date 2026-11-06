@@ -141,7 +141,7 @@ impl ViewItem for CardResponse {
     }
 
     fn card_id_str(&self) -> Option<String> {
-        Some(cloze_tag_str(self.note_id, self.order))
+        Some(cloze_tag_str(self.order))
     }
 }
 

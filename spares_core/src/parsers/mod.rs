@@ -33,6 +33,7 @@ mod helpers;
 pub(crate) mod image_occlusion;
 pub(crate) mod impls;
 mod notes;
+mod render_reuse;
 mod settings;
 pub mod syntax;
 pub mod tts;
@@ -517,7 +518,7 @@ pub fn construct_card_data(
     side: CardSide,
     note_id: NoteId,
 ) -> String {
-    let card_id = cloze_tag_str(note_id, card_order);
+    let card_id = cloze_tag_str(card_order);
     let mut id_injected = false;
     let mut image_occlusion_order: usize = 1;
     card_data
