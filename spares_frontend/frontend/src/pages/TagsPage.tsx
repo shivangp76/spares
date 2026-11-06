@@ -15,6 +15,7 @@ import { setTagsPageSize, useTagsPageSize } from '../preferences';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 import PageTitle from '../components/PageTitle';
+import Skeleton from '../components/Skeleton';
 
 const PAGE_SIZE = 500;
 const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
@@ -466,7 +467,7 @@ export default function TagsPage() {
         </div>
       )}
       {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
-      {!tags && !error && <div>Loading…</div>}
+      {!tags && !error && <Skeleton lines={8} />}
 
       {tags && view === 'tree' && (
         <>

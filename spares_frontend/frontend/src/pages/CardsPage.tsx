@@ -27,6 +27,7 @@ import { selectedCount, type IdsOrQuery } from '../selection';
 import type { CardMatch, CardResponse, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatDate, formatDateTime, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
 import PageTitle from '../components/PageTitle';
+import Skeleton from '../components/Skeleton';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
@@ -472,7 +473,7 @@ export default function CardsPage() {
           />
 
           {error && <pre style={{ color: 'var(--error)', marginBottom: 12, marginTop: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>}
-          {loading && <div>Loading…</div>}
+          {loading && <Skeleton lines={8} />}
 
           {queueOrder && searchQuery !== null && (
             <QueueOrder

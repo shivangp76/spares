@@ -11,6 +11,7 @@ import { useTableWidths } from '../hooks/useTableWidths';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
 import PageTitle from '../components/PageTitle';
+import Skeleton from '../components/Skeleton';
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
@@ -119,7 +120,7 @@ export default function ParsersPage() {
         </div>
       )}
       {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>{error}</div>}
-      {!parsers && !error && <div>Loading…</div>}
+      {!parsers && !error && <Skeleton lines={4} />}
 
       {parsers && (
         <div className="table-scroll">

@@ -44,6 +44,7 @@ import InsertImageButton from "./InsertImageButton";
 import InsertImageOcclusionButton from "./InsertImageOcclusionButton";
 import LocalGraph from "./LocalGraph";
 import NoteSyntaxButton from "./NoteSyntaxHelp";
+import Skeleton from "./Skeleton";
 
 const fieldLabel: React.CSSProperties = {
   fontSize: 12,
@@ -661,7 +662,7 @@ export default function NoteDetail({
             backgroundColor: "var(--bg)",
           }}
         >
-          {render === null && <div>Loading…</div>}
+          {render === null && <Skeleton block={160} lines={0} />}
           {render && "error" in render && (
             <div className="error-text-small">{render.error}</div>
           )}

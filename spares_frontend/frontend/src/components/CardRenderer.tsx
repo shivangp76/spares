@@ -13,6 +13,7 @@ import PdfViewer from "./PdfViewer";
 import TypstViewer from "./TypstViewer";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useCardZoom, usePagesPerRow } from "../preferences";
+import Skeleton from "./Skeleton";
 
 interface Props {
   path: string;
@@ -116,7 +117,7 @@ function RenderedFile({
 
   if (error)
     return <div className="error-text">Error loading card: {error}</div>;
-  if (url === null) return <div className="loading-delayed">Loading…</div>;
+  if (url === null) return <Skeleton block={160} lines={0} />;
   return <PdfViewer url={url} onReady={onReady} />;
 }
 
@@ -157,7 +158,7 @@ function DeviceSource({
         after the next sync.
       </p>
       {html === null ? (
-        <div className="loading-delayed">Loading…</div>
+        <Skeleton block={160} lines={0} />
       ) : (
         <HtmlViewer
           path=""
@@ -257,7 +258,7 @@ function PendingRender({
   );
   const html = useDeviceImages(parsed) ?? parsed;
 
-  if (current === null) return <div className="loading-delayed">Loading…</div>;
+  if (current === null) return <Skeleton block={160} lines={0} />;
   if ("rendered" in current) {
     return (
       <>
