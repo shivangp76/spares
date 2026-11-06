@@ -620,6 +620,24 @@ pub mod note {
         pub id: Option<NoteId>,
     }
 
+    /// `POST /api/notes/live/list`: the notes of one live sync group
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ListLiveNotesRequest {
+        pub live_sync_name: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ListLiveNotesResponse {
+        /// By block order
+        pub notes: Vec<LiveNoteId>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct LiveNoteId {
+        pub block_order: i64,
+        pub id: NoteId,
+    }
+
     /// The notes of one live sync group as an import is about to leave them. See
     /// [`crate::api::note::relocate_live_cards`].
     #[derive(Debug, Deserialize, Serialize)]
