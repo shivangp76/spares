@@ -688,10 +688,11 @@ pub async fn import_files(
             handle_live_sync(parser, file_contents, &max_parser_all_notes)?
         {
             // Re-parse enriched content so note data carries the same id: keys
-            // as what will be written to the file (fixes double-UID-minting bug).
+            // as what will be written to the file (fixes double-UID-minting bug). Only `parser`
+            // found notes in the file, and adding keys to its clozes doesn't change that.
             let reparsed = guess_and_parse_notes(
                 &enriched_contents,
-                &parsers_to_try,
+                &[parser],
                 to_parser_opt,
                 &*adapter,
                 dry_run,
