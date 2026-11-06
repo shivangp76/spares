@@ -240,6 +240,7 @@ fn build_review_card_response(
     all_parsers: &[fn() -> Box<dyn Parseable>],
     linked_notes: Vec<ReviewLinkedNote>,
     keywords: Vec<String>,
+    tags: Vec<String>,
 ) -> Result<GetReviewCardResponse, Error> {
     let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
@@ -382,6 +383,7 @@ fn build_review_card_response(
         note_updated_at,
         parser_name,
         keywords,
+        tags,
         cli,
         browser_sources: None,
         device_sources: None,
@@ -1155,6 +1157,14 @@ pub(crate) async fn review_card_response(
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+    let tags: Vec<String> = sqlx::query_scalar(
+        r"SELECT t.name FROM tag t JOIN note_tag nt ON nt.tag_id = t.id
+        WHERE nt.note_id = ? ORDER BY t.name",
+    )
+    .bind(review_card.note_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
     let note_updated_at: DateTime<Utc> =
         sqlx::query_scalar(r"SELECT updated_at FROM note WHERE id = ?")
             .bind(review_card.note_id)
@@ -1170,6 +1180,7 @@ pub(crate) async fn review_card_response(
         all_parsers,
         linked_notes,
         keywords,
+        tags,
     )?;
     add_card_extras(db, &mut response, all_parsers).await?;
     Ok(response)
@@ -2278,6 +2289,41 @@ mod tests {
         assert!(!cards.is_empty());
 
         (last_note.clone(), cards)
+    }
+
+    /// The note's keywords and tags come with the card, for clients to show beside it.
+    #[sqlx::test]
+    async fn test_review_card_keywords_and_tags(pool: SqlitePool) -> () {
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "The capital of France is {{Paris}}.".to_string(),
+                keywords: vec!["France".to_string()],
+                tags: vec!["geography".to_string(), "europe".to_string()],
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let now = Utc::now();
+        create_notes(&pool, request, now, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let card_id: CardId = sqlx::query_scalar(r"SELECT id FROM card")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let review_card = get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(review_card.keywords, ["France"]);
+        assert_eq!(review_card.tags, ["europe", "geography"]);
     }
 
     #[sqlx::test]

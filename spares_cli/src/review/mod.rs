@@ -8,6 +8,7 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::Utc;
 use clap::Args;
+use colored::Colorize;
 use inquire::MultiSelect;
 use inquire::Select;
 use reqwest::Client;
@@ -261,6 +262,17 @@ async fn fetch_review_card(
             };
             println!("Note Id: {}", review_card.note_id.letters());
             println!("Card Id: {}", review_card.card_id);
+            // Shown here, as the rendered card leaves them out. Coloured to stand out from the
+            // lines around them, in colours typed answers don't use for right and wrong.
+            if !review_card.keywords.is_empty() {
+                println!(
+                    "Keywords: {}",
+                    review_card.keywords.join(", ").cyan().bold()
+                );
+            }
+            if !review_card.tags.is_empty() {
+                println!("Tags: {}", review_card.tags.join(", ").magenta().bold());
+            }
             if !is_cli {
                 let file_name = review_card
                     .card_front_rendered_path
