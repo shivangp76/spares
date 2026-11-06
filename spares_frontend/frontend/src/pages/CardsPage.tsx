@@ -8,6 +8,7 @@ import CardDetail, { type CardDetailHandle } from '../components/CardDetail';
 import CardTools from '../components/CardTools';
 import { NavbarHelp } from '../components/Navbar';
 import RecentSearches from '../components/RecentSearches';
+import SavedSearches from '../components/SavedSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import Pagination from '../components/Pagination';
 import { QueueOrder } from '../components/QueuePositions';
@@ -298,13 +299,13 @@ export default function CardsPage() {
     setSearchCount(n => n + 1);
   }
 
-  const { saved: savedSearches, save: saveSavedSearch, remove: removeSavedSearch, error: savedSearchError } = useSavedSearches();
+  const savedSearches = useSavedSearches();
 
   function handleSaveSearch() {
     const q = query.trim();
     if (!q) return;
-    const name = window.prompt('Save this search as:', savedSearches.find(s => s.query === q)?.name ?? '');
-    if (name?.trim()) void saveSavedSearch(name.trim(), q);
+    const name = window.prompt('Save this search as:', savedSearches.saved.find(s => s.query === q)?.name ?? '');
+    if (name?.trim()) void savedSearches.save(name.trim(), q);
   }
 
   function handleClear() {
@@ -410,7 +411,7 @@ export default function CardsPage() {
             <CardTools onOpenCard={(index, list) => setBrowse({ cards: list, index })} />
           </details>
 
-          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.length > 0 ? 8 : 16 }}>
+          <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: recentSearches.length + savedSearches.saved.length > 0 ? 8 : 16 }}>
             <SearchInput
               ref={searchInput}
               value={query}
@@ -425,15 +426,7 @@ export default function CardsPage() {
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares card search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
           </div>
-          <RecentSearches
-            heading="Saved"
-            recent={savedSearches}
-            label={s => s.name}
-            itemTitle={s => s.query}
-            onSelect={s => handleSearch(s.query)}
-            onRemove={s => { if (window.confirm(`Delete the saved search "${s.name}"?`)) void removeSavedSearch(s); }}
-          />
-          {savedSearchError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{savedSearchError}</div>}
+          <SavedSearches searches={savedSearches} onSelect={handleSearch} />
           <RecentSearches recent={recentSearches} onSelect={handleSearch} onRemove={removeRecentSearch} style={{ marginBottom: 16 }} />
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
