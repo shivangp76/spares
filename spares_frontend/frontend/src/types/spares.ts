@@ -27,7 +27,10 @@ export interface GetReviewCardResponse {
   // When the note was last changed
   note_updated_at: string;
   parser_name: string;
+  // The note's keywords and tags, shown beside the card as its rendered files leave them out
   keywords: string[];
+  // In name order
+  tags: string[];
   // Present iff the card is reviewed by running an external command (CLI only)
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)

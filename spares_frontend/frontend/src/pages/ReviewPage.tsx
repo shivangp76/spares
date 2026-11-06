@@ -2006,6 +2006,23 @@ export default function ReviewPage() {
               <ReviewTimer stopwatch={stopwatch} flipped={phase === "back"} />
             )}
           </div>
+          {/* Shown here, as the rendered card leaves them out. Each on its own line. */}
+          {(card.keywords.length > 0 || card.tags.length > 0) && (
+            <div
+              style={{
+                marginTop: -4,
+                marginBottom: 8,
+                fontSize: 13,
+                color: "var(--text-muted)",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {card.keywords.length > 0 && (
+                <div>Keywords: {card.keywords.join(", ")}</div>
+              )}
+              {card.tags.length > 0 && <div>Tags: {card.tags.join(", ")}</div>}
+            </div>
+          )}
 
           {/* Like the CLI, the front is closed when the card is flipped. It stays mounted so undoing
               the flip shows it again without rerendering. */}
