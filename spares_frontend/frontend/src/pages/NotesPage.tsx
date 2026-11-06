@@ -762,6 +762,7 @@ export default function NotesPage() {
               onChange={setQuery}
               onSubmit={handleSearch}
               placeholder="Search notes…"
+              items="Notes"
               error={searchError}
               style={{ maxWidth: "none" }}
               inputStyle={{ fontSize: 15, padding: "8px 12px" }}

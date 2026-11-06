@@ -1,14 +1,38 @@
-import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { getSearchFields, listTagNames } from '../api/client';
-import SearchHelp from './SearchHelp';
-import { applyCompletion, searchCompletions, type Completion } from '../searchCompletion';
-import type { SearchField } from '../types/spares';
+import {
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { getSearchFields, listTagNames } from "../api/client";
+import SearchHelp from "./SearchHelp";
+import {
+  applyCompletion,
+  searchCompletions,
+  type Completion,
+} from "../searchCompletion";
+import type { SearchField } from "../types/spares";
 
 /** The styles that decide where the input's text is drawn, copied onto the underline. */
 const TEXT_STYLES = [
-  'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textIndent',
-  'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
-  'borderLeftWidth', 'borderRightWidth', 'borderTopWidth', 'borderBottomWidth',
+  "fontFamily",
+  "fontSize",
+  "fontWeight",
+  "fontStyle",
+  "letterSpacing",
+  "lineHeight",
+  "textIndent",
+  "paddingLeft",
+  "paddingRight",
+  "paddingTop",
+  "paddingBottom",
+  "borderLeftWidth",
+  "borderRightWidth",
+  "borderTopWidth",
+  "borderBottomWidth",
 ] as const;
 
 /** A failed search: its query, and where in it the server says the problem is. */
@@ -29,6 +53,8 @@ interface SearchInputProps {
   /** Underlined while the box still holds the query that failed. */
   error?: SearchInputError | null;
   ref?: React.Ref<HTMLInputElement>;
+  /** What the query finds, for explaining it in the syntax help (default cards) */
+  items?: "Notes" | "Cards";
   /** Merged into the wrapper's and the input's styles. */
   style?: React.CSSProperties;
   inputStyle?: React.CSSProperties;
@@ -38,7 +64,19 @@ interface SearchInputProps {
  * A search box that completes field names, tags, card states and sort fields, underlines where a
  * failed query went wrong, and has a "Syntax" link in it that opens examples and the fields.
  */
-export default function SearchInput({ value, onChange, onSubmit, placeholder, id, ariaLabel, error, ref, style, inputStyle }: SearchInputProps) {
+export default function SearchInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  id,
+  ariaLabel,
+  error,
+  ref,
+  items = "Cards",
+  style,
+  inputStyle,
+}: SearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(ref, () => inputRef.current!, []);
   const underlineRef = useRef<HTMLDivElement>(null);
@@ -57,12 +95,19 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
 
   useEffect(() => {
     // Suggestions are a convenience, so offline there are just none
-    getSearchFields().then(setFields).catch(() => {});
-    listTagNames().then(setTags).catch(() => {});
+    getSearchFields()
+      .then(setFields)
+      .catch(() => {});
+    listTagNames()
+      .then(setTags)
+      .catch(() => {});
   }, []);
 
   const completions = useMemo(
-    () => (focused && !dismissed ? searchCompletions(value, caret, fields, tags) : null),
+    () =>
+      focused && !dismissed
+        ? searchCompletions(value, caret, fields, tags)
+        : null,
     [focused, dismissed, value, caret, fields, tags],
   );
 
@@ -83,7 +128,8 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
     const underline = underlineRef.current;
     if (!input || !underline) return;
     const style = getComputedStyle(input);
-    for (const property of TEXT_STYLES) underline.style[property] = style[property];
+    for (const property of TEXT_STYLES)
+      underline.style[property] = style[property];
     underline.style.left = `${input.offsetLeft}px`;
     underline.style.top = `${input.offsetTop}px`;
     underline.style.width = `${input.offsetWidth}px`;
@@ -94,7 +140,8 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
   function syncCaret() {
     const input = inputRef.current;
     if (input) setCaret(input.selectionStart ?? input.value.length);
-    if (input && underlineRef.current) underlineRef.current.scrollLeft = input.scrollLeft;
+    if (input && underlineRef.current)
+      underlineRef.current.scrollLeft = input.scrollLeft;
   }
 
   function accept(completion: Completion) {
@@ -109,13 +156,15 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
   // Listed in the help popup as `SEARCH_BOX_SHORTCUTS`
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     const count = completions?.items.length ?? 0;
-    if (count > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    if (count > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      setActive(i => (e.key === 'ArrowDown' ? (i + 1) % count : (i <= 0 ? count - 1 : i - 1)));
-    } else if (count > 0 && e.key === 'Tab' && !e.shiftKey) {
+      setActive((i) =>
+        e.key === "ArrowDown" ? (i + 1) % count : i <= 0 ? count - 1 : i - 1,
+      );
+    } else if (count > 0 && e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       accept(completions!.items[Math.max(active, 0)]);
-    } else if (e.key === 'Enter') {
+    } else if (e.key === "Enter") {
       if (count > 0 && active >= 0) {
         e.preventDefault();
         accept(completions!.items[active]);
@@ -123,7 +172,7 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
         setDismissed(true);
         onSubmit(value);
       }
-    } else if (e.key === 'Escape') {
+    } else if (e.key === "Escape") {
       setDismissed(true);
     }
   }
@@ -137,14 +186,23 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
 
   const open = completions !== null && completions.items.length > 0;
   return (
-    <div className="search-input" style={{ position: 'relative', display: 'flex', flex: 1, maxWidth: 400, ...style }}>
+    <div
+      className="search-input"
+      style={{
+        position: "relative",
+        display: "flex",
+        flex: 1,
+        maxWidth: 400,
+        ...style,
+      }}
+    >
       <input
         ref={inputRef}
         id={id}
         aria-label={ariaLabel}
         type="text"
         value={value}
-        onChange={e => {
+        onChange={(e) => {
           onChange(e.target.value);
           setCaret(e.target.selectionStart ?? e.target.value.length);
           setDismissed(false);
@@ -154,7 +212,10 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
         onSelect={syncCaret}
         onScroll={syncCaret}
         onFocus={() => setFocused(true)}
-        onBlur={() => { setFocused(false); setActive(-1); }}
+        onBlur={() => {
+          setFocused(false);
+          setActive(-1);
+        }}
         placeholder={placeholder}
         spellCheck={false}
         autoCapitalize="off"
@@ -163,25 +224,44 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
-        aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
+        aria-activedescendant={
+          open && active >= 0 ? `${listId}-${active}` : undefined
+        }
         aria-invalid={underlined !== null}
         // The right padding leaves room for the Syntax link
-        style={{ padding: '6px 10px', fontSize: 14, flex: 1, minWidth: 0, ...inputStyle, paddingRight: 64 }}
+        style={{
+          padding: "6px 10px",
+          fontSize: 14,
+          flex: 1,
+          minWidth: 0,
+          ...inputStyle,
+          paddingRight: 64,
+        }}
       />
       {underlined && (
         <div ref={underlineRef} aria-hidden="true" style={underlineStyle}>
           {value.slice(0, underlined[0])}
-          <span style={markStyle}>{value.slice(underlined[0], Math.max(underlined[1], underlined[0] + 1)) || ' '}</span>
+          <span style={markStyle}>
+            {value.slice(
+              underlined[0],
+              Math.max(underlined[1], underlined[0] + 1),
+            ) || " "}
+          </span>
           {value.slice(Math.max(underlined[1], underlined[0] + 1))}
         </div>
       )}
       <button
         type="button"
         className="search-syntax-link"
-        onClick={() => { setDismissed(true); setShowHelp(true); }}
+        onClick={() => {
+          setDismissed(true);
+          setShowHelp(true);
+        }}
         aria-haspopup="dialog"
         title="Example queries and the fields"
-      >Syntax</button>
+      >
+        Syntax
+      </button>
 
       {open && (
         <ul id={listId} role="listbox" style={popupStyle}>
@@ -192,59 +272,84 @@ export default function SearchInput({ value, onChange, onSubmit, placeholder, id
               role="option"
               aria-selected={i === active}
               // Keeps the focus in the input
-              onMouseDown={e => { e.preventDefault(); accept(item); }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                accept(item);
+              }}
               onMouseEnter={() => setActive(i)}
-              style={{ padding: '6px 10px', cursor: 'pointer', background: i === active ? 'var(--selected)' : undefined }}
+              style={{
+                padding: "6px 10px",
+                cursor: "pointer",
+                background: i === active ? "var(--selected)" : undefined,
+              }}
             >
               <code>{item.label}</code>
-              {item.detail && <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontSize: 12 }}>{item.detail}</span>}
+              {item.detail && (
+                <span
+                  style={{
+                    color: "var(--text-muted)",
+                    marginLeft: 8,
+                    fontSize: 12,
+                  }}
+                >
+                  {item.detail}
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
 
-      {showHelp && <SearchHelp fields={fields} onPick={pickExample} onClose={() => setShowHelp(false)} />}
+      {showHelp && (
+        <SearchHelp
+          fields={fields}
+          query={value}
+          items={items}
+          onPick={pickExample}
+          onClose={() => setShowHelp(false)}
+        />
+      )}
     </div>
   );
 }
 
 const popupStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: '100%',
+  position: "absolute",
+  top: "100%",
   left: 0,
   right: 0,
   zIndex: 20,
   marginTop: 2,
   padding: 0,
-  listStyle: 'none',
-  background: 'var(--bg)',
-  border: '1px solid var(--border-strong)',
+  listStyle: "none",
+  background: "var(--bg)",
+  border: "1px solid var(--border-strong)",
   borderRadius: 4,
-  boxShadow: '0 4px 12px rgb(0 0 0 / 0.15)',
+  boxShadow: "0 4px 12px rgb(0 0 0 / 0.15)",
   fontSize: 13,
   maxHeight: 280,
-  overflowY: 'auto',
+  overflowY: "auto",
 };
 
 const underlineStyle: React.CSSProperties = {
-  position: 'absolute',
-  pointerEvents: 'none',
-  boxSizing: 'border-box',
-  borderStyle: 'solid',
-  borderColor: 'transparent',
-  whiteSpace: 'pre',
-  overflow: 'hidden',
-  color: 'transparent',
+  position: "absolute",
+  pointerEvents: "none",
+  boxSizing: "border-box",
+  borderStyle: "solid",
+  borderColor: "transparent",
+  whiteSpace: "pre",
+  overflow: "hidden",
+  color: "transparent",
   // An input centers its line of text
-  display: 'flex',
-  alignItems: 'center',
+  display: "flex",
+  alignItems: "center",
 };
 
 const markStyle: React.CSSProperties = {
-  textDecorationLine: 'underline',
-  textDecorationStyle: 'wavy',
-  textDecorationColor: 'var(--error)',
-  textDecorationSkipInk: 'none',
+  textDecorationLine: "underline",
+  textDecorationStyle: "wavy",
+  textDecorationColor: "var(--error)",
+  textDecorationSkipInk: "none",
   textDecorationThickness: 2,
   textUnderlineOffset: 3,
 };
