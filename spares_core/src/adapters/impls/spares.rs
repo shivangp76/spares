@@ -22,7 +22,7 @@ use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
 use crate::api::note::relocate_live_cards;
 use crate::api::note::render_notes;
-use crate::api::note::update_notes;
+use crate::api::note::update_notes_batch;
 use crate::api::parser::list_parsers;
 use crate::api::undo::group_events;
 use crate::config::host_client;
@@ -182,20 +182,25 @@ impl SparesAdapter {
     }
 
     /// Returns the event to undo the update with, if any
-    async fn update_note(
+    /// Updates the notes of an import in one request, with one commit of the notes repository,
+    /// and returns their events
+    async fn update_notes(
         &self,
-        update_note_request: UpdateNotesRequest,
+        requests: Vec<UpdateNotesRequest>,
         at: DateTime<Utc>,
-    ) -> Result<Option<i64>, Error> {
-        let response: UpdateNotesResponse = match &self.request_processor {
+    ) -> Result<Vec<i64>, Error> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let responses: Vec<UpdateNotesResponse> = match &self.request_processor {
             SparesRequestProcessorInternal::Server {
                 base_url,
                 client,
                 api_key,
             } => {
-                let url = format!("{}/api/notes", base_url);
+                let url = format!("{}/api/notes/batch", base_url);
                 let response = authed(client.patch(url), api_key.as_deref())
-                    .json(&update_note_request)
+                    .json(&requests)
                     .send()
                     .await
                     .map_err(Error::ApiRequest)?;
@@ -203,10 +208,10 @@ impl SparesAdapter {
                 response.json().await.map_err(Error::ApiRequest)?
             }
             SparesRequestProcessorInternal::Database { pool } => {
-                update_notes(pool, update_note_request, at, &get_all_parsers(), true).await?
+                update_notes_batch(pool, requests, at, &get_all_parsers(), true).await?
             }
         };
-        Ok(response.event_id)
+        Ok(responses.into_iter().filter_map(|r| r.event_id).collect())
     }
 
     async fn relocate_live_cards(
@@ -256,7 +261,7 @@ impl SparesAdapter {
             tags: UpdateTags::None,
         };
         if !dry_run {
-            self.update_note(update_note_request, at).await?;
+            self.update_notes(vec![update_note_request], at).await?;
         }
         Ok(())
     }
@@ -444,9 +449,7 @@ impl SrsAdapter for SparesAdapter {
             event_ids.extend(self.relocate_live_cards(request, at).await?.event_id);
         }
 
-        for update_note_request in update_note_requests {
-            event_ids.extend(self.update_note(update_note_request, at).await?);
-        }
+        event_ids.extend(self.update_notes(update_note_requests, at).await?);
 
         // Issue a single bulk delete for all collected note IDs.
         if !delete_note_ids.is_empty() {
