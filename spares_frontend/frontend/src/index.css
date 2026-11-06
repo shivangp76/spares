@@ -301,6 +301,123 @@ button:disabled {
   color: var(--text);
 }
 
+/* The More link opens a menu, so it is a button that looks like the links beside it */
+button.navbar-link {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+button.navbar-link-current {
+  cursor: pointer;
+}
+
+/* Undo, with its menu of Redo and History joined to its right */
+.navbar-split {
+  display: inline-flex;
+}
+
+.navbar-split > .navbar-button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.navbar-split-end {
+  margin-left: -1px;
+  padding-left: 6px;
+  padding-right: 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.navbar-split-end svg {
+  margin-left: 0 !important;
+}
+
+/* A navbar button's menu (`NavMenu`) */
+.nav-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+}
+
+.nav-menu-item,
+.nav-menu-item:visited {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.nav-menu-item:hover:not(:disabled),
+.nav-menu-item:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.nav-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.nav-menu-item[aria-current="page"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-menu-key {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+/* What the navbar's last undo, redo or sync did */
+.navbar-status {
+  flex-basis: 100%;
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* A compact button beside a line of text, as Undo after an action */
+.button-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Read by screen readers but not shown, as the name of a button that only shows an icon */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Notes a sync could not merge (`sync-conflict`) */
 .sync-conflict-badge {
   display: inline-block;
@@ -732,6 +849,7 @@ html:has(.review-answer-bar) {
   /* The links scroll sideways on one row instead of wrapping onto several */
   .navbar-links {
     flex-wrap: nowrap;
+    gap: 2px;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -740,7 +858,11 @@ html:has(.review-answer-bar) {
     display: none;
   }
 
-  .navbar-link {
+  /* Tighter, so the main links and More fit across a phone */
+  .navbar-link,
+  button.navbar-link {
+    padding: 4px 6px;
+    font-size: 14px;
     white-space: nowrap;
   }
 
