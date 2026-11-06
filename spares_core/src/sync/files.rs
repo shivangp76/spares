@@ -58,6 +58,9 @@ pub async fn sync_now(
     match send_media(&remote).await {
         Ok(0) => {}
         Ok(sent) => log::info!("Sent {sent} images, clips and image occlusions"),
+        // The push would fail the same way. The caller says so, e.g. automatic sync only once the
+        // upstream has stayed unreachable a while, not in each of a closed lid's dark wakes.
+        Err(e @ Error::SyncUnreachable(_)) => return Err(e),
         Err(e) => error!("Failed to send images and audio to {url}: {e}"),
     }
     let report = sync(db, &remote, mode, temp_dir).await?;
