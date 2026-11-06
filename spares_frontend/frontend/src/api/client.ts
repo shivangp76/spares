@@ -21,12 +21,14 @@ import type {
   NoteRenderResponse,
   NoteResponse,
   NotesSelector,
+  OptimizeResponse,
   ParserResponse,
   QueryExample,
   QueuePositionRequest,
   QueuePositionResponse,
   Rating,
   RedoEventResponse,
+  RescheduleResponse,
   ReviewConfig,
   ReviewFilter,
   ReviewHistoryResponse,
@@ -925,6 +927,36 @@ export async function getStepsStats(
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+/**
+ * Fits the scheduler's parameters to the review history, like `spares card optimize`. With
+ * `apply`, saves them if they predict it better and reschedules every card. On the server, which
+ * keeps the parameters in its `config.toml`; this can take a minute.
+ */
+export async function optimizeScheduler(
+  schedulerName: string,
+  apply: boolean,
+): Promise<OptimizeResponse> {
+  return apiFetch(
+    "Optimize",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize`,
+    { method: "POST", body: JSON.stringify({ apply }) },
+  );
+}
+
+/**
+ * Recomputes every card's memory state and due date from its review history, like `spares card
+ * reschedule`. On the server, like `optimizeScheduler`.
+ */
+export async function rescheduleCards(
+  schedulerName: string,
+): Promise<RescheduleResponse> {
+  return apiFetch(
+    "Reschedule",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/reschedule`,
+    { method: "POST" },
+  );
 }
 
 /** `getStatistics` for today, remembered for `cachedTodayStatistics`. */

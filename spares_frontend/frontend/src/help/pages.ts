@@ -214,6 +214,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     title: "Statistics",
     about: [
       "How your reviews went, and how many cards are due in the days ahead. A query limits them to the cards it finds.",
+      "Scheduler fits FSRS's parameters to your reviews (Optimize parameters, then Apply and reschedule), and Reschedule all cards applies changed scheduler settings to every card at once. Both run on the server.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [SCHEDULING],

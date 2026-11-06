@@ -510,6 +510,33 @@ export interface StepsStatsResponse {
   recommended: RecommendedSteps;
 }
 
+/** `spares_core::schema::review::ParametersEvaluation`: lower is better for both. */
+export interface ParametersEvaluation {
+  log_loss: number;
+  /** The RMSE between predicted and actual recall rates, as a fraction. */
+  rmse_bins: number;
+}
+
+/** `spares_core::schema::review::OptimizeResponse` */
+export interface OptimizeResponse {
+  card_count: number;
+  review_count: number;
+  current_parameters: number[];
+  current: ParametersEvaluation;
+  optimized_parameters: number[];
+  optimized: ParametersEvaluation;
+  /** Whether the optimized parameters were saved and every card rescheduled. */
+  applied: boolean;
+  /** The reschedule's event, if `applied` changed any card. */
+  event_id: number | null;
+}
+
+/** `spares_core::schema::review::RescheduleResponse` */
+export interface RescheduleResponse {
+  /** The event logging the cards it changed; undone by id only. */
+  event_id: number | null;
+}
+
 export interface StatisticsGraphsResponse {
   mature_threshold_days: number;
   /** The local date of the request's `date`. */

@@ -118,6 +118,7 @@ use crate::handlers::scheduler::get_scheduler_states_handler;
 use crate::handlers::scheduler::list_schedulers_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::scheduler::optimize_scheduler_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::MEDIA_BODY_LIMIT;
@@ -344,9 +345,15 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/notes/live/relocate-cards",
             post(relocate_live_cards_handler),
         )
+        // Both use the scheduler settings in the collection's `config.toml`, which optimizing
+        // writes, so a browser's copy sends them to the server and syncs the cards they changed.
         .route(
             "/api/scheduler/{name}/optimize",
             post(optimize_scheduler_handler),
+        )
+        .route(
+            "/api/scheduler/{name}/reschedule",
+            post(reschedule_scheduler_handler),
         )
         .merge(media_routes())
         .merge(notes_vcs_routes())
@@ -462,10 +469,6 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route(
             "/api/scheduler/{name}/rating",
             get(get_rating_from_score_handler),
-        )
-        .route(
-            "/api/scheduler/{name}/reschedule",
-            post(reschedule_scheduler_handler),
         )
         // Undo
         .route("/api/undo", post(undo_event_handler))
@@ -593,11 +596,12 @@ async fn not_stored(mut response: axum::response::Response) -> axum::response::R
 /// with no login, since requests never leave the browser.
 ///
 /// A few requests act on the server's files or devices rather than on the collection. They are
-/// answered with [`needs_server`], so the web app sends them to the server instead. Every other
+/// answered with [`needs_server`], so the web app sends them to the server instead. So are
+/// optimizing and rescheduling, which use (and optimizing writes) the scheduler settings in the
+/// server's `config.toml`: the cards they change reach the copy at its next sync. Every other
 /// request is refused ([`not_on_device`]) rather than sent on, so a server route added later never
-/// changes the server's database behind the copy's back. Of those, rendering, live notes and
-/// optimizing a scheduler (which writes `config.toml` and reschedules the server's cards) stay on
-/// the server.
+/// changes the server's database behind the copy's back. Of those, rendering and live notes stay
+/// on the server.
 pub fn create_local_router(collection: Arc<spares_core::collection::Collection>) -> Router {
     Router::<()>::new()
         .route("/api/healthcheck", get(health_check_handler))
@@ -611,6 +615,8 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .route("/api/notes/vcs/saved-copies/remove", post(needs_server))
         .route("/api/sync/devices", get(needs_server))
         .route("/api/sync/unenroll", post(needs_server))
+        .route("/api/scheduler/{name}/optimize", post(needs_server))
+        .route("/api/scheduler/{name}/reschedule", post(needs_server))
         .fallback(not_on_device)
         // Also when a route has the path for another method: `POST /api/notes/live` matches
         // `GET /api/notes/{id}`.
@@ -754,6 +760,8 @@ mod tests {
             ("POST", "/api/notes/vcs/saved-copies/remove"),
             ("GET", "/api/sync/devices"),
             ("POST", "/api/sync/unenroll"),
+            ("POST", "/api/scheduler/fsrs/optimize"),
+            ("POST", "/api/scheduler/fsrs/reschedule"),
         ] {
             let (status, body) = call(&router, method, uri).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{method} {uri}");
@@ -764,7 +772,6 @@ mod tests {
             ("GET", "/api/sync/meta?replica=2"),
             ("POST", "/api/sync/push"),
             ("POST", "/api/sync/run"),
-            ("POST", "/api/scheduler/fsrs/optimize"),
             ("POST", "/api/notes/generate_files"),
             ("POST", "/api/notes/live"),
             ("POST", "/api/notes/live/relocate-cards"),

@@ -10,6 +10,7 @@ use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
 use spares_core::schema::review::OptimizeRequest;
 use spares_core::schema::review::OptimizeResponse;
+use spares_core::schema::review::RescheduleResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::search::QueryReturnItemType;
@@ -236,8 +237,7 @@ pub(crate) async fn handle(
             yes,
         }) => {
             if !yes {
-                // Unlike advance and postpone, a reschedule is not recorded as an event.
-                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones, and cannot be undone. Are you sure you want to continue?";
+                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones. Are you sure you want to continue?";
                 let ans = Confirm::new(prompt).with_default(false).prompt();
                 if !ans.unwrap_or(false) {
                     return Ok(());
@@ -249,8 +249,10 @@ pub(crate) async fn handle(
                 .send()
                 .await
                 .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Rescheduled all cards.");
+            let response = ensure_ok(response).await?;
+            let rescheduled: RescheduleResponse =
+                response.json().await.map_err(|e| miette!("{}", e))?;
+            print_rescheduled(rescheduled.event_id);
         }
         CardCommands::Optimize(OptimizeArgs {
             scheduler_name,
@@ -258,7 +260,7 @@ pub(crate) async fn handle(
             yes,
         }) => {
             if apply && !yes {
-                let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card, which cannot be undone. Are you sure you want to continue?";
+                let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card. Are you sure you want to continue?";
                 let ans = Confirm::new(prompt).with_default(false).prompt();
                 if !ans.unwrap_or(false) {
                     return Ok(());
@@ -332,6 +334,17 @@ pub(crate) async fn handle(
     Ok(())
 }
 
+/// Says that every card was rescheduled, and how to undo it.
+fn print_rescheduled(event_id: Option<i64>) {
+    match event_id {
+        // An automatic event: a plain `spares event undo` skips it
+        Some(id) => println!(
+            "Rescheduled all cards. `spares event undo {id}` restores their previous schedule."
+        ),
+        None => println!("Rescheduled all cards. None of them changed."),
+    }
+}
+
 fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
     println!(
         "Fitted to {} reviews of {} cards. Lower is better:",
@@ -358,7 +371,8 @@ fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
     println!("\nfsrs_parameters = [{}]\n", parameters);
     let better = response.optimized.log_loss < response.current.log_loss;
     if response.applied {
-        println!("Saved the optimized parameters to the config and rescheduled all cards.");
+        println!("Saved the optimized parameters to the config.");
+        print_rescheduled(response.event_id);
     } else if !better {
         println!(
             "Kept the current parameters: the optimized ones do not predict your reviews better."

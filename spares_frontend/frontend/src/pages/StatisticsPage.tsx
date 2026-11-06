@@ -7,7 +7,9 @@ import {
   getStatistics,
   getStatisticsGraphs,
   getStepsStats,
+  optimizeScheduler,
   postponeCards,
+  rescheduleCards,
 } from "../api/client";
 import { useServerReachable } from "../api/reachability";
 import ActionResult, { type ActionOutcome } from "../components/ActionResult";
@@ -28,9 +30,10 @@ import ReviewHeatmap from "../components/ReviewHeatmap";
 import { useAuth } from "../hooks/useAuth";
 import { useCardStates } from "../hooks/useCardStates";
 import { useRecentSearches } from "../hooks/useRecentSearches";
-import { useLocalStatus } from "../local/copy";
+import { runOnServer, useLocalStatus } from "../local/copy";
 import {
   type AnswerGroup,
+  type OptimizeResponse,
   type PassFail,
   type ReviewHistoryResponse,
   type StatisticsGraphsResponse,
@@ -1003,6 +1006,252 @@ function StepsSection({
   );
 }
 
+const SCHEDULER_OFFLINE_HINT =
+  "The server cannot be reached, and optimizing and rescheduling run on it.";
+
+/** What a reschedule did, with Undo for its event (which a plain undo skips). */
+function rescheduledOutcome(
+  message: string,
+  eventId: number | null,
+  local: boolean,
+  syncError: string | null,
+): ActionOutcome {
+  let text = eventId === null ? `${message} No card changed.` : message;
+  if (syncError)
+    text += ` The cards reach this device at its next sync (${syncError}).`;
+  else if (local && eventId !== null)
+    text +=
+      " Undo it from a device without a copy, or with `spares event undo`.";
+  return {
+    message: text,
+    eventIds: local || eventId === null ? [] : [eventId],
+  };
+}
+
+const formatLogLoss = (v: number) => v.toFixed(4);
+const formatRmse = (v: number) => `${(v * 100).toFixed(2)}%`;
+
+/**
+ * `spares card optimize` and `spares card reschedule`: fits the scheduler's parameters to the
+ * review history, and applies them, or other changed scheduler settings, to every card.
+ */
+function SchedulerSection({
+  enabled,
+  onChanged,
+}: {
+  enabled: boolean;
+  /** After the cards changed, or an undo of that */
+  onChanged: () => void;
+}) {
+  const { credentials } = useAuth();
+  const [optimized, setOptimized] = useState<OptimizeResponse | null>(null);
+  // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
+  const [outcome, setOutcome] = useState<{
+    seq: number;
+    outcome: ActionOutcome;
+  } | null>(null);
+  const onDone = (o: ActionOutcome) => {
+    setOutcome((prev) => ({ seq: (prev?.seq ?? 0) + 1, outcome: o }));
+    onChanged();
+  };
+  const [running, setRunning] = useState<
+    "optimize" | "apply" | "reschedule" | null
+  >(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run<T>(
+    kind: "optimize" | "apply" | "reschedule",
+    action: () => Promise<T>,
+  ) {
+    setRunning(kind);
+    setError(null);
+    try {
+      return await action();
+    } catch (e) {
+      setError(errorMessage(e));
+      return null;
+    } finally {
+      setRunning(null);
+    }
+  }
+
+  async function optimize() {
+    if (!credentials) return;
+    const res = await run("optimize", () =>
+      runOnServer(() => optimizeScheduler(credentials.schedulerName, false)),
+    );
+    if (res) setOptimized(res.result);
+  }
+
+  async function apply() {
+    if (!credentials) return;
+    if (
+      !window.confirm(
+        "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included?\n\nUndo restores the cards, but not the parameters.",
+      )
+    )
+      return;
+    const res = await run("apply", () =>
+      runOnServer(() => optimizeScheduler(credentials.schedulerName, true)),
+    );
+    if (!res) return;
+    setOptimized(res.result);
+    if (res.result.applied)
+      onDone(
+        rescheduledOutcome(
+          "Saved the optimized parameters and rescheduled every card.",
+          res.result.event_id,
+          res.local,
+          res.syncError,
+        ),
+      );
+    else
+      onDone({
+        message:
+          "Kept the current parameters: the optimized ones do not predict your reviews better.",
+        eventIds: [],
+      });
+  }
+
+  async function reschedule() {
+    if (!credentials) return;
+    if (
+      !window.confirm(
+        "Recompute the memory state and due date of every card from its review history, suspended and buried ones included?\n\nUndo restores the cards' previous schedule.",
+      )
+    )
+      return;
+    const res = await run("reschedule", () =>
+      runOnServer(() => rescheduleCards(credentials.schedulerName)),
+    );
+    if (res)
+      onDone(
+        rescheduledOutcome(
+          "Rescheduled every card.",
+          res.result.event_id,
+          res.local,
+          res.syncError,
+        ),
+      );
+  }
+
+  const better =
+    optimized !== null &&
+    optimized.optimized.log_loss < optimized.current.log_loss;
+  const busy = running !== null || !enabled;
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          onClick={optimize}
+          disabled={busy}
+          title={enabled ? undefined : SCHEDULER_OFFLINE_HINT}
+          className="touch-target-small"
+        >
+          {running === "optimize" ? "Optimizing…" : "Optimize parameters"}
+        </button>
+        <button
+          onClick={reschedule}
+          disabled={busy}
+          title={enabled ? undefined : SCHEDULER_OFFLINE_HINT}
+          className="touch-target-small"
+        >
+          {running === "reschedule" ? "Rescheduling…" : "Reschedule all cards"}
+        </button>
+      </div>
+      {running === "optimize" || running === "apply" ? (
+        <p style={note}>This can take a minute on a large collection.</p>
+      ) : null}
+      {error && (
+        <div
+          style={{
+            color: "var(--error)",
+            marginTop: 8,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {error}
+        </div>
+      )}
+      {!enabled && <p style={note}>{SCHEDULER_OFFLINE_HINT}</p>}
+      {outcome && (
+        <ActionResult
+          key={outcome.seq}
+          outcome={outcome.outcome}
+          onReverted={onChanged}
+        />
+      )}
+      {optimized && (
+        <div style={{ marginTop: 12 }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
+            <thead>
+              <tr>
+                <th style={th}>Parameters</th>
+                <th style={th}>Log loss</th>
+                <th style={th}>RMSE</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={td}>Current</td>
+                <td style={numeric}>
+                  {formatLogLoss(optimized.current.log_loss)}
+                </td>
+                <td style={numeric}>
+                  {formatRmse(optimized.current.rmse_bins)}
+                </td>
+              </tr>
+              <tr>
+                <td style={td}>Optimized</td>
+                <td style={numeric}>
+                  {formatLogLoss(optimized.optimized.log_loss)}
+                </td>
+                <td style={numeric}>
+                  {formatRmse(optimized.optimized.rmse_bins)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={note}>
+            Fitted to {optimized.review_count.toLocaleString()} reviews of{" "}
+            {optimized.card_count.toLocaleString()} cards. Lower is better for
+            both.{" "}
+            {optimized.applied
+              ? "The optimized parameters are saved, and every card was rescheduled with them."
+              : better
+                ? "The optimized parameters predict your reviews better."
+                : "The current parameters predict your reviews at least as well, so there is nothing to apply."}
+          </p>
+          <details style={{ marginTop: 8, fontSize: 13 }}>
+            <summary style={{ cursor: "pointer" }}>Parameters</summary>
+            <pre style={{ whiteSpace: "pre-wrap", margin: "8px 0 0" }}>
+              {`current   = [${optimized.current_parameters.join(", ")}]\noptimized = [${optimized.optimized_parameters.join(", ")}]`}
+            </pre>
+          </details>
+          {better && !optimized.applied && (
+            <button
+              onClick={apply}
+              disabled={busy}
+              className="touch-target-small"
+              style={{ marginTop: 8 }}
+            >
+              {running === "apply" ? "Applying…" : "Apply and reschedule"}
+            </button>
+          )}
+        </div>
+      )}
+      <p style={note}>
+        Changing the scheduler, its parameters, learning steps or easy days in
+        config.toml only affects cards as they are next rated. Reschedule
+        applies the change to every card now. Once you have a few hundred
+        reviews, optimizing fits the parameters to your own history, which
+        usually predicts your memory better; again every month or so keeps them
+        in step. Not affected by the search query.
+      </p>
+    </>
+  );
+}
+
 export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
@@ -1289,6 +1538,9 @@ export default function StatisticsPage() {
 
           <div style={sectionTitle}>Learning steps</div>
           <StepsSection periodDays={view.periodDays} enabled={canSchedule} />
+
+          <div style={sectionTitle}>Scheduler</div>
+          <SchedulerSection enabled={online} onChanged={reload} />
 
           {statistics && (
             <>

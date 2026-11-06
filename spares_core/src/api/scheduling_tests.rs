@@ -220,7 +220,7 @@ async fn reschedule_is_logged_with_the_cards_it_changed(pool: SqlitePool) {
     set_desired_retention(&pool, changed, 0.97).await;
     let before = fetch_card(&pool, changed).await;
 
-    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
+    let response = reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
     let rescheduled = fetch_card(&pool, changed).await;
     assert_ne!(rescheduled.due, before.due);
 
@@ -237,6 +237,8 @@ async fn reschedule_is_logged_with_the_cards_it_changed(pool: SqlitePool) {
         .map(|card| card["card_id"].as_i64().unwrap())
         .collect();
     assert_eq!(card_ids, [changed], "{unreviewed} did not change");
+    // Returned, so the web app can offer to undo it
+    assert_eq!(response.event_id, Some(event_id));
 
     // A plain undo skips it, as an automatic change, but it can be undone by id
     let latest = undo_event(
