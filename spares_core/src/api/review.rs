@@ -2156,14 +2156,15 @@ pub async fn submit_study_action(
 /// Recomputes every card's memory state from its review log and gives it a new due date, with
 /// the steps of each card's [preset](crate::config::QueuePreset).
 ///
-/// Logs the cards it changed as an [`EventType::RescheduleCards`] event. Undoing it restores
-/// those cards, not the scheduler settings that called for the reschedule.
+/// Logs the cards it changed as an [`EventType::RescheduleCards`] event, and returns its id (none
+/// if no card changed). Undoing it by id restores those cards, not the scheduler settings that
+/// called for the reschedule.
 pub(crate) async fn reschedule_all_cards(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
     config: &SparesExternalConfig,
     at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
     // Suspended and buried cards are included: they keep their special state, but should come
     // back with a memory state and due date that match their history.
     let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
@@ -2218,16 +2219,17 @@ pub(crate) async fn reschedule_all_cards(
             Some(build_update_card_payload(old.id, old, new)).filter(UpdateCardPayload::has_changes)
         })
         .collect();
-    if !changes.is_empty() {
-        insert_events(
-            db,
-            &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
-            at,
-            None,
-        )
-        .await?;
+    if changes.is_empty() {
+        return Ok(None);
     }
-    Ok(())
+    let event_ids = insert_events(
+        db,
+        &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
+        at,
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
 }
 
 #[cfg(test)]

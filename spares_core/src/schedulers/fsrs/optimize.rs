@@ -179,6 +179,7 @@ pub fn optimize(
         optimized_parameters,
         optimized,
         applied: false,
+        event_id: None,
     })
 }
 

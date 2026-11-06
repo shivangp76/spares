@@ -53,6 +53,6 @@ Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4a
 - The `[queue]` table sets the order cards are shown in (`QueueConfig`), and `new_cards_daily_limit` and `reviews_daily_limit` how many.
 - `[queue.presets.<name>]` tables give the cards of notes with some tags their own limits, orders, steps and sibling burying, as deck presets do in Anki (`QueuePreset`).
 
-Changing these settings only affects cards as they are next rated. To apply them to every card now, run `spares card reschedule`.
+Changing these settings only affects cards as they are next rated. To apply them to every card now, run `spares card reschedule`, or click **Reschedule all cards** under Scheduler on the web app's Statistics page. Undoing it (`spares event undo <id>` with the id it prints, or Undo in the web app) restores the cards, not the settings.
 
-Once you have a few hundred reviews, `spares card optimize` fits FSRS's parameters to your own history, which usually predicts your memory better. `spares card optimize --apply` saves them and reschedules every card. See `spares card reschedule --help` and `spares card optimize --help`.
+Once you have a few hundred reviews, `spares card optimize` (or **Optimize parameters** on the Statistics page) fits FSRS's parameters to your own history, which usually predicts your memory better. `spares card optimize --apply` (or **Apply and reschedule**) saves them and reschedules every card. See `spares card reschedule --help` and `spares card optimize --help`.

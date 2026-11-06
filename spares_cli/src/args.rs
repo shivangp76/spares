@@ -443,7 +443,9 @@ pub(crate) enum CardCommands {
     /// each seeing the due dates already given to the others, so rescheduling only some of them
     /// would leave the load spread across days unbalanced.
     ///
-    /// It cannot be undone, so it asks for confirmation.
+    /// It changes every card, so it asks for confirmation. It prints the event that logs the cards
+    /// it changed: `spares event undo <id>` restores them (a plain `spares event undo` skips it),
+    /// but not the settings that called for it.
     Reschedule(RescheduleArgs),
     /// Fit the scheduler's parameters to your review history and compare them with the current
     /// ones. Use `--apply` to save them and reschedule every card.
@@ -457,7 +459,8 @@ pub(crate) enum CardCommands {
     ///
     /// With `--apply`, the parameters are saved to `fsrs_parameters` in config.toml only if they
     /// predict your reviews better than the current ones, and every card is rescheduled. Like
-    /// `spares card reschedule`, this cannot be undone, so it asks for confirmation. Optimizing
+    /// `spares card reschedule`, it asks for confirmation, and undoing the event it prints restores
+    /// the cards but not the parameters it saved. Optimizing
     /// again every month or so keeps the parameters in step with your history.
     Optimize(OptimizeArgs),
     /// Recommend learning and relearning steps from how quickly cards are forgotten in them

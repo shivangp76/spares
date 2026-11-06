@@ -74,8 +74,8 @@ pub(crate) async fn reschedule_scheduler_handler(
     Path(name): Path<String>,
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    reschedule_scheduler(&data.db, name.as_str(), Utc::now())
+    let res = reschedule_scheduler(&data.db, name.as_str(), Utc::now())
         .await
         .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    Ok(Json(res))
 }

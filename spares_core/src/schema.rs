@@ -1083,6 +1083,19 @@ pub mod review {
         pub optimized: ParametersEvaluation,
         /// Whether the optimized parameters were saved and every card rescheduled.
         pub applied: bool,
+        /// The reschedule's event, if it changed any card: undoing it restores the cards, but not
+        /// the parameters it saved. See [`RescheduleResponse`].
+        #[serde(default)]
+        pub event_id: Option<i64>,
+    }
+
+    /// What `POST /api/scheduler/{name}/reschedule` did.
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct RescheduleResponse {
+        /// The event logging the cards it changed, if it changed any. Undoing it (by id: a plain
+        /// undo skips it, as it skips every [automatic](crate::model::EventType::AUTOMATIC) event)
+        /// restores the cards, but not the settings that called for the reschedule.
+        pub event_id: Option<i64>,
     }
 
     #[serde_with::serde_as]
