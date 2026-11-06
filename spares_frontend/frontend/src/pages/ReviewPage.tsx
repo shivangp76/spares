@@ -2505,9 +2505,6 @@ export default function ReviewPage() {
                   <button onClick={suspendNote} style={toned(TONES.purple)}>
                     Suspend Note (card + siblings)
                   </button>
-                  <button onClick={forget} style={toned(TONES.red)}>
-                    Forget Card
-                  </button>
                 </ActionGroup>
                 <ActionGroup label="Reschedule" tone={TONES.teal}>
                   <button
@@ -2631,6 +2628,16 @@ export default function ReviewPage() {
                   >
                     A+
                   </button>
+                </ActionGroup>
+                {/* Last and on its own, away from the buttons that only put the card off, since
+                    it throws away the card's schedule */}
+                <ActionGroup label="Reset scheduling" tone={TONES.red}>
+                  <button onClick={forget} style={toned(TONES.red)}>
+                    Forget Card
+                  </button>
+                  <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    Starts the card again as new; its review log is kept.
+                  </span>
                 </ActionGroup>
               </div>
             </details>
