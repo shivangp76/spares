@@ -33,6 +33,7 @@ use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::utils::parse_custom_data;
 use crate::utils::parse_list;
+use crate::utils::with_spinner;
 use crate::view::view_notes;
 
 #[expect(clippy::too_many_lines)]
@@ -315,13 +316,21 @@ pub(crate) async fn handle(
                 force_generate_rendered: force_render,
             };
             let url = format!("{}/api/notes/generate_files", base_url);
-            let response = client
-                .post(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
+            let message = if render || force_render {
+                "Generating and rendering note files"
+            } else {
+                "Generating note files"
+            };
+            with_spinner(message, async {
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                ensure_ok(response).await
+            })
+            .await?;
             println!("Done");
         }
     }
