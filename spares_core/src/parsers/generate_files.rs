@@ -38,6 +38,9 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
 use crate::parsers::image_occlusion::read_image_occlusions;
+use crate::parsers::notes::NotePart;
+use crate::parsers::render_reuse::RenderReuse;
+use crate::parsers::render_reuse::render_aside;
 use crate::parsers::web_render_filepath;
 use crate::schema::note::LinkedNote;
 
@@ -257,6 +260,12 @@ pub fn create_note_files_bulk(
         .unwrap()
         .progress_chars("##-"),
     );
+    // Cards the batch's notes had, to copy those whose source moved to another note or card
+    let reuse = if request.render && !request.force_render {
+        RenderReuse::snapshot(parser, &request.render_states)
+    } else {
+        None
+    };
     // Rayon's threads render in the current collection too.
     let context = crate::collection::capture();
     let result = requests
@@ -276,6 +285,7 @@ pub fn create_note_files_bulk(
                 request
                     .render_states
                     .get(&create_note_files_request.note_id),
+                reuse.as_ref(),
             )
         })
         .collect();
@@ -326,6 +336,7 @@ fn create_note_files(
     force_render: bool,
     precomputed_cards: Option<&HashMap<NoteId, Vec<CardData>>>,
     render_states: Option<&RenderStates>,
+    reuse: Option<&RenderReuse>,
 ) -> NoteFiles {
     let start = Instant::now();
     let changes = Mutex::new(RenderStateChanges::default());
@@ -345,6 +356,7 @@ fn create_note_files(
         },
         precomputed_cards,
         render_states,
+        reuse,
         &changes,
     );
     debug!(
@@ -386,6 +398,7 @@ fn write_note_files(
     options: NoteFilesOptions,
     precomputed_cards: Option<&HashMap<NoteId, Vec<CardData>>>,
     render_states: Option<&RenderStates>,
+    reuse: Option<&RenderReuse>,
     changes: &Mutex<RenderStateChanges>,
 ) -> Result<PathBuf, Error> {
     let NoteFilesOptions {
@@ -507,6 +520,7 @@ fn write_note_files(
                             Some(&card_image_occlusion_sources),
                             &key,
                             stored(output),
+                            reuse,
                         ),
                     )?;
                 }
@@ -541,6 +555,7 @@ fn write_note_files(
             None,
             &note_key,
             None,
+            reuse,
         ),
     )
 }
@@ -562,6 +577,8 @@ fn create_raw_and_rendered_file(
     // From when it was last rendered, to render it only if it changed. `None` for notes, which
     // are checked before their cards are made, and when rendering is forced.
     stored: Option<&RenderState>,
+    // The batch's cards from before it, to copy a card from instead of rendering it
+    reuse: Option<&RenderReuse>,
 ) -> Result<(PathBuf, Option<RenderState>), Error> {
     let render_output_type: RenderOutputType = match output_type {
         ConstructFileDataType::Note => RenderOutputType::Note,
@@ -647,6 +664,21 @@ fn create_raw_and_rendered_file(
             return Ok((output_text_filepath, None));
         }
 
+        if let Some(reuse) = reuse
+            && let ConstructFileDataType::Card(_, card_data, _) = output_type
+            && !card_data
+                .data
+                .iter()
+                .any(|part| matches!(part, NotePart::ImageOcclusion { .. }))
+            && let Some(dependencies) = reuse.copy(key, &output_rendered_filepath)
+        {
+            let state = RenderState {
+                key: key.to_string(),
+                dependencies,
+            };
+            return Ok((output_text_filepath, Some(state)));
+        }
+
         let aux_dir = parser.get_aux_dir(render_output_type, note_id);
 
         // Render Image Occlusions, unless the card's source has them as overlays
@@ -682,12 +714,22 @@ fn create_raw_and_rendered_file(
         let RenderedFile {
             output,
             mut dependencies,
-        } = parser.render_file(
-            &aux_dir,
-            &output_text_filepath,
-            &output_rendered_dir,
-            &output_rendered_filepath,
-        )?;
+        } = {
+            let render = || {
+                parser.render_file(
+                    &aux_dir,
+                    &output_text_filepath,
+                    &output_rendered_dir,
+                    &output_rendered_filepath,
+                )
+            };
+            // Others' links to the file being replaced keep what it was (see `RenderReuse`)
+            if reuse.is_some() {
+                render_aside(&output_rendered_filepath, render)?
+            } else {
+                render()?
+            }
+        };
 
         if !output_rendered_filepath.exists() {
             return Err(Error::Io {

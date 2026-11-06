@@ -256,7 +256,7 @@ async fn fetch_review_card(
                 Some(open_rendered_file(
                     review_card.card_front_rendered_path.as_ref(),
                     open_command,
-                    Some(&cloze_tag_str(review_card.note_id, review_card.card_order)),
+                    Some(&cloze_tag_str(review_card.card_order)),
                     first,
                 )?)
             };
@@ -952,10 +952,7 @@ pub(crate) async fn review_cards(
                 card_back_rendered_child = Some(open_rendered_file(
                     card_back_rendered_path,
                     open_command_card_used,
-                    Some(&cloze_tag_str(
-                        review_card_response.note_id,
-                        review_card_response.card_order,
-                    )),
+                    Some(&cloze_tag_str(review_card_response.card_order)),
                     false,
                 )?);
                 rate_start = Instant::now();
@@ -1231,10 +1228,7 @@ pub(crate) async fn review_cards(
                                 card_back_rendered_child = Some(open_rendered_file(
                                     &back_path,
                                     open_command_card_used,
-                                    Some(&cloze_tag_str(
-                                        new_response.note_id,
-                                        new_response.card_order,
-                                    )),
+                                    Some(&cloze_tag_str(new_response.card_order)),
                                     false,
                                 )?);
                             }
@@ -1246,10 +1240,7 @@ pub(crate) async fn review_cards(
                                 card_front_rendered_child = Some(open_rendered_file(
                                     &new_response.card_front_rendered_path,
                                     open_command_card_used,
-                                    Some(&cloze_tag_str(
-                                        new_response.note_id,
-                                        new_response.card_order,
-                                    )),
+                                    Some(&cloze_tag_str(new_response.card_order)),
                                     false,
                                 )?);
                             }
@@ -1340,10 +1331,7 @@ pub(crate) async fn review_cards(
                     card_front_rendered_child = Some(open_rendered_file(
                         &review_card_response.card_front_rendered_path,
                         open_command_card_used,
-                        Some(&cloze_tag_str(
-                            review_card_response.note_id,
-                            review_card_response.card_order,
-                        )),
+                        Some(&cloze_tag_str(review_card_response.card_order)),
                         false,
                     )?);
 

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { markdownCardHtml, markSpanLength } from "./markdownCard";
 
 test("clozes are marked, with the brackets in them paired", () => {
-  expect(markdownCardHtml("[card-aaa-1 _____]{.mark} is in France.")).toBe(
-    "<p><mark>card-aaa-1 _____</mark> is in France.</p>\n",
+  expect(markdownCardHtml("[card-1 _____]{.mark} is in France.")).toBe(
+    "<p><mark>card-1 _____</mark> is in France.</p>\n",
   );
   expect(
     markdownCardHtml("See [a [link](https://example.com) and *more*]{.mark}."),

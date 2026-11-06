@@ -120,8 +120,15 @@ pub struct NoteFilepathData {
 
 /// Text to pass to the first answerable cloze when viewing the card front so that the pdf viewer
 /// can scroll to it.
-pub fn cloze_tag_str(note_id: NoteId, card_order: impl std::fmt::Display) -> String {
-    format!("card-{}-{card_order}", note_id.letters())
+///
+/// It names the card by its order only. A card's file holds one note's card, so that is enough
+/// to find it, and leaving the note out keeps the file's text, and so its
+/// [render key](crate::parsers::generate_files::RenderState::key), the same when the card's text
+/// moves to another note. Live notes are matched by position, so inserting one moves the text of
+/// every note after it to the next note, whose files can then be copied from the ones already
+/// rendered instead of being rendered again.
+pub fn cloze_tag_str(card_order: impl std::fmt::Display) -> String {
+    format!("card-{card_order}")
 }
 
 pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathData, String> {

@@ -826,7 +826,7 @@ mod tests {
         assert!(
             sources
                 .card_front
-                .contains("[card-aaa-1 _____]{.mark} is in France")
+                .contains("[card-1 _____]{.mark} is in France")
         );
         assert!(!sources.card_front.contains("Paris"));
         // The card's back is its note, by default, with its clozes as their text

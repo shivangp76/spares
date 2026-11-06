@@ -307,6 +307,70 @@ mod tests {
         assert!(states().await.is_empty());
     }
 
+    /// When notes swap their text, as live notes do when one is inserted before them, each card
+    /// is copied from the file the other note's card had, and keeps its key.
+    #[sqlx::test]
+    async fn moved_cards_are_copied_from_earlier_renders(pool: SqlitePool) {
+        let parser_row = create_parser_helper(&pool, "markdown").await;
+        sqlx::query("INSERT INTO id_counter (replica, tbl, last) VALUES (0, 'note', ?)")
+            .bind(NoteId::from_letters("movz").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let note = |data: &str| CreateNoteRequest {
+            data: data.to_string(),
+            keywords: Vec::new(),
+            tags: Vec::new(),
+            is_suspended: false,
+            custom_data: serde_json::Map::new(),
+        };
+        let request = CreateNotesRequest {
+            parser_id: parser_row.id,
+            requests: vec![
+                note("{{Paris}} is in France."),
+                note("{{Berlin}} is in Germany."),
+            ],
+        };
+        create_notes(&pool, request, Utc::now(), &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let ids: Vec<(NoteId, String)> = sqlx::query_as("SELECT id, data FROM note ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let (a, b) = (ids[0].0, ids[1].0);
+        let parser = MarkdownParser::new();
+        let card = RenderOutputType::Card(1, CardSide::Front);
+        let rendered = |note_id| {
+            parser
+                .get_output_rendered_dir(RenderOutputDirectoryType::Card)
+                .join(parser.get_output_filename(card, note_id))
+        };
+        render(&pool, false).await;
+        let before = read_render_states(&pool, &[a, b]).await.unwrap();
+        let (file_a, file_b) = (
+            std::fs::read(rendered(a)).unwrap(),
+            std::fs::read(rendered(b)).unwrap(),
+        );
+
+        for (id, data) in [(a, &ids[1].1), (b, &ids[0].1)] {
+            sqlx::query("UPDATE note SET data = ? WHERE id = ?")
+                .bind(data)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        render(&pool, false).await;
+        let after = read_render_states(&pool, &[a, b]).await.unwrap();
+        assert_eq!(after[&a][&card].key, before[&b][&card].key);
+        assert_eq!(after[&b][&card].key, before[&a][&card].key);
+        assert_eq!(std::fs::read(rendered(a)).unwrap(), file_b);
+        assert_eq!(std::fs::read(rendered(b)).unwrap(), file_a);
+        // The files set aside while rendering are gone
+        assert!(!rendered(a).with_extension("pdf.before").exists());
+    }
+
     #[test]
     fn output_names_round_trip() {
         for output in [
