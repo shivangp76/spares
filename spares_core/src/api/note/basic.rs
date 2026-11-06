@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use chrono::DateTime;
 use chrono::Utc;
 use serde_json::Value;
@@ -239,6 +241,25 @@ pub async fn find_live_note_by_block_order(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
     Ok(note_id)
+}
+
+/// The notes of the live sync group `live_sync_name`, by block order, for an import to match a
+/// file's notes against in one query rather than one per note
+pub async fn list_live_notes(
+    db: &SqlitePool,
+    live_sync_name: &str,
+) -> Result<BTreeMap<i64, NoteId>, Error> {
+    let rows: Vec<(Option<i64>, NoteId)> = sqlx::query_as(
+        r"SELECT json_extract(custom_data, '$.live_block_order'), id FROM note WHERE json_extract(custom_data, '$.live_sync_name') = ?",
+    )
+    .bind(live_sync_name)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(block_order, id)| Some((block_order?, id)))
+        .collect())
 }
 
 #[cfg(test)]
