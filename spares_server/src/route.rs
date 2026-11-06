@@ -65,6 +65,7 @@ use crate::handlers::note::search_fields_handler;
 use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
 use crate::handlers::note::search_page_handler;
+use crate::handlers::note::update_notes_batch_handler;
 use crate::handlers::note::update_notes_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::notes_vcs::notes_vcs_anki_finish_handler;
@@ -423,6 +424,7 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/notes/{id}", get(get_note_handler))
         .route("/api/notes/{id}/render", get(get_note_render_handler))
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>
+        .route("/api/notes/batch", patch(update_notes_batch_handler))
         .route("/api/notes", delete(delete_notes_handler))
         .route("/api/notes", get(list_notes_handler))
         .route("/api/notes/count", get(count_notes_handler))

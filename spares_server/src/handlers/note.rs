@@ -23,6 +23,7 @@ use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
 use spares_core::api::note::search_page;
 use spares_core::api::note::update_notes;
+use spares_core::api::note::update_notes_batch;
 use spares_core::config::read_external_config;
 use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
@@ -89,6 +90,21 @@ pub(crate) async fn update_notes_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(update_notes_res))
+}
+
+/// `PATCH /api/notes/batch`: several updates, such as the notes of an import, in one request, with
+/// one commit of the notes repository (see `update_notes_batch`)
+pub(crate) async fn update_notes_batch_handler(
+    Coll(data): Coll,
+    Json(bodies): Json<Vec<UpdateNotesRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = data.db.clone();
+    let responses = run_shared(async move {
+        update_notes_batch(&db, bodies, Utc::now(), &get_all_parsers(), true).await
+    })
+    .await
+    .map_err(error_to_response)?;
+    Ok(Json(responses))
 }
 
 pub(crate) async fn delete_notes_handler(
