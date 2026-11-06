@@ -32,9 +32,19 @@ use crate::schema::undo::EventSummary;
 ///
 /// Must run before `event` is reverted, since reverting a rating deletes its `review_log` row.
 pub(crate) async fn summarize(db: &SqlitePool, event: &Event) -> Result<EventSummary, Error> {
+    summarize_as(db, event, event_action(db, event.id).await?).await
+}
+
+/// [`summarize`], for an event known to be `event_action`, which saves looking it up in the
+/// `event_action` view.
+pub(crate) async fn summarize_as(
+    db: &SqlitePool,
+    event: &Event,
+    event_action: EventAction,
+) -> Result<EventSummary, Error> {
     // An undo's payload is the inverse of the action, so describe the event it reverted instead.
     // Undoing a rating deleted its `review_log` row, but the undo kept it.
-    let (action, review_log) = if event_action(db, event.id).await? == EventAction::Undo {
+    let (action, review_log) = if event_action == EventAction::Undo {
         let review_log = (event.kind == EventType::UnrateCard)
             .then(|| {
                 serde_json::from_value::<UnreviewPayload>(event.payload.clone())
