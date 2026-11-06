@@ -5,6 +5,7 @@ import { scrollClozesIntoView } from "../clozeScroll";
 import { useResolvedTheme } from "../theme";
 import { openableUrl } from "../links";
 import { errorMessage, parseNoteId } from "../utils";
+import Skeleton from "./Skeleton";
 
 interface Props {
   path: string;
@@ -162,7 +163,7 @@ export default function HtmlViewer({
     return (
       <div className="error-text">Error loading card: {current.error}</div>
     );
-  if (current === null) return <div className="loading-delayed">Loading…</div>;
+  if (current === null) return <Skeleton block={160} lines={0} />;
   return (
     <iframe
       ref={iframeRef}

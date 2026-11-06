@@ -733,8 +733,42 @@ input[type="checkbox"] {
   font-size: 14px;
 }
 
+/* Grey blocks in the shape of what is loading, so the page doesn't jump when it comes */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--hover) 0%,
+    var(--border-subtle) 50%,
+    var(--hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-block {
+  border-radius: 6px;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .audio-recorder-dot {
+  .audio-recorder-dot,
+  .skeleton-line {
     animation: none;
   }
 }

@@ -73,6 +73,7 @@ import {
   withSearch,
 } from "../utils";
 import PageTitle from "../components/PageTitle";
+import Skeleton from "../components/Skeleton";
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = {
@@ -888,7 +889,7 @@ export default function NotesPage() {
               {error}
             </pre>
           )}
-          {loading && <div>Loading…</div>}
+          {loading && <Skeleton lines={8} />}
 
           {!loading && (
             <div className="table-scroll">
