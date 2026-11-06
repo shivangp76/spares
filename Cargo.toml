@@ -33,6 +33,12 @@ opt-level = "z"
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
 
+# Dependencies are optimized in debug builds too, while spares' own crates stay quick to rebuild:
+# Typst compiling in a worker (the `typst-render` feature) is about 9 times slower unoptimized, and
+# parsing notes with typst-syntax and fancy-regex is also faster.
+[profile.dev.package."*"]
+opt-level = 3
+
 [workspace.package]
 authors = ["Shivang Patel <shivangp76@gmail.com>"]
 edition = "2024"
