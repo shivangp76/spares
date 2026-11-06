@@ -22,6 +22,7 @@ import { useTableWidths } from "../hooks/useTableWidths";
 import { setTagsPageSize, useTagsPageSize } from "../preferences";
 import type { TagResponse, UpdateTagRequest } from "../types/spares";
 import { errorMessage, td, th } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const PAGE_SIZE = 500;
 const input: React.CSSProperties = {
@@ -651,7 +652,7 @@ export default function TagsPage() {
       style={{ maxWidth: "max(1000px, var(--page-max-width))" }}
     >
       <NavbarHelp help={keys.help} />
-      <h2 style={{ marginBottom: 16 }}>Tags</h2>
+      <PageTitle>Tags</PageTitle>
 
       <div
         className="search-row"
@@ -762,13 +763,7 @@ export default function TagsPage() {
       {tags && view === "table" && (
         <>
           <div className="table-scroll">
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: 14,
-              }}
-            >
+            <table className="data-table">
               <thead>
                 <tr>
                   <ResizableHeader

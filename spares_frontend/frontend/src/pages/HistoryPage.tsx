@@ -10,6 +10,7 @@ import {
 import { useAuth } from "../hooks/useAuth";
 import type { EventEntry } from "../types/spares";
 import { errorMessage, formatDateTime, td, th } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const PAGE_SIZE = 30;
 
@@ -111,14 +112,17 @@ export default function HistoryPage() {
 
   return (
     <div className="page">
-      <h2 style={{ marginBottom: 8 }}>History</h2>
-      <p
-        style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 12px" }}
+      <PageTitle
+        description={
+          <>
+            Every change, newest first. Any of them can be undone, or an undo
+            redone, unless a later change depends on it. A group, such as an
+            import, is undone as one.
+          </>
+        }
       >
-        Every change, newest first. Any of them can be undone, or an undo
-        redone, unless a later change depends on it. A group, such as an import,
-        is undone as one.
-      </p>
+        History
+      </PageTitle>
       <label
         style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}
       >
@@ -130,10 +134,7 @@ export default function HistoryPage() {
         Show ratings
       </label>
       {status && (
-        <p
-          role="status"
-          style={{ fontSize: 13, color: "var(--text-secondary)" }}
-        >
+        <p role="status" className="secondary-text">
           {status}
         </p>
       )}

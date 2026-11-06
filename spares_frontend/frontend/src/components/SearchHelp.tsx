@@ -111,7 +111,7 @@ export default function SearchHelp({
         <>
           Tab completes fields and tags. Click a query to put it in the search
           box.
-          {error && <div style={{ color: "var(--error)" }}>{error}</div>}
+          {error && <div className="error-text">{error}</div>}
           <Explain query={query} items={items} />
         </>
       }

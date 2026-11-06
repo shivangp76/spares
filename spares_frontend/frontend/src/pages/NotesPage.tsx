@@ -71,6 +71,7 @@ import {
   withPage,
   withSearch,
 } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = {
@@ -741,7 +742,7 @@ export default function NotesPage() {
       `}</style>
 
       <NavbarHelp help={keys} />
-      <h2 style={{ marginBottom: 16 }}>Notes</h2>
+      <PageTitle>Notes</PageTitle>
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
@@ -1010,7 +1011,7 @@ export default function NotesPage() {
                             No notes yet.{" "}
                             <button
                               onClick={startNewNote}
-                              style={{ padding: "2px 8px", fontSize: 12 }}
+                              className="button-small"
                             >
                               Write one
                             </button>

@@ -170,9 +170,7 @@ export default function LoginPage() {
             Your email address is verified. Log in.
           </div>
         )}
-        {error && (
-          <div style={{ color: "var(--error)", fontSize: 13 }}>{error}</div>
-        )}
+        {error && <div className="error-text-small">{error}</div>}
         {policy && policy.signups !== "closed" && (
           <Link to="/signup" style={{ fontSize: 13 }}>
             Create an account

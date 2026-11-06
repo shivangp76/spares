@@ -478,9 +478,7 @@ export default function CardDetail({
         )}
       </details>
 
-      {error && (
-        <div style={{ color: "var(--error)", fontSize: 13 }}>{error}</div>
-      )}
+      {error && <div className="error-text-small">{error}</div>}
       {outcome && (
         <ActionResult
           key={outcome.seq}

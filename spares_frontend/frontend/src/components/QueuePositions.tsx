@@ -196,7 +196,7 @@ export function QueuePositionList({
           </div>
         ))}
       {response.not_shown_total > response.not_shown.length && (
-        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+        <div className="hint">
           And {response.not_shown_total - response.not_shown.length} more not
           shown today.
         </div>
@@ -401,9 +401,7 @@ export default function FindInQueue({
         </div>
       )}
       {lookup.kind === "offline" && (
-        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          Needs the server, which can't be reached.
-        </div>
+        <div className="hint">Needs the server, which can't be reached.</div>
       )}
       {lookup.kind === "error" && (
         <pre
@@ -471,11 +469,7 @@ export function QueueOrder({
   if (lookup.kind === "loading" || lookup.kind === "idle")
     return <div className="loading-delayed">Loading…</div>;
   if (lookup.kind === "offline")
-    return (
-      <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-        Queue order needs the server.
-      </div>
-    );
+    return <div className="hint">Queue order needs the server.</div>;
   if (lookup.kind === "error")
     return (
       <pre

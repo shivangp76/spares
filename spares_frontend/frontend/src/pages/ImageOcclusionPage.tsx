@@ -7,6 +7,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { OCCLUSIONS_FROM_NOTES, useLocalStatus } from "../local/copy";
 import type { ParserResponse } from "../types/spares";
 import { errorMessage, sectionLabel } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
@@ -56,12 +57,17 @@ export default function ImageOcclusionPage() {
 
   return (
     <div className="page">
-      <h2 style={{ marginBottom: 8 }}>Image Occlusion</h2>
-      <p style={{ marginTop: 0, fontSize: 14, color: "var(--text-secondary)" }}>
-        Draw clozes over an image. The image and clozes are stored on the
-        server, and you get a block to paste into a note. When editing a note
-        here, use <em>Insert image occlusion</em> by its data instead.
-      </p>
+      <PageTitle
+        description={
+          <>
+            Draw clozes over an image. The image and clozes are stored on the
+            server, and you get a block to paste into a note. When editing a
+            note here, use <em>Insert image occlusion</em> by its data instead.
+          </>
+        }
+      >
+        Image Occlusion
+      </PageTitle>
 
       {local.active ? (
         <p style={{ fontSize: 14 }}>{OCCLUSIONS_FROM_NOTES}</p>
@@ -116,7 +122,7 @@ export default function ImageOcclusionPage() {
             <div style={sectionLabel}>For {name}</div>
             <button
               onClick={() => copy(index, snippet)}
-              style={{ padding: "2px 8px", fontSize: 12 }}
+              className="button-small"
             >
               {copied === index ? "Copied" : "Copy"}
             </button>

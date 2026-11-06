@@ -43,6 +43,7 @@ import {
   type StepsStatsResponse,
 } from "../types/spares";
 import { errorMessage, formatDuration, td, th } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const sectionTitle: React.CSSProperties = {
   fontSize: 12,
@@ -117,9 +118,7 @@ function Tile({ value, label }: { value: React.ReactNode; label: string }) {
   return (
     <div className="tile" style={tile}>
       <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
-      <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-        {label}
-      </div>
+      <div className="secondary-text">{label}</div>
     </div>
   );
 }
@@ -482,9 +481,7 @@ function RetentionSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
   return (
     <>
       <div className="table-scroll">
-        <table
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
-        >
+        <table className="data-table">
           <thead>
             <tr>
               <th style={th} rowSpan={2} />
@@ -587,9 +584,7 @@ function AnswerButtonsSection({
   ];
   return (
     <div className="table-scroll">
-      <table
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
-      >
+      <table className="data-table">
         <thead>
           <tr>
             <th style={th} />
@@ -1370,6 +1365,7 @@ export default function StatisticsPage() {
 
   return (
     <div className="page">
+      <PageTitle>Statistics</PageTitle>
       <div
         style={{
           display: "flex",
@@ -1459,11 +1455,7 @@ export default function StatisticsPage() {
             style={input}
           />
         </label>
-        {loading && (
-          <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            Loading…
-          </span>
-        )}
+        {loading && <span className="hint">Loading…</span>}
       </div>
 
       {error && !loading && (

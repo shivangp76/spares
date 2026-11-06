@@ -577,9 +577,7 @@ export default function NoteDetail({
         <div style={{ marginBottom: 16 }}>
           <div style={metaLabel}>Image Occlusions</div>
           {imageOcclusionsError && (
-            <div style={{ fontSize: 13, color: "var(--error)" }}>
-              {imageOcclusionsError}
-            </div>
+            <div className="error-text-small">{imageOcclusionsError}</div>
           )}
           <div
             style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}
@@ -632,8 +630,7 @@ export default function NoteDetail({
                       ? "No note matches this keyword"
                       : (ln.matched_keyword ?? undefined)
                   }
-                  className="button-link"
-                  style={{ padding: "4px 10px", fontSize: 12 }}
+                  className="button-link button-small"
                 >
                   {ln.searched_keyword} (
                   {id === null ? "unmatched" : formatNoteId(id)})
@@ -666,9 +663,7 @@ export default function NoteDetail({
         >
           {render === null && <div>Loading…</div>}
           {render && "error" in render && (
-            <div style={{ color: "var(--error)", fontSize: 13 }}>
-              {render.error}
-            </div>
+            <div className="error-text-small">{render.error}</div>
           )}
           {render && "result" in render && (
             <CardRenderer

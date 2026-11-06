@@ -97,7 +97,7 @@ export default function DeviceTokens() {
                     <button
                       disabled={busy !== null}
                       onClick={() => void revoke(device)}
-                      style={{ color: "var(--error)" }}
+                      className="error-text"
                     >
                       {busy === device.id ? "Logging out…" : "Log out"}
                     </button>

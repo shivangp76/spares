@@ -132,11 +132,7 @@ export default function UnmaskedImageOcclusions({
                   )}
                 </div>
               ) : (
-                !error && (
-                  <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                    Loading…
-                  </div>
-                )
+                !error && <div className="hint">Loading…</div>
               )}
               <figcaption
                 style={{

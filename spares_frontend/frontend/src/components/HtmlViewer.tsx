@@ -160,9 +160,7 @@ export default function HtmlViewer({
 
   if (current?.error !== undefined)
     return (
-      <div style={{ color: "var(--error)" }}>
-        Error loading card: {current.error}
-      </div>
+      <div className="error-text">Error loading card: {current.error}</div>
     );
   if (current === null) return <div className="loading-delayed">Loading…</div>;
   return (

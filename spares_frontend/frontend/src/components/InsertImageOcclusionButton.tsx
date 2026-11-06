@@ -19,9 +19,8 @@ export default function InsertImageOcclusionButton({
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
-        className="button-tool tool-purple"
+        className="button-tool tool-purple button-small"
         title={title}
-        style={{ padding: "2px 8px", fontSize: 12 }}
       >
         <span aria-hidden="true">🖼️</span> Insert image occlusion
       </button>
