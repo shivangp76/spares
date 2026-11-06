@@ -26,6 +26,7 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_cards;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::ImageOcclusionSources;
 use crate::parsers::image_occlusion::construct::get_clozes_from_svg;
 use crate::parsers::image_occlusion::construct::modify_clozes_for_card;
 use crate::parsers::image_occlusion::create_image_occlusion_cards;
@@ -376,6 +377,7 @@ fn test_get_cards_image_occlusion_2() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -391,11 +393,14 @@ fn test_get_cards_image_occlusion_2() {
                 <title>Clozes</title>
                 <g>
                   <rect fill="#FF7E7E" height="75" width="123.21429" stroke="#2D2D2D" y="65.17857" id="svg_1" x="53.67857" data-cloze-settings="h:Hi there;g:1" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="115.28571500000001" y="110.67857">Hi there</text>
+                  <text font-family="Libertinus Serif" font-size="27.48" text-anchor="middle" dominant-baseline="central" x="115.29" y="102.68" textLength="92.41" lengthAdjust="spacingAndGlyphs">Hi there</text>
                 </g>
                 <g>
                   <ellipse fill="#FFEBA2" stroke="#2D2D2D" stroke-dasharray="null" stroke-linejoin="null" stroke-linecap="null" cx="346.52633" cy="78.94737" id="svg_2" rx="46.31579" ry="46.31579" data-cloze-settings="g:1;hide:" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.52633" y="78.94737">(no answer)</text>
+                  <text font-family="Libertinus Serif" font-size="17.49" text-anchor="middle" dominant-baseline="central" x="346.53" y="78.95">
+                    <tspan x="346.53" y="68.98" textLength="23.5" lengthAdjust="spacingAndGlyphs">(no</tspan>
+                    <tspan x="346.53" y="88.91" textLength="56.45" lengthAdjust="spacingAndGlyphs">answer)</tspan>
+                  </text>
                 </g>
               </g>
             </svg>"##
@@ -580,6 +585,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
         back_emphasis,
         CardSide::Front,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -596,11 +602,14 @@ fn test_get_cards_image_occlusion_front_conceal() {
                 <rect fill="#FF7E7E" height="75" id="svg_1" stroke="#2D2D2D" width="123.21" x="53.68" y="65.18" data-cloze-settings="g:1" />
                 <g>
                   <rect fill="#FF7E7E" height="75" id="svg_2" stroke="#2D2D2D" width="123.21" x="193.68" y="236.18" data-cloze-settings="h:Hi;g:1" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="255.285" y="281.68">Hi</text>
+                  <text font-family="Libertinus Serif" font-size="49.34" text-anchor="middle" dominant-baseline="central" x="255.28" y="273.68" textLength="49.39" lengthAdjust="spacingAndGlyphs">Hi</text>
                 </g>
                 <g>
                   <ellipse cx="346.53" cy="78.95" fill="#FFEBA2" id="svg_3" rx="46.32" ry="46.32" stroke="#2D2D2D" stroke-dasharray="null" stroke-linecap="null" stroke-linejoin="null" data-cloze-settings="o:2" />
-                  <text font-size="16" text-anchor="middle" dominant-baseline="middle" x="346.53" y="78.95">(no answer)</text>
+                  <text font-family="Libertinus Serif" font-size="17.49" text-anchor="middle" dominant-baseline="central" x="346.53" y="78.95">
+                    <tspan x="346.53" y="68.98" textLength="23.5" lengthAdjust="spacingAndGlyphs">(no</tspan>
+                    <tspan x="346.53" y="88.92" textLength="56.45" lengthAdjust="spacingAndGlyphs">answer)</tspan>
+                  </text>
                 </g>
               </g>
             </svg>"##
@@ -630,6 +639,7 @@ fn test_get_cards_image_occlusion_front_conceal() {
         back_emphasis,
         CardSide::Back,
         &config,
+        None,
     );
     let mut buffer: Vec<u8> = Vec::new();
     let _ = clozes_svg_element
@@ -866,7 +876,9 @@ fn test_image_occlusion_parallel_performance() {
 
     // Test parallel version
     let parallel_start = Instant::now();
-    let parallel_result = create_image_occlusion_cards(&card_data, CardSide::Front, &output_path);
+    let sources = ImageOcclusionSources::read(std::slice::from_ref(&card_data), false);
+    let parallel_result =
+        create_image_occlusion_cards(&card_data, CardSide::Front, &output_path, &sources);
     let parallel_duration = parallel_start.elapsed();
 
     if let Err(e) = parallel_result {
@@ -884,7 +896,8 @@ fn test_image_occlusion_parallel_performance() {
 
     // Verify files were created
     for i in 1..=num_cards {
-        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        let card_filepath =
+            get_image_occlusion_card_filepath(&output_path, CardSide::Front, i, false);
         if !card_filepath.exists() {
             // List what files actually exist
             let files: Vec<_> = std::fs::read_dir(&rendered_dir)
@@ -924,6 +937,7 @@ fn test_image_occlusion_parallel_performance() {
             &output_path,
             CardSide::Front,
             image_occlusion_order_in_card,
+            false,
         );
         let _ = create_image_occlusion_card(
             cloze_indices,
@@ -931,6 +945,7 @@ fn test_image_occlusion_parallel_performance() {
             &card_filepath,
             CardSide::Front,
             &config.image_occlusion,
+            false,
         );
     }
 
@@ -938,7 +953,8 @@ fn test_image_occlusion_parallel_performance() {
 
     // Clean up sequential test files
     for i in 1..=num_cards {
-        let card_filepath = get_image_occlusion_card_filepath(&output_path, CardSide::Front, i);
+        let card_filepath =
+            get_image_occlusion_card_filepath(&output_path, CardSide::Front, i, false);
         let _ = std::fs::remove_file(&card_filepath);
     }
 
@@ -982,14 +998,13 @@ fn test_grouped_shapes_accepted_by_get_clozes_from_svg() {
 
 /// `modify_clozes_for_card` with a group cloze (front, `ToAnswer + hint`) should:
 /// - recursively apply the answer colour to every shape child
-/// - wrap the group in a hint `<g>` with a `<text>` element whose position is
-///   the centre of the group's bounding box
+/// - wrap the group in a hint `<g>` with a `<text>` element inside its shapes
 #[test]
 fn test_grouped_shapes_modify_card_to_answer() {
     // Two shapes:
     //   rect  x=0  y=0  w=100 h=40  → bbox (0,  0, 100, 40)
     //   ellipse cx=200 cy=20 rx=20 ry=20 → bbox (180, 0, 220, 40)
-    //   union bbox → (0, 0, 220, 40)  centre → (110, 20)
+    //   the rect is the largest room for text → centre about (50, 20)
     let svg = r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><g id="group_1"><rect x="0" y="0" width="100" height="40"/><ellipse cx="200" cy="20" rx="20" ry="20"/></g></g></svg>"#;
 
     let mut svg_element = Element::parse(svg.as_bytes()).unwrap();
@@ -1010,6 +1025,7 @@ fn test_grouped_shapes_modify_card_to_answer() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
 
     // add_text_to_cloze wraps the group in a new <g> and adds a <text> sibling.
@@ -1056,15 +1072,15 @@ fn test_grouped_shapes_modify_card_to_answer() {
         other => panic!("expected Element, got {:?}", other),
     };
     assert_eq!(text_el.name, "text");
-    assert_eq!(
-        text_el.attributes.get("x").map(String::as_str),
-        Some("110"),
-        "text x must be at horizontal centre of union bounding box"
+    // The hint goes in the largest room inside the shapes, the rect, not the gap between them
+    let coordinate = |key: &str| -> f64 { text_el.attributes[key].parse().unwrap() };
+    assert!(
+        (coordinate("x") - 50.).abs() < 2.,
+        "text x must be near the centre of the rect"
     );
-    assert_eq!(
-        text_el.attributes.get("y").map(String::as_str),
-        Some("20"),
-        "text y must be at vertical centre of union bounding box"
+    assert!(
+        (coordinate("y") - 20.).abs() < 2.,
+        "text y must be near the centre of the rect"
     );
     assert_eq!(
         text_el.children,
@@ -1091,6 +1107,7 @@ fn test_grouped_shapes_modify_card_hidden() {
         false,
         CardSide::Front,
         &config,
+        None,
     );
 
     assert_eq!(
@@ -1128,13 +1145,16 @@ fn test_delete_note_files_with_missing_image_occlusion_files() {
         original_image_filepath.display(),
     );
 
+    // PNGs and overlays, in case another parser rendered the note
     let rendered_filepaths = [CardSide::Front, CardSide::Back]
         .into_iter()
-        .map(|side| {
+        .flat_map(|side| {
             let output_rendered_filepath = get_image_occlusion_rendered_directory().join(
                 parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
             );
-            get_image_occlusion_card_filepath(&output_rendered_filepath, side, 1)
+            [false, true].map(|overlay| {
+                get_image_occlusion_card_filepath(&output_rendered_filepath, side, 1, overlay)
+            })
         })
         .collect::<Vec<_>>();
     for filepath in &rendered_filepaths {
@@ -1182,4 +1202,351 @@ fn test_update_cloze_settings_skips_unchanged_file() {
     );
 
     std::fs::remove_file(&clozes_filepath).unwrap();
+}
+
+/// A Typst card shows the original image with an SVG of the card's clozes over it, the size of
+/// the original image, instead of a PNG of both. The SVG is in the card's source, so the card
+/// reads no file but the original image.
+#[test]
+fn test_typst_card_shows_clozes_over_original_image() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::image_occlusion::image_occlusion_overlay;
+    use crate::parsers::impls::typst::TypstParser;
+    use crate::parsers::impls::typst::typst_string;
+
+    let dir = get_image_occlusion_directory();
+    let original_image_filepath = dir.join("test-overlay.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-overlay_clozes.svg");
+    // Larger than the image, which clips it
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="350">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+            <line x1="0" y1="0" x2="100" y2="100" stroke="#1565C0" />
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_1" x="53" />
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_2" x="253" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let config = ImageOcclusionConfig::default();
+    let cloze_indices = [
+        (0, ClozeHiddenReplacement::ToAnswer { hint: None }),
+        (1, ClozeHiddenReplacement::NotToAnswer),
+    ];
+
+    let parser = TypstParser::new();
+    assert!(parser.image_occlusion_overlays());
+    let note_id: NoteId = "zzzy".parse().unwrap();
+    let card_source = |data: &ImageOcclusionData| {
+        parser.construct_image_occlusion(
+            data,
+            ConstructImageOcclusionType::Card {
+                side: CardSide::Front,
+                note_id,
+                card_order: 1,
+                image_occlusion_order: 1,
+                cloze_indices: &cloze_indices,
+            },
+        )
+    };
+    let source = card_source(&data);
+    assert!(source.contains(&format!(
+        r#"std.image("{}", width: 100%)"#,
+        original_image_filepath.display()
+    )));
+    let overlay = image_occlusion_overlay(&cloze_indices, &data, CardSide::Front).unwrap();
+    let svg = String::from_utf8(overlay).unwrap();
+    assert!(
+        source.contains(&format!(
+            r#"std.image(bytes({}), format: "svg", width: 100%)"#,
+            typst_string(&svg)
+        )),
+        "{source}"
+    );
+    // No file is written for it
+    let overlay_filepath = get_image_occlusion_rendered_directory().join(format!(
+        "{}-io-1.svg",
+        PathBuf::from(
+            parser.get_output_filename(RenderOutputType::Card(1, CardSide::Front), note_id)
+        )
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+    ));
+    assert!(!source.contains(&overlay_filepath.display().to_string()));
+
+    let overlay = Element::parse(svg.as_bytes()).unwrap();
+    assert_eq!(overlay.attributes["width"], "400");
+    assert_eq!(overlay.attributes["height"], "200");
+    assert_eq!(overlay.attributes["viewBox"], "0 0 400 200");
+    // The clozes SVG at its own size, as the PNG draws it
+    let clozes = overlay.get_child("svg").unwrap();
+    assert_eq!(clozes.attributes["width"], "1024");
+    assert!(
+        svg.contains(r##"stroke="#1565C0""##),
+        "markup is kept: {svg}"
+    );
+    assert!(svg.contains(&config.cloze_to_answer_color), "{svg}");
+    assert!(svg.contains(&config.cloze_not_to_answer_color), "{svg}");
+
+    for path in [original_image_filepath, clozes_filepath] {
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// A Typst card whose image occlusion can't be drawn fails to compile, saying why.
+#[test]
+fn test_typst_card_without_its_image_fails() {
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let clozes_filepath = dir.join("test-overlay-missing_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="20" width="30" y="10" id="svg_1" x="10" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: dir.join("test-overlay-missing.png"),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let source = TypstParser::new().construct_image_occlusion(
+        &data,
+        ConstructImageOcclusionType::Card {
+            side: CardSide::Front,
+            note_id: "zzzy".parse().unwrap(),
+            card_order: 1,
+            image_occlusion_order: 1,
+            cloze_indices: &[(0, ClozeHiddenReplacement::ToAnswer { hint: None })],
+        },
+    );
+    assert!(
+        source.contains("std.panic(\"Failed to open input image"),
+        "{source}"
+    );
+    assert!(source.contains("test-overlay-missing.png"), "{source}");
+    std::fs::remove_file(clozes_filepath).unwrap();
+}
+
+/// Typst reads `typst_string`'s literals back as the strings they were made from.
+#[test]
+fn test_typst_string_escapes() {
+    use crate::parsers::impls::typst::typst_string;
+
+    assert_eq!(
+        typst_string("a \"b\" \\ c\nd\te"),
+        r#""a \"b\" \\ c\nd\te""#
+    );
+}
+
+/// A note's cards draw their image occlusions from files read once for all of them: the clozes
+/// SVG and the original image are not read again for each card, so the cards are drawn after
+/// both are gone, and as each would be drawn on its own.
+#[test]
+fn test_note_cards_read_image_occlusion_files_once() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::config::read_external_config;
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+
+    let dir = get_image_occlusion_directory();
+    let rendered_dir = get_image_occlusion_rendered_directory();
+    std::fs::create_dir_all(&rendered_dir).unwrap();
+    let original_image_filepath = dir.join("test-read-once.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-read-once_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_1" x="53" />
+            <rect fill="#FFEBA2" height="75" width="123" stroke="#2D2D2D" y="65" id="svg_2" x="253" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let data = Arc::new(ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    });
+    let card = |order: usize| {
+        let cloze_indices = vec![
+            (order - 1, ClozeHiddenReplacement::ToAnswer { hint: None }),
+            (2 - order, ClozeHiddenReplacement::NotToAnswer),
+        ];
+        CardData {
+            order: Some(order),
+            previous_order: None,
+            grouping: ClozeGrouping::Auto(order.try_into().unwrap()),
+            is_suspended: None,
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+            back_type: BackType::CardFilePath,
+            type_answer: None,
+            inherit: None,
+            cloze_uid: None,
+            data: vec![NotePart::ImageOcclusion {
+                cloze_indices,
+                data: data.clone(),
+            }],
+        }
+    };
+    let cards = [card(1), card(2)];
+    let config = read_external_config().unwrap().image_occlusion;
+
+    for overlay in [false, true] {
+        let sources = ImageOcclusionSources::read(&cards, overlay);
+        // Moved away, so a card that read them again would fail
+        let moved = |path: &PathBuf| path.with_extension("moved");
+        std::fs::rename(&original_image_filepath, moved(&original_image_filepath)).unwrap();
+        std::fs::rename(&clozes_filepath, moved(&clozes_filepath)).unwrap();
+        let mut drawn = Vec::new();
+        for (i, card) in cards.iter().enumerate() {
+            for side in [CardSide::Front, CardSide::Back] {
+                let output = rendered_dir.join(format!("test-read-once-{}-{side:?}.txt", i + 1));
+                create_image_occlusion_cards(card, side, &output, &sources).unwrap();
+                drawn.push((
+                    card,
+                    side,
+                    get_image_occlusion_card_filepath(&output, side, 1, overlay),
+                ));
+            }
+        }
+        std::fs::rename(moved(&original_image_filepath), &original_image_filepath).unwrap();
+        std::fs::rename(moved(&clozes_filepath), &clozes_filepath).unwrap();
+
+        for (card, side, filepath) in drawn {
+            let NotePart::ImageOcclusion { cloze_indices, .. } = &card.data[0] else {
+                unreachable!()
+            };
+            let alone =
+                filepath.with_extension(format!("alone.{}", if overlay { "svg" } else { "png" }));
+            create_image_occlusion_card(cloze_indices, &data, &alone, side, &config, overlay)
+                .unwrap();
+            assert!(
+                std::fs::read(&filepath).unwrap() == std::fs::read(&alone).unwrap(),
+                "{} differs from the card drawn alone",
+                filepath.display()
+            );
+            std::fs::remove_file(filepath).unwrap();
+            std::fs::remove_file(alone).unwrap();
+        }
+    }
+
+    std::fs::remove_file(original_image_filepath).unwrap();
+    std::fs::remove_file(clozes_filepath).unwrap();
+}
+
+/// A card's image is not written again when it is unchanged, which would change its modification
+/// time, but is when it changes.
+#[test]
+fn test_card_image_skips_unchanged_file() {
+    use image::Rgba;
+    use image::RgbaImage;
+
+    use crate::parsers::image_occlusion::construct::create_image_occlusion_card;
+
+    let dir = get_image_occlusion_directory();
+    let rendered_dir = get_image_occlusion_rendered_directory();
+    std::fs::create_dir_all(&rendered_dir).unwrap();
+    let original_image_filepath = dir.join("test-unchanged-card.png");
+    RgbaImage::from_pixel(400, 200, Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-unchanged-card_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        r#"<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><g id="markup-group"></g><g id="clozes-group"><rect x="0" y="0" width="50" height="50"/><rect x="100" y="0" width="50" height="50"/></g></svg>"#,
+    )
+    .unwrap();
+    let data = ImageOcclusionData {
+        original_image_filepath: original_image_filepath.clone(),
+        clozes_filepath: clozes_filepath.clone(),
+        front_conceal: FrontConceal::AllGroupings,
+        back_reveal: BackReveal::OnlyAnswered,
+        back_emphasis: true,
+    };
+    let config = ImageOcclusionConfig::default();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let modified = |path: &PathBuf| std::fs::metadata(path).unwrap().modified().unwrap();
+
+    for overlay in [false, true] {
+        let card_filepath = rendered_dir.join(format!(
+            "test-unchanged-card.{}",
+            if overlay { "svg" } else { "png" }
+        ));
+        let draw = |cloze: usize| {
+            create_image_occlusion_card(
+                &[(cloze, ClozeHiddenReplacement::ToAnswer { hint: None })],
+                &data,
+                &card_filepath,
+                CardSide::Front,
+                &config,
+                overlay,
+            )
+            .unwrap();
+        };
+        draw(0);
+        let first = std::fs::read(&card_filepath).unwrap();
+        File::options()
+            .write(true)
+            .open(&card_filepath)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        draw(0);
+        assert_eq!(modified(&card_filepath), old, "overlay: {overlay}");
+
+        draw(1);
+        assert_ne!(modified(&card_filepath), old, "overlay: {overlay}");
+        // Not `assert_ne!`, which would print both images
+        assert!(std::fs::read(&card_filepath).unwrap().ne(&first));
+
+        std::fs::remove_file(card_filepath).unwrap();
+    }
+
+    std::fs::remove_file(original_image_filepath).unwrap();
+    std::fs::remove_file(clozes_filepath).unwrap();
 }

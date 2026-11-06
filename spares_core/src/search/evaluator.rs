@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use chrono::NaiveDate;
 use chrono::Utc;
@@ -17,6 +18,7 @@ use sqlx::SqlitePool;
 use crate::LibraryError;
 use crate::api::queue::waiting_on_links;
 use crate::config::QueueConfig;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::helpers::get_start_end_local_date;
@@ -973,7 +975,7 @@ impl Field {
                     special_state(crate::model::SpecialState::SchedulerBuried)
                 }
                 CardField::WaitingOnLinks => {
-                    unreachable!("needs the config, see `waiting_on_links_sql`")
+                    unreachable!("needs the config, see `evaluate_comparison`")
                 }
                 CardField::Leech => unreachable!("needs the config, see `leech_sql`"),
                 CardField::State => with_op("c.state"),
@@ -1216,6 +1218,9 @@ struct EvaluationContext {
     scope_clause: Option<String>,
     /// The words results are ranked by, for [`relevance_cte`].
     relevance_match: Option<String>,
+    /// `config.toml`, read the first time a comparison needs it and shared with the children, so
+    /// that a query comparing several such fields reads it once
+    config: Arc<OnceLock<Result<SparesExternalConfig, String>>>,
 }
 
 impl EvaluationContext {
@@ -1233,12 +1238,23 @@ impl EvaluationContext {
             output_type,
             scope_clause,
             relevance_match: None,
+            config: Arc::default(),
         }
+    }
+
+    fn config(&self) -> Result<&SparesExternalConfig, Error> {
+        self.config
+            .get_or_init(|| read_external_config().map_err(|e| e.to_string()))
+            .as_ref()
+            .map_err(|e| miette!("{e}"))
     }
 
     /// A fresh context for evaluating a subtree of this one's expression.
     fn child(&self) -> Self {
-        Self::new(self.output_type, self.scope_clause.clone())
+        Self {
+            config: Arc::clone(&self.config),
+            ..Self::new(self.output_type, self.scope_clause.clone())
+        }
     }
 
     /// Compiles this context, which holds an `or` branch that set its own `limit`, into an
@@ -2048,9 +2064,11 @@ fn evaluate_comparison(
                 } else if matches!(field, Field::Card(CardField::Retrievability))
                     && let Ok(value) = value_param.parse::<f64>()
                 {
-                    value_context.params.push(retrievability_sql(|key| {
-                        format!("{} {}", key.sql, key_bound(op, value, &key.at))
-                    })?);
+                    value_context.params.push(retrievability_key_sql(
+                        context.config()?,
+                        &retrievability_elapsed_sql(),
+                        |key| format!("{} {}", key.sql, key_bound(op, value, &key.at)),
+                    ));
                 } else if matches!(field_type, FieldType::Float)
                     && matches!(op, Op::Equal)
                     && let Ok(value) = value_param.parse::<f64>()
@@ -2119,8 +2137,10 @@ fn evaluate_comparison(
         .map_err(|e| label_error(e, value.span(), &format!("not {}", field_type.describe())))?;
 
     let sql_condition = match field {
-        Field::Card(CardField::WaitingOnLinks) => waiting_on_links_sql(&value_str)?,
-        Field::Card(CardField::Leech) => leech_sql(&value_str)?,
+        Field::Card(CardField::WaitingOnLinks) => {
+            waiting_on_links_condition(&context.config()?.queue, &value_str)
+        }
+        Field::Card(CardField::Leech) => leech_sql(context.config()?, &value_str),
         _ => field.to_sql_str(&value_str)?,
     };
     context.add_where_clause(sql_condition);
@@ -2153,17 +2173,14 @@ pub(crate) fn lapses_sql() -> String {
 /// The SQL of `c.leech` compared with `value_str`: whether the card lapsed at least
 /// [`crate::config::LeechConfig::lapses_threshold`] times, the cards
 /// [`crate::schedulers::SrsScheduler::get_leeches`] lists, and the suspended and buried ones too.
-fn leech_sql(value_str: &str) -> Result<String, Error> {
-    let threshold = read_external_config()
-        .map_err(|e| miette!("{e}"))?
-        .leech
-        .lapses_threshold;
+fn leech_sql(config: &SparesExternalConfig, value_str: &str) -> String {
+    let threshold = config.leech.lapses_threshold;
     let leech = format!("{} >= {threshold}", lapses_sql());
-    Ok(if value_str.contains("false") {
+    if value_str.contains("false") {
         format!("NOT ({leech})")
     } else {
         format!("({leech})")
-    })
+    }
 }
 
 /// Days from the card's last review to when it is due, as in statistics, or NULL for a new card.
@@ -2179,11 +2196,19 @@ pub(crate) fn interval_sql() -> String {
 /// as [`retrievability_key_sql`] describes.
 fn retrievability_sql(sql_for: impl Fn(&RetrievabilityKey) -> String) -> Result<String, Error> {
     let config = read_external_config().map_err(|e| miette!("{e}"))?;
-    let elapsed = format!(
+    Ok(retrievability_key_sql(
+        &config,
+        &retrievability_elapsed_sql(),
+        sql_for,
+    ))
+}
+
+/// Seconds since the card's last review, for [`retrievability_key_sql`]
+fn retrievability_elapsed_sql() -> String {
+    format!(
         "(CAST(strftime('%s', 'now') AS INTEGER) - {})",
         last_rated_sql()
-    );
-    Ok(retrievability_key_sql(&config, &elapsed, sql_for))
+    )
 }
 
 /// The bound on a [`RetrievabilityKey`] that is the same as the card's retrievability comparing
@@ -2302,13 +2327,6 @@ fn review_time_sql(field: &str, range: &str) -> Result<String, Error> {
         None => miette!("{}", e.chain().last().unwrap_or(&*e)),
     })?;
     context.where_clauses.pop().ok_or_else(invalid)
-}
-
-/// The SQL of `c.waiting_on_links` compared with `value_str`, with the `[queue]` settings of
-/// `config.toml`. See [`waiting_on_links_condition`].
-fn waiting_on_links_sql(value_str: &str) -> Result<String, Error> {
-    let queue = read_external_config().map_err(|e| miette!("{e}"))?.queue;
-    Ok(waiting_on_links_condition(&queue, value_str))
 }
 
 /// The SQL of `c.waiting_on_links` compared with `value_str`: the cards that
@@ -3089,7 +3107,7 @@ mod tests {
             // Field type and operator type do not match
             "data>2", // Strings do not have an order
             "id~2",   // Numbers cannot use containment operator
-            // Note ids are letters, so old numeric ids are rejected rather than reinterpreted.
+            // Note ids are letters, so numbers are rejected
             "id>100",
             "id=42",
             "linked_to_note=12",

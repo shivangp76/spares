@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, cachedNotesPage, changeNotesParser, countNotes, deleteNotes, exportNotes, getNote, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
+import { ApiError, cachedNotesPage, changeNotesParser, countNotes, deleteNotes, exportNotes, getCredentials, getNote, importShared, shareBundle, shareSummary as fetchShareSummary, isNetworkError, listManualTagNames, listNotes, listParsers, modifyNoteTags, searchNotes, searchNotesPage } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useDetailView } from '../hooks/useDetailView';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useRowSelection } from '../hooks/useRowSelection';
 import { useListKeys } from '../hooks/useListKeys';
 import { useSavedSearches } from '../hooks/useSavedSearches';
+import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import BulkActionBar, { Checkbox, type BulkAction } from '../components/BulkActionBar';
 import { FILTERED_TAG_ACTION } from '../components/bulkActions';
 import { NavbarHelp } from '../components/Navbar';
@@ -14,18 +15,40 @@ import RecentSearches from '../components/RecentSearches';
 import SearchInput, { type SearchInputError } from '../components/SearchInput';
 import type { IdsOrQuery, RowSelection } from '../selection';
 import NewNoteForm from '../components/NewNoteForm';
+import { syncLocalCopy } from '../local/copy';
+import { usesLocalCopy } from '../local/transport';
 import NoteDetail, { type NotePaneHandle } from '../components/NoteDetail';
 import Pagination from '../components/Pagination';
 import { setNoteColumns, setNotesPageSize, useNoteColumns, useNotesPageSize, type NoteColumn, type PageSize } from '../preferences';
 import { ColumnHeader, ColumnPicker, type Column } from '../components/tableColumns';
 import { useTableSort } from '../hooks/useTableSort';
 import { useTableWidths } from '../hooks/useTableWidths';
-import type { NoteResponse } from '../types/spares';
-import { SYNC_CONFLICT_TAG, downloadText, errorMessage, formatDate, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
+import type { ImportSharedResponse, NoteResponse, ShareSummary } from '../types/spares';
+import { SYNC_CONFLICT_TAG, downloadBlob, downloadText, errorMessage, formatDate, formatDateTime, formatNoteId, highlightPreview, keepShown, tagList, td, th, withPage, withSearch } from '../utils';
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = { ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
+
+/** What an export to share holds, from its summary, of `count` notes selected. */
+function shareSummary(summary: ShareSummary, count: number): string {
+  const shared = count - summary.private_notes_left_out;
+  const lines = [`${shared} note(s), with ${summary.media.length} image, audio and image occlusion file(s).`];
+  if (summary.private_notes_left_out > 0) lines.push(`${summary.private_notes_left_out} private note(s) are left out.`);
+  if (summary.missing_media.length > 0) {
+    lines.push(`These paths have no file, so the notes still name them. Check that they name nothing private:\n${summary.missing_media.join('\n')}`);
+  }
+  return lines.join('\n');
+}
+
+/** What importing shared notes did, in a sentence or a few. */
+function importSummary(imported: ImportSharedResponse, name: string): string {
+  const parts = [`Imported ${imported.note_count} note(s) from ${name}, with ${imported.media_count} image, audio and image occlusion file(s).`];
+  if (imported.parsers_added.length > 0) parts.push(`Added the parser(s) ${tagList(imported.parsers_added)}.`);
+  if (imported.missing_media.length > 0) parts.push(`The zip has none of ${imported.missing_media.join(', ')}, which the notes name.`);
+  if (imported.skipped_files.length > 0) parts.push(`Left out ${imported.skipped_files.join(', ')}, which no parser reads.`);
+  return parts.join(' ');
+}
 
 /** A query that finds the notes `selector` picks, for an endpoint that only takes a query. */
 function queryOf(selector: IdsOrQuery): string {
@@ -113,6 +136,11 @@ export default function NotesPage() {
   // contents are still there when New note is clicked again
   const [hasDraft, setHasDraft] = useState(false);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
+  // What the last import of shared notes did, numbered so each gets a fresh Undo button
+  const [imported, setImported] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const importInput = useRef<HTMLInputElement>(null);
   // Bumped after a bulk action, to refetch the notes it may have changed
   const [reloadCount, setReloadCount] = useState(0);
   // Bumped when the shown note is changed by a bulk action, so its editor starts again from it
@@ -310,10 +338,25 @@ export default function NotesPage() {
     },
     {
       label: 'Export',
-      run: async (selector, _, count) => {
-        const files = Object.entries(await exportNotes(queryOf(selector)));
-        for (const [extension, text] of files) downloadText(`export.${extension}`, text);
-        return { message: `Exported ${count} note(s) to ${files.map(([extension]) => `export.${extension}`).join(', ') || 'no files'}.`, eventIds: [] };
+      input: {
+        kind: 'choice',
+        options: async () => [
+          { value: 'share', label: 'To share' },
+          { value: 'edit', label: 'To edit and import back' },
+        ],
+        initial: 'share',
+      },
+      run: async (selector, [mode], count) => {
+        const query = queryOf(selector);
+        if (mode === 'edit') {
+          const files = Object.entries(await exportNotes(query));
+          for (const [extension, text] of files) downloadText(`export.${extension}`, text);
+          return { message: `Exported ${count} note(s) to ${files.map(([extension]) => `export.${extension}`).join(', ') || 'no files'}, to import back with \`spares import\`.`, eventIds: [] };
+        }
+        const summary = shareSummary(await fetchShareSummary(query), count);
+        if (!window.confirm(`${summary}\n\nDownload shared.zip?`)) return { message: 'Not exported.', eventIds: [] };
+        downloadBlob('shared.zip', await shareBundle(query));
+        return { message: `Exported to shared.zip. ${summary}`, eventIds: [] };
       },
     },
     FILTERED_TAG_ACTION,
@@ -328,6 +371,33 @@ export default function NotesPage() {
       },
     },
   ];
+
+  /** Adds the shared notes in `file`, a file of them or a zip with their media, as new notes. */
+  async function importFile(file: File) {
+    setImporting(true);
+    setImportError(null);
+    try {
+      const result = await importShared(file);
+      let message = importSummary(result, file.name);
+      let eventIds = result.event_ids;
+      // The server added them, so this device's copy has them once it syncs. The server's events
+      // aren't synced, so the copy can't undo them.
+      if (usesLocalCopy(getCredentials().serverUrl)) {
+        eventIds = [];
+        try {
+          await syncLocalCopy();
+        } catch (e) {
+          message += ` They reach this device at its next sync (${errorMessage(e)}).`;
+        }
+      }
+      setImported(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: { message, eventIds } }));
+      afterBulkAction();
+    } catch (e) {
+      setImportError(errorMessage(e));
+    } finally {
+      setImporting(false);
+    }
+  }
 
   /** Shows what a bulk action, or undoing it, changed. */
   function afterBulkAction() {
@@ -396,8 +466,30 @@ export default function NotesPage() {
             <button onClick={handleSaveSearch} disabled={!query.trim()} className="touch-target-small" title="Save this search, for here and `spares note search --saved`">Save</button>
             {searchResults !== null && <button onClick={handleClear} className="touch-target-small">Clear</button>}
             <Link to={searchQuery ? `/graph?q=${encodeURIComponent(searchQuery)}` : '/graph'} className="hide-narrow" style={{ alignSelf: 'center', fontSize: 13 }} title="See how these notes link to the notes they build on">Graph</Link>
-            <button onClick={startNewNote} className="touch-target-small" style={{ marginLeft: 'auto' }}>New note</button>
+            <button
+              onClick={() => importInput.current?.click()}
+              disabled={importing}
+              className="touch-target-small"
+              style={{ marginLeft: 'auto' }}
+              title="Add shared notes, from a zip exported to share or a file of notes"
+            >
+              {importing ? 'Importing…' : 'Import'}
+            </button>
+            <input
+              ref={importInput}
+              type="file"
+              accept=".zip,.md,.typ,.tex"
+              hidden
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void importFile(file);
+              }}
+            />
+            <button onClick={startNewNote} className="touch-target-small">New note</button>
           </div>
+          {importError && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap' }}>{importError}</div>}
+          {imported && <ActionResult key={imported.seq} outcome={imported.outcome} onReverted={afterBulkAction} />}
           <RecentSearches
             heading="Saved"
             recent={savedSearches}

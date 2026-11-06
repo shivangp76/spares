@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -25,6 +23,7 @@ use spares_core::api::note::search_keyword;
 use spares_core::api::note::search_notes;
 use spares_core::api::note::search_page;
 use spares_core::api::note::update_notes;
+use spares_core::config::read_external_config;
 use spares_core::model::NoteId;
 use spares_core::notes_vcs::run_shared;
 use spares_core::parsers::get_all_parsers;
@@ -43,11 +42,11 @@ use spares_core::schema::note::SearchNotesRequest;
 use spares_core::schema::note::SearchPageRequest;
 use spares_core::schema::note::UpdateNotesRequest;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn create_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<CreateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -62,7 +61,7 @@ pub(crate) async fn create_notes_handler(
 
 pub(crate) async fn get_note_handler(
     Path(id): Path<NoteId>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let note_res = get_note(&data.db, id).await.map_err(error_to_response)?;
     Ok(Json(note_res))
@@ -70,7 +69,7 @@ pub(crate) async fn get_note_handler(
 
 pub(crate) async fn get_note_render_handler(
     Path(id): Path<NoteId>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let response = get_note_render(&data.db, id, &get_all_parsers())
         .await
@@ -79,7 +78,7 @@ pub(crate) async fn get_note_render_handler(
 }
 
 pub(crate) async fn update_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UpdateNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -93,7 +92,7 @@ pub(crate) async fn update_notes_handler(
 }
 
 pub(crate) async fn delete_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<DeleteNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -106,7 +105,7 @@ pub(crate) async fn delete_notes_handler(
 
 pub(crate) async fn list_notes_handler(
     opts: Query<FilterOptions>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let list_notes_res = list_notes(&data.db, opts.0)
         .await
@@ -116,14 +115,14 @@ pub(crate) async fn list_notes_handler(
 
 /// How many notes there are, for the pages `GET /api/notes` has.
 pub(crate) async fn count_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let count = count_notes(&data.db).await.map_err(error_to_response)?;
     Ok(Json(count))
 }
 
 pub(crate) async fn search_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<SearchNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let search_notes_res = search_notes(&data.db, body)
@@ -134,7 +133,7 @@ pub(crate) async fn search_notes_handler(
 
 /// One page of a search's results, with how many there are in all.
 pub(crate) async fn search_page_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<SearchPageRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let page = search_page(&data.db, body)
@@ -154,7 +153,7 @@ pub(crate) async fn search_examples_handler() -> impl IntoResponse {
 }
 
 pub(crate) async fn search_keyword_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<SearchKeywordRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let search_keyword_res = search_keyword(&data.db, body)
@@ -164,7 +163,7 @@ pub(crate) async fn search_keyword_handler(
 }
 
 pub(crate) async fn generate_note_files_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<RenderNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -175,7 +174,7 @@ pub(crate) async fn generate_note_files_handler(
 }
 
 pub(crate) async fn find_live_note_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<FindLiveNoteRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let id = find_live_note_by_block_order(&data.db, &body.live_sync_name, body.block_order)
@@ -185,7 +184,7 @@ pub(crate) async fn find_live_note_handler(
 }
 
 pub(crate) async fn relocate_live_cards_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<RelocateLiveCardsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -197,7 +196,7 @@ pub(crate) async fn relocate_live_cards_handler(
 }
 
 pub(crate) async fn get_unmatched_keywords_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let unmatched_keywords = get_unmatched_keywords(&data.db)
         .await
@@ -206,7 +205,7 @@ pub(crate) async fn get_unmatched_keywords_handler(
 }
 
 pub(crate) async fn get_note_links_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<NoteLinksRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let note_links = get_note_links(&data.db, body)
@@ -217,7 +216,7 @@ pub(crate) async fn get_note_links_handler(
 
 /// The notes a query finds and the notes they link to, for the graph page.
 pub(crate) async fn get_note_graph_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<NoteGraphRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let graph = get_note_graph(&data.db, body)
@@ -227,17 +226,18 @@ pub(crate) async fn get_note_graph_handler(
 }
 
 pub(crate) async fn export_notes_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<ExportNotesRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let result = export_notes(&data.db, body, &get_all_parsers())
+    let config = read_external_config().map_err(error_to_response)?;
+    let result = export_notes(&data.db, body, &config, &get_all_parsers())
         .await
         .map_err(error_to_response)?;
     Ok(Json(result))
 }
 
 pub(crate) async fn get_duplicate_keywords_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let duplicate_keywords = get_duplicate_keywords(&data.db)
         .await
@@ -246,7 +246,7 @@ pub(crate) async fn get_duplicate_keywords_handler(
 }
 
 pub(crate) async fn get_keywords_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let keywords = get_keywords(&data.db).await.map_err(error_to_response)?;
     Ok(Json(keywords))

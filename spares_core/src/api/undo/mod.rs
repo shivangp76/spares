@@ -4,9 +4,10 @@
 //! - To undo an event, you append a new event to the event log that reverses the previous event. For example, to undo `AddNote`, you append a `DeleteNote` event.
 //!
 //! ## Problems and Solutions
-//! - Future: Syncing data between devices
-//!   - Last write wins. This is why there is a `timestamp` field. Events are merged and then replayed in chronological order. If there is a conflict, pick random one for now. This can be worked out later. (Pretty unlikely there is a conflict at the exact same timestamp.)
-//!   - Future: Add `device_id` field to `Event`
+//! - Syncing between replicas
+//!   - Events stay on the replica that recorded them. An undo is a change like any other, which
+//!     the next sync sends, so an event can be undone after a sync too, unless the sync changed
+//!     the same notes, cards, tags or parsers since ([`received`]).
 //! - Branching undo logs
 //!   - Events can be undone by their id, so the user can submit the exact action they want to undo.
 //!   - If the user does `create parser -> add note to parser -> UNDO: create parser`, then throw error saying cannot delete parser since notes depend on it.
@@ -58,6 +59,7 @@ use crate::schema::undo::UndoEventResponse;
 mod describe;
 mod event_actions;
 mod invert_payload;
+mod received;
 pub use event_actions::create_event_group;
 pub use event_actions::insert_events;
 pub(crate) use event_actions::join_event_group;
@@ -137,24 +139,6 @@ async fn expand_group(
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })
-}
-
-/// Errors if any of `events` happened before the last sync: what it did has reached the other
-/// replica, which may have changed the same rows since.
-async fn check_not_synced(db: &SqlitePool, events: &[Event]) -> Result<(), Error> {
-    let guard: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
-        .bind(crate::sync::LAST_SYNC_EVENT_ID_KEY)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let guard: i64 = guard.and_then(|g| g.parse().ok()).unwrap_or(0);
-    if let Some(event) = events.iter().find(|event| event.id <= guard) {
-        return Err(Error::Library(LibraryError::InvalidConfig(format!(
-            "Event {} happened before the last sync, so it can no longer be reverted",
-            event.id
-        ))));
-    }
-    Ok(())
 }
 
 /// Errors unless `event` can be reverted by an undo (`redo == false`), which takes an action or a
@@ -256,7 +240,6 @@ pub async fn group_events(db: &SqlitePool, body: GroupEventsRequest) -> Result<(
         }
         events.push(event);
     }
-    check_not_synced(db, &events).await?;
     for &other in others {
         join_event_group(db, leader, other).await?;
     }
@@ -293,7 +276,7 @@ pub async fn undo_event(
     };
 
     let events = expand_group(db, event, body.undo_group).await?;
-    check_not_synced(db, &events).await?;
+    received::check_not_received(db, &events, received::Reverting::Undo).await?;
     let undone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
@@ -345,7 +328,7 @@ pub async fn redo_event(
     };
 
     let events = expand_group(db, event, body.redo_group).await?;
-    check_not_synced(db, &events).await?;
+    received::check_not_received(db, &events, received::Reverting::Redo).await?;
     let redone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;

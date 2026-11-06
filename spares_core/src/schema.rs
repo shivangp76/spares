@@ -139,6 +139,7 @@ pub mod tag {
 }
 
 pub mod note {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use chrono::DateTime;
@@ -160,6 +161,27 @@ pub mod note {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ExportNotesRequest {
         pub query: String,
+        /// Export the notes to share with someone else, as [`crate::api::note::export`] describes.
+        /// Without this, the file updates the notes in this collection when imported.
+        #[serde(default)]
+        pub share: bool,
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+    pub struct ExportNotesResponse {
+        /// Each file's contents, by the file extension of its parser.
+        pub files: HashMap<String, String>,
+        /// How many of the notes the query found were left out for being private (see
+        /// [`crate::config::SparesExternalConfig::private_tag_name`]). Only when sharing.
+        pub private_notes_left_out: usize,
+        /// The images, audio and image occlusions the notes name, to go with them. Only when
+        /// sharing (see [`crate::api::note::shared_media`]).
+        #[serde(default)]
+        pub media: Vec<crate::api::note::shared_media::SharedMedia>,
+        /// Paths of images and audio the notes name, with no file there, so they are left as
+        /// they are. Only when sharing.
+        #[serde(default)]
+        pub missing_media: Vec<String>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -827,6 +849,38 @@ pub mod review {
         pub card_count: u32,
     }
 
+    /// An image occlusion of a review card whose back masks some of it, which the review page can
+    /// show without masks.
+    #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+    pub struct UnmaskedImageOcclusion {
+        /// As the card's figure is captioned ([`crate::parsers::image_occlusion::image_occlusion_caption`])
+        pub caption: String,
+        /// Its place among the card's image occlusions, from 1
+        pub order: usize,
+    }
+
+    /// `GET /api/review/unmasked-image-occlusion`: a part of an image occlusion of a card, without
+    /// masks (see [`crate::api::review::unmasked_image_occlusion`]).
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct UnmaskedImageOcclusionRequest {
+        pub note_id: NoteId,
+        pub card_order: u32,
+        /// [`UnmaskedImageOcclusion::order`]
+        pub order: usize,
+        pub part: UnmaskedImageOcclusionPart,
+    }
+
+    /// A part of an image occlusion without masks, which the review page shows one over the other
+    /// at the same width.
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum UnmaskedImageOcclusionPart {
+        /// The original image, as it is
+        Image,
+        /// Its Markup layer, as an SVG the size of the original image
+        Markup,
+    }
+
     #[derive(Debug, Deserialize, Serialize)]
     pub enum CardBackRenderedPath {
         CardBack(PathBuf),
@@ -905,6 +959,11 @@ pub mod review {
         /// Present iff the parser [renders in the browser](crate::parsers::Parseable::renders_in_browser).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub browser_sources: Option<BrowserRenderSources>,
+        /// Present iff the card is a Markdown card and this is a device that keeps a copy of the
+        /// collection, which renders nothing: the sources the web app shows while the server
+        /// hasn't rendered the note's latest change (see `api::browser_render::add_device_sources`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub device_sources: Option<BrowserRenderSources>,
         /// Present iff the card asks for its answers to be typed (the cloze key `t`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub typed_answer: Option<TypedAnswerInfo>,
@@ -912,6 +971,10 @@ pub mod review {
         /// which web clients fetch from the render assets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub audio: Option<CardAudio>,
+        /// Present iff the back of the card still masks some of its image occlusions: those, which
+        /// the review page shows without masks when asked (`GET /api/review/unmasked-image-occlusion`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub image_occlusions: Option<Vec<UnmaskedImageOcclusion>>,
         /// The number of cards left in each state for the relevant query, as many as today's
         /// limits leave room for. With `reviews_daily_limit = 200`, 600 reviews due and 50
         /// already done today, reviews show 150, not 550. Learning and relearning cards, and the
@@ -1070,45 +1133,6 @@ pub mod review {
         pub event_id: Option<i64>,
     }
 
-    /// The cards a review would show next, for a web client to review offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueRequest {
-        pub filter: Option<GetReviewCardFilterRequest>,
-        /// The most cards to return.
-        pub limit: u32,
-        /// Also include cards that become due on the next `days_ahead` days, so a client that
-        /// stays offline past midnight still has cards. New cards are only included up to today's
-        /// remaining limit.
-        #[serde(default)]
-        pub days_ahead: u32,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueResponse {
-        /// In the order a review would show them.
-        pub cards: Vec<ReviewQueueCard>,
-        /// New cards that can still be studied today, before any of `cards` are.
-        pub new_cards_left_today: u32,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct ReviewQueueCard {
-        /// When the card becomes due, so a client knows which cards to show on which day.
-        pub due: DateTime<Utc>,
-        /// The earliest a client may show the card, for a learning or relearning card held back
-        /// by [`QueueConfig::learn_ahead_limit`](crate::config::QueueConfig::learn_ahead_limit):
-        /// its `due` minus the limit. `None` for other cards, and for every card of a filtered
-        /// tag, which holds nothing back.
-        ///
-        /// For example, with the default limit of 20 minutes, a card rated at 12:00 onto a 1
-        /// hour step is due at 13:00 and has `shown_from` 12:40. Offline review shows it once
-        /// nothing else is left and it is 12:40, as online review does, rather than at once.
-        pub shown_from: Option<DateTime<Utc>>,
-        /// `cards_left_by_state` and `time_estimate` are for the whole queue as it was fetched.
-        #[serde(flatten)]
-        pub card: GetReviewCardResponse,
-    }
-
     /// Where the cards matching `match_query` are in the queue of the review with `filter` (see
     /// [`queue_positions`](crate::api::queue_position::queue_positions)).
     #[derive(Debug, Default, Deserialize, Serialize)]
@@ -1204,54 +1228,6 @@ pub mod review {
         ReviewLimit {
             preset: Option<String>,
         },
-    }
-
-    /// Study actions a client performed while offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct SyncOfflineActionsRequest {
-        pub scheduler_name: String,
-        pub actions: Vec<OfflineStudyAction>,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct OfflineStudyAction {
-        /// Chosen by the client, unique per action. An action that was already received is not
-        /// applied again, so a client can resend a batch whose response it did not get.
-        pub client_id: String,
-        /// When the action was performed. A time after the server's clock is taken as the
-        /// server's current time.
-        pub performed_at: DateTime<Utc>,
-        pub action: OfflineStudyActionKind,
-    }
-
-    /// The [`StudyAction`]s that can be performed offline.
-    #[derive(Debug, Deserialize, Serialize)]
-    pub enum OfflineStudyActionKind {
-        Rate(RatingSubmission),
-        Bury { card_id: CardId },
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct SyncOfflineActionsResponse {
-        /// One per action, in the order they were submitted.
-        pub results: Vec<OfflineActionResult>,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct OfflineActionResult {
-        pub client_id: String,
-        pub outcome: OfflineActionOutcome,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub enum OfflineActionOutcome {
-        /// `event_id` is the event to undo it with, if it can be undone.
-        Applied { event_id: Option<i64> },
-        /// It was received before.
-        Duplicate,
-        /// It cannot be applied, e.g. because the card was deleted or is suspended. It will not
-        /// be applied if resent.
-        Rejected { message: String },
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -1562,6 +1538,17 @@ pub mod statistics {
         pub retrievability: Option<Histogram>,
         /// The sum of every card's retrievability: how many of them you would recall now.
         pub total_knowledge: Option<f64>,
+        /// The reviews a day the cards in review cost once the collection settles: the sum of
+        /// `1 / max(1, interval in days)`, also known as the burden. The cards in review are
+        /// those in a review state that are not suspended (buried cards count), with a review to
+        /// measure their interval from.
+        pub daily_load: f64,
+        /// The mean retrievability of the cards in review, now. `None` if the scheduler has no
+        /// forgetting curve, or there are no such cards.
+        pub average_retrievability: Option<f64>,
+        /// The mean stability of the cards in review, in days. `None` like
+        /// `average_retrievability`.
+        pub average_stability: Option<f64>,
     }
 
     /// Cards counted into buckets: bucket `i` holds the values from `edges[i]` up to
@@ -1574,6 +1561,79 @@ pub mod statistics {
         pub counts: Vec<u32>,
         /// The mean of every value, `None` when there are none.
         pub mean: Option<f64>,
+    }
+
+    /// `POST /api/statistics/steps`: how quickly cards are forgotten in their learning and
+    /// relearning steps, and the steps that would fit, like fsrs4anki-helper's Steps Stats. FSRS
+    /// only. See `schedulers::fsrs::steps_stats` for how they are estimated.
+    #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct StepsStatsRequest {
+        /// The [preset](crate::config::QueuePreset) whose cards to look at, since steps are set
+        /// per preset. `None` for the cards that use none, which have the top-level steps.
+        pub preset: Option<String>,
+        /// Only cards first reviewed in the last this many days, and lapses in them. `None` for
+        /// all time.
+        pub period_days: Option<u32>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct StepsStatsResponse {
+        /// The names of every preset, in order, to choose from.
+        pub presets: Vec<String>,
+        /// The mean desired retention of the preset's cards, which the steps aim for.
+        pub desired_retention: f64,
+        /// A group's fewest reviews for it to count toward a recommendation.
+        pub min_reviews: u32,
+        /// Every [`StepsGroupKind`], in order, empty groups included.
+        pub groups: Vec<StepsGroup>,
+        /// The preset's steps now, in seconds.
+        pub learning_steps: Vec<i64>,
+        pub relearning_steps: Vec<i64>,
+        pub recommended: RecommendedSteps,
+    }
+
+    /// A step's reviews, and the next review of the same card within a day.
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum StepsGroupKind {
+        /// A new card's first rating was Again.
+        Again,
+        Hard,
+        Good,
+        /// Again, then Good on the next review, measured from the Good.
+        AgainThenGood,
+        /// A card in review was rated Again.
+        Relearning,
+    }
+
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    pub struct StepsGroup {
+        pub kind: StepsGroupKind,
+        /// The pairs of reviews in the group: the step's review and the next one.
+        pub reviews: u32,
+        /// Of `reviews`, how many next reviews were rated above Again.
+        pub recalled: u32,
+        /// The fitted stability, in days. `None` without reviews, or when the reviews do not pin
+        /// it down, as when every one was recalled.
+        pub stability: Option<f64>,
+        /// In seconds, the time after which recall falls to the desired retention with
+        /// `stability`: the step this group alone suggests.
+        pub interval: Option<i64>,
+    }
+
+    /// Steps in seconds, from the groups with at least
+    /// [`min_reviews`](StepsStatsResponse::min_reviews). `None` without enough reviews. A step of
+    /// a day or more means the step can go: the next review can wait for the card to graduate.
+    #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+    pub struct RecommendedSteps {
+        /// [`StepsGroupKind::Again`]'s interval.
+        pub first_learning_step: Option<i64>,
+        /// The shortest of the intervals of [`StepsGroupKind::AgainThenGood`] and
+        /// [`StepsGroupKind::Good`], and of twice [`StepsGroupKind::Hard`]'s less the first step,
+        /// since Hard waits halfway between the first two steps.
+        pub second_learning_step: Option<i64>,
+        /// [`StepsGroupKind::Relearning`]'s interval.
+        pub relearning_step: Option<i64>,
     }
 }
 

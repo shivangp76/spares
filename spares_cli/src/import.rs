@@ -197,6 +197,9 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
+use spares_core::api::note::share_bundle::read_bundle;
+use spares_core::api::note::share_bundle::refuse_note_ids;
+use spares_core::api::note::shared_media::bundled_media_references;
 use spares_core::config::SparesExternalConfig;
 use spares_core::config::read_external_config;
 use spares_core::model::NoteId;
@@ -607,8 +610,136 @@ async fn aggregate_note_into_parser_group(
     Ok(())
 }
 
+/// Uploads the images, audio and image occlusions bundled with a shared file (see
+/// `spares_core::api::note::shared_media`) to the host, so its notes name them there.
+pub(crate) struct MediaUploader<'a> {
+    pub(crate) base_url: &'a str,
+    pub(crate) client: &'a reqwest::Client,
+}
+
+impl MediaUploader<'_> {
+    /// `contents` of the file at `file_path`, naming the files of the bundle next to it by their
+    /// paths on the host, once they are uploaded. In a dry run, nothing is uploaded and
+    /// `contents` is unchanged.
+    async fn upload_bundled(
+        &self,
+        file_path: &Path,
+        contents: String,
+        dry_run: bool,
+    ) -> Result<String, Error> {
+        let references = bundled_media_references(&contents)
+            .into_iter()
+            .filter(|r| r.path(file_path).is_file())
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return Ok(contents);
+        }
+        let mut uploaded: HashMap<PathBuf, String> = HashMap::new();
+        for reference in &references {
+            let path = reference.path(file_path);
+            if dry_run || uploaded.contains_key(&path) {
+                continue;
+            }
+            let body = std::fs::read(&path).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            })?;
+            let url = format!(
+                "{}/api/sync/media/{}/{}",
+                self.base_url,
+                reference.kind.as_str(),
+                reference.name
+            );
+            let response = self.client.put(url).body(body).send().await?;
+            let status = response.status();
+            let answer: Value = response.json().await?;
+            let host_path = answer.get("path").and_then(Value::as_str);
+            let Some(host_path) = host_path.filter(|_| status.is_success()) else {
+                let message = answer
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| status.to_string(), ToString::to_string);
+                return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                    description: format!("Failed to upload {}: {message}", path.display()),
+                })));
+            };
+            uploaded.insert(path, host_path.to_string());
+        }
+        if dry_run {
+            println!(
+                "Would upload {} images, audio clips and image occlusion files",
+                references
+                    .iter()
+                    .map(|r| r.path(file_path))
+                    .collect::<HashSet<_>>()
+                    .len()
+            );
+            return Ok(contents);
+        }
+        let mut result = String::with_capacity(contents.len());
+        let mut last = 0;
+        for reference in &references {
+            result.push_str(&contents[last..reference.range.start]);
+            result.push_str(&uploaded[&reference.path(file_path)]);
+            last = reference.range.end;
+        }
+        result.push_str(&contents[last..]);
+        Ok(result)
+    }
+}
+
+/// `files`, with each zip of shared notes (`spares note export --share --zip`) unpacked into a
+/// directory of its own under `dir`, as `--share` without `--zip` writes them: its files of notes
+/// in place of the zip, next to their `media`.
+///
+/// `dir` is created, and must not be there yet, so no one else can have put anything in it: on
+/// Unix, only this user can read or write it. A zip whose files name notes by id is refused (see
+/// [`refuse_note_ids`]), so a shared zip only ever adds notes.
+pub(crate) fn unpack_bundles(files: &[PathBuf], dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut unpacked = Vec::new();
+    let mut created = false;
+    for (i, file) in files.iter().enumerate() {
+        if file
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("zip"))
+        {
+            unpacked.push(file.clone());
+            continue;
+        }
+        let io = |path: &Path, e| Error::Io {
+            description: format!("Failed to unpack {}", path.display()),
+            source: e,
+        };
+        let bytes = std::fs::read(file).map_err(|e| io(file, e))?;
+        let bundle = read_bundle(&bytes)?;
+        refuse_note_ids(&bundle, &get_all_parsers())?;
+        if !created {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(dir).map_err(|e| io(dir, e))?;
+            created = true;
+        }
+        let out = dir.join(i.to_string());
+        let write = |name: &str, contents: &[u8]| -> Result<PathBuf, Error> {
+            let path = out.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+            }
+            std::fs::write(&path, contents).map_err(|e| io(&path, e))?;
+            Ok(path)
+        };
+        for (name, contents) in &bundle.media {
+            write(name, contents)?;
+        }
+        for (name, contents) in &bundle.files {
+            unpacked.push(write(name, contents.as_bytes())?);
+        }
+    }
+    Ok(unpacked)
+}
+
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
-#[expect(clippy::too_many_lines)]
 pub(crate) async fn import_from_files<P>(
     adapter: &mut dyn SrsAdapter,
     parser_opt: Option<&dyn Parseable>,
@@ -617,6 +748,35 @@ pub(crate) async fn import_from_files<P>(
     dry_run: bool,
     quiet: bool,
     strip_liveness: bool,
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
+    import_files(
+        adapter,
+        parser_opt,
+        to_parser_opt,
+        file_paths,
+        dry_run,
+        quiet,
+        strip_liveness,
+        None,
+    )
+    .await
+}
+
+/// [`import_from_files`], uploading the files bundled with shared files with `media_uploader`.
+#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn import_files<P>(
+    adapter: &mut dyn SrsAdapter,
+    parser_opt: Option<&dyn Parseable>,
+    to_parser_opt: Option<&dyn Parseable>,
+    file_paths: &[P],
+    dry_run: bool,
+    quiet: bool,
+    strip_liveness: bool,
+    media_uploader: Option<&MediaUploader<'_>>,
 ) -> Result<(), Error>
 where
     P: AsRef<Path>,
@@ -655,6 +815,14 @@ where
             description: format!("Failed to read {}", file_path.as_ref().display()),
             source: e,
         })?;
+        let file_contents = match media_uploader {
+            Some(uploader) => {
+                uploader
+                    .upload_bundled(file_path.as_ref(), file_contents, dry_run)
+                    .await?
+            }
+            None => file_contents,
+        };
 
         let parse_result = guess_and_parse_notes(
             &file_contents,
@@ -2234,5 +2402,51 @@ mod tests {
         assert_eq!(note_count, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A zip is unpacked into a directory made for it, which no one else can have filled, and one
+    /// whose notes are named by id is refused.
+    #[test]
+    fn test_unpack_bundles_into_a_new_private_directory() {
+        use spares_core::api::note::share_bundle::write_bundle;
+        use spares_core::schema::note::ExportNotesResponse;
+
+        let base = std::env::temp_dir().join(format!("spares-unpack-test-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let shared = "<!--- spares: start --->\n\n<!--- # action: add --->\n<!--- spares: note start --->\n{{ Paris }} is the capital\n<!--- spares: note end --->\n\n<!--- spares: end --->\n";
+        let zip_of = |text: &str, name: &str| {
+            let export = ExportNotesResponse {
+                files: std::collections::HashMap::from([("md".to_string(), text.to_string())]),
+                ..ExportNotesResponse::default()
+            };
+            let path = base.join(name);
+            std::fs::write(&path, write_bundle(&export).unwrap()).unwrap();
+            path
+        };
+        let zip = zip_of(shared, "shared.zip");
+
+        let dir = base.join("unpacked");
+        let files = unpack_bundles(std::slice::from_ref(&zip), &dir).unwrap();
+        assert_eq!(files, [dir.join("0").join("export.md")]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        // Not into a directory that is already there
+        assert!(unpack_bundles(std::slice::from_ref(&zip), &dir).is_err());
+
+        let by_id = zip_of(
+            &shared.replace("# action: add", "# note-id: aaaa"),
+            "by_id.zip",
+        );
+        let error = unpack_bundles(&[by_id], &base.join("by_id")).unwrap_err();
+        assert!(
+            error.to_string().contains("names notes by their ids"),
+            "{error}"
+        );
+        assert!(!base.join("by_id").exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

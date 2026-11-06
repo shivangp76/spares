@@ -5,7 +5,7 @@ import { errorMessage } from '../utils';
 interface Loaded { key: string; url: string | null; error: string | null }
 
 /**
- * An object URL for a rendered file, for elements like `<embed>` that cannot send the API key.
+ * An object URL for a rendered file, fetched like other requests (from this device's copy when it keeps one), for elements like `<embed>`.
  * Changing `version` refetches the file, e.g. after it was regenerated.
  */
 export function useAuthedFileUrl(path: string, version?: number): { url: string | null; error: string | null } {

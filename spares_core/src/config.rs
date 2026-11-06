@@ -1,33 +1,26 @@
-//! Settings from `config.toml` ([`SparesExternalConfig`]), the environment, and where spares keeps
-//! its files.
+//! Settings from `config.toml` ([`SparesExternalConfig`]), and where spares keeps its files.
 //!
 //! # Directories
 //!
-//! Rendered files are written to a per-parser directory, chosen by the first of these that
-//! applies:
+//! Every directory is the current collection's (see [`crate::collection`]): on a host,
+//! `users/<user_id>/` under `SPARES_ROOT` and `users/<user_id>/` under its cache root
+//! (`~/.cache/spares`). Nothing is read from the environment, so two hosts on one machine (one for
+//! testing, say) never share files as long as their roots differ.
 //!
-//! 1. The parser's own environment variable, if it points to an existing directory:
-//!    `MARKDOWN_OUT_DIR`, `LATEX_OUT_DIR`, or `TYPST_OUT_DIR`.
-//! 2. `SPARES_CACHE_DIR`, if set ([`get_cache_dir`]).
-//! 3. The default cache directory, `$XDG_CACHE_HOME/spares` (`~/.cache/spares` if
-//!    `XDG_CACHE_HOME` is unset).
+//! - [`get_data_dir`]: the collection's directory, with the database and raw note files
+//! - [`get_config_dir`]: `config.toml` and the parser templates
+//! - [`get_media_dir`]: images, audio and image occlusions
+//! - [`get_cache_dir`]: what spares recreates: rendered files, raw card files, render hashes and
+//!   sync's snapshots
+//! - [`get_files_dir`]: rendered files, in the cache, which the host serves at `/files`, and API
+//!   responses name files relative to
 //!
-//! The more specific variable wins, so `SPARES_CACHE_DIR` does **not** override a parser's
-//! `*_OUT_DIR`. If you run a separate instance of spares (e.g. for testing) next to your main one,
-//! unset the `*_OUT_DIR` variables for it too, or its rendered files will overwrite your main
-//! instance's. `spares_server` logs the directory each parser renders to when it starts (run it
-//! with `RUST_LOG=info` to see this).
-//!
-//! The other directories can be overridden with `SPARES_CONFIG_DIR` (config file and parser
-//! templates, [`get_config_dir`]), `SPARES_DATA_DIR` (database, and note and card text files,
-//! [`get_data_dir`]), and `DATABASE_URL` (the database alone, [`get_env_config`]).
+//! A program that renders a note itself (vimtex compiling a LaTeX note, say) finds its PDF in the
+//! files directory, `~/.cache/spares/users/<user_id>/files`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::create_dir_all;
-use std::fs::read_to_string;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -36,9 +29,6 @@ use chrono::Duration;
 use chrono::NaiveDate;
 use chrono::Utc;
 use chrono::Weekday;
-use etcetera::AppStrategy;
-use etcetera::AppStrategyArgs;
-use etcetera::choose_app_strategy;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -48,78 +38,41 @@ use toml_edit::DocumentMut;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
+use crate::collection;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
+use crate::platform::write;
 use crate::sync::SyncConfig;
-
-const SPARES: &str = "spares";
 
 /// True when running under a test harness. `cfg!(test)` alone is not enough: it only reflects
 /// whether *this crate* was compiled in test mode. A dependent crate's test binary (e.g.
 /// `spares_cli`'s tests) compiles `spares_core` as a normal, non-test dependency, so `cfg!(test)`
-/// is `false` there even though real tests are running — which previously caused those tests to
-/// read/write the user's actual config, cache, and data directories. `SPARES_TEST_MODE` lets such
-/// tests opt in explicitly.
+/// is `false` there even though real tests are running. `SPARES_TEST_MODE` lets such tests opt in
+/// explicitly. Under tests, code that runs outside of a collection gets the directories under
+/// `/tmp/spares` (see [`crate::collection`]).
 pub fn is_test_mode() -> bool {
     cfg!(test) || std::env::var_os("SPARES_TEST_MODE").is_some()
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's `config.toml` and parser templates.
 pub fn get_config_dir() -> PathBuf {
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("config");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_CONFIG_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.config_dir().push(SPARES);
-    create_dir_all(strategy.config_dir()).unwrap();
-    strategy.config_dir()
+    collection::paths().config.clone()
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's cache: what spares recreates, such as rendered files, raw card files,
+/// render hashes and sync's snapshots (see [`collection::CollectionPaths::cache`]).
 pub fn get_cache_dir() -> PathBuf {
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("cache");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_CACHE_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.cache_dir().push(SPARES);
-    create_dir_all(strategy.cache_dir()).unwrap();
-    strategy.cache_dir()
+    collection::paths().cache.clone()
 }
 
-/// The directory the server serves at `/files`. Paths in API responses are relative to it, so
-/// web clients can request them and local clients can [resolve](resolve_in_files_dir) them.
-/// Defaults to the rendered files, never the data directory, which holds the database.
+/// The directory the host serves at `/files`: the current collection's rendered files. Paths in
+/// API responses are relative to it, so web clients can request them and local clients can
+/// [resolve](resolve_in_files_dir) them. Never the data directory, which holds the database.
 pub fn get_files_dir() -> PathBuf {
-    std::env::var("SPARES_FILES_DIR").map_or_else(|_| get_cache_dir(), PathBuf::from)
+    collection::paths().files.clone()
 }
 
 /// The local path of a path from an API response. Paths outside the files directory are
@@ -128,82 +81,69 @@ pub fn resolve_in_files_dir(path: &Path) -> PathBuf {
     get_files_dir().join(path)
 }
 
-#[allow(clippy::missing_panics_doc)]
+/// The current collection's directory: its database, raw note files, and what doesn't belong in
+/// another of its directories.
 pub fn get_data_dir() -> PathBuf {
-    if is_test_mode() {
-        let mut tmp_dir = PathBuf::from("/tmp");
-        tmp_dir.push(SPARES);
-        tmp_dir.push("data");
-        create_dir_all(&tmp_dir).unwrap();
-        return tmp_dir;
-    }
-    if let Ok(p) = std::env::var("SPARES_DATA_DIR") {
-        let path = PathBuf::from(p);
-        create_dir_all(&path).unwrap();
-        return path;
-    }
-    let strategy: etcetera::app_strategy::Xdg = choose_app_strategy(AppStrategyArgs {
-        top_level_domain: "org".to_string(),
-        author: SPARES.to_string(),
-        app_name: SPARES.to_string(),
-    })
-    .unwrap();
-    strategy.data_dir().push(SPARES);
-    create_dir_all(strategy.data_dir()).unwrap();
-    strategy.data_dir()
+    collection::paths().root.clone()
 }
 
-#[derive(Clone, Copy, Debug, strum::EnumString, strum::Display, strum_macros::EnumIter)]
-pub enum Environment {
-    Production,
-    Development,
+/// Where the current collection's images, audio and image occlusions are.
+pub fn get_media_dir() -> PathBuf {
+    collection::paths().media.clone()
 }
 
-#[derive(Debug, Clone)]
-pub struct EnvironmentConfig {
-    pub socket_address: String,
-    pub database_url: String,
+/// The host a command-line client talks to, and the device token it sends there (see `spares
+/// login`). The CLI sets it at startup ([`set_host_client`]); [`host_client`] defaults to a host
+/// on this machine at `127.0.0.1:8080`, without a token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostClient {
+    /// Such as `http://127.0.0.1:8080`, without a trailing slash
+    pub base_url: String,
+    pub token: Option<String>,
 }
 
-pub fn get_env_config(env: Environment) -> EnvironmentConfig {
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        let mut database_path = get_data_dir();
-        database_path.push(match env {
-            Environment::Production => "spares-main.sqlite",
-            Environment::Development => "spares-dev.sqlite",
-        });
-        format!("sqlite://{}", database_path.display())
-    });
-    let socket_address = std::env::var("SPARES_SOCKET_ADDRESS").unwrap_or_else(|_| match env {
-        Environment::Production => "127.0.0.1:8080".to_string(),
-        Environment::Development => "127.0.0.1:8081".to_string(),
-    });
-
-    EnvironmentConfig {
-        socket_address,
-        database_url,
+impl Default for HostClient {
+    fn default() -> Self {
+        Self {
+            base_url: "http://127.0.0.1:8080".to_string(),
+            token: None,
+        }
     }
 }
 
-/// The local server's API key, from `SPARES_API_KEY`. The server then refuses requests without it,
-/// so its clients send it too.
-pub fn local_api_key() -> Option<String> {
-    std::env::var("SPARES_API_KEY")
-        .ok()
-        .filter(|key| !key.is_empty())
+static HOST_CLIENT: std::sync::RwLock<Option<HostClient>> = std::sync::RwLock::new(None);
+
+pub fn set_host_client(client: HostClient) {
+    *HOST_CLIENT
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(client);
 }
 
-/// Which replica this instance is, from `SPARES_REPLICA`: `0` is the laptop, `1` the server, and a
-/// later replica takes the next unused number. It decides which form of note id this instance
-/// writes (see [`crate::ids`]). It comes from the environment, never the database, since a full
-/// sync copies the other replica's database.
+pub fn host_client() -> HostClient {
+    HOST_CLIENT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_default()
+}
+
+/// Which replica this host's copy of a collection is: `0` is the laptop, `1` the root of the sync
+/// chain (the server), and a later replica takes the next unused number. It decides which form of
+/// note id this copy writes (see [`crate::ids`]). It is kept outside the database, in the
+/// collection's `config.toml` (`[sync] replica`), since a full sync copies the other replica's
+/// database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Replica(u8);
 
 impl Replica {
     /// The largest replica number. Each replica owns one residue modulo [`crate::ids::ID_STEP`].
     pub const MAX: u8 = crate::ids::ID_STEP as u8 - 1;
+    /// The laptop, whose note ids are the shortest (see [`crate::ids`]).
+    pub const LAPTOP: Self = Self(0);
+    /// The root of a collection's sync chain: the copy with no upstream.
+    pub const ROOT: Self = Self(1);
 
+    #[cfg(test)]
     pub(crate) const fn new_unchecked(number: u8) -> Self {
         Self(number)
     }
@@ -231,69 +171,50 @@ impl std::str::FromStr for Replica {
     }
 }
 
-/// Whether this instance answers sync requests or runs the client side, from `SPARES_SYNC_ROLE`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::Display)]
-#[strum(serialize_all = "lowercase")]
-pub enum SyncRole {
-    Server,
-    Client,
-}
+impl TryFrom<u8> for Replica {
+    type Error = String;
 
-pub const REPLICA_ENV: &str = "SPARES_REPLICA";
-pub const SYNC_ROLE_ENV: &str = "SPARES_SYNC_ROLE";
+    fn try_from(number: u8) -> Result<Self, Self::Error> {
+        number.to_string().parse()
+    }
+}
 
 #[cfg(test)]
 tokio::task_local! {
     /// Lets a test act as another replica (for example the server in a sync test) for the code it
-    /// runs inside [`with_test_replica`], since `SPARES_REPLICA` is shared by every test.
-    static TEST_REPLICA: (Replica, SyncRole);
+    /// runs inside [`with_test_replica`].
+    static TEST_REPLICA: Replica;
 }
 
-/// Runs `f` as replica `replica` with sync role `role`. Tests only.
+/// Runs `f` as replica `replica`. Tests only.
 #[cfg(test)]
-pub(crate) async fn with_test_replica<F: std::future::Future>(
-    replica: Replica,
-    role: SyncRole,
-    f: F,
-) -> F::Output {
-    TEST_REPLICA.scope((replica, role), f).await
+pub(crate) async fn with_test_replica<F: std::future::Future>(replica: Replica, f: F) -> F::Output {
+    TEST_REPLICA.scope(replica, f).await
 }
 
-/// This instance's replica. Required, with no default, except under tests, which are replica `0`.
+/// Sets this browser's replica, or clears it with `None`. A browser is always a sync client.
+#[cfg(target_family = "wasm")]
+pub fn set_device_replica(replica: Option<Replica>) {
+    collection::state().set_replica(replica);
+}
+
+/// The current collection's replica on this host. Tests that open no collection are replica `0`.
 pub fn get_replica() -> Result<Replica, Error> {
     #[cfg(test)]
-    if let Ok((replica, _)) = TEST_REPLICA.try_with(|test| *test) {
+    if let Ok(replica) = TEST_REPLICA.try_with(|test| *test) {
         return Ok(replica);
     }
-    match std::env::var(REPLICA_ENV) {
-        Ok(value) => value
-            .parse()
-            .map_err(|e| invalid_config(format!("{REPLICA_ENV}: {e}"))),
-        Err(_) if is_test_mode() => Ok(Replica(0)),
-        Err(_) => Err(invalid_config(format!(
-            "{REPLICA_ENV} is not set. Set it to 0 on the laptop and 1 on the server."
-        ))),
+    if let Some(replica) = collection::state().replica() {
+        return Ok(replica);
     }
-}
-
-/// This instance's sync role. Required, with no default, except under tests, which are clients.
-pub fn get_sync_role() -> Result<SyncRole, Error> {
-    #[cfg(test)]
-    if let Ok((_, role)) = TEST_REPLICA.try_with(|test| *test) {
-        return Ok(role);
+    if is_test_mode() && collection::current().is_none() {
+        return Ok(Replica(0));
     }
-    match std::env::var(SYNC_ROLE_ENV) {
-        Ok(value) => value.trim().parse().map_err(|_| {
-            invalid_config(format!(
-                "{SYNC_ROLE_ENV}: expected `server` or `client`, got `{value}`"
-            ))
-        }),
-        Err(_) if is_test_mode() => Ok(SyncRole::Client),
-        Err(_) => Err(invalid_config(format!(
-            "{SYNC_ROLE_ENV} is not set. Set it to `client` on the laptop and `server` on the \
-             server."
-        ))),
-    }
+    Err(invalid_config(if cfg!(target_family = "wasm") {
+        "this device has no replica yet".to_string()
+    } else {
+        "this collection has no replica number (`[sync] replica` in its config.toml)".to_string()
+    }))
 }
 
 fn invalid_config(message: String) -> Error {
@@ -320,10 +241,6 @@ impl Default for SparesInternalConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EasyDaysConfig {
-    /// Deprecated: use [`SparesExternalConfig::load_balance`]. `false` is read as
-    /// `load_balance = false`, which is what it used to control.
-    #[serde(skip_serializing)]
-    pub enabled: Option<bool>,
     /// Mapping from days of the week to a percentage describing their workload.
     /// Between 0% (0.0) and 100% (1.0). For example, if this is 0.2, then 20% of cards will be scheduled on that day, relative to normal days (which are set to 1.0).
     ///
@@ -351,7 +268,6 @@ impl Default for EasyDaysConfig {
             days_to_workload_percentage.insert(weekday, 1.);
         }
         Self {
-            enabled: None,
             days_to_workload_percentage,
             specific_dates: HashSet::default(),
         }
@@ -360,8 +276,7 @@ impl Default for EasyDaysConfig {
 
 /// The `[queue]` table of `config.toml`: the order review shows the cards it can show today.
 ///
-/// `spares card review`, the web app, and the queue the web app downloads for offline review all
-/// use this order. Which cards can be shown at all (what is due, and the daily limits) is set
+/// `spares card review` and the web app, on the server or a device's copy, all use this order. Which cards can be shown at all (what is due, and the daily limits) is set
 /// elsewhere, such as [`SparesExternalConfig::new_cards_daily_limit`].
 ///
 /// Cards come in these groups, one group after another:
@@ -456,9 +371,7 @@ pub struct QueueConfig {
     /// learning card due today as soon as nothing else is left, as spares did before this
     /// setting.
     ///
-    /// Filtered tags are not affected: they show every card in them, whenever it is due. Offline
-    /// review (see [`crate::api::offline_review`]) applies the limit the server had when the
-    /// cards were downloaded.
+    /// Filtered tags are not affected: they show every card in them, whenever it is due.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
@@ -507,8 +420,7 @@ pub struct QueueConfig {
     /// notes are rendered with linked notes, so a new note holds nothing back until then. They
     /// are not synced and a sync does not match them, so each machine holds cards back by its
     /// own links: the sync server's change only when notes are rendered with linked notes there.
-    /// The count of new cards can go up during a session, as the notes they wait for are learned,
-    /// and offline review only gets the cards let through with its next download.
+    /// The count of new cards can go up during a session, as the notes they wait for are learned.
     ///
     /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
     /// back before studying with it, turn it on and run one.
@@ -652,8 +564,8 @@ pub struct QueuePreset {
     /// [`SparesExternalConfig::learning_steps`]. The same rules apply.
     ///
     /// They are used when a card is rated, and when its history is replayed, as by `spares card
-    /// reschedule`, by a sync, or by an offline review inserted into the history. A card that
-    /// changes preset in the middle of its steps continues on the new preset's steps.
+    /// reschedule` or by a sync. A card that changes preset in the middle of its steps continues
+    /// on the new preset's steps.
     #[serde_as(as = "Option<Vec<serde_with::DurationSeconds<i64>>>")]
     pub learning_steps: Option<Vec<Duration>>,
     /// This preset's relearning steps, in seconds, in place of
@@ -797,9 +709,7 @@ pub struct LeechConfig {
     ///
     /// It is done on the lapse that reaches [`Self::lapses_threshold`], and again every half of
     /// it after (every 4 lapses with the default of 8), in case the card was let back in without
-    /// being fixed. Undoing the rating undoes it too. An offline rating placed before a later
-    /// review of the card, which cannot be undone, gets it as an undo event of its own (see
-    /// [`crate::api::offline_review`]).
+    /// being fixed. Undoing the rating undoes it too.
     pub action: LeechAction,
     /// The tag [`LeechAction::Tag`] and [`LeechAction::Suspend`] add to a leech's note, so you can
     /// find the notes to fix with `tag=leech`. Tags belong to notes, so the note's other cards
@@ -926,6 +836,9 @@ pub struct SparesExternalConfig {
     /// a backlog of reviews stops new cards from adding to it.
     pub new_cards_ignore_review_limit: bool,
     pub flagged_tag_name: String,
+    /// The tag of notes that are never shared: `spares note export --share` leaves out the notes
+    /// with it or a tag under it, such as `private:health`. Defaults to `"private"`.
+    pub private_tag_name: String,
     /// Delays between the same-day reviews of a new card before it graduates to review, in
     /// seconds. Each must be shorter than a day, in increasing order. Empty to graduate on the
     /// first answer. A [preset](QueuePreset::learning_steps) can have its own.
@@ -985,6 +898,7 @@ impl Default for SparesExternalConfig {
             reviews_daily_limit: u32::MAX,
             new_cards_ignore_review_limit: false,
             flagged_tag_name: "flagged".to_string(),
+            private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],
             fsrs_parameters: Vec::new(),
@@ -1043,13 +957,6 @@ impl SparesExternalConfig {
                 "`fsrs_parameters` must be empty or 17, 19 or 21 finite numbers, not {} values.",
                 self.fsrs_parameters.len()
             ));
-        }
-        if self.easy_days.enabled == Some(false) && self.load_balance {
-            log::warn!(
-                "`easy_days.enabled` is deprecated. Replace `enabled = false` with \
-                 `load_balance = false` at the top level of the config."
-            );
-            self.load_balance = false;
         }
         for (weekday, workload_percentage) in &self.easy_days.days_to_workload_percentage {
             if !(&0_f64..=&1.).contains(&workload_percentage) {
@@ -1202,16 +1109,14 @@ pub(crate) async fn write_internal_config(
 }
 
 pub fn get_external_config_file() -> PathBuf {
-    let mut config_file_path = get_config_dir();
-    config_file_path.push("config.toml");
-    config_file_path
+    collection::paths().config_file()
 }
 
 /// Sets `fsrs_parameters` in the config file, leaving the rest of the file, comments included, as
 /// it is.
 pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
-    if !config_file_path.exists() {
+    if !is_file(&config_file_path) {
         write_external_config(&SparesExternalConfig::default())?;
     }
     let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
@@ -1244,7 +1149,7 @@ fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String
 // The `toml_edit` package was used in place of `confy` since `confy` does not support default values when serializing. For example, if a user had an existing config file and then `spares` was changed to add a new config key, deserialization would fail since a key was missing and not defaulted.
 pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     let config_file_path = get_external_config_file();
-    if !config_file_path.exists() {
+    if !is_file(&config_file_path) {
         let config = SparesExternalConfig::default();
         write_external_config(&config)?;
         return Ok(config);
@@ -1280,6 +1185,29 @@ pub fn server_config(contents: &str) -> Result<String, Error> {
     ))
 }
 
+/// The server's `config.toml` after `spares sync cloud` sends this machine's (`pushed`): the
+/// [`server_config`] of `pushed`, with the `[sync]` table of the server's own (`current`), which
+/// says how the server's copy syncs (its replica, and an upstream if it has one). Nothing of
+/// `pushed`'s `[sync]` table, such as its token, reaches the server. Fails if the result is not a
+/// valid config.
+pub fn merge_pushed_config(current: &str, pushed: &str) -> Result<String, Error> {
+    let invalid = |e: String| Error::Library(LibraryError::InvalidConfig(e));
+    let current = current
+        .parse::<DocumentMut>()
+        .map_err(|e| invalid(format!("the server's config.toml: {e}")))?;
+    let mut merged = server_config(pushed)?
+        .parse::<DocumentMut>()
+        .map_err(|e| invalid(e.to_string()))?;
+    if let Some(sync) = current.get("sync") {
+        merged.insert("sync", sync.clone());
+    }
+    let merged = merged.to_string();
+    let mut config: SparesExternalConfig =
+        toml_edit::de::from_str(&merged).map_err(|e| invalid(e.to_string()))?;
+    config.validate().map_err(invalid)?;
+    Ok(merged)
+}
+
 /// `contents` (a `config.toml`) with these keys of its `[sync]` table set, leaving the rest of the
 /// file, comments included, as it is. The table is added if it is missing.
 pub fn set_sync_values(
@@ -1306,6 +1234,12 @@ pub fn set_sync_values(
 
 pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
+    if let Some(dir) = config_file_path.parent() {
+        crate::platform::create_dir_all(dir).map_err(|e| Error::Io {
+            description: format!("Failed to create {}", dir.display()),
+            source: e,
+        })?;
+    }
     let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
         Error::Library(LibraryError::InvalidConfig(format!(
             "Failed to serialize config: {}",
@@ -1327,6 +1261,42 @@ mod tests {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
         config.validate().unwrap();
         config
+    }
+
+    #[test]
+    fn a_pushed_config_keeps_the_servers_sync_table_and_none_of_its_own() {
+        let laptop = "maximum_interval = 100\n\n\
+                      [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
+                      token = \"spt_secret\"\nreplica = 0\n\n\
+                      [leech]\nlapses_threshold = 8\n";
+        let server = "render_browser_parsers = false\nmaximum_interval = 5\n\n\
+                      [sync] # the server's own\nreplica = 1\n";
+        let merged = merge_pushed_config(server, laptop).unwrap();
+        assert!(!merged.contains("spt_secret"), "{merged}");
+        assert!(!merged.contains("me@vps"), "{merged}");
+        assert!(merged.contains("# the server's own"), "{merged}");
+        let config = parse(&merged);
+        assert_eq!(config.maximum_interval, Duration::seconds(100));
+        assert_eq!(config.leech.lapses_threshold, 8);
+        assert!(!config.render_browser_parsers);
+        assert_eq!(config.sync.replica, Some(1));
+        assert_eq!(config.sync.url, None);
+        assert_eq!(config.sync.token, None);
+        // Pushing again changes nothing.
+        assert_eq!(merge_pushed_config(&merged, laptop).unwrap(), merged);
+
+        // A server with an upstream of its own keeps it.
+        let relaying = "[sync]\nurl = \"https://root\"\ntoken = \"spt_its_own\"\nreplica = 3\n";
+        let merged = merge_pushed_config(relaying, laptop).unwrap();
+        let config = parse(&merged);
+        assert_eq!(config.sync.url.as_deref(), Some("https://root"));
+        assert_eq!(config.sync.token.as_deref(), Some("spt_its_own"));
+        assert_eq!(config.sync.replica, Some(3));
+        // And one without a config yet gets no [sync] table.
+        assert!(!merge_pushed_config("", laptop).unwrap().contains("[sync]"));
+
+        assert!(merge_pushed_config("", "maximum_interval = \"soon\"").is_err());
+        assert!(merge_pushed_config("not toml [", laptop).is_err());
     }
 
     #[test]
@@ -1367,13 +1337,13 @@ mod tests {
         };
         let original = "maximum_interval = 100 # days, roughly\n\n\
                         [sync] # how to reach the server\nurl = \"https://old\" # replaced\n\
-                        remote_rendered_dir = \"rendered\"\n\n[leech]\nlapses_threshold = 8\n";
+                        push_delay_seconds = 45\n\n[leech]\nlapses_threshold = 8\n";
         let written = set_sync_values(original, values()).unwrap();
         let config = parse(&written);
         assert_eq!(config.sync.remote_host.as_deref(), Some("me@vps"));
         assert_eq!(config.sync.url.as_deref(), Some("https://vps"));
         assert_eq!(config.sync.interval_minutes, 15);
-        assert_eq!(config.sync.remote_rendered_dir, "rendered");
+        assert_eq!(config.sync.push_delay_seconds, 45);
         assert_eq!(config.leech.lapses_threshold, 8);
         assert!(written.contains("# days, roughly"), "{written}");
         assert!(written.contains("# how to reach the server"), "{written}");
@@ -1396,23 +1366,6 @@ mod tests {
         let config = parse("");
         assert!(config.load_balance);
         assert!(config.disperse_siblings);
-    }
-
-    #[test]
-    fn deprecated_easy_days_enabled_turns_off_load_balancing() {
-        let config = parse("[easy_days]\nenabled = false\n");
-        assert!(!config.load_balance);
-        assert!(config.disperse_siblings, "it never controlled dispersal");
-
-        assert!(parse("[easy_days]\nenabled = true\n").load_balance);
-    }
-
-    #[test]
-    fn deprecated_easy_days_enabled_is_not_written_back() {
-        let config = parse("[easy_days]\nenabled = false\n");
-        let written = toml_edit::ser::to_string_pretty(&config).unwrap();
-        assert!(!written.contains("enabled"), "{written}");
-        assert!(written.contains("load_balance = false"), "{written}");
     }
 
     #[test]

@@ -1,7 +1,4 @@
 use std::fmt::Write as _;
-use std::fs::create_dir_all;
-use std::fs::read_to_string;
-use std::fs::write;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -18,12 +15,14 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
-use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
+use crate::config::get_files_dir;
 use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
 use crate::model::NoteId;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
 
 pub mod audio;
 mod cards;
@@ -45,6 +44,8 @@ pub use cli::CliData;
 pub use clozes::*;
 pub use helpers::*;
 pub use image_occlusion::get_image_occlusion_rendered_directory;
+#[cfg(target_family = "wasm")]
+pub use image_occlusion::read_device_card;
 pub use notes::*;
 pub use settings::*;
 
@@ -61,9 +62,17 @@ pub enum RenderOutputDirectoryType {
     Card,
 }
 
+/// The templates a parser's files are made from, each a file in `<config dir>/<parser>/templates/`
+/// ([`Parseable::template_filepath`]) with a `spares: body` comment where the note's text goes.
+///
+/// A template without a file is [`Parseable::default_template`], which isn't written to the
+/// config directory, so a parser's default reaches every collection that hasn't changed it, and
+/// reading a template never writes to the config. `spares parser template <parser> <type>` writes
+/// a copy of the default to edit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TemplateType {
     Note,
+    /// The note template if it has no file
     Card,
     Export,
 }
@@ -199,8 +208,20 @@ pub trait Parseable: Send + Sync {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String;
+
+    /// Whether cards show an image occlusion as the original image with an SVG of the card's
+    /// clozes over it, written into the card's source (see
+    /// [`image_occlusion::image_occlusion_overlay`]), rather than as a PNG of both (see
+    /// [`image_occlusion::get_image_occlusion_card_filepath`]). The original image is then the
+    /// only file a card reads for it, shared by every card of the note, which matters to web
+    /// clients that fetch the files a card reads to compile it themselves: each file costs them a
+    /// request and a compile that fails for want of it. Only for parsers whose output can draw an
+    /// SVG given in the source over another image.
+    fn image_occlusion_overlays(&self) -> bool {
+        false
+    }
 
     /// Shows the image at `file_path`, an absolute path, where it is inserted into a note.
     fn construct_image(&self, file_path: &Path) -> String;
@@ -364,13 +385,15 @@ pub trait Parseable: Send + Sync {
         }
     }
 
+    /// Compiles the raw file `output_text_filepath` to `output_rendered_filepath`. Temporary files
+    /// go next to the rendered file, named after it.
     fn render_file(
         &self,
         aux_dir: &Path,
         output_text_filepath: &Path,
         output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error>;
+    ) -> Result<RenderedFile, Error>;
 
     // fn comment_regex(&self) -> Option<Regex> {
     //     None
@@ -388,49 +411,50 @@ pub trait Parseable: Send + Sync {
             // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));
         }
-        let mut templates_dir: PathBuf = get_config_dir();
-        templates_dir.push(self.get_parser_name());
-        templates_dir.push("templates");
-        let file_extension = self.file_extension();
-        let read_or_create_template = |name: &str| -> Result<String, std::io::Error> {
-            let path = templates_dir.join(format!("{name}.{file_extension}"));
-            if !path.is_file() {
-                create_dir_all(&templates_dir)?;
-                write(&path, self.default_template())?;
-            }
-            read_to_string(&path)
+        let read_template = |template_type| -> Result<Option<String>, std::io::Error> {
+            let path = self.template_filepath(template_type);
+            is_file(&path).then(|| read_to_string(&path)).transpose()
         };
-        match template_type {
-            TemplateType::Note => Ok((read_or_create_template("note_template")?, body_placeholder)),
-            TemplateType::Card => {
-                let card_template_path =
-                    templates_dir.join(format!("card_template.{file_extension}"));
-                let card_template_contents = if card_template_path.is_file() {
-                    read_to_string(&card_template_path)?
-                } else {
-                    read_or_create_template("note_template")?
-                };
-                Ok((card_template_contents, body_placeholder))
-            }
-            TemplateType::Export => Ok((
-                read_or_create_template("export_template")?,
-                body_placeholder,
-            )),
-        }
+        let contents = match template_type {
+            TemplateType::Note | TemplateType::Export => read_template(template_type)?,
+            TemplateType::Card => match read_template(TemplateType::Card)? {
+                Some(contents) => Some(contents),
+                None => read_template(TemplateType::Note)?,
+            },
+        };
+        Ok((
+            contents.unwrap_or_else(|| self.default_template().to_string()),
+            body_placeholder,
+        ))
     }
 
-    /// Contents written to a note or export template file that does not exist yet. Must contain the
+    /// Where the template of `template_type` is, if the user has one (see [`TemplateType`]).
+    fn template_filepath(&self, template_type: TemplateType) -> PathBuf {
+        let name = match template_type {
+            TemplateType::Note => "note_template",
+            TemplateType::Card => "card_template",
+            TemplateType::Export => "export_template",
+        };
+        let mut path = get_config_dir();
+        path.push(self.get_parser_name());
+        path.push("templates");
+        path.push(format!("{name}.{}", self.file_extension()));
+        path
+    }
+
+    /// The template of every type without a file (see [`TemplateType`]). Must contain the
     /// `spares: body` comment.
     fn default_template(&self) -> &'static str;
 
-    // This can be overridden for a specific parser, so it is in the trait.
+    /// Where rendered files go: the collection's files directory. It can be overridden for a
+    /// specific parser, so it is in the trait.
     fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        get_cache_dir()
+        get_files_dir()
     }
 
     /// Whether web clients compile this parser's cards themselves from the raw source instead of
     /// displaying the rendered file. The files their sources need are shipped to the client from the
-    /// [`RenderDependencies`] file written next to each rendered file, so such parsers must write it.
+    /// [`RenderDependencies`] that [`Self::render_file`] returns, so such parsers must find them.
     fn renders_in_browser(&self) -> bool {
         false
     }
@@ -442,14 +466,16 @@ pub trait Parseable: Send + Sync {
     }
 
     /// Writes HTML for web clients to `output_web_filepath`, after [`Self::render_file`] wrote
-    /// `output_rendered_filepath`. Returns why web clients should show the rendered file instead,
-    /// either since rendering failed or, in [`WebRenderMode::Auto`], since the HTML loses content.
+    /// `output_rendered_filepath`, and adds the files it read to `dependencies`. Returns why web
+    /// clients should show the rendered file instead, either since rendering failed or, in
+    /// [`WebRenderMode::Auto`], since the HTML loses content.
     fn render_web_file(
         &self,
         _output_text_filepath: &Path,
         _output_rendered_filepath: &Path,
         _output_web_filepath: &Path,
         _mode: WebRenderMode,
+        _dependencies: &mut RenderDependencies,
     ) -> Result<(), String> {
         Err(format!(
             "the {} parser has no web render",
@@ -511,7 +537,10 @@ pub fn construct_card_data(
                 parser.construct_cloze_replacement(&replacement, side, id_opt)
             }
             NotePart::SurroundingData(d) => d.clone(),
-            NotePart::ImageOcclusion { data, .. } => {
+            NotePart::ImageOcclusion {
+                data,
+                cloze_indices,
+            } => {
                 let image_occlusion = parser.construct_image_occlusion(
                     data,
                     ConstructImageOcclusionType::Card {
@@ -519,6 +548,7 @@ pub fn construct_card_data(
                         note_id,
                         card_order,
                         image_occlusion_order,
+                        cloze_indices,
                     },
                 );
                 image_occlusion_order += 1;
@@ -601,5 +631,50 @@ mod tests {
             all_parser_names.len(),
             all_parser_names.iter().unique().count()
         );
+    }
+    /// A note written to be added has no id, so importing it adds a note, as a note written to be
+    /// updated imports as an update of its own note (see `spares note export --without-ids`).
+    #[test]
+    fn test_construct_file_data_round_trips_action() {
+        let adapter = crate::adapters::get_adapter_from_string("spares").unwrap();
+        let note_id: crate::model::NoteId = "aak".parse().unwrap();
+        let request = GenerateNoteFilesRequest {
+            note_id,
+            keywords: vec!["k".to_string()],
+            tags: vec!["t".to_string()],
+            linked_notes: None,
+            note_data: "a".to_string(),
+            custom_data: CustomData::default(),
+        };
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let name = parser.get_parser_name();
+            for action in [NoteImportAction::Add, NoteImportAction::Update(note_id)] {
+                let data = parser
+                    .construct_full_file_data(&[(ConstructFileDataType::Note, &request)], &action);
+                assert_eq!(
+                    data.contains("note-id"),
+                    action != NoteImportAction::Add,
+                    "{name}: {data}"
+                );
+                let notes =
+                    get_notes(parser.as_ref(), None, &data, adapter.as_ref(), false, None).unwrap();
+                assert_eq!(notes.len(), 1, "{name}: {data}");
+                let (settings, _) = &notes[0];
+                // Only the settings matter here: LaTeX reads a note without clozes as an error.
+                let settings_errors = settings
+                    .errors_and_warnings
+                    .iter()
+                    .filter(|e| matches!(e, crate::LibraryError::Note(_)))
+                    .collect::<Vec<_>>();
+                assert!(
+                    settings_errors.is_empty(),
+                    "{name}: {settings_errors:?}\n{data}"
+                );
+                assert_eq!(settings.action, action, "{name}: {data}");
+                assert_eq!(settings.tags, ["t"], "{name}: {data}");
+                assert_eq!(settings.keywords, ["k"], "{name}: {data}");
+            }
+        }
     }
 }

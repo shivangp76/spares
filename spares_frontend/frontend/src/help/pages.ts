@@ -57,6 +57,7 @@ export function docUrl(link: DocLink): string {
 
 const NOTE_VS_CARD: DocLink = { label: 'Note vs Card', file: 'concepts.md', heading: 'Note vs Card' };
 const SCHEDULING: DocLink = { label: 'Scheduling', file: 'concepts.md', heading: 'Scheduling' };
+const LOCAL_COPY: DocLink = { label: 'Keeping a copy on this device', file: 'getting_started.md', heading: 'Keeping a copy on this device' };
 
 /** The help for each page, by its path. */
 export const PAGE_HELP: Record<string, PageHelp> = {
@@ -72,7 +73,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     docs: [
       SCHEDULING,
       { label: 'Typed answers', file: 'getting_started.md', heading: 'Typed answers' },
-      { label: 'Reviewing offline', file: 'getting_started.md', heading: 'Reviewing offline' },
+      { label: 'Reviewing offline', file: 'getting_started.md', heading: 'Keeping a copy on this device' },
       { label: 'Putting cards off until after an exam', file: 'workflows.md', heading: 'Putting cards off until after an exam' },
       { label: 'Fixing a live note while reviewing it', file: 'workflows.md', heading: 'Live notes' },
     ],
@@ -170,14 +171,23 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     title: 'Settings',
     about: [
       "These settings are kept in this browser. Scheduling, the daily limits and the presets are set in the server's `config.toml`.",
+      'This Device can keep a copy of the whole collection in this browser, so every page works offline. It syncs with the server like the laptop does.',
     ],
     shortcuts: [],
-    docs: [SCHEDULING, { label: 'Deploying a sync server', file: 'deploying.md' }],
+    docs: [SCHEDULING, LOCAL_COPY, { label: 'Deploying a sync server', file: 'deploying.md' }],
+  },
+  '/conflicts': {
+    title: 'Conflicts',
+    about: [
+      'Notes a sync could not merge on its own: both sides changed the same lines, or one deleted the note while the other edited it. Each can be kept as it is, replaced by the other side, edited, or deleted. The next sync sends the result.',
+    ],
+    shortcuts: [],
+    docs: [{ label: 'Two-way sync', file: 'getting_started.md', heading: 'Two-way sync' }, LOCAL_COPY],
   },
 };
 
 /** Linked from the login page. */
-export const LOGIN_DOCS: DocLink = { label: 'Setting up a server to log in to', file: 'deploying.md', heading: '5. Log in on the phone' };
+export const LOGIN_DOCS: DocLink = { label: 'Setting up a host to log in to', file: 'getting_started.md', heading: 'Starting the server' };
 
 /** The shortcuts every page has, after the page's own. */
 export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT, ...GO_TO_SHORTCUTS];

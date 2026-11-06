@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { getCM } from '@replit/codemirror-vim';
-import { getNoteRender, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
+import { getNoteRender, isNetworkError, listNoteImageOcclusions, renderNote, updateNote, updateNoteImageOcclusion } from '../api/client';
 import { EDITOR_TIPS, useEditorSetup } from '../hooks/useEditorSetup';
 import { useVimKeybindings } from '../preferences';
 import { useResolvedTheme } from '../theme';
@@ -88,7 +88,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
     let cancelled = false;
     listNoteImageOcclusions(note.id).then(
       list => { if (!cancelled) { setImageOcclusions(list); setImageOcclusionsError(null); } },
-      (e: unknown) => { if (!cancelled) setImageOcclusionsError(errorMessage(e)); },
+      (e: unknown) => { if (!cancelled && !isNetworkError(e)) setImageOcclusionsError(errorMessage(e)); },
     );
     return () => { cancelled = true; };
   }, [note.id, savedData]);
@@ -391,6 +391,7 @@ export default function NoteDetail({ note, onClose, onNoteUpdated, onOpenNote, l
               path={render.result.rendered_path}
               source={render.result.browser_source}
               webPath={render.result.web_path}
+              noteId={note.id}
               onOpenNote={onOpenNote}
               version={render.version}
             />

@@ -22,7 +22,6 @@ use super::SYNC_EPOCH_KEY;
 use super::SYNC_USN_KEY;
 use super::USN_TABLES;
 use super::bump_notes_version;
-use super::guard_undo;
 use super::schema_version;
 use super::set_applying;
 use super::set_state;
@@ -120,6 +119,19 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
              {version}. Update spares on both sides first."
         )));
     }
+    // A render asset's hash names its file in the collection's directory, so it must be one.
+    let bad_hashes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM incoming.render_asset
+         WHERE length(hash) != 64 OR hash GLOB '*[^0-9a-f]*'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    if bad_hashes > 0 {
+        return Err(Error::Sync(format!(
+            "the incoming database has {bad_hashes} render assets whose hash isn't one"
+        )));
+    }
     let usn: Option<String> =
         sqlx::query_scalar("SELECT value FROM incoming.app_state WHERE key = ?")
             .bind(SYNC_USN_KEY)
@@ -170,14 +182,13 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
             .map_err(sqlx_error)?;
     }
     bump_notes_version(&mut tx).await?;
-    for table in ["grave", "sync_base", "event"] {
+    for table in ["grave", "sync_base", "event", "sync_received"] {
         sqlx::query(AssertSqlSafe(format!("DELETE FROM main.{table}")))
             .execute(&mut *tx)
             .await
             .map_err(sqlx_error)?;
     }
     set_state(&mut tx, "linked_notes_generated", "false").await?;
-    guard_undo(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
     Ok(RestoredState {

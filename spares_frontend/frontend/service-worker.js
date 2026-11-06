@@ -1,8 +1,8 @@
 // Lets the app open without a network connection. Built into `dist/sw.js` by the `service-worker`
 // plugin in vite.config.ts, which fills in the build hash and the files to precache and keep.
 //
-// Only the app itself is cached here. Data from the server (`/api`, `/files`) is cached by the app
-// (see src/offline), which knows what to keep for offline review and when it is stale.
+// Only the app itself is cached here. Data from the server (`/api`, `/files`) is kept only by a
+// device that keeps a copy of the collection, in caches of its own (see src/local/copy.ts).
 
 const BUILD = __BUILD__;
 // The page and the scripts, styles and fonts it loads, relative to this file
@@ -10,6 +10,13 @@ const PRECACHE = __PRECACHE__;
 // Files of this build cached when first loaded, e.g. the Typst compiler, which are kept across
 // builds that have them since their names are hashed
 const KEEP = __KEEP__;
+// The image occlusion editor's page and the files it loads by URL, whose names aren't hashed
+const EDITOR = __EDITOR__;
+// A device that keeps a copy of the collection needs those too, such as spares_wasm, to work
+// offline after an update, so it caches them with the page, and the editor with this build's page
+// so image occlusions can be inserted offline. The app marks such a device with this cache (see
+// src/local/copy.ts).
+const LOCAL_COPY_MARKER = 'spares-local-copy';
 
 // Build files have hashed names, so they never change and are kept across builds until the build
 // that drops them takes over. The page itself is replaced on every build.
@@ -25,14 +32,18 @@ const FONTS_URL = 'https://cdn.jsdelivr.net/gh/typst/typst-assets@';
 const PAGE_URL = new URL('index.html', self.registration.scope).href;
 const precacheUrls = PRECACHE.map(path => new URL(path, self.registration.scope).href);
 const keepUrls = KEEP.map(path => new URL(path, self.registration.scope).href);
+const editorUrls = EDITOR.map(path => new URL(path, self.registration.scope).href);
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const page = await caches.open(PAGE_CACHE);
     await page.add(new Request(PAGE_URL, { cache: 'reload' }));
+    const localCopy = await caches.has(LOCAL_COPY_MARKER);
+    if (localCopy) await cacheEditor(page);
     const assets = await caches.open(ASSETS_CACHE);
     const cached = new Set((await assets.keys()).map(request => request.url));
-    await assets.addAll(precacheUrls.filter(url => url !== PAGE_URL && !cached.has(url)));
+    const urls = localCopy ? [...precacheUrls, ...keepUrls] : precacheUrls;
+    await assets.addAll(urls.filter(url => url !== PAGE_URL && !cached.has(url)));
   })());
 });
 
@@ -56,6 +67,15 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') self.skipWaiting();
+  // From a page that set up a copy of the collection
+  if (event.data === 'cacheLocalCopy') {
+    event.waitUntil((async () => {
+      const assets = await caches.open(ASSETS_CACHE);
+      const cached = new Set((await assets.keys()).map(request => request.url));
+      await assets.addAll(keepUrls.filter(url => !cached.has(url)));
+      await cacheEditor(await caches.open(PAGE_CACHE));
+    })());
+  }
 });
 
 self.addEventListener('fetch', event => {
@@ -72,8 +92,9 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (url.origin !== self.location.origin) return;
-  // The server's data, which the app caches itself
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/files/')) return;
+  // The server's data, which the app caches itself, and pandoc.wasm, which a device that keeps a
+  // copy keeps itself (see src/local/pandoc.ts)
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/files/') || url.pathname.startsWith('/pandoc/')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(navigate(request));
@@ -90,10 +111,14 @@ async function navigate(request) {
   try {
     return await fetch(request);
   } catch (error) {
-    const cached = await caches.match(request);
+    // The image occlusion editor is its own page, whose settings are in its query, and is available
+    // offline only on a device that keeps a copy
+    const editor = new URL(request.url).pathname.startsWith('/svgedit/');
+    // Only this build's pages: other caches have other responses at app routes, such as the
+    // marker of a device that keeps a copy at `/`
+    const cached = await caches.match(request, { cacheName: PAGE_CACHE, ignoreSearch: editor });
     if (cached) return cached;
-    // The image occlusion editor is its own page, and is not available offline
-    if (!new URL(request.url).pathname.startsWith('/svgedit/')) {
+    if (!editor) {
       const page = await caches.match(PAGE_URL);
       if (page) return page;
     }
@@ -101,9 +126,16 @@ async function navigate(request) {
   }
 }
 
+/** The editor's files, which change with the build since their names aren't hashed. */
+async function cacheEditor(page) {
+  const cached = new Set((await page.keys()).map(request => request.url));
+  await page.addAll(editorUrls.filter(url => !cached.has(url)).map(url => new Request(url, { cache: 'no-cache' })));
+}
+
 async function cacheFirst(cacheName, request) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  // Or this build's page cache, which has the editor's files on a device that keeps a copy
+  const cached = await cache.match(request) ?? await caches.match(request, { cacheName: PAGE_CACHE });
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) await cache.put(request, response.clone());

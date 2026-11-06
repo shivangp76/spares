@@ -8,7 +8,12 @@ export function errorMessage(e: unknown): string {
 
 /** Saves `text` as a file named `name`, as the browser saves downloads. */
 export function downloadText(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  downloadBlob(name, new Blob([text], { type: 'text/plain' }));
+}
+
+/** Saves `blob` as a file named `name`, as the browser saves downloads. */
+export function downloadBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -37,8 +42,8 @@ export function keepShown<T extends { id: number }>(shown: T | null, updated: T)
 }
 
 /** Whether `note` was changed after `card` was fetched, e.g. by `spares import` of its file. */
-export function noteChangedSince(card: { note_updated_at?: string }, note: { updated_at: string }): boolean {
-  return card.note_updated_at !== undefined && Date.parse(note.updated_at) > Date.parse(card.note_updated_at);
+export function noteChangedSince(card: { note_updated_at: string }, note: { updated_at: string }): boolean {
+  return Date.parse(note.updated_at) > Date.parse(card.note_updated_at);
 }
 
 const NOTE_ID_PLACES = 8;
@@ -207,6 +212,13 @@ const IMAGE_TYPE_EXTENSIONS: Record<string, string> = {
   'image/bmp': 'bmp',
   'image/svg+xml': 'svg',
 };
+
+/** The type of the image at `path`, by its extension, or `null` if cards can't show its format. */
+export function imageMimeType(path: string): string | null {
+  const extension = /\.([^./]*)$/.exec(path)?.[1].toLowerCase();
+  if (extension === 'jpeg') return 'image/jpeg';
+  return Object.entries(IMAGE_TYPE_EXTENSIONS).find(([, e]) => e === extension)?.[0] ?? null;
+}
 
 /** The name to upload an image file under, or `null` if cards can't show its format. Pasted images
     often have a generic name or none, so without a supported extension, it comes from the type. */

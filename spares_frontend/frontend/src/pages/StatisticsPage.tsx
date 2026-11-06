@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { advanceCards, ApiError, getReviewHistory, getStatistics, getStatisticsGraphs, isNetworkError, postponeCards } from '../api/client';
+import { advanceCards, ApiError, getReviewHistory, getStatistics, getStatisticsGraphs, getStepsStats, postponeCards } from '../api/client';
+import { useServerReachable } from '../api/reachability';
 import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import BarChart from '../components/charts/BarChart';
 import { cumulative, daysBetween, fillDays, HOUR_LABELS, percent, toSeries, type Series } from '../components/charts/chartData';
@@ -11,24 +12,15 @@ import ReviewHeatmap from '../components/ReviewHeatmap';
 import { useAuth } from '../hooks/useAuth';
 import { useCardStates } from '../hooks/useCardStates';
 import { useRecentSearches } from '../hooks/useRecentSearches';
-import { useOfflineStatus } from '../offline/review';
-import {
-  cachedViews,
-  describeView,
-  indexedDbStatisticsCache,
-  offlineBanner,
-  recallStatistics,
-  rememberStatistics,
-  statisticsKey,
-  type CachedStatistics,
-  type StatisticsView,
-} from '../offline/statistics';
+import { useLocalStatus } from '../local/copy';
 import {
   type AnswerGroup,
   type PassFail,
   type ReviewHistoryResponse,
   type StatisticsGraphsResponse,
   type StatisticsResponse,
+  type StepsGroupKind,
+  type StepsStatsResponse,
 } from '../types/spares';
 import { errorMessage, formatDuration, td, th } from '../utils';
 
@@ -39,8 +31,15 @@ const note: React.CSSProperties = { fontSize: 13, color: 'var(--text-muted)', ma
 const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
 const chip: React.CSSProperties = { padding: '4px 10px', fontSize: 13 };
 const numeric: React.CSSProperties = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
-// The server's message when offline review is used, as `OfflineIndicator` shows it
-const OFFLINE_HINT = 'The server cannot be reached. Downloaded cards can still be reviewed, and ratings are sent once it can.';
+const OFFLINE_HINT = 'The server cannot be reached, and advancing and postponing need it.';
+
+/** What the page was asked to show, apart from the date. */
+interface StatisticsView {
+  query: string;
+  /** `null` for all time. */
+  periodDays: number | null;
+  forecastDays: number;
+}
 
 const PERIODS: { label: string; days: number | null }[] = [
   { label: '1 month', days: 30 },
@@ -394,10 +393,11 @@ function AddedSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
 }
 
 const formatPercent = (v: number) => `${Math.round(v * 100)}%`;
+const formatAverage = (v: number) => (v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(2));
 
 function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
   const d = graphs.distributions;
-  const average = (mean: number | null, unit = '') => (mean === null ? null : <p style={note}>Average {mean >= 100 ? Math.round(mean).toLocaleString() : mean.toFixed(2)}{unit}</p>);
+  const average = (mean: number | null, unit = '') => (mean === null ? null : <p style={note}>Average {formatAverage(mean)}{unit}</p>);
   return (
     <>
       <h3 style={{ fontSize: 14, margin: '8px 0' }}>Interval</h3>
@@ -420,6 +420,120 @@ function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) 
           <p style={note}>Total knowledge is the sum of every card’s retrievability: about how many of them you would recall now.</p>
         </>
       )}
+      <h3 style={{ fontSize: 14, margin: '20px 0 8px' }}>Cards in review</h3>
+      <div style={tiles}>
+        <Tile value={formatAverage(d.daily_load)} label="Daily load (reviews a day)" />
+        {d.average_retrievability !== null && <Tile value={formatPercent(d.average_retrievability)} label="Average retrievability" />}
+        {d.average_stability !== null && <Tile value={`${formatAverage(d.average_stability)} days`} label="Average stability" />}
+      </div>
+      <p style={note}>
+        Over the cards in review, leaving out learning and suspended cards. The daily load is about how many reviews a day they will cost once the collection settles: the sum of 1 / interval in days, an interval under a day counting
+        as one.
+      </p>
+    </>
+  );
+}
+
+const STEPS_GROUP_LABELS: Record<StepsGroupKind, string> = {
+  again: 'Again',
+  hard: 'Hard',
+  good: 'Good',
+  again_then_good: 'Again, then Good',
+  relearning: 'Lapse (Again)',
+};
+
+/** A step at a useful precision: `45s`, `12m`, `2.5h` or `1.3d`. */
+function formatStep(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+const formatSteps = (steps: (number | null)[]) => (steps.length === 0 ? 'none' : steps.map(step => (step === null ? '?' : formatStep(step))).join(' '));
+
+/** Steps stats for one preset's cards, fetched on their own since they need no query or date. */
+function StepsSection({ periodDays, enabled }: { periodDays: number | null; enabled: boolean }) {
+  // '' for the cards that use no preset
+  const [preset, setPreset] = useState('');
+  const [stats, setStats] = useState<StepsStatsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    getStepsStats({ preset: preset || null, period_days: periodDays })
+      .then(s => { if (!cancelled) { setStats(s); setError(null); } })
+      .catch(e => { if (!cancelled) setError(errorMessage(e)); });
+    return () => { cancelled = true; };
+  }, [preset, periodDays, enabled]);
+
+  if (!enabled && !stats) return <p style={note}>The server cannot be reached, and the steps need it.</p>;
+  const retention = stats ? formatPercent(stats.desired_retention) : '';
+  const r = stats?.recommended;
+  return (
+    <>
+      <label style={{ fontSize: 14 }}>
+        Preset{' '}
+        <select value={preset} onChange={e => setPreset(e.target.value)} style={input} aria-label="Preset">
+          <option value="">No preset</option>
+          {stats?.presets.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      {error && <div style={{ color: 'var(--error)', marginTop: 8 }}>{error}</div>}
+      {stats && r && (
+        <>
+          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr>
+                  <th style={th}>After</th>
+                  <th style={th}>Reviews</th>
+                  <th style={th}>Recalled</th>
+                  <th style={th}>Stability</th>
+                  <th style={th}>Falls to {retention} after</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.groups.map(g => (
+                  <tr key={g.kind}>
+                    <td style={td}>{STEPS_GROUP_LABELS[g.kind]}</td>
+                    <td style={numeric}>{g.reviews}{g.reviews > 0 && g.reviews < stats.min_reviews ? ' (too few)' : ''}</td>
+                    <td style={numeric}>{g.reviews > 0 ? formatPercent(g.recalled / g.reviews) : '–'}</td>
+                    <td style={numeric}>{g.stability === null ? '–' : formatStep(g.stability * 86400)}</td>
+                    <td style={numeric}>{g.interval === null ? '–' : formatStep(g.interval)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <table style={{ borderCollapse: 'collapse', fontSize: 14, marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th style={th}></th>
+                <th style={th}>Now</th>
+                <th style={th}>Recommended</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={td}>Learning steps</td>
+                <td style={td}>{formatSteps(stats.learning_steps)}</td>
+                <td style={td}>{formatSteps([r.first_learning_step, r.second_learning_step])}</td>
+              </tr>
+              <tr>
+                <td style={td}>Relearning steps</td>
+                <td style={td}>{formatSteps(stats.relearning_steps)}</td>
+                <td style={td}>{formatSteps([r.relearning_step])}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={note}>
+            Each review in a step is paired with the card’s next review within a day, and each group is fitted the stability that best predicts which were recalled. A step is the time recall takes to fall to {retention}. ? means fewer than{' '}
+            {stats.min_reviews} reviews in its groups; a step of a day or more can go. Not affected by the search query.
+          </p>
+        </>
+      )}
     </>
   );
 }
@@ -427,7 +541,8 @@ function DistributionsSection({ graphs }: { graphs: StatisticsGraphsResponse }) 
 export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
-  const { online, pending } = useOfflineStatus();
+  const online = useServerReachable();
+  const local = useLocalStatus();
   const { recent, save: saveRecent, remove: removeRecent } = useRecentSearches('spares_statistics_recent_searches');
 
   const [date, setDate] = useState(() => toDateInputValue(new Date()));
@@ -442,10 +557,6 @@ export default function StatisticsPage() {
   const requestKey = JSON.stringify([view, date]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Shown in place of the server's responses when it cannot be reached
-  const [offlineEntry, setOfflineEntry] = useState<CachedStatistics | null>(null);
-  // The views kept offline, offered when the current one is not among them
-  const [otherViews, setOtherViews] = useState<CachedStatistics[] | null>(null);
   const loading = loadedKey !== requestKey;
   // Bumped to refetch after an action changes the schedule
   const [reloadCount, setReloadCount] = useState(0);
@@ -469,57 +580,22 @@ export default function StatisticsPage() {
     statisticsFetch.then(s => { if (!cancelled) setStatistics(s); }).catch(() => {});
     graphsFetch.then(g => { if (!cancelled) setGraphs(g); }).catch(() => {});
     historyFetch.then(h => { if (!cancelled) setHistory(h); }).catch(() => {});
-    Promise.allSettled([statisticsFetch, graphsFetch, historyFetch]).then(async ([s, g, h]) => {
+    Promise.allSettled([statisticsFetch, graphsFetch, historyFetch]).then(([s, g, h]) => {
       if (cancelled) return;
-      const cacheKey = statisticsKey(credentials.serverUrl, view);
       const failed = [g, h].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
       setQueryError(query && failed?.reason instanceof ApiError && failed.reason.span ? { query, span: failed.reason.span } : null);
       if (s.status === 'fulfilled' && g.status === 'fulfilled') {
         setError(null);
-        setOfflineEntry(null);
-        setOtherViews(null);
-        // Only today's statistics are kept, so a look at a past day does not replace them
-        if (isToday) {
-          const now = Date.now();
-          rememberStatistics(indexedDbStatisticsCache, {
-            key: cacheKey,
-            serverUrl: credentials.serverUrl,
-            view,
-            statistics: s.value,
-            graphs: g.value,
-            history: h.status === 'fulfilled' ? h.value : null,
-            fetchedAt: now,
-            usedAt: now,
-          }).catch(console.error);
-        }
       } else {
         const failure = [s, g, h].find(r => r.status === 'rejected') as PromiseRejectedResult;
-        const cached = isNetworkError(failure.reason) || !navigator.onLine
-          ? await recallStatistics(indexedDbStatisticsCache, cacheKey).catch(() => undefined)
-          : undefined;
-        if (cancelled) return;
-        if (cached) {
-          setStatistics(cached.statistics);
-          setGraphs(cached.graphs);
-          if (cached.history) setHistory(cached.history);
-          setOfflineEntry(cached);
-          setOtherViews(null);
-          setError(null);
-        } else {
-          setOfflineEntry(null);
-          setError(errorMessage(failure.reason));
-          setStatistics(null);
-          setGraphs(null);
-          const views = isNetworkError(failure.reason)
-            ? await cachedViews(indexedDbStatisticsCache, credentials.serverUrl).catch(() => [])
-            : [];
-          if (!cancelled) setOtherViews(views);
-        }
+        setError(errorMessage(failure.reason));
+        setStatistics(null);
+        setGraphs(null);
       }
       setLoadedKey(key);
     });
     return () => { cancelled = true; };
-  }, [credentials, navigate, date, view, isToday, reloadCount]);
+  }, [credentials, navigate, date, view, reloadCount]);
 
   function applyQuery(query = queryInput) {
     const q = query.trim();
@@ -528,11 +604,9 @@ export default function StatisticsPage() {
     setView(v => ({ ...v, query: q }));
   }
 
-  // While offline, a view kept from before today shows its own date rather than "Today"
-  const todayTitle = offlineEntry && new Date(offlineEntry.fetchedAt).toDateString() !== new Date().toDateString()
-    ? `Studied on ${new Date(offlineEntry.fetchedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}`
-    : isToday ? 'Today' : `Studied on ${date}`;
-  const serverReachable = online && !offlineEntry;
+  const todayTitle = isToday ? 'Today' : `Studied on ${date}`;
+  // A device's copy schedules cards itself, offline too
+  const canSchedule = local.active || online;
 
   return (
     <div className="page">
@@ -571,27 +645,7 @@ export default function StatisticsPage() {
         {loading && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</span>}
       </div>
 
-      {offlineEntry && (
-        <div role="status" style={{ marginTop: 16, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tone-orange-border)', background: 'var(--tone-orange-bg)', color: 'var(--tone-orange-fg)', fontSize: 14 }}>
-          {offlineBanner(offlineEntry.fetchedAt, pending)}
-        </div>
-      )}
-
       {error && !loading && <div style={{ color: 'var(--error)', marginTop: 16, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{error}</div>}
-      {otherViews && !loading && (
-        otherViews.length > 0 ? (
-          <div style={{ marginTop: 12, fontSize: 14 }}>
-            <p style={{ margin: '0 0 8px' }}>These statistics were not kept for offline use. Kept views:</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
-              {otherViews.map(entry => (
-                <button key={entry.key} onClick={() => { setQueryInput(entry.view.query); setView(entry.view); setDate(toDateInputValue(new Date())); }}>
-                  {describeView(entry.view)} <span style={{ color: 'var(--text-muted)' }}>({new Date(entry.fetchedAt).toLocaleString()})</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : <p style={{ ...note, marginTop: 12 }}>No statistics were kept for offline use yet. They are kept each time this page loads them.</p>
-      )}
 
       {(statistics || graphs) && (
         <div style={{ opacity: loading ? 0.5 : 1 }}>
@@ -643,6 +697,9 @@ export default function StatisticsPage() {
             </>
           )}
 
+          <div style={sectionTitle}>Learning steps</div>
+          <StepsSection periodDays={view.periodDays} enabled={canSchedule} />
+
           {statistics && (
             <>
               <div style={sectionTitle}>Scheduling</div>
@@ -653,9 +710,9 @@ export default function StatisticsPage() {
               {isToday ? (
                 <>
                   {/* Keyed on the safe count so the prefilled count follows the latest statistics */}
-                  <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} disabled={!serverReachable} onDone={o => { showOutcome(o); reload(); }} />
-                  <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} disabled={!serverReachable} onDone={o => { showOutcome(o); reload(); }} />
-                  {!serverReachable && <p style={note}>{OFFLINE_HINT}</p>}
+                  <ScheduleForm key={`a${statistics.advance_safe_count}`} kind="Advance" safeCount={statistics.advance_safe_count} disabled={!canSchedule} onDone={o => { showOutcome(o); reload(); }} />
+                  <ScheduleForm key={`p${statistics.postpone_safe_count}`} kind="Postpone" safeCount={statistics.postpone_safe_count} disabled={!canSchedule} onDone={o => { showOutcome(o); reload(); }} />
+                  {!canSchedule && <p style={note}>{OFFLINE_HINT}</p>}
                   {scheduleOutcome && <ActionResult key={scheduleOutcome.seq} outcome={scheduleOutcome.outcome} onReverted={reload} />}
                 </>
               ) : (

@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import AccountSettings from '../components/AccountSettings';
+import LocalCopySettings from '../components/LocalCopySettings';
+import VersionSettings from '../components/VersionSettings';
 import { useAuth } from '../hooks/useAuth';
 import {
   CARD_ZOOMS, EDITOR_FONT_LABELS, EDITOR_FONT_SIZES, EDITOR_FONTS, LINE_WRAPPING_LABELS, LINE_WRAPPINGS, PAGE_WIDTH_LABELS,
@@ -41,7 +44,7 @@ function useSpeechVoices(): SpeechSynthesisVoice[] {
   return voices;
 }
 
-/** Settings kept in this browser. */
+/** Settings kept in this browser, and whether it keeps a copy of the collection. */
 export default function SettingsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
@@ -288,6 +291,12 @@ export default function SettingsPage() {
           Type the closing bracket or quote along with the opening one
         </label>
       </fieldset>
+
+      <AccountSettings />
+
+      <LocalCopySettings />
+
+      <VersionSettings />
     </div>
   );
 }

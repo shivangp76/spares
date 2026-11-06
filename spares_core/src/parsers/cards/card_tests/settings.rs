@@ -4,9 +4,11 @@ use crate::adapters::get_adapter_from_string;
 use crate::parsers::BackReveal;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
+use crate::parsers::CardInheritance;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::FrontConceal;
+use crate::parsers::InheritMode;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::ReadableCardIdentifier;
@@ -667,9 +669,12 @@ fn test_get_cards_inherit_basic() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             type_answer: None,
-            inherit: Some(ReadableCardIdentifier {
-                note_id: "dt".parse().unwrap(),
-                order: 1,
+            inherit: Some(CardInheritance {
+                source: ReadableCardIdentifier {
+                    note_id: "dt".parse().unwrap(),
+                    order: 1,
+                },
+                mode: InheritMode::Copy,
             }),
             cloze_uid: None,
             data: vec![
@@ -683,6 +688,40 @@ fn test_get_cards_inherit_basic() {
             ],
         }];
         assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_move() {
+    // `mv:NOTE_ID/ORDER` takes the same source as `inh:` but moves the card, and is stripped too.
+    let data = r"{{[o:1;mv:dt/2]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards = get_cards(parser.as_ref(), None, data, false, MOVE_FILES).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(
+        cards[0].inherit,
+        Some(CardInheritance {
+            source: ReadableCardIdentifier {
+                note_id: "dt".parse().unwrap(),
+                order: 2,
+            },
+            mode: InheritMode::Move,
+        })
+    );
+    assert_eq!(
+        cards[0].data[0],
+        NotePart::ClozeStart("{{[o:1]".to_string())
+    );
+}
+
+#[test]
+fn test_get_cards_inherit_and_move_are_exclusive() {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    for data in [r"{{[inh:dt/1;mv:dt/2]b}}", r"{{[mv:dt/1;mv:dt/2]b}}"] {
+        assert!(
+            get_cards(parser.as_ref(), None, data, false, MOVE_FILES).is_err(),
+            "{data}"
+        );
     }
 }
 
@@ -704,9 +743,12 @@ fn test_get_cards_inherit_with_order() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             type_answer: None,
-            inherit: Some(ReadableCardIdentifier {
-                note_id: "gir".parse().unwrap(),
-                order: 2,
+            inherit: Some(CardInheritance {
+                source: ReadableCardIdentifier {
+                    note_id: "gir".parse().unwrap(),
+                    order: 2,
+                },
+                mode: InheritMode::Copy,
             }),
             cloze_uid: None,
             data: vec![
@@ -720,16 +762,6 @@ fn test_get_cards_inherit_with_order() {
         }];
         assert_eq!(cards, expected);
     }
-}
-
-#[test]
-fn test_get_cards_inherit_numeric_note_id() {
-    // Old numeric note ids are rejected, with a hint to look them up.
-    let data = r"{{[inh:99/3]b}}";
-    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
-    let err = format!("{:?}", cards_res.unwrap_err());
-    assert!(err.contains("id-map.tsv"), "got: {err}");
 }
 
 #[test]

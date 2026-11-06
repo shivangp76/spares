@@ -23,6 +23,7 @@ use crate::args::PostponeArgs;
 use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
 use crate::args::SpecialStateLocal;
+use crate::args::StepsArgs;
 use crate::card_info::fetch_card_reviews;
 use crate::card_info::print_card_info;
 use crate::history::print_history;
@@ -35,6 +36,7 @@ use crate::search::print_fields;
 use crate::search::search;
 use crate::search::search_cards;
 use crate::statistics::print_statistics;
+use crate::steps::print_steps_stats;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::view::view_cards;
@@ -274,6 +276,9 @@ pub(crate) async fn handle(
             let optimized: OptimizeResponse =
                 response.json().await.map_err(|e| miette!("{}", e))?;
             print_optimize_response(&optimized, apply);
+        }
+        CardCommands::Steps(args @ StepsArgs { .. }) => {
+            print_steps_stats(args, base_url, client).await?;
         }
         CardCommands::Forget(ForgetCardArgs { ids, query }) => {
             let card_ids = if let Some(ids_vec) = ids {

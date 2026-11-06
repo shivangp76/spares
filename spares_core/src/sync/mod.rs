@@ -1,11 +1,13 @@
-//! Two-way sync between the laptop and the server. How to set it up and use it is in the manual's
-//! Getting Started and Deploying pages.
+//! Two-way sync between the laptop, the server and browsers that keep a copy of the collection. How
+//! to set it up and use it is in the manual's Getting Started and Deploying pages.
 //!
 //! # Goal
 //!
 //! Review and edit notes from the phone anywhere, even when the laptop is off. The laptop and a
 //! small server (reached over Tailscale) both hold the whole database and sync like Anki and
-//! `AnkiWeb`. Notes can be edited on the laptop (CLI, note files, live notes) or on the web.
+//! `AnkiWeb`. Notes can be edited on the laptop (CLI, note files, live notes) or on the web. A
+//! browser can also keep a copy of its own and sync it like the laptop, so the phone works offline
+//! ([More replicas](#more-replicas)).
 //!
 //! **Unsynced laptop edits must never be silently overwritten by later phone edits.** Laptop edits
 //! often sit unsynced for a while.
@@ -28,17 +30,17 @@
 //! 4. **An edit beats a delete**, the opposite of Anki.
 //! 5. **Live notes are read-only on the web**, because their source file is on the laptop. Their
 //!    tags and keywords stay editable.
-//! 6. **A replica's identity comes from the environment, never the database.** A full download
-//!    replaces the database, and the laptop must not take on the server's identity. There are two
-//!    settings, both required with no default (tests default to replica `0`, role `client`):
-//!    - `SPARES_REPLICA`, `0`–`7` ([`crate::config::Replica`]): which id form the replica writes
-//!      and its residue for the other tables (see [`crate::ids`]). `0` is the laptop, `1` the
-//!      server.
-//!    - `SPARES_SYNC_ROLE`, `server` or `client` ([`crate::config::SyncRole`]): whether this
-//!      instance answers `/api/sync/*` or runs the client side, including the merge.
+//! 6. **A replica's identity is kept outside its database.** A full download replaces the
+//!    database, and the laptop must not take on the server's identity. Its number, `0`–`7`
+//!    ([`crate::config::Replica`]), decides which id form it writes and its residue for the other
+//!    tables (see [`crate::ids`]). The root of the collection's sync chain, the host whose copy has
+//!    no upstream, is `1` and gives out every other number when a copy enrolls ([`devices`]): the
+//!    laptop's host gets `0`, browsers `2` to `4`. A host keeps its number in the collection's
+//!    `config.toml` (`[sync] replica`), a browser in its own storage next to the database.
 //!
-//!    Keeping them apart means a new replica only takes a new number, and code never infers the
-//!    role from the number.
+//!    **There are no roles.** Every host answers `/api/sync/*` for its users' devices (relaying to
+//!    the upstream if the collection has one), and a collection with an upstream (`[sync] url`)
+//!    also runs the client side, including the merge, against it.
 //!
 //! # Change tracking
 //!
@@ -46,11 +48,15 @@
 //!
 //! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and (since
 //!   `20261017140000_saved_search_sync`) `saved_search`, defaulting to `-1` (changed and not yet
-//!   synced), so new rows are dirty without a trigger.
+//!   synced), so new rows are dirty without a trigger. A client marks the rows it is pushing `-2`
+//!   (see [`run`]); they count as dirty too.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
-//!   of a delete) removes the grave.
+//!   of a delete) removes the grave. Since `20261101130000_undo_after_sync`, review logs have
+//!   graves too, as an undo deletes the review it takes back; nothing else deletes one.
+//! - **`sync_received(kind, oid, event_id)`**: each note, card, tag and parser sync wrote with
+//!   a change, and the newest event then, which undo checks (see [`crate::api::undo`]).
 //! - **`sync_base(kind, oid, snapshot)`**: a row's last synced version, saved on its first change
 //!   or delete after a sync, for the three-way merge. For a note: its data, custom data, parser,
 //!   tag ids and non-embedded keywords; for a card: its fields and tag ids. The views
@@ -71,17 +77,53 @@
 //!   table whose row is never committed.
 //!
 //! `note_link` and embedded keywords are derived from the text, so they aren't tracked or sent;
-//! they are rebuilt wherever a note is applied. `event`, `offline_action` and `app_state` aren't
-//! synced. `render_asset` and `render_package` rows are sent in full on every push, since assets
-//! are only added on the laptop.
+//! they are rebuilt wherever a note is applied. `event` and `app_state` aren't synced.
+//! `render_asset` and `render_package` rows are sent in full on every push, since assets are only
+//! added on the laptop, and the server keeps a row's newer file. A device sends none, and
+//! gets the server's in a pull whenever they differ from its own (`render_assets_digest`), so it
+//! has the laptop's latest templates, and never puts its older rows back on the server.
+//!
+//! # More replicas
+//!
+//! The laptop (`0`) and the server (`1`, the root) were the first replicas. Browsers that keep a
+//! copy of the collection are replicas `2` to `4`, clients like the laptop:
+//!
+//! - **Enrolling** gives one a number ([`devices`]), then it does a full download. Its note ids are
+//!   its own letter after the laptop note they follow ([`crate::ids`]), and its other ids take its
+//!   residue modulo 8.
+//! - **Nothing in the protocol assumes one client.** The usn is the server's counter, whichever
+//!   client a change came from. A pull returns everything after the client's last sync, other
+//!   clients' pushes included. A push is refused while anything changed on the server since that
+//!   client's pull, another client's push included, and the client starts over. `sync_client`
+//!   checks each replica's last usn on its own.
+//! - **A full upload replaces the server's database for everyone**: its new epoch makes every
+//!   other client do a full sync. So a browser never full-uploads on its own. When it can't sync
+//!   normally, the user chooses: download the server's copy and lose the browser's changes, or
+//!   upload its own and make the other devices download. The server answers a full upload once
+//!   the database is replaced, and regenerates every note's files afterwards, which takes minutes.
+//! - **What a browser needs besides the database:** the config and parser templates
+//!   (`GET /api/sync/config`, read through [`crate::platform`]), and the files its cards show
+//!   ([`media`]): rendered files, and the render assets Typst cards read, which the web app
+//!   downloads into Cache Storage after each sync. A browser writes no note files and renders
+//!   nothing; the server does that after each push ([`files::after_sync`]). Images, audio and image
+//!   occlusions added on a browser are uploaded before its push, and it downloads the server's
+//!   image occlusions, which notes are parsed with ([`media`]).
+//! - **When a browser syncs**: when the app opens, when it is hidden or closed, from the Sync
+//!   button, after reconnecting, and 30 seconds after its last change, so a review is one sync
+//!   (`src/local/copy.ts` in the web app). Unlike in Anki, a sync doesn't end undo: undoing a
+//!   change after it is a change like any other, which the next sync sends. Only a change whose
+//!   rows a sync wrote since can't be undone ([`crate::api::undo`]), since the undo would write
+//!   over the other side's change.
+//! - **API responses are `Cache-Control: no-store`.** Firefox otherwise answers a sync's
+//!   `GET /api/sync/meta` from its HTTP cache, with a usn from before, and the sync takes the
+//!   server for one restored from a backup.
 //!
 //! # The rest
 //!
 //! - Note and other ids that are unique across replicas: [`crate::ids`].
 //! - Merge rules: [`client`] and [`merge`]; card orders in merged text: `orders`.
 //! - The protocol: [`protocol`]; the server's side: [`server`]; a full sync: [`full`].
-//! - Files after a sync: [`files`]; undo and the change number after a sync:
-//!   [`LAST_SYNC_EVENT_ID_KEY`] and [`NOTES_VERSION_OFFSET_KEY`].
+//! - Files after a sync: [`files`]; the change number after a sync: [`NOTES_VERSION_OFFSET_KEY`].
 //!
 //! # Sources
 //!
@@ -102,12 +144,15 @@ use crate::Error;
 pub mod apply;
 pub mod client;
 pub mod conflicts;
+pub mod devices;
 pub mod files;
 pub mod full;
 pub mod http;
+pub mod media;
 pub mod merge;
 mod orders;
 pub mod protocol;
+pub mod push;
 pub mod records;
 pub mod run;
 pub mod server;
@@ -117,13 +162,16 @@ mod tests;
 #[cfg(test)]
 mod tracking_tests;
 
-/// The `[sync]` table of `config.toml`. Only the machine that syncs uses it, so it is left out of
-/// the copy `spares sync cloud` makes for the server (see [`crate::config::server_config`]).
+/// The `[sync]` table of `config.toml`. It says how this host's copy syncs, so it never leaves
+/// this host: devices get the config without it ([`crate::config::server_config`]), and the
+/// server keeps its own when `spares sync cloud` sends this one
+/// ([`crate::config::merge_pushed_config`]).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SyncConfig {
-    /// The sync server's address, such as `https://spares.tail1234.ts.net`. Its API key is read
-    /// from `SPARES_SYNC_API_KEY`. Two-way sync is off without it.
+    /// The collection's upstream: the host its copy here syncs with, as one of its user's
+    /// devices, such as `https://spares.tail1234.ts.net`. Without it, this copy is the root of its
+    /// sync chain, and two-way sync with an upstream is off.
     pub url: Option<String>,
     /// With `url`, the local server syncs on startup, on waking from sleep and then every this many
     /// minutes. `0` turns automatic syncing off, including after changes.
@@ -132,11 +180,17 @@ pub struct SyncConfig {
     /// have stopped for this many seconds, and at least every two minutes while they keep coming,
     /// so they reach the server without waiting for the interval. `0` turns this off.
     pub push_delay_seconds: u64,
-    /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`.
+    /// Where `spares sync cloud` copies files over SSH, such as `user@myserver.com`: the machine
+    /// `url` is served from, logged in as the user the server runs as. Where they go there is the
+    /// server's answer to `GET /api/sync/push-target` (see [`push`]), which is checked first.
     pub remote_host: Option<String>,
-    /// Where `spares sync cloud` puts rendered files on `remote_host`. Relative paths are relative
-    /// to the remote user's home directory. Must match the server's `SPARES_CACHE_DIR`.
-    pub remote_rendered_dir: String,
+    /// This host's replica number for the collection (see [`crate::config::Replica`]). A
+    /// collection without `url` is the root of its sync chain, replica `1`, unless this says
+    /// otherwise. With `url`, it is set when this host enrolls with the upstream.
+    pub replica: Option<u8>,
+    /// The device token for `url`, which this host got when it enrolled with it (`spares sync
+    /// login`). Never sent anywhere (see above).
+    pub token: Option<String>,
 }
 
 impl Default for SyncConfig {
@@ -146,7 +200,8 @@ impl Default for SyncConfig {
             interval_minutes: 0,
             push_delay_seconds: 30,
             remote_host: None,
-            remote_rendered_dir: ".cache/spares".to_string(),
+            replica: None,
+            token: None,
         }
     }
 }
@@ -158,10 +213,6 @@ pub const SYNC_USN_KEY: &str = "sync_usn";
 /// sync.
 pub const SYNC_EPOCH_KEY: &str = "sync_epoch";
 pub const LAST_SYNC_AT_KEY: &str = "last_sync_at";
-/// The newest event at the last sync. `/api/undo` refuses events at or below it, since what they
-/// did has reached the other replica, as Anki clears undo on sync. The server sets it when it
-/// answers a pull or push, the client when it commits.
-pub const LAST_SYNC_EVENT_ID_KEY: &str = "last_sync_event_id";
 /// Set (to the reason) when only a full sync can bring the replicas back in step.
 pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
 /// Added to the newest note event id by [`crate::api::undo::get_latest_note_event_id`], so the
@@ -231,13 +282,14 @@ pub(crate) async fn remove_state(conn: &mut SqliteConnection, key: &str) -> Resu
     Ok(())
 }
 
-/// Records the newest event as synced, so undo cannot reach past it.
-pub(crate) async fn guard_undo(conn: &mut SqliteConnection) -> Result<(), Error> {
-    let latest: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM event")
-        .fetch_one(&mut *conn)
+/// Drops the rows of `sync_received` older than every event, which can't stop an undo any more
+/// (see [`crate::api::undo`]).
+pub(crate) async fn prune_received(conn: &mut SqliteConnection) -> Result<(), Error> {
+    sqlx::query("DELETE FROM sync_received WHERE event_id < (SELECT MIN(id) FROM event)")
+        .execute(&mut *conn)
         .await
         .map_err(sqlx_error)?;
-    set_state(conn, LAST_SYNC_EVENT_ID_KEY, latest).await
+    Ok(())
 }
 
 /// Moves the note change number on after a sync changed notes. Call it before clearing `event`
@@ -290,7 +342,7 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
     let query = USN_TABLES
         .iter()
         .chain(&["grave"])
-        .map(|table| format!("SELECT 1 FROM {table} WHERE usn = -1"))
+        .map(|table| format!("SELECT 1 FROM {table} WHERE usn < 0"))
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
     let found: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!("SELECT EXISTS ({query})")))
@@ -300,13 +352,14 @@ pub(crate) async fn has_dirty(conn: &mut SqliteConnection) -> Result<bool, Error
     Ok(found == Some(1))
 }
 
-/// How many rows changed here since the last sync. Automatic sync watches it to tell when changes
-/// stop coming; changing a row that is already dirty leaves it the same.
+/// How many rows changed here since the last sync, those being pushed included. Automatic sync
+/// watches it to tell when changes stop coming; changing a row that is already dirty leaves it the
+/// same.
 pub async fn dirty_count(db: &SqlitePool) -> Result<i64, Error> {
     let query = USN_TABLES
         .iter()
         .chain(&["grave"])
-        .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn = -1)"))
+        .map(|table| format!("(SELECT COUNT(*) FROM {table} WHERE usn < 0)"))
         .collect::<Vec<_>>()
         .join(" + ");
     sqlx::query_scalar(AssertSqlSafe(format!("SELECT {query}")))
@@ -338,6 +391,8 @@ pub enum SyncKind {
     Note,
     Card,
     SavedSearch,
+    /// Only graves: review logs are only ever added, apart from the ones an undo deletes
+    ReviewLog,
 }
 
 impl SyncKind {
@@ -348,6 +403,7 @@ impl SyncKind {
             "note" => Ok(Self::Note),
             "card" => Ok(Self::Card),
             "saved_search" => Ok(Self::SavedSearch),
+            "review_log" => Ok(Self::ReviewLog),
             _ => Err(Error::Sync(format!("unknown row kind `{name}`"))),
         }
     }
@@ -359,6 +415,7 @@ impl SyncKind {
             Self::Note => "note",
             Self::Card => "card",
             Self::SavedSearch => "saved_search",
+            Self::ReviewLog => "review_log",
         }
     }
 }

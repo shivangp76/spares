@@ -14,9 +14,6 @@ use serde::Deserialize;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::ParserErrorKind;
-use crate::config::get_cache_dir;
-use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
@@ -28,8 +25,8 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
 use crate::parsers::audio::regex_ranges;
@@ -38,8 +35,9 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::image_occlusion::image_occlusion_caption;
+use crate::parsers::image_occlusion::image_occlusion_overlay;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
@@ -248,7 +246,12 @@ impl Parseable for TypstParser {
                     // "\n".to_string(),
                     "\n".to_string(),
                     action_string,
-                    self.construct_setting(&note_id_string),
+                    // A note to add has no id yet: importing one with an id is an error.
+                    if matches!(note_import_action, NoteImportAction::Add) {
+                        String::new()
+                    } else {
+                        self.construct_setting(&note_id_string)
+                    },
                     self.construct_setting(&keywords_string),
                     self.construct_setting(&tags_string),
                     custom_data_str,
@@ -327,7 +330,7 @@ impl Parseable for TypstParser {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         fn construct_image(file_path: &Path, caption: &str) -> String {
             format!(
@@ -340,12 +343,48 @@ impl Parseable for TypstParser {
                 caption,
             )
         }
+        if let ConstructImageOcclusionType::Card {
+            side,
+            cloze_indices,
+            ..
+        } = output_type
+        {
+            // The clozes over the original image, scaled to the same width (see
+            // `image_occlusion_overlay`). In the source, so that a web client that compiles the
+            // card fetches only the original image, which the note's cards share. `std` in case a
+            // note or preamble shadows these.
+            let overlay = match image_occlusion_overlay(cloze_indices, image_occlusion_data, side) {
+                Ok(svg) => format!(
+                    r#"std.image(bytes({}), format: "svg", width: 100%)"#,
+                    typst_string(&String::from_utf8_lossy(&svg))
+                ),
+                // The card fails to compile with the reason, where it would show the clozes
+                Err(e) => format!("std.panic({})", typst_string(&e.to_string())),
+            };
+            return format!(
+                indoc! { r#"#figure(
+                  std.box(width: 80%, {{
+                    std.image("{}", width: 100%)
+                    std.place(std.top + std.left, {})
+                  }}),
+                  caption: [{}],
+                )
+                "#},
+                image_occlusion_data.original_image_filepath.display(),
+                overlay,
+                image_occlusion_caption(image_occlusion_data),
+            );
+        }
         construct_image_occlusion_from_image(
             self,
             construct_image,
             image_occlusion_data,
             output_type,
         )
+    }
+
+    fn image_occlusion_overlays(&self) -> bool {
+        true
     }
 
     fn construct_image(&self, file_path: &Path) -> String {
@@ -367,17 +406,6 @@ impl Parseable for TypstParser {
         Some(format!("#{KEYWORD_FUNC_NAME}[{keyword}]"))
     }
 
-    fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if is_test_mode() {
-            return get_cache_dir();
-        }
-        std::env::var("TYPST_OUT_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|dir| dir.exists())
-            .unwrap_or_else(get_cache_dir)
-    }
-
     fn file_extension(&self) -> &'static str {
         "typ"
     }
@@ -392,12 +420,11 @@ impl Parseable for TypstParser {
         output_text_filepath: &Path,
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
-        let typst_root_dir = std::env::var("TYPST_ROOT").map_err(|_| {
-            Error::Library(LibraryError::Parser(ParserErrorKind::NotFound(
-                "TYPST_ROOT environment variable is not set".to_string(),
-            )))
-        })?;
+    ) -> Result<RenderedFile, Error> {
+        // Notes import and include files by their absolute paths, which Typst resolves in its
+        // root, so the root is `/`. What a render may read is the sandbox's to limit (see
+        // `crate::render`).
+        let typst_root_dir = Path::new("/");
         let to_absolute = |path: &Path| {
             std::path::absolute(path).map_err(|e| Error::Io {
                 description: format!("Failed to make {} absolute", path.display()),
@@ -405,10 +432,9 @@ impl Parseable for TypstParser {
             })
         };
         let output_text_filepath = to_absolute(output_text_filepath)?;
-        let dependencies_filepath =
-            render_dependencies_filepath(&to_absolute(output_rendered_filepath)?);
-        let mut raw_dependencies_filepath = dependencies_filepath.clone();
-        raw_dependencies_filepath.set_extension("raw.json");
+        // Read right after, then removed
+        let raw_dependencies_filepath =
+            to_absolute(output_rendered_filepath)?.with_extension("deps.raw.json");
         let mut command = Command::new("typst");
         command
             .arg("compile")
@@ -421,25 +447,46 @@ impl Parseable for TypstParser {
             .arg(&output_text_filepath)
             .arg(output_rendered_filepath)
             .current_dir("/");
-        let output = render_command_output(&mut command, "typst")?;
+        let output = render_command_output(&mut command, "typst");
         // The raw dependency list holds every file of every package, so only a summary is kept.
-        if let Err(e) = summarize_dependencies(
-            &raw_dependencies_filepath,
-            &output_text_filepath,
-            &dependencies_filepath,
-        ) {
-            warn!(
-                "Failed to record dependencies of {}: {e}",
-                output_text_filepath.display()
-            );
-        }
+        let dependencies = output.as_ref().ok().map(|_| {
+            summarize_dependencies(&raw_dependencies_filepath, &output_text_filepath)
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "Failed to record dependencies of {}: {e}",
+                        output_text_filepath.display()
+                    );
+                    RenderDependencies::default()
+                })
+        });
         let _ = remove_file(&raw_dependencies_filepath);
-        Ok(output)
+        Ok(RenderedFile {
+            output: output?,
+            dependencies: dependencies.unwrap_or_default(),
+        })
     }
 
     fn renders_in_browser(&self) -> bool {
         true
     }
+}
+
+/// `s` as a Typst string literal.
+pub(crate) fn typst_string(s: &str) -> String {
+    let mut literal = String::with_capacity(s.len() + 2);
+    literal.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[derive(Deserialize)]
@@ -451,8 +498,7 @@ struct TypstDependencies {
 fn summarize_dependencies(
     raw_dependencies_filepath: &Path,
     main_filepath: &Path,
-    dependencies_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let raw = read_to_string(raw_dependencies_filepath).map_err(|e| e.to_string())?;
     let TypstDependencies { inputs } = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let mut dependencies = RenderDependencies::default();
@@ -468,7 +514,7 @@ fn summarize_dependencies(
             None => dependencies.files.push(input),
         }
     }
-    dependencies.write(dependencies_filepath)
+    Ok(dependencies)
 }
 
 /// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid

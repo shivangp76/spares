@@ -240,11 +240,14 @@ button:disabled {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* The links take the first row and the buttons the next, so the Sync button appearing once its
+   status loads can't push the buttons from beside the links onto a row of their own */
 .navbar-links {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
+  flex-basis: 100%;
 }
 
 .navbar-link,
@@ -304,6 +307,10 @@ button:disabled {
   font-size: 11px;
   font-weight: 600;
   line-height: 16px;
+}
+
+a.sync-conflict-badge {
+  text-decoration: none;
 }
 
 /* Where a note's text matches a search */
@@ -455,6 +462,13 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 /* For tables of examples */
 .help-dialog.wide {
   width: min(640px, calc(100% - 32px));
+}
+
+/* A card's image occlusions without masks, as large as the window allows */
+.help-dialog.unmasked-image-occlusions {
+  width: auto;
+  max-width: calc(100% - 32px);
+  min-width: min(440px, calc(100% - 32px));
 }
 
 .help-dialog td:first-child button {
@@ -699,7 +713,6 @@ html:has(.review-answer-bar) {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
-    flex-basis: 100%;
   }
 
   .navbar-links::-webkit-scrollbar {
@@ -711,7 +724,7 @@ html:has(.review-answer-bar) {
   }
 
   /* The buttons also stay on one row and scroll sideways, so a status appearing beside them
-     (`Downloading cards 3/40`) can't squeeze them onto two lines and push the page down */
+     (`Downloading files 3/40`) can't squeeze them onto two lines and push the page down */
   .navbar-actions {
     min-width: 0;
     max-width: 100%;

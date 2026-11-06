@@ -23,17 +23,21 @@
 //!   return os.getenv("LATEX_OUT_DIR") .. "/aux/" .. vim.fn.expand("%:t:r")
 //! end }
 //! ```
-//! where `$LATEX_OUT_DIR` is set in your shell to the appropriate directory.
+//! where `$LATEX_OUT_DIR` is set in your shell to the files directory of your collection on your
+//! host, `<SPARES_ROOT>/users/<your id>/files`, where spares renders notes too (spares itself reads
+//! no such variable).
 //!
 //! With notes in a git or jj repository (see "Notes as a git or jj repository" in the manual's
 //! Workflows page):
-//! - spares compiles notes from its own copy (`notes-spares/`), while vimtex compiles the file in
+//! - spares compiles notes from its own copy (`notes.git/`), while vimtex compiles the file in
 //!   your clone. Both write the same PDF in `$LATEX_OUT_DIR`, so after compiling an unpushed change
 //!   (for example on an LLM's branch), reviews show that version until spares renders the note
 //!   again (`spares note generate`).
-//! - Inverse search from a PDF spares compiled opens the file in `notes-spares/`. Edit the note in
-//!   your clone instead: spares overwrites edits made in `notes-spares/`, saving them to
-//!   `notes-spares/.git/spares-overwritten/`.
+//! - Inverse search from a PDF spares compiled opens the file in `notes.git/`. Edit the note in
+//!   your clone instead: spares overwrites edits made in `notes.git/`, saving them to
+//!   `notes.git/.git/spares-overwritten/`.
+//! - spares renders in a sandbox without shell escape (see [`crate::render`]): a note that needs
+//!   it (for the `svg` package, say) renders only in your own vimtex.
 
 mod data_parser;
 
@@ -44,7 +48,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Output;
 use std::sync::LazyLock;
 
 use data_parser::KEYWORD_CMD;
@@ -54,8 +57,7 @@ use log::warn;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::config::get_cache_dir;
-use crate::config::is_test_mode;
+use crate::config::get_files_dir;
 use crate::helpers::get_or_compile_regex;
 use crate::model::NoteId;
 use crate::parsers::ClozeHiddenReplacement;
@@ -69,6 +71,7 @@ use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
@@ -77,7 +80,6 @@ use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -203,7 +205,7 @@ impl Parseable for LatexParserNote {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         construct_image_occlusion(self, image_occlusion_data, output_type)
     }
@@ -217,19 +219,7 @@ impl Parseable for LatexParserNote {
     }
 
     fn construct_image(&self, file_path: &Path) -> String {
-        // `graphicx` cannot include SVGs. The `svg` package can, as for image occlusions.
-        let command = if file_path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-        {
-            "includesvg"
-        } else {
-            "includegraphics"
-        };
-        format!(
-            "\\{command}[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{{{}}}",
-            file_path.display()
-        )
+        include_image(file_path)
     }
 
     fn get_output_rendered_dir(&self, output_type: RenderOutputDirectoryType) -> PathBuf {
@@ -245,14 +235,9 @@ impl Parseable for LatexParserNote {
         aux_dir: &Path,
         output_text_filepath: &Path,
         output_rendered_dir: &Path,
-        output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
-        render_file(
-            aux_dir,
-            output_text_filepath,
-            output_rendered_dir,
-            output_rendered_filepath,
-        )
+        _output_rendered_filepath: &Path,
+    ) -> Result<RenderedFile, Error> {
+        render_file(aux_dir, output_text_filepath, output_rendered_dir)
     }
 }
 
@@ -381,7 +366,12 @@ fn construct_file_data(
                 // "\n".to_string(),
                 "\n".to_string(),
                 action_string,
-                parser.construct_setting(&note_id_string),
+                // A note to add has no id yet: importing one with an id is an error.
+                if matches!(note_import_action, NoteImportAction::Add) {
+                    String::new()
+                } else {
+                    parser.construct_setting(&note_id_string)
+                },
                 parser.construct_setting(&keywords_string),
                 parser.construct_setting(&tags_string),
                 custom_data_str,
@@ -516,18 +506,32 @@ fn construct_cloze_replacement(
     }
 }
 
+/// Includes the image at `file_path`: with `graphicx`, or, since it cannot include SVGs, with the
+/// `svg` package for an SVG.
+fn include_image(file_path: &Path) -> String {
+    let command = if file_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+    {
+        "includesvg"
+    } else {
+        "includegraphics"
+    };
+    format!(
+        "\\{command}[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{{{}}}",
+        file_path.display()
+    )
+}
+
 fn construct_image_occlusion(
     parser: &impl Parseable,
     image_occlusion_data: &ImageOcclusionData,
-    output_type: ConstructImageOcclusionType,
+    output_type: ConstructImageOcclusionType<'_>,
 ) -> String {
     fn construct_image(file_path: &Path, _caption: &str) -> String {
         [
             r"\begin{figure}".to_string(),
-            format!(
-                "  \\includesvg[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]{}",
-                file_path.display()
-            ),
+            format!("  {}", include_image(file_path)),
             r"\end{figure}".to_string(),
             String::new(),
         ]
@@ -537,14 +541,7 @@ fn construct_image_occlusion(
 }
 
 fn get_output_rendered_dir(_: &impl Parseable, _output_type: RenderOutputDirectoryType) -> PathBuf {
-    if is_test_mode() {
-        return get_cache_dir();
-    }
-    std::env::var("LATEX_OUT_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|dir| dir.exists())
-        .unwrap_or_else(get_cache_dir)
+    get_files_dir()
 }
 
 fn get_aux_dir(parser: &impl Parseable, output_type: RenderOutputType, note_id: NoteId) -> PathBuf {
@@ -563,8 +560,7 @@ fn render_file(
     aux_dir: &Path,
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
-    output_rendered_filepath: &Path,
-) -> Result<Output, Error> {
+) -> Result<RenderedFile, Error> {
     // This is currently the same `pdflatex` command that `latexmk` ends up running.
     // let output = Command::new("pdflatex")
     //     .arg("-shell-escape") // for svg package
@@ -587,6 +583,8 @@ fn render_file(
     // `cd $XDG_DATA_HOME/spares/notes/latex-note/ && time latexmk -verbose -file-line-error -synctex=1 -interaction=nonstopmode -pdf -auxdir=$XDG_CACHE_HOME/vimtex/aux/2051 $XDG_DATA_HOME/spares/notes/latex-note/2051.tex`
     let mut command = Command::new("latexmk");
     command
+        // No `latexmkrc`, which is Perl
+        .arg("-norc")
         .arg("-verbose")
         .arg("-file-line-error")
         .arg("-synctex=1")
@@ -598,29 +596,28 @@ fn render_file(
         // Current directory is changed to ensure first vimtex compilation is fast.
         .current_dir(output_text_filepath.parent().unwrap());
     let output = render_command_output(&mut command, "latexmk")?;
-    if let Err(e) = record_dependencies(
-        aux_dir,
-        output_text_filepath,
-        output_rendered_dir,
-        output_rendered_filepath,
-    ) {
-        warn!(
-            "Failed to record dependencies of {}: {e}",
-            output_text_filepath.display()
-        );
-    }
-    Ok(output)
+    let dependencies = record_dependencies(aux_dir, output_text_filepath, output_rendered_dir)
+        .unwrap_or_else(|e| {
+            warn!(
+                "Failed to record dependencies of {}: {e}",
+                output_text_filepath.display()
+            );
+            RenderDependencies::default()
+        });
+    Ok(RenderedFile {
+        output,
+        dependencies,
+    })
 }
 
-/// Writes the [`RenderDependencies`] of a rendered file from the recorder file (`.fls`) that
-/// `latexmk` has `pdflatex` write to the aux directory. It is kept when `latexmk` skips an
-/// up-to-date file, so it always describes the last compilation.
+/// The [`RenderDependencies`] of a rendered file, from the recorder file (`.fls`) that `latexmk`
+/// has `pdflatex` write to the aux directory. It is kept when `latexmk` skips an up-to-date file,
+/// so it always describes the last compilation.
 fn record_dependencies(
     aux_dir: &Path,
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
-    output_rendered_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let output_text_filepath =
         std::path::absolute(output_text_filepath).map_err(|e| e.to_string())?;
     let file_name = output_text_filepath
@@ -635,11 +632,10 @@ fn record_dependencies(
         .into_iter()
         .filter(|path| *path != output_text_filepath)
         .collect();
-    RenderDependencies {
+    Ok(RenderDependencies {
         files,
         packages: Vec::new(),
-    }
-    .write(&render_dependencies_filepath(output_rendered_filepath))
+    })
 }
 
 /// Absolute paths of the files read according to a recorder file, except files it also wrote and
@@ -668,7 +664,7 @@ fn recorded_inputs(recorder: &str, excluded_dirs: &[&Path]) -> Vec<PathBuf> {
 
 /// Directories of the TeX distribution, along with its caches and configuration. `TEXMFHOME` is
 /// not included, since it holds packages the user added.
-fn tex_distribution_dirs() -> &'static [PathBuf] {
+pub(crate) fn tex_distribution_dirs() -> &'static [PathBuf] {
     static DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
         [
             "TEXMFROOT",
@@ -864,5 +860,50 @@ mod tests {
                 PathBuf::from("/notes/figures/plot.pdf"),
             ]
         );
+    }
+
+    /// An image occlusion's image is included like any other: with braces around its path, and with
+    /// `\includegraphics` unless it is an SVG. Its cards show a PNG.
+    #[test]
+    fn test_image_occlusion_includes_its_image() {
+        use crate::parsers::ConstructImageOcclusionType;
+        use crate::parsers::generate_files::CardSide;
+        use crate::parsers::image_occlusion::ImageOcclusionData;
+
+        let parser = LatexParserNote::new();
+        let data = ImageOcclusionData {
+            original_image_filepath: PathBuf::from("/images/piston.gif"),
+            clozes_filepath: PathBuf::from("/images/piston_clozes.svg"),
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+        };
+        let include =
+            "\\includegraphics[width=0.5\\textwidth,height=0.8\\textheight,keepaspectratio]";
+
+        let note = parser.construct_image_occlusion(&data, ConstructImageOcclusionType::Note);
+        assert!(
+            note.contains(&format!("{include}{{/images/piston.gif}}")),
+            "{note}"
+        );
+
+        assert!(!parser.image_occlusion_overlays());
+        let card = parser.construct_image_occlusion(
+            &data,
+            ConstructImageOcclusionType::Card {
+                side: CardSide::Front,
+                note_id: "zzzx".parse().unwrap(),
+                card_order: 1,
+                image_occlusion_order: 1,
+                cloze_indices: &[],
+            },
+        );
+        let line = card
+            .lines()
+            .find(|line| line.contains("include"))
+            .unwrap()
+            .trim();
+        assert!(line.starts_with(&format!("{include}{{")), "{card}");
+        assert!(line.ends_with("-io-1.png}"), "{card}");
     }
 }

@@ -183,7 +183,7 @@ function withUnavailableFiles(error: unknown, source: string, missing: Set<strin
 }
 
 // The compiler is shared and every compile writes the same main file, so compiles run one at a time.
-// Those in the background, e.g. of cards downloaded for offline review, wait for the others.
+// Those in the background, e.g. warming up the compiler for a device's copy, wait for the others.
 const tasks: (() => Promise<void>)[] = [];
 const backgroundTasks: (() => Promise<void>)[] = [];
 let running = false;
@@ -201,6 +201,27 @@ async function runTasks(): Promise<void> {
   let task;
   while ((task = tasks.shift() ?? backgroundTasks.shift())) await task();
   running = false;
+}
+
+/**
+ * Makes the compiler ask for `paths` again at the next compile, e.g. render assets that a sync of
+ * this device's copy changed, added or removed. Otherwise it keeps the contents it was given, or
+ * that the server had none, for as long as the page is open.
+ */
+export function forgetTypstFiles(paths: Iterable<string>): Promise<void> {
+  const forget = [...paths].filter(path => requestedFiles.has(path));
+  if (forget.length === 0) return Promise.resolve();
+  // Queued, so that no compile is running meanwhile
+  return enqueue(async () => {
+    for (const path of forget) {
+      requestedFiles.delete(path);
+      // Unmapping one that was never mapped would create a compiler
+      if (!unavailableFiles.delete(path)) await $typst.unmapShadow(path);
+    }
+    precompiled.clear();
+    // Which gives the compiler those of `forget` that are sources again, before the next compile
+    sourcesLoaded = null;
+  });
 }
 
 /**

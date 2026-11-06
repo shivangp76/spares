@@ -1,7 +1,6 @@
 //! The notes repository end to end: server writes, pushes, rejections, rollbacks and
-//! reconciliation. In its own test binary, since it points the data directories at a temporary
-//! directory through process-wide environment variables, and its tests share that directory, so
-//! they run one at a time.
+//! reconciliation. In its own test binary, since it sets the process's default collection to one in
+//! a temporary directory, and its tests share that directory, so they run one at a time.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -25,6 +24,9 @@ use spares_core::api::tag::create_tag;
 use spares_core::api::tag::rename_tags;
 use spares_core::api::tag::update_tag;
 use spares_core::api::undo::undo_event;
+use spares_core::collection::Collection;
+use spares_core::collection::CollectionPaths;
+use spares_core::config::Replica;
 use spares_core::model::NoteId;
 use spares_core::notes_vcs;
 use spares_core::notes_vcs::FinishRequest;
@@ -54,33 +56,31 @@ type Change = dyn Fn(&Path);
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static BASE: OnceLock<PathBuf> = OnceLock::new();
 
-/// Points spares at a fresh temporary directory and returns a guard that keeps other tests out.
-async fn setup() -> tokio::sync::MutexGuard<'static, ()> {
+/// Points spares at a collection in a fresh temporary directory and returns a guard that keeps
+/// other tests out.
+async fn setup(pool: &SqlitePool) -> tokio::sync::MutexGuard<'static, ()> {
     let guard = SERIAL.lock().await;
     let base = BASE.get_or_init(|| {
-        let base = std::env::temp_dir().join(format!("spares-notes-vcs-{}", std::process::id()));
-        // SAFETY: set before any test reads them, while holding `SERIAL`
-        unsafe {
-            std::env::set_var("SPARES_DATA_DIR", base.join("data"));
-            std::env::set_var("SPARES_CACHE_DIR", base.join("cache"));
-            std::env::set_var("SPARES_CONFIG_DIR", base.join("config"));
-            std::env::set_var("SPARES_FILES_DIR", base.join("cache"));
-            std::env::set_var("SPARES_REPLICA", "0");
-            for variable in [
-                "SPARES_TEST_MODE",
-                "MARKDOWN_OUT_DIR",
-                "LATEX_OUT_DIR",
-                "TYPST_OUT_DIR",
-            ] {
-                std::env::remove_var(variable);
-            }
-        }
-        base
+        std::env::temp_dir().join(format!("spares-notes-vcs-{}", std::process::id()))
     });
     for dir in ["data", "cache", "clone"] {
         let _ = std::fs::remove_dir_all(base.join(dir));
     }
     std::fs::create_dir_all(base.join("data")).unwrap();
+    // As the directories were before collections, so notes' links keep pointing at the data
+    // directory's clone.
+    let paths = CollectionPaths {
+        root: base.join("data"),
+        config: base.join("config"),
+        files: base.join("cache"),
+        media: base.join("data"),
+        render: base.join("cache").join("render"),
+        cache: base.join("cache"),
+        notes_repo: base.join("data").join("notes-spares"),
+    };
+    let collection = Arc::new(Collection::new("test", pool.clone(), paths));
+    collection.set_replica(Some(Replica::LAPTOP));
+    spares_core::collection::set_default(Some(collection));
     guard
 }
 
@@ -304,7 +304,7 @@ fn reset_clone(clone: &Path) {
 
 #[sqlx::test]
 async fn test_init_and_server_writes_commit(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     assert_eq!(commit_count(&repo()), 1);
     assert_eq!(last_message(&repo()), "spares: initial import");
@@ -367,7 +367,7 @@ fn notes_vcs_user_dir() -> PathBuf {
 
 #[sqlx::test]
 async fn test_push_imports(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     commit_edit(&clone, ids[0], |s| {
@@ -409,7 +409,7 @@ async fn test_push_imports(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_note_without_cards_warns(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     commit_edit(&clone, ids[0], |s| {
@@ -428,7 +428,7 @@ async fn test_push_note_without_cards_warns(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_normalizes(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     // A cloze without its order: spares adds it, so the stored file differs from the push.
@@ -453,7 +453,7 @@ async fn test_push_normalizes(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_rejections(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     let original_head = head(&repo());
@@ -575,7 +575,7 @@ async fn test_push_rejections(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_must_fast_forward(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     // A web edit lands after the clone
@@ -608,7 +608,7 @@ async fn test_push_must_fast_forward(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_detects_database_only_changes(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     // A change that does not write the file, as undo and tag renames did before.
@@ -639,7 +639,7 @@ async fn test_push_detects_database_only_changes(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_failed_import_rolls_back(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     create_tag(
         &pool,
@@ -685,7 +685,7 @@ async fn test_failed_import_rolls_back(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_whose_ref_update_fails_is_rolled_back(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     let original = note_data(&pool, ids[0]).await;
@@ -721,7 +721,7 @@ async fn max_event_id(pool: &SqlitePool) -> i64 {
 
 #[sqlx::test]
 async fn test_push_of_several_notes_is_one_group(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     let originals = [
@@ -767,7 +767,7 @@ async fn test_push_of_several_notes_is_one_group(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_reconcile_dirty_saves_overwritten(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let note = note_path(&repo(), ids[0]);
     let committed = read(&note);
@@ -832,7 +832,7 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 
 #[sqlx::test]
 async fn test_undo_and_tag_rename_commit(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let response = update_notes(
         &pool,
@@ -899,7 +899,7 @@ async fn test_undo_and_tag_rename_commit(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_startup_rolls_back_an_interrupted_push(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let original = note_data(&pool, ids[0]).await;
     // What a server that died mid-import leaves: the import's change in the database, and the
@@ -948,7 +948,7 @@ async fn test_startup_rolls_back_an_interrupted_push(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_note_with_linked_notes(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     // The third note's file shows its linked notes, so its link reference is numbered.
@@ -980,7 +980,7 @@ fn assert_gitignore_matches() {
 
 #[sqlx::test]
 async fn test_startup_updates_gitignore(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     init(&pool).await;
     // A repository created with another `.gitignore`
     std::fs::write(repo().join(".gitignore"), "old pattern\n").unwrap();
@@ -1000,7 +1000,7 @@ async fn test_startup_updates_gitignore(pool: SqlitePool) {
 /// tags and keywords.
 #[sqlx::test]
 async fn test_push_live_note(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let mut custom_data = Map::new();
     custom_data.insert("live_sync_name".to_string(), "lecture".into());
@@ -1118,7 +1118,7 @@ async fn note_count(pool: &SqlitePool) -> i64 {
 
 #[sqlx::test]
 async fn test_push_creates_and_deletes_notes(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     let new_file = new_note_file(&clone, "Fourth {{ New cloze }}");
@@ -1175,7 +1175,7 @@ async fn test_push_creates_and_deletes_notes(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_push_creating_and_deleting_rolls_back(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     let before = head(&repo());
@@ -1205,9 +1205,226 @@ async fn test_push_creating_and_deleting_rolls_back(pool: SqlitePool) {
     );
 }
 
+/// The id of the card at `order` of note `id`, if there is one
+async fn card_at(pool: &SqlitePool, id: NoteId, order: u32) -> Option<i64> {
+    sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? AND "order" = ?"#)
+        .bind(id)
+        .bind(order)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// Gives the first note's file a second cloze that moves the second note's card, in the clone.
+fn move_second_card_into_first(clone: &Path) {
+    let path = note_path(clone, first());
+    let file = read(&path);
+    let merged = file.replace(
+        "First {{[o:1] Cloze here }}",
+        &format!(
+            "First {{{{[o:1] Cloze here }}}} and {{{{[mv:{}/1] moved }}}}",
+            second()
+        ),
+    );
+    assert_ne!(merged, file);
+    std::fs::write(path, merged).unwrap();
+}
+
+async fn undo_last_group(pool: &SqlitePool) {
+    undo_event(
+        pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_out_of_a_note_it_deletes(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let clone = clone();
+    move_second_card_into_first(&clone);
+    std::fs::remove_file(note_path(&clone, second())).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "merge the second note into the first"],
+    );
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert!(get_note(&pool, second()).await.is_err());
+    // The card kept its id, so its scheduling and reviews, in the first note.
+    assert_eq!(card_at(&pool, first(), 2).await, Some(card));
+    assert!(pushed.finish.unwrap().normalized);
+    assert!(!read(&note_path(&repo(), first())).contains("mv:"));
+    assert_eq!(status(&repo()), "");
+
+    // One undo puts the card back and restores the note.
+    undo_last_group(&pool).await;
+    assert_eq!(card_at(&pool, second(), 1).await, Some(card));
+    assert_eq!(card_at(&pool, first(), 2).await, None);
+}
+
+#[sqlx::test]
+async fn test_push_of_several_commits_moves_cards_before_deleting_their_note(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let clone = clone();
+    // A note moved to another file: created with the card, then the old one deleted.
+    std::fs::write(
+        clone.join("markdown/new-merged.md"),
+        new_note_file(
+            &clone,
+            &format!("Merged {{{{[mv:{}/1] moved }}}}", second()),
+        ),
+    )
+    .unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "create the merged note"]);
+    git(
+        &clone,
+        &["rm", "-q", note_path(&clone, second()).to_str().unwrap()],
+    );
+    git(&clone, &["commit", "-qm", "delete the second note"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let created: NoteId = sqlx::query_scalar("SELECT id FROM note WHERE data LIKE 'Merged%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(card_at(&pool, created, 1).await, Some(card));
+    assert!(get_note(&pool, second()).await.is_err());
+    assert_eq!(status(&repo()), "");
+}
+
+#[sqlx::test]
+async fn test_push_moving_cards_out_of_a_note_it_deletes_rolls_back(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let card = card_at(&pool, second(), 1).await.unwrap();
+    let before = head(&repo());
+    let clone = clone();
+    move_second_card_into_first(&clone);
+    std::fs::remove_file(note_path(&clone, second())).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "merge the second note into the first"],
+    );
+    let pushed = push(&pool, &clone, false).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let finish = pushed.finish.unwrap();
+    assert!(finish.message.contains("rolled back"), "{}", finish.message);
+    assert!(!finish.message.contains("partial"), "{}", finish.message);
+    assert_eq!(card_at(&pool, second(), 1).await, Some(card));
+    assert_eq!(card_at(&pool, first(), 2).await, None);
+    assert!(note_path(&repo(), second()).exists());
+    assert_eq!(head(&repo()), before);
+    assert_eq!(status(&repo()), "");
+}
+
+/// Pushes the second note taking the first note's card with `mv:`, and `edit` of the first note,
+/// whose file is imported first, being first in the diff. Checks that the card moved, and that the
+/// first note is left with `cards_left` other cards.
+async fn push_move_and_edit_of_its_note(pool: &SqlitePool, edit: &str, cards_left: usize) {
+    let _guard = setup(pool).await;
+    init(pool).await;
+    let card = card_at(pool, first(), 1).await.unwrap();
+    let clone = clone();
+    let path = note_path(&clone, second());
+    let file = read(&path);
+    let merged = file.replace(
+        "Second {{[o:1] Cloze }}",
+        &format!(
+            "Second {{{{[o:1] Cloze }}}} {{{{[mv:{}/1] moved }}}}",
+            first()
+        ),
+    );
+    assert_ne!(merged, file);
+    std::fs::write(path, merged).unwrap();
+    let path = note_path(&clone, first());
+    let file = read(&path);
+    let edited = file.replace("First {{[o:1] Cloze here }}", edit);
+    assert_ne!(edited, file);
+    std::fs::write(path, edited).unwrap();
+    git(
+        &clone,
+        &["commit", "-qam", "move the card and edit its note"],
+    );
+    let pushed = push(pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    assert_eq!(card_at(pool, second(), 2).await, Some(card));
+    let left: Vec<i64> = sqlx::query_scalar("SELECT id FROM card WHERE note_id = ?")
+        .bind(first())
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), cards_left);
+    assert!(!left.contains(&card));
+    assert_eq!(status(&repo()), "");
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_before_inserting_a_cloze_before_them(pool: SqlitePool) {
+    // Editing the first note first would give the card's order to the inserted cloze's new card,
+    // which would then be moved instead.
+    push_move_and_edit_of_its_note(&pool, "First {{ Inserted }} {{[o:1] Cloze here }}", 2).await;
+}
+
+#[sqlx::test]
+async fn test_push_moves_cards_before_removing_their_cloze(pool: SqlitePool) {
+    // Editing the first note first would delete the card with its cloze, so it could not move.
+    push_move_and_edit_of_its_note(&pool, "First, its cloze moved", 0).await;
+}
+
+#[sqlx::test]
+async fn test_push_with_impossible_moves_is_rejected(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let clone = clone();
+    let before = head(&repo());
+    let with_cloze = |id: NoteId, cloze: String| {
+        let path = note_path(&clone, id);
+        let file = read(&path);
+        let marker = "{{[o:1] ";
+        let at = file.find(marker).unwrap();
+        let edited = format!("{}{cloze} {}", &file[..at], &file[at..]);
+        std::fs::write(path, edited).unwrap();
+    };
+    let third: NoteId = "aac".parse().unwrap();
+    // A card within its own note, a card that does not exist, and one card moved twice
+    std::fs::write(
+        clone.join("markdown/new-twice.md"),
+        new_note_file(&clone, &format!("Twice {{{{[mv:{third}/1] twice }}}}")),
+    )
+    .unwrap();
+    with_cloze(first(), format!("{{{{[mv:{}/1] own }}}}", first()));
+    with_cloze(second(), format!("{{{{[mv:{third}/9] missing }}}}"));
+    with_cloze(second(), format!("{{{{[mv:{third}/1] once }}}}"));
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "impossible moves"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(!pushed.receive.ok);
+    let message = &pushed.receive.message;
+    assert!(message.contains("nothing was imported"), "{message}");
+    assert!(message.contains("within its own note"), "{message}");
+    assert!(
+        message.contains(&format!("`mv:{third}/9` names a card")),
+        "{message}"
+    );
+    assert!(message.contains("can only move once"), "{message}");
+    assert!(card_at(&pool, third, 1).await.is_some());
+    assert_eq!(note_count(&pool).await, 3);
+    assert_eq!(head(&repo()), before);
+}
+
 #[sqlx::test]
 async fn test_push_deleting_every_note_of_a_parser(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let clone = clone();
     git(&clone, &["rm", "-qr", "markdown"]);
@@ -1229,7 +1446,14 @@ fn anki_ref(dir: &Path) -> String {
 /// What spares writes to Anki for the note in `contents`
 fn stored_in_anki(id: NoteId, contents: &str) -> (String, String) {
     let parser = find_parser("markdown", &get_all_parsers()).unwrap();
-    let mut parsed = notes_vcs::parse_note_file(parser.as_ref(), contents, id, false).unwrap();
+    let mut parsed = notes_vcs::parse_note_file(
+        &notes_vcs::NoteFileContext::default(),
+        parser.as_ref(),
+        contents,
+        id,
+        false,
+    )
+    .unwrap();
     parsed
         .settings
         .custom_data
@@ -1296,7 +1520,7 @@ fn edit_in_anki(anki: &FakeAnki, anki_id: i64, edit: impl FnOnce(&str) -> String
 
 #[sqlx::test]
 async fn test_anki_refresh_of_round_tripped_notes_is_empty(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     // Anki holds only the first card, so a note of several cards loses data there.
     update_notes(
@@ -1333,7 +1557,7 @@ async fn test_anki_refresh_of_round_tripped_notes_is_empty(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_anki_refresh_keeps_notes_never_in_anki(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     link_to_anki(&pool, &anki, &ids[..1]).await;
@@ -1355,7 +1579,7 @@ async fn test_anki_refresh_keeps_notes_never_in_anki(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_anki_refresh_drops_notes_deleted_in_anki(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     link_to_anki(&pool, &anki, &ids[..2]).await;
@@ -1397,7 +1621,7 @@ async fn merge_anki_and_push(pool: &SqlitePool, clone: &Path) -> Pushed {
 
 #[sqlx::test]
 async fn test_anki_edits_and_new_notes_merge_into_spares(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     link_to_anki(&pool, &anki, &ids).await;
@@ -1525,7 +1749,7 @@ fn checkout_anki(clone: &Path) {
 
 #[sqlx::test]
 async fn test_anki_push_writes_anki(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let parser_id: i64 = sqlx::query_scalar("SELECT id FROM parser WHERE name = 'markdown'")
         .fetch_one(&pool)
@@ -1718,7 +1942,7 @@ async fn test_anki_push_writes_anki(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_anki_push_with_stale_base_is_rejected(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     link_to_anki(&pool, &anki, &ids[..1]).await;
@@ -1745,7 +1969,7 @@ async fn test_anki_push_with_stale_base_is_rejected(pool: SqlitePool) {
 
 #[sqlx::test]
 async fn test_anki_push_failing_partway_records_what_anki_holds(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     refresh(&pool, &anki).await;
@@ -1782,7 +2006,7 @@ async fn test_anki_push_failing_partway_records_what_anki_holds(pool: SqlitePool
 
 #[sqlx::test]
 async fn test_anki_push_adds_back_a_note_deleted_in_anki(pool: SqlitePool) {
-    let _guard = setup().await;
+    let _guard = setup(&pool).await;
     let ids = init(&pool).await;
     let anki = Arc::new(FakeAnki::new());
     link_to_anki(&pool, &anki, &ids[..1]).await;

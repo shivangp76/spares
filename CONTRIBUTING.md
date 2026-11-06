@@ -27,6 +27,46 @@ cargo fmt
 cargo clippy
 ```
 
+`spares_core` and `spares_server`'s router also build for the browser, where the web app can keep a copy of the collection. Check that they still do:
+
+```sh
+rustup target add wasm32-unknown-unknown
+# SQLite's C needs a clang that targets wasm. On macOS, Apple's doesn't: use Homebrew's LLVM.
+export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
+cargo clippy -p spares_wasm --target wasm32-unknown-unknown  # spares_core and spares_server's library too
+```
+
+There, sqlx is the patched copy in `vendor/` (see `vendor/README.md`).
+
+The web app runs `spares_wasm` (spares in a browser, see its crate docs) in a worker, for a device that keeps a copy of the collection (`src/local`). `bun run build` builds it first, with the command below. On macOS, it needs Homebrew's LLVM (`brew install llvm`).
+
+```sh
+cargo xtask build-wasm
+```
+
+It writes the wasm module and its JS bindings to `spares_frontend/frontend/src/local/pkg`. The `wasm` profile builds it small (LTO, `opt-level = "z"`): about 7.6 MB, 1.75 MB with brotli. Its JS bindings come from `wasm-bindgen-cli-support`, at the version of the `wasm-bindgen` crate, so there is no `wasm-bindgen` CLI to install. When upgrading `wasm-bindgen`, upgrade both (in `spares_wasm/Cargo.toml` and `xtask/Cargo.toml`).
+
+### A scratch host
+
+A host keeps everything in its root directory and reads nothing else of yours, so a scratch host for testing is a temporary root:
+
+```sh
+export SPARES_ROOT=$(mktemp -d)
+TOKEN=$(echo password1 | spares host init --user test --bind 127.0.0.1:8090 --password-stdin --print-token)
+spares_server &                     # serves $SPARES_ROOT on 127.0.0.1:8090
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/parsers
+```
+
+Sync between hosts is tested with two of them, one the other's upstream (`spares_server/tests/two_hosts.rs`).
+
+An end-to-end test runs a device's copy in headless Chromium, WebKit and Firefox, against a host of its own on an empty collection: setting it up, using it offline, syncing, resolving a conflict, and removing it (see `e2e/local_copy.ts`):
+
+```sh
+cd spares_frontend/frontend
+bunx playwright-core install chromium-headless-shell webkit firefox  # once
+bun run build && bun run e2e
+```
+
 ## Documentation
 
 Document things where they are implemented, so the docs change with the code:

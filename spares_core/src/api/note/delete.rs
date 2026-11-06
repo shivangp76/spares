@@ -45,15 +45,17 @@ use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::DeleteNotesResponse;
 
 fn delete_file(file_path: &Path) -> Result<(), Error> {
-    if is_test_mode() {
-        // Don't clutter the Trash with testing files
-        std::fs::remove_file(file_path).map_err(|e| Error::Io {
+    // Testing files would clutter the Trash, and a browser has none.
+    if is_test_mode() || cfg!(target_family = "wasm") {
+        return std::fs::remove_file(file_path).map_err(|e| Error::Io {
             source: e,
             description: String::new(),
-        })
-    } else {
-        trash::delete(file_path).map_err(Error::Trash)
+        });
     }
+    #[cfg(not(target_family = "wasm"))]
+    return trash::delete(file_path).map_err(Error::Trash);
+    #[cfg(target_family = "wasm")]
+    unreachable!()
 }
 
 /// Deletes a rendered file and the HTML for web clients next to it, if they exist.
@@ -97,7 +99,6 @@ pub fn delete_note_files(
             delete_file(&note_raw_path)?;
         }
     }
-    notes_vcs::remove_render_hash(parser.get_parser_name(), note_id);
 
     // Note rendered path
     let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
@@ -175,13 +176,17 @@ pub fn delete_card_files(
                     note_id,
                 ));
                 let image_occlusion_order_in_card = i + 1;
-                let image_occlusion_card_filepath = get_image_occlusion_card_filepath(
-                    &output_rendered_filepath,
-                    side,
-                    image_occlusion_order_in_card,
-                );
-                if image_occlusion_card_filepath.exists() {
-                    delete_file(&image_occlusion_card_filepath)?;
+                // Both kinds, in case the note was rendered by a parser that makes the other
+                for overlay in [false, true] {
+                    let image_occlusion_card_filepath = get_image_occlusion_card_filepath(
+                        &output_rendered_filepath,
+                        side,
+                        image_occlusion_order_in_card,
+                        overlay,
+                    );
+                    if image_occlusion_card_filepath.exists() {
+                        delete_file(&image_occlusion_card_filepath)?;
+                    }
                 }
             }
         }

@@ -10,6 +10,7 @@ import OfflineIndicator from './OfflineIndicator';
 import PageHelp from './PageHelp';
 import SavedCopiesNotice from './SavedCopiesNotice';
 import SyncButton from './SyncButton';
+import UpdateIndicator from './UpdateIndicator';
 import { errorMessage } from '../utils';
 
 /** The help of a page that opens it itself, with `?`, and has shortcuts of its own. */
@@ -85,7 +86,9 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
     return () => window.removeEventListener('keydown', handleKey, { capture: true });
   }, [navigate, pathname]);
 
-  const [undoStatus, setUndoStatus] = useState<string | null>(null);
+  // What the last undo, redo or sync did, and whether it changed what pages show
+  const [status, setStatus] = useState<{ message: string; changed: boolean } | null>(null);
+  const showStatus = (message: string, changed = false) => setStatus({ message, changed });
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);
   const currentLinkRef = useRef<HTMLSpanElement>(null);
@@ -100,10 +103,10 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
     if (!window.confirm('Undo the most recent change? This can be any kind of change (a review, card, note or tag edit), including one made from the CLI.')) return;
     try {
       const res = await undoEvent(null);
-      setUndoStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.');
+      showStatus(res ? describeReverted('Undone', res.undone_events) : 'No event to undo.', !!res);
       setLastUndoId(res?.undo_event_ids[0] ?? null);
     } catch (e) {
-      setUndoStatus(errorMessage(e));
+      showStatus(errorMessage(e));
     }
   }
 
@@ -113,9 +116,9 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
     try {
       const res = await redoEvent(lastUndoId);
       setLastUndoId(null);
-      setUndoStatus(res ? describeReverted('Redone', res.redone_events) : 'No undo to redo.');
+      showStatus(res ? describeReverted('Redone', res.redone_events) : 'No undo to redo.', !!res);
     } catch (e) {
-      setUndoStatus(errorMessage(e));
+      showStatus(errorMessage(e));
     }
   }
 
@@ -133,9 +136,10 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
             )}
           </div>
           <div className="navbar-actions">
+            <UpdateIndicator />
             <OfflineIndicator />
             <SavedCopiesNotice />
-            <SyncButton onStatus={setUndoStatus} />
+            <SyncButton onStatus={showStatus} />
             <button onClick={undoLatest} className="navbar-button" title="Undo the most recent change"><UndoIcon />Undo last change</button>
             {lastUndoId !== null && <button onClick={redoLast} className="navbar-button" title="Redo the change just undone"><RedoIcon />Redo last undo</button>}
             {pageHelp && (
@@ -146,12 +150,12 @@ export default function Navbar({ onLogout, children }: { onLogout: () => void; c
             <button onClick={onLogout} className="navbar-button">Logout</button>
           </div>
           {helpOpenOn === pathname && !pageHelpOpener && pageHelp && <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />}
-          {undoStatus && (
+          {status && (
             <div style={{ flexBasis: '100%', marginTop: 4, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span>{undoStatus}</span>
-              {/* Pages don't know what the undone or redone event changed, so offer to refetch everything */}
-              <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>
-              <button onClick={() => setUndoStatus(null)} style={{ padding: '2px 8px', fontSize: 12 }}>Dismiss</button>
+              <span>{status.message}</span>
+              {/* Pages don't know what the undone or redone event, or the sync, changed, so offer to refetch everything */}
+              {status.changed && <button onClick={() => window.location.reload()} style={{ padding: '2px 8px', fontSize: 12 }}>Reload page</button>}
+              <button onClick={() => setStatus(null)} style={{ padding: '2px 8px', fontSize: 12 }}>Dismiss</button>
             </div>
           )}
         </nav>

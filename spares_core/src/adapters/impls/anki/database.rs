@@ -410,7 +410,7 @@ pub fn anki_note_from_fields(
     let spares_id_str = (*flds.get(3).unwrap_or(&"")).to_string();
     let spares_parser_name_string = (*flds.get(4).unwrap_or(&"")).to_string();
 
-    // Notes exported before `spares migrate ids` hold old numeric ids, which no longer parse.
+    // A note whose id doesn't parse is imported as a new note.
     let spares_id = spares_id_str.trim().parse::<NoteId>().ok();
     let keywords = parse_list(keywords_str.as_str());
 

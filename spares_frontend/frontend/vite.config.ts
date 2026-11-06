@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { cpSync, createReadStream, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +7,9 @@ import { promisify } from 'node:util'
 import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { buildId } from './build-id.ts'
 import wasm from 'vite-plugin-wasm'
+import { pandocWasm } from './pandoc-wasm.ts'
 
 const SVGEDIT_EDITOR_DIR = fileURLToPath(new URL('./svgedit/src/editor', import.meta.url))
 const DIST_DIR = fileURLToPath(new URL('./dist', import.meta.url))
@@ -88,7 +90,9 @@ function listFiles(dir: string): string[] {
 /** Writes `dist/sw.js` from service-worker.js, with the files to cache for offline use. These are
     the page and everything it may load except the image occlusion editor and WebAssembly modules,
     which are large and only cached once used. The modules, having hashed names, are kept across
-    builds that still have them. */
+    builds that still have them. Devices that keep a copy of the collection cache the modules with
+    the page, since they can't do without spares_wasm and the Typst compiler (see src/local), and
+    the editor, so image occlusions can be inserted offline. */
 function serviceWorker(): Plugin {
   return {
     name: 'service-worker',
@@ -106,12 +110,43 @@ function serviceWorker(): Plugin {
         for (const path of files) hash.update(path).update(readFileSync(join(DIST_DIR, path)))
         const precache = files.filter(path => !path.startsWith('svgedit/') && !path.endsWith('.wasm'))
         const keep = files.filter(path => path.startsWith('assets/') && path.endsWith('.wasm'))
+        const editor = files.filter(path => path.startsWith('svgedit/'))
         const source = template
           .replace('__BUILD__', JSON.stringify(hash.digest('hex').slice(0, 16)))
           .replace('__PRECACHE__', JSON.stringify(precache, null, 2))
           .replace('__KEEP__', JSON.stringify(keep, null, 2))
+          .replace('__EDITOR__', JSON.stringify(editor, null, 2))
         writeFileSync(join(DIST_DIR, 'sw.js'), source)
       },
+    },
+  }
+}
+
+/** Puts pandoc.wasm of the server's version (see pandoc-wasm.ts) in the build, with its compressed
+    copies, at a path naming the version, which the app gets as `__PANDOC_WASM__`. Only devices
+    that keep a copy download it (see src/local/copy.ts), so it isn't precached, and the service
+    worker leaves it to them. */
+function pandocWasmFile(): Plugin {
+  let wasm: { version: string; path: string }
+  let url: string
+  return {
+    name: 'pandoc-wasm',
+    async config() {
+      wasm = await pandocWasm()
+      url = `/pandoc/pandoc-${wasm.version}.wasm`
+      return { define: { __PANDOC_WASM__: JSON.stringify(url) } }
+    },
+    configureServer(server) {
+      server.middlewares.use(url, (_req, res) => {
+        res.setHeader('Content-Type', 'application/wasm')
+        createReadStream(wasm.path).pipe(res)
+      })
+    },
+    // Before `serviceWorker`, so the build hash covers it, and `precompress`, which leaves it as it is
+    closeBundle() {
+      const out = join(DIST_DIR, url)
+      mkdirSync(join(out, '..'), { recursive: true })
+      for (const suffix of ['', '.br', '.gz']) copyFileSync(`${wasm.path}${suffix}`, `${out}${suffix}`)
     },
   }
 }
@@ -136,7 +171,8 @@ function precompress(): Plugin {
     closeBundle: {
       order: 'post',
       async handler() {
-        await Promise.all(listFiles(DIST_DIR).filter(path => COMPRESSIBLE.test(path)).map(async path => {
+        // Not files that come with their compressed copies, such as pandoc.wasm
+        await Promise.all(listFiles(DIST_DIR).filter(path => COMPRESSIBLE.test(path) && !existsSync(`${path}.br`)).map(async path => {
           const data = readFileSync(path)
           if (data.length < 1024) return
           const quality = data.length > LARGE_FILE_BYTES ? LARGE_FILE_BROTLI_QUALITY : zlibConstants.BROTLI_MAX_QUALITY
@@ -171,11 +207,18 @@ export default defineConfig({
       },
     },
   },
+  // This device's copy of the collection runs in a module worker (src/local/worker.ts)
+  worker: {
+    format: 'es',
+  },
   server: {
     open: process.env.SPARES_OPEN ?? '/',
     port: 5173,
+    // The host's API and files, from this page's origin, so its session cookie works here too.
+    // `SPARES_HOST` is the host to use, by default the one on this machine.
+    proxy: Object.fromEntries(['/api', '/files'].map(path => [path, { target: process.env.SPARES_HOST ?? 'http://127.0.0.1:8080', changeOrigin: true }])),
   },
-  plugins: [react(), wasm(), copySvgeditAssets(), serviceWorker(), precompress(), imageOcclusionEditorConfig(), {
+  plugins: [react(), wasm(), copySvgeditAssets(), pandocWasmFile(), buildId(), serviceWorker(), precompress(), imageOcclusionEditorConfig(), {
     name: 'html-import-transformer',
     transform(code, id) {
       // Only transform JS/TS files

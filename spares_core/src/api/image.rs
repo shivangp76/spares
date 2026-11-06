@@ -23,12 +23,8 @@
 //! Unlike image occlusions, nothing is ever written into a stored image, so files are named by
 //! their contents: uploading the same image again reuses its file.
 
-use std::fs::create_dir_all;
-use std::fs::rename;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -40,9 +36,13 @@ use crate::api::image_occlusion::image_extension;
 use crate::api::image_occlusion::other_error;
 use crate::api::image_occlusion::sanitized_stem;
 use crate::api::parser::get_parser_name;
-use crate::config::get_data_dir;
+use crate::config::get_media_dir;
 use crate::parsers::Parseable;
 use crate::parsers::find_parser;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::rename;
+use crate::platform::write;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateImageResponse {
@@ -52,9 +52,14 @@ pub struct CreateImageResponse {
     pub snippet: String,
 }
 
-/// Where images uploaded for notes are stored.
+/// Where images uploaded for notes are stored. In a browser, where the server stores them (see
+/// [`crate::platform`]).
 pub fn get_image_directory() -> PathBuf {
-    get_data_dir().join("images")
+    #[cfg(target_family = "wasm")]
+    if let Some(dirs) = crate::platform::media_dirs() {
+        return dirs.image;
+    }
+    get_media_dir().join("images")
 }
 
 /// Stores `image` in the image directory and returns its path. `image_filename` is only used for
@@ -69,7 +74,7 @@ fn store_image(image: &[u8], image_filename: &str) -> Result<PathBuf, Error> {
         source: e,
     })?;
     let path = directory.join(format!("{stem}-{}.{extension}", &hash[..HASH_LENGTH]));
-    if !path.exists() {
+    if !is_file(&path) {
         // Write then rename so a partially written image is never rendered
         let temp_path = path.with_extension(format!("{extension}.tmp"));
         write(&temp_path, image)
@@ -99,7 +104,8 @@ pub async fn create_image(
 /// The largest image downloaded by [`create_image_from_url`], as for uploads.
 pub const MAX_IMAGE_SIZE: usize = 64 * 1024 * 1024;
 
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(target_family = "wasm"))]
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The extension of images of `content_type`, if cards can show them.
 fn content_type_extension(content_type: &str) -> Option<&'static str> {
@@ -155,10 +161,12 @@ pub async fn create_image_from_url(
             MAX_IMAGE_SIZE / 1024 / 1024
         ))
     };
-    let client = reqwest::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()?;
-    let mut response = client.get(url.clone()).send().await?.error_for_status()?;
+    let client = reqwest::Client::builder();
+    // The browser's `fetch` has no timeout to set.
+    #[cfg(not(target_family = "wasm"))]
+    let client = client.timeout(DOWNLOAD_TIMEOUT);
+    let client = client.build()?;
+    let response = client.get(url.clone()).send().await?.error_for_status()?;
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -180,6 +188,17 @@ pub async fn create_image_from_url(
     {
         return Err(too_large());
     }
+    let image = read_image(response, too_large).await?;
+    let filename = downloaded_image_filename(&url, content_type.as_deref());
+    create_image(db, parser_id, &image, &filename, all_parsers).await
+}
+
+/// The body of `response`, stopping once it is larger than [`MAX_IMAGE_SIZE`].
+#[cfg(not(target_family = "wasm"))]
+async fn read_image(
+    mut response: reqwest::Response,
+    too_large: impl Fn() -> Error,
+) -> Result<Vec<u8>, Error> {
     let mut image = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         image.extend_from_slice(&chunk);
@@ -187,8 +206,21 @@ pub async fn create_image_from_url(
             return Err(too_large());
         }
     }
-    let filename = downloaded_image_filename(&url, content_type.as_deref());
-    create_image(db, parser_id, &image, &filename, all_parsers).await
+    Ok(image)
+}
+
+/// The body of `response`. The browser's `fetch` can't be read in chunks, so the size is checked
+/// once it has all arrived.
+#[cfg(target_family = "wasm")]
+async fn read_image(
+    response: reqwest::Response,
+    too_large: impl Fn() -> Error,
+) -> Result<Vec<u8>, Error> {
+    let image = response.bytes().await?;
+    if image.len() > MAX_IMAGE_SIZE {
+        return Err(too_large());
+    }
+    Ok(image.to_vec())
 }
 
 #[cfg(test)]

@@ -1,6 +1,12 @@
 export interface Credentials {
   serverUrl: string;
-  apiKey: string;
+  /**
+   * The session's CSRF token, which every request sends in `X-CSRF-Token`. The session itself is
+   * a cookie the page can't read (see `spares_server::host::auth`).
+   */
+  csrfToken: string;
+  /** The account's name */
+  user: string;
   schedulerName: string;
 }
 
@@ -18,21 +24,33 @@ export interface GetReviewCardResponse {
   card_front_raw_path: string;
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
-  // When the note was last changed. Missing from cards downloaded for offline review before it was added.
-  note_updated_at?: string;
+  // When the note was last changed
+  note_updated_at: string;
   parser_name: string;
   keywords: string[];
   // Present iff the card is reviewed by running an external command (CLI only)
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_sources?: BrowserRenderSources;
+  // Present iff the card is a Markdown card on a device that keeps a copy, which shows them while the server hasn't rendered its note's latest change
+  device_sources?: BrowserRenderSources;
   // Present iff the card asks for its answers to be typed (the cloze key `t`)
   typed_answer?: TypedAnswerInfo;
   // Present iff the card has audio clips or text to read aloud
   audio?: CardAudio;
+  // Present iff the card's back still masks some of its image occlusions: those, which the review page shows without masks
+  image_occlusions?: UnmaskedImageOcclusion[];
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
+}
+
+/** An image occlusion of a review card whose back masks some of it. */
+export interface UnmaskedImageOcclusion {
+  /** As the card's figure is captioned */
+  caption: string;
+  /** Its place among the card's image occlusions, from 1 */
+  order: number;
 }
 
 export interface CliReviewInfo {
@@ -123,27 +141,6 @@ export interface SubmitStudyActionResponse {
 // Externally-tagged serde enum
 export type ReviewFilter = { Query: string } | { FilteredTag: { tag_id: number } };
 
-export interface ReviewQueueRequest {
-  filter: ReviewFilter | null;
-  limit: number;
-  // Also include cards due on the next `days_ahead` days
-  days_ahead: number;
-}
-
-export interface ReviewQueueCard extends GetReviewCardResponse {
-  due: string; // ISO 8601
-  // The earliest the card may be shown, for a learning card held back by the learn ahead limit
-  // (ISO 8601). Missing from queues downloaded before it was added.
-  shown_from?: string | null;
-}
-
-export interface ReviewQueueResponse {
-  // In the order a review would show them
-  cards: ReviewQueueCard[];
-  new_cards_left_today: number;
-}
-
-// Where the cards matching `match_query` are in the queue of the review with `filter`
 export interface QueuePositionRequest {
   // `null` for the default review
   filter: ReviewFilter | null;
@@ -198,31 +195,6 @@ export interface QueuePositionResponse {
   not_shown: NotShownCard[];
   // Matching cards that are not in the review's filter at all
   not_in_review: number;
-}
-
-// The study actions that can be performed offline
-export type OfflineStudyActionKind = { Rate: RatingSubmission } | { Bury: { card_id: number } };
-
-export interface OfflineStudyAction {
-  // Unique per action, so a resent action is not applied twice
-  client_id: string;
-  performed_at: string; // ISO 8601
-  action: OfflineStudyActionKind;
-}
-
-export interface SyncOfflineActionsRequest {
-  scheduler_name: string;
-  actions: OfflineStudyAction[];
-}
-
-export type OfflineActionOutcome =
-  | { Applied: { event_id: number | null } }
-  | 'Duplicate'
-  | { Rejected: { message: string } };
-
-export interface SyncOfflineActionsResponse {
-  // One per action, in the order they were submitted
-  results: { client_id: string; outcome: OfflineActionOutcome }[];
 }
 
 export interface ReviewSnapshotResponse {
@@ -475,6 +447,47 @@ export interface Distributions {
   /** `null` if the scheduler has no forgetting curve. */
   retrievability: Histogram | null;
   total_knowledge: number | null;
+  /** Reviews a day the cards in review cost once the collection settles: the sum of 1 / max(1, interval in days). */
+  daily_load: number;
+  /** Over the cards in review, neither new, learning nor suspended. `null` without a forgetting curve or such cards. */
+  average_retrievability: number | null;
+  average_stability: number | null;
+}
+
+export interface StepsStatsRequest {
+  /** `null` for the cards that use no preset. */
+  preset: string | null;
+  period_days: number | null;
+}
+
+export type StepsGroupKind = 'again' | 'hard' | 'good' | 'again_then_good' | 'relearning';
+
+export interface StepsGroup {
+  kind: StepsGroupKind;
+  reviews: number;
+  recalled: number;
+  /** Days. `null` when the reviews do not pin it down. */
+  stability: number | null;
+  /** Seconds until recall falls to the desired retention. */
+  interval: number | null;
+}
+
+/** Seconds; `null` without enough reviews. */
+export interface RecommendedSteps {
+  first_learning_step: number | null;
+  second_learning_step: number | null;
+  relearning_step: number | null;
+}
+
+export interface StepsStatsResponse {
+  presets: string[];
+  desired_retention: number;
+  min_reviews: number;
+  groups: StepsGroup[];
+  /** Seconds. */
+  learning_steps: number[];
+  relearning_steps: number[];
+  recommended: RecommendedSteps;
 }
 
 export interface StatisticsGraphsResponse {
@@ -732,4 +745,24 @@ export interface SearchPage<T> {
 export interface SavedSearch {
   name: string;
   query: string;
+}
+
+/** `POST /api/notes/share/summary`: `spares_core::schema::note::ExportNotesResponse` of an export to share, with its media's names but not their contents. */
+export interface ShareSummary {
+  /** Each file of notes, by its parser's file extension */
+  files: Record<string, string>;
+  private_notes_left_out: number;
+  media: { kind: 'image' | 'audio' | 'image-occlusion'; name: string }[];
+  /** Paths the notes name with no file there, which stay as they are */
+  missing_media: string[];
+}
+
+/** `spares_core::api::note::share_bundle::ImportSharedResponse` */
+export interface ImportSharedResponse {
+  note_count: number;
+  event_ids: number[];
+  parsers_added: string[];
+  media_count: number;
+  missing_media: string[];
+  skipped_files: string[];
 }

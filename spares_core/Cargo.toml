@@ -21,9 +21,7 @@ fancy-regex = "0.20.0"
 fsrs-rs = { package = "fsrs", version = "6.6.2" }
 futures = "0.3.34"
 indexmap = { version = "2.14.2", features = ["serde"] }
-indicatif = { version = "0.18.6", features = ["rayon"] }
 indoc = "2.0.8"
-inquire = "0.9.4"
 itertools = "0.15.0"
 log = "0.4.34"
 miette = { version = "7.6.0" }
@@ -32,14 +30,12 @@ rayon = "1.12.0"
 reqwest = { version = "0.13.5", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-serde_with = { version = "3.24.0", features = ["chrono_0_4"] }
+serde_with = { version = "3.24.0", features = ["base64", "chrono_0_4"] }
 shellexpand = "3.1.2"
-sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
 strum = { version = "0.28.0", features = ["derive"] }
 strum_macros = "0.28.0"
 thiserror = "2.0.21"
 toml_edit = { version = "0.25.17", features = ["serde"] }
-trash = "5.2.9"
 typst-syntax = "0.15.1"
 xmltree = { version = "0.12.0", features = ["attribute-order"] }
 unscanny = "0.1.0"
@@ -50,6 +46,23 @@ tokio = { version = "1", features = ["rt", "sync", "time"] }
 diffy = "0.5.2"
 unicode-normalization = "0.1.26"
 chrono-tz = "0.10.4"
+web-time = "1.1"
+zip = { version = "2.2.3", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+indicatif = { version = "0.18.6", features = ["rayon"] }
+inquire = "0.9.4"
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "chrono", "json", "migrate", "regexp"] }
+trash = "5.2.9"
+
+# In a browser (the web app's copy of the collection). sqlx has no runtime feature: the vendored
+# sqlx runs on the browser's event loop instead (vendor/README.md), and tokio's `net` and `fs`
+# don't build for wasm32-unknown-unknown.
+[target.'cfg(target_family = "wasm")'.dependencies]
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "chrono", "json", "migrate", "regexp", "macros"] }
+chrono = { version = "0.4.45", features = ["serde", "wasmbind"] }
+# `rand`'s random numbers, from the browser's `crypto.getRandomValues`
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"

@@ -215,6 +215,7 @@ pub async fn update_cards(
             SpecialStateUpdate::BuriedUntilLaterToday => SpecialState::BuriedUntilLaterToday,
         })
     });
+    let mut config = None;
     for card_id in card_ids {
         let existing_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(card_id)
@@ -257,8 +258,12 @@ pub async fn update_cards(
             if let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) {
                 let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
 
-                let config = read_external_config()?;
-                let configs = CardConfigs::load(db, &config, Some(&[updated_card.id])).await?;
+                // Read once for all of the cards, rather than parsing config.toml for each
+                if config.is_none() {
+                    config = Some(read_external_config()?);
+                }
+                let config = config.as_ref().expect("read above");
+                let configs = CardConfigs::load(db, config, Some(&[updated_card.id])).await?;
                 // Reschedule card
                 scheduler
                     .reschedule(db, &configs, vec![(updated_card.clone(), review_logs)], at)

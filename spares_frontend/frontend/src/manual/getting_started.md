@@ -22,47 +22,79 @@ Spares ships with 3 main parsers: "markdown", "typst", and "latex-note". To crea
 
 ## Starting the server
 
-Run the following command in the terminal:
+spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT`, by default `~/.local/share/spares`) that holds its settings (`host.toml`), its accounts, and each account's collection in `users/<id>/`. Your machine is a host with one account and signups closed. Create it once, with your account:
 ```sh
+spares host init --user <your name>
 spares_server
+spares login            # in another terminal: the CLI's device token for this host
 ```
+Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
 
 ### Running on a remote server (optional)
 
-On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --data-dir <your local data dir> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints. Re-running it with no arguments updates the server.
+On a Debian/Ubuntu VPS, `scripts/setup_vps.sh` does all of the following, and also sets up the service, the web app and HTTPS. Run `sudo bash setup_vps.sh --root <your local SPARES_ROOT> --account <your name> --local-home <your local home dir> --domain <domain>` on the server (or `--tailscale` instead of `--domain`, to reach it only over your tailnet), then follow the steps it prints. It creates a host at the same root as yours, so the paths notes name images by work on both, with your account (asking for its password). Re-running it with no arguments updates the server.
 
 On macOS, `spares deploy init <server>` does it all from your machine instead: it builds spares here and installs it on a fresh VPS (`setup_vps.sh --bundle`, so the server needs neither the memory to build it nor GitHub), sets up your machine for two-way sync (below), uploads your database and closes the server's public ports, leaving Tailscale. A 512 MB server is enough with `--no-latex`, if you have no markdown or LaTeX notes. Install Tailscale on your machine and phone, and zig and cargo-zigbuild (`brew install zig && cargo install --locked cargo-zigbuild`), first. If your machine can't reach the server's address (an IPv6-only server), `spares deploy cloud-init` prints a script for the provider's cloud-init field that puts the server on your tailnet, and `init` then takes its Tailscale name. `spares deploy update` updates the server. [Deploying a sync server](./deploying.md) goes through it step by step, including creating the server on Vultr.
 
 #### Two-way sync
 
-Notes can be edited and reviewed both on your machine and on the server (e.g. from your phone), and synced like Anki and AnkiWeb. Each side needs its own replica number and role, which the server requires at startup:
+Notes can be edited and reviewed both on your machine and on the server (e.g. from your phone), and synced like Anki and AnkiWeb. Your machine's host syncs its copy of your collection with the server's as one of your devices: the server's copy is the *upstream*, the root of the collection's sync chain, which gives every other copy its replica number. Log your machine's host in to it once:
+```sh
+spares sync login https://<the server>
+```
+It gets a sync-only device token there, enrolls this copy (your machine keeps `0`, the laptop's number), and sets `url`, `token` and `replica` in the `[sync]` table of your collection's `config.toml`. `spares sync logout` undoes it.
 
-- your machine: `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client`, and `SPARES_SYNC_API_KEY` set to the server's `SPARES_API_KEY`;
-- the server: `SPARES_REPLICA=1`, `SPARES_SYNC_ROLE=server` (`setup_vps.sh` sets these).
+A phone's browser can be a replica too, with a copy of its own: see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device). It gets its number from the root, also when it uses your machine's host, which relays its sync to the server.
 
-Set `url` in the `[sync]` table of your `config.toml` to the server's address. Then `spares sync cloud` exchanges changes both ways. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync.interval_minutes`, your local server also syncs in the background, and the web app it serves has a Sync button.
+Then `spares sync cloud` exchanges changes both ways, and images, audio and image occlusions either side lacks. An image occlusion's image or clozes file replaced on one side, under the same name, replaces the other side's, the newer one winning, and the notes naming it are rendered again. The first sync, or any sync after the two sides can no longer be merged, has to replace one side's database with the other's; the command says why and asks which (or pass `--full-upload` / `--full-download`). With `sync.interval_minutes`, your host also syncs in the background, and the web app it serves has a Sync button.
 
-A sync merges notes both sides changed: changes to different lines, tags and fields are combined, and reviews from both sides are kept. A note whose same lines were changed on both sides keeps your machine's text and is tagged `sync-conflict`; resolve it with `spares sync conflicts`. A note deleted on one side and edited on the other is kept. Changes made before a sync can no longer be undone. Live notes are read-only in the web app, since their text comes from files on your machine. How sync works, and why, is documented on `spares_core::sync` (`cargo doc -p spares_core --document-private-items --open`).
+A sync merges notes both sides changed: changes to different lines, tags and fields are combined, and reviews from both sides are kept. A note whose same lines were changed on both sides keeps your machine's text and is tagged `sync-conflict`; resolve it with `spares sync conflicts`. A note deleted on one side and edited on the other is kept. A change can still be undone after a sync, which sends the undo at the next sync, unless that sync brought a change to the same note or card from the other side. Live notes are read-only in the web app, since their text comes from files on your machine. How sync works, and why, is documented on `spares_core::sync` (`cargo doc -p spares_core --document-private-items --open`).
 
 Some limitations:
-- Conflicts can only be resolved on your machine. The web app shows the `sync-conflict` tag but cannot resolve them.
+- Conflicts are resolved where the sync that found them ran: on your machine (`spares sync conflicts`, or the Conflicts page of the web app it serves), or on a device that keeps a copy (its Conflicts page). The server's web app shows the `sync-conflict` tag but cannot resolve them.
 - Without the [notes repository](./workflows.md#notes-as-a-git-or-jj-repository), a note file you edit while a sync runs can be overwritten if the sync changes that note. With it, nothing is lost.
-- `spares sync cloud` copies its rendered cards of markdown and LaTeX notes to the server after the sync. If such a note is edited on the web in between, the server's newer cards are replaced by yours until the next `spares sync cloud`.
 
 #### Rendering locally
 
-To keep a remote server's compute low, render notes on your own machine and push them with `spares sync cloud`. Besides syncing the database (or, without `sync.url`, replacing the server's with yours), it copies the rendered files to `sync.remote_rendered_dir` on the server (default: `~/.cache/spares`), your templates, your `config.toml` (so reviews on the server are scheduled with your settings; see below), and every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults. Those files are copied to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally. On the server:
+To keep a remote server's compute low, render Typst notes on your own machine and let web clients compile their cards. Before syncing the database, `spares sync cloud` copies to `sync.remote_host` over SSH:
 
-- `render_browser_parsers` is `false` in its `config.toml`: `spares sync cloud` copies yours with that changed, and without its `[sync]` table. It overwrites the server's, so change settings on your machine. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
+- the stored copies of the files Typst cards read (render assets), which web clients compile them with, but not those of images and audio, which the sync gives the server itself;
+- your templates, and your `config.toml`, so reviews on the server are scheduled with your settings (see below);
+- every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults, to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally;
+- the rendered cards of markdown and LaTeX notes, only if the server has no pandoc and LaTeX (`setup_vps.sh --no-latex`). Otherwise the server renders them itself after the sync, and again when your templates or the files they read change.
+
+It first asks the server where your collection is, and checks over SSH that `remote_host` reaches that collection (the server's machine, as the user it runs as), that it is in the same directory as yours (notes name images and the files they read by absolute path), and that your home directory leads to the server user's (`setup_vps.sh --local-home`, which `spares deploy` passes). `spares sync cloud --dry-run` runs these checks and lists what would be copied, without copying or syncing anything. On the server:
+
+- `render_browser_parsers` is `false` in its `config.toml`: `spares sync cloud` sends yours, which replaces the server's with that changed, but the server keeps its own `[sync]` table, and yours, with its token, never leaves your machine. Change settings on your machine. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
 - Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.
+- Every render runs in a sandbox (`sandbox-exec` on macOS, bubblewrap on Linux; see `spares_core::render`): it reads only the system's directories, your collection's directory and the directories in `read_dirs` under `[render]` in `host.toml`, and has no network. List there what your templates import from outside the collection, such as your preambles. LaTeX runs without shell escape.
 
 #### Markdown notes on the web
 
 Rendering a Markdown note also writes an HTML file, which the web app shows instead of the PDF. It needs pandoc 3.12.1 or later; see `spares_core::parsers::impls::markdown` for when the PDF is shown instead and how to style the HTML.
 
-#### Reviewing offline
+#### Keeping a copy on this device
 
-The web app can be installed as an app (e.g. "Add to Home Screen" on a phone) and used to review without a connection, if the server is reached over HTTPS or at `localhost`. What works offline is described on `spares_core::api::offline_review`.
+A browser can keep the whole collection, so the web app works without a connection: reviewing, searching, statistics, and adding and editing notes and tags, with undo. The device schedules cards itself, so a card rated Again comes back after its step. It syncs with the server as your machine does. It needs the server to be reached over HTTPS (or at `localhost`), and storage the page can use, which private windows don't have.
+
+1. On an iPhone or iPad, add the web app to the Home Screen and open it from there: Safari deletes a website's storage after 7 days without a visit, but not a Home Screen app's.
+2. In **Settings → This Device**, choose **Keep a Copy on This Device**. The device registers with the server under the name shown (up to three devices), downloads the collection, and then the rendered cards, the files Typst cards read, and pandoc for Markdown cards (about 11 MB to download, 62 MB of storage).
+3. From then on, every page uses the copy, online or not. The navbar shows **Offline** when the server can't be reached, and how many changes haven't been synced.
+
+The copy syncs when the app opens, when it is hidden or closed, when the connection comes back, 30 seconds after the last change (and every 15 minutes while the app stays open), and with the **Sync** button.
+
+- Typst cards compile on the device. Other notes changed there are rendered by the server after the next sync. Until then, Markdown cards show from their own text, with their clozes hidden and their image occlusions drawn by the device, converted by pandoc on the device as the server does, though without the Lua filters, stylesheets, templates and includes the web defaults file names. LaTeX cards show as they were last rendered, or as their note's text.
+- Images, audio and image occlusions can be added offline too: the device keeps them, and sends them to the server at the next sync. Until then, Typst and Markdown cards and audio play them from the device. It also keeps the server's image occlusions, so they can be edited offline.
+- Insert image occlusions from a note's editor: the device sends one to the server along with a note that has it, so the Image Occlusion page, for notes written elsewhere, isn't available on the device.
+- Images dragged from a web page by their address, and the notes repository need the server, so they work only online.
+- Logging out keeps the copy and its files: it stops syncing until you log in to its server again.
+- Other tabs use the copy through the tab that opened it, and one of them takes it over, by reloading, once that tab is closed. If the browser pauses that tab in the background, the others say so: switch to it, or close it.
+- If the copy and the server can no longer be merged, for example after `spares sync cloud --full-upload`, **Sync** asks which to keep: download the server's collection, dropping the changes made on the device, or upload the device's, which makes your machine and other devices download it.
+- Notes the device's syncs couldn't merge are on its **Conflicts** page, which the badge next to **Sync** opens.
+- **Stop Keeping a Copy**, in the same place, sends the device's changes, removes it from the server's devices, and deletes the copy. Offline, it can delete the copy without sending them; the device then stays on the server's list of devices, to remove there once online.
+- A device that lost its copy without that, for example because the browser deleted its storage, stays on the server's list of devices, below. **Remove** it there (or with `spares sync devices remove`) to free its place for another device.
+
+Notes created on the device get ids that follow your machine's newest note, with a letter of the device's own: after `hbp`, the first device's next note is `hbph`. How it works is documented on `spares_core::sync` (More replicas) and `spares_wasm`.
 
 ### Migration (optional)
 
@@ -142,7 +174,7 @@ The note's text file will also contain the linked notes. The exact syntax of the
 
 ### Where files are written
 
-Rendered files go to `~/.cache/spares` by default. Environment variables such as `SPARES_CACHE_DIR` and the parsers' `*_OUT_DIR` change this; see "Directories" on `spares_core::config`. If you run a separate instance of spares next to your main one, unset the `*_OUT_DIR` variables for it, or its rendered files will overwrite your main instance's.
+Everything of a collection is in its directory on the host, `<SPARES_ROOT>/users/<id>/`: rendered files in `files/`, `config.toml` and the templates in `config/`, images, audio and image occlusions in `media/`, and the notes repository in `notes.git/` (see `spares_core::collection`). A second host for testing only needs its own `SPARES_ROOT`: nothing is shared with your main one.
 
 ## Editing notes
 

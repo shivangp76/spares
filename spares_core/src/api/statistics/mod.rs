@@ -1,5 +1,6 @@
 mod graphs;
 pub(crate) mod local_time;
+mod steps;
 #[cfg(test)]
 mod tests;
 
@@ -15,6 +16,7 @@ use local_time::date_of_day_number;
 use local_time::day_number;
 use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
+pub use steps::get_steps_stats;
 
 use crate::Error;
 use crate::api::preset::cap_counts;

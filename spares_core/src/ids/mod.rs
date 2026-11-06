@@ -95,9 +95,10 @@
 //! [`allocate_note_ids`] gets all of a call's notes at once, so an import gets one run of ids. Undo
 //! and redo replay the ids stored in the event and don't allocate.
 //!
-//! **Three devices at most** (replicas `2`–`4`): each lane takes letters from the others, so more
-//! devices would mean fewer 4-letter ids for each. Replicas `5`–`7` create no notes. A second
-//! laptop would be enrolled as a device, and its notes would be a letter longer than the first's.
+//! **Three devices at most** (replicas `2`–`4`, see [`crate::sync::devices`]): each lane takes
+//! letters from the others, so more devices would mean fewer 4-letter ids for each. Replicas
+//! `5`–`7` create no notes. A second laptop would be enrolled as a device, and its notes would be
+//! a letter longer than the first's.
 //!
 //! # The high-water mark
 //!
@@ -131,23 +132,20 @@
 //! - The largest value, `zzzzzzzz` ([`MAX_PACKED`]), is 27⁸ − 1 (39 bits), exact as a JS or Lua
 //!   number. The frontend must decode with division and `Math.floor`, since JS `>>` works on 32
 //!   bits.
-//! - The smallest id, `a` ([`MIN_PACKED`]), is 27⁷, far above the old numeric ids, so a note id
-//!   below 27⁷ can only be unmigrated. No valid id packs to `0`, so there are no sentinel ids.
+//! - The smallest id, `a` ([`MIN_PACKED`]), is 27⁷. No valid id packs to `0`, so there are no
+//!   sentinel ids.
 //! - [`NoteId`] is a newtype; other ids stay `i64`. Any letter string parses, whether or not the
-//!   allocator could produce it. Digits are rejected, with a hint to look the old id up in
-//!   [`ID_MAP_FILE_NAME`].
+//!   allocator could produce it.
 //!
 //! # Other tables
 //!
 //! Cards, review logs, tags and parsers have no human-facing requirement, but still need ids
 //! unique across replicas. New rows take the smallest id above `max(high-water marks, MAX(id))`
-//! that is congruent to `SPARES_REPLICA` mod [`ID_STEP`] ([`next_ids`]).
+//! that is congruent to the replica's number mod [`ID_STEP`] ([`next_ids`]).
 //!
 //! - The modulus is fixed at 8, not the current replica count, so adding a replica never changes
 //!   the rule for existing ones. Wasting 7/8 of the numbers costs nothing, since these ids are
 //!   never shown.
-//! - Existing rows kept their ids when note ids were migrated, so review logs, the phone's offline
-//!   queue and undo payloads still refer to the right cards.
 //! - `note_tag`, `card_tag`, `note_link` and `note_keyword` keep SQLite's own row ids. They are
 //!   identified by their parent row and contents.
 //!
@@ -171,8 +169,6 @@
 //!   If some ids turn out annoying, the allocator can skip a denylist of ids at any time; a
 //!   skipped id costs capacity, never correctness.
 
-pub mod migrate;
-
 use std::fmt;
 use std::str::FromStr;
 
@@ -190,21 +186,13 @@ use crate::config::get_replica;
 /// The longest id that can be packed.
 pub const MAX_LETTERS: usize = 8;
 const RADIX: i64 = 27;
-/// The packed value of `a`, the smallest id. Anything below it is a numeric id from before
-/// `spares migrate ids`.
+/// The packed value of `a`, the smallest id.
 pub const MIN_PACKED: i64 = RADIX.pow(MAX_LETTERS as u32 - 1);
 /// The packed value of `zzzzzzzz`.
 pub const MAX_PACKED: i64 = RADIX.pow(MAX_LETTERS as u32) - 1;
 /// Letters the first letter of a [tail](next_tail) can take: `a`–`y`. `z` starts the next level.
 const SLOTS: u8 = 25;
 const Z: u8 = 25;
-
-/// File mapping old numeric note ids to their letter ids, written to the data directory by
-/// `spares migrate ids`.
-pub const ID_MAP_FILE_NAME: &str = "id-map.tsv";
-
-/// `app_state` key set once the database's note ids are letter ids.
-pub const NOTE_IDS_MIGRATED_KEY: &str = "note_ids_migrated";
 
 /// A note id. Shown as letters ([`NoteId::letters`]), stored and sent as the packed integer.
 #[derive(Clone, Copy, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, sqlx::Type)]
@@ -227,8 +215,7 @@ impl NoteId {
         self.0
     }
 
-    /// The id's letters, or `None` if the packed value is not a valid id (for example a numeric id
-    /// from before the migration).
+    /// The id's letters, or `None` if the packed value is not a valid id.
     pub fn try_letters(self) -> Option<String> {
         unpack(self.0).map(|letters| letters.into_iter().map(|l| char::from(b'a' + l)).collect())
     }
@@ -242,12 +229,6 @@ impl NoteId {
     /// Parses 1 to [`MAX_LETTERS`] letters, in any case.
     pub fn from_letters(s: &str) -> Result<Self, ParseNoteIdError> {
         let s = s.trim();
-        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(ParseNoteIdError(format!(
-                "`{s}` is an old numeric note id. Note ids are letters now; look it up in \
-                 `{ID_MAP_FILE_NAME}` in the data directory."
-            )));
-        }
         if s.is_empty() || s.len() > MAX_LETTERS || !s.bytes().all(|b| b.is_ascii_alphabetic()) {
             return Err(ParseNoteIdError(format!(
                 "`{s}` is not a note id: expected 1 to {MAX_LETTERS} letters"
@@ -506,8 +487,7 @@ fn ids_after(
     let letters = |id: NoteId| {
         id.letter_indices().ok_or_else(|| {
             note_error(format!(
-                "Cannot allocate note ids after {}, which is not a letter id. Run `spares \
-                 migrate ids` first.",
+                "Cannot allocate note ids after {}, which is not a letter id.",
                 id.packed()
             ))
         })
@@ -728,37 +708,6 @@ pub(crate) async fn next_ids_for(
         .collect())
 }
 
-/// Whether the database's note ids are letter ids. A database with no notes is marked as migrated
-/// here, since it has nothing to migrate.
-pub async fn ensure_note_ids_migrated(db: &SqlitePool) -> Result<(), Error> {
-    let flag: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
-        .bind(NOTE_IDS_MIGRATED_KEY)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let (count, numeric): (i64, i64) =
-        sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(id < ?), 0) FROM note")
-            .bind(MIN_PACKED)
-            .fetch_one(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-    if flag.is_none() && count == 0 {
-        sqlx::query("INSERT OR IGNORE INTO app_state (key, value) VALUES (?, 'true')")
-            .bind(NOTE_IDS_MIGRATED_KEY)
-            .execute(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-        return Ok(());
-    }
-    if flag.is_none() || numeric > 0 {
-        return Err(note_error(format!(
-            "The database still has numeric note ids ({numeric} of {count} notes). Stop the \
-             server and run `spares migrate ids` (try `--dry-run` first)."
-        )));
-    }
-    Ok(())
-}
-
 /// Inserts a bare note with a newly allocated id, for tests that need a note row but not
 /// everything [`crate::api::note::create_notes`] does.
 #[cfg(test)]
@@ -841,9 +790,7 @@ mod tests {
         assert_eq!(id("GIR"), id("gir"));
         assert_eq!(id("Gir"), id("gir"));
         assert_eq!(id(" gir "), id("gir"));
-        let err = "42".parse::<NoteId>().unwrap_err().to_string();
-        assert!(err.contains(ID_MAP_FILE_NAME), "{err}");
-        for bad in ["", "abcdefghi", "g1r", "gi-r", "gïr"] {
+        for bad in ["", "42", "abcdefghi", "g1r", "gi-r", "gïr"] {
             assert!(bad.parse::<NoteId>().is_err(), "{bad}");
         }
     }
@@ -1227,24 +1174,5 @@ mod tests {
             }
         }
         assert_eq!(all.len(), 40);
-    }
-
-    #[sqlx::test]
-    async fn test_ensure_note_ids_migrated(pool: SqlitePool) {
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        insert_note(&pool, NoteId::from_packed(7)).await;
-        assert!(ensure_note_ids_migrated(&pool).await.is_err());
-        sqlx::query("DELETE FROM note")
-            .execute(&pool)
-            .await
-            .unwrap();
-        // An empty database has nothing to migrate.
-        ensure_note_ids_migrated(&pool).await.unwrap();
-        insert_note(&pool, NoteId::from_packed(7)).await;
-        // The backstop: the flag is set but a numeric id is left.
-        assert!(ensure_note_ids_migrated(&pool).await.is_err());
     }
 }

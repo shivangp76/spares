@@ -14,10 +14,14 @@ use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::fetch_batched_query;
+use crate::api::note::CardMove;
+use crate::api::note::check_card_moves;
+use crate::api::note::move_cards;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
 use crate::api::undo::create_event_group;
 use crate::api::undo::insert_events;
+use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::CardSnapshot;
 use crate::api::undo::payloads::CreateTagPayload;
 use crate::api::undo::payloads::DeletedTag;
@@ -134,7 +138,8 @@ fn get_parser_and_cards(
     parser_factories: &HashMap<&'static str, fn() -> Box<dyn Parseable>>,
 ) -> Result<(Box<dyn Parseable>, Vec<CardData>), Error> {
     let parser = get_parser_only(parser_name, parser_factories)?;
-    let cards = get_cards(parser.as_ref(), None, note_data, false, true)?;
+    // As it is: the files the old text names stay where they are, for its cards and its undo
+    let cards = get_cards(parser.as_ref(), None, note_data, false, false)?;
     Ok((parser, cards))
 }
 
@@ -413,6 +418,9 @@ pub async fn update_notes(
     let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
 
     let mut pending_notes: Vec<PendingNote> = Vec::with_capacity(parsed_notes.len());
+    // `mv:` directives, checked before the transaction commits and carried out once the update's
+    // event is logged
+    let mut move_entries: Vec<CardMove> = Vec::new();
 
     for parsed in parsed_notes {
         let created_at: i64 = sqlx::query_scalar(
@@ -441,14 +449,16 @@ pub async fn update_notes(
             parser_id: parsed.new_parser_id,
             custom_data: parsed.new_custom_data.clone(),
         };
-        cards::update_cards(
-            &mut *tx,
-            &parsed.old_cards,
-            &parsed.new_cards,
-            parsed.note_id,
-            at,
-        )
-        .await?;
+        move_entries.extend(
+            cards::update_cards(
+                &mut *tx,
+                &parsed.old_cards,
+                &parsed.new_cards,
+                parsed.note_id,
+                at,
+            )
+            .await?,
+        );
 
         let tag_changes = tags::update_tags(
             &mut *tx,
@@ -577,6 +587,7 @@ pub async fn update_notes(
         HashMap::new()
     };
 
+    check_card_moves(&mut tx, &move_entries).await?;
     tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
 
     // ---- Phase 4: Build responses, parse requests, delete old files, and undo snapshots ----
@@ -774,6 +785,12 @@ pub async fn update_notes(
         None
     };
 
+    // After the event, which holds the cards as created, so undoing the moves restores them
+    let move_event_id = move_cards(db, &move_entries, at, log).await?;
+    if let (Some(leader), Some(move_event_id)) = (event_id, move_event_id) {
+        join_event_group(db, leader, move_event_id).await?;
+    }
+
     Ok(UpdateNotesResponse {
         notes: note_responses,
         event_id,
@@ -825,10 +842,11 @@ async fn generate_updated_note_files(
             render: false,
             force_render: false,
             precomputed_cards: Some(group_precomputed_cards),
+            render_states: HashMap::new(),
         };
-        let _card_paths = create_note_files_bulk(parser.as_ref(), &parse_notes_request)?
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+        for files in create_note_files_bulk(parser.as_ref(), &parse_notes_request)? {
+            files.result?;
+        }
     }
     Ok(())
 }

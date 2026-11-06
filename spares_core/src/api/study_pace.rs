@@ -165,6 +165,7 @@ mod tests {
     use crate::api::queue::tests::LEARNING;
     use crate::api::queue::tests::NEW;
     use crate::api::queue::tests::REVIEW;
+    use crate::api::queue::tests::local_midday;
     use crate::api::queue::tests::set_card;
     use crate::api::review::ReviewFilterQuery;
     use crate::api::review::get_cards_left_by_state_and_time_estimate;
@@ -349,7 +350,8 @@ mod tests {
     /// card already reviewed today with one more review.
     #[sqlx::test]
     async fn a_day_counts_every_review_of_a_card(pool: SqlitePool) {
-        let now = Utc::now();
+        // Midday, so that yesterday's reviews 10 minutes apart were both yesterday
+        let now = local_midday();
         let ids = cards(&pool, &[&[], &[]], now - Duration::days(10)).await;
         // Seen as new and then once more in its learning steps, a minute and a half in all
         let yesterday = now - Duration::days(1);

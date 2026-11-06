@@ -1,16 +1,17 @@
 # Deploying a sync server
 
-This sets up a small VPS that your phone (or any browser) reviews on, kept in two-way sync with your laptop. It was first done on Vultr's cheapest plan (512 MB, 10 GB, IPv6 only, $2.50/month) on 2026-10-14, from a Mac. The server is only reachable over [Tailscale](https://tailscale.com); nothing is open to the internet.
+This sets up a small VPS as a spares host with your account, that your phone (or any browser) reviews on, kept in two-way sync with your laptop: your laptop's host syncs its copy of your collection with the VPS's as one of your devices. It was first done on Vultr's cheapest plan (512 MB, 10 GB, IPv6 only, $2.50/month) on 2026-10-14, from a Mac. The server is only reachable over [Tailscale](https://tailscale.com); nothing is open to the internet.
 
 Two parts do the work:
 - `spares deploy` runs on the laptop, in the repo. It builds spares for Linux from that checkout, uploads it with rsync, and sets up both sides. It shows each step as it goes and the time each took at the end.
-- `scripts/setup_vps.sh` runs on the server (`spares deploy` uploads and runs it). It installs spares, a systemd service, swap and Tailscale's HTTPS.
+- `scripts/setup_vps.sh` runs on the server (`spares deploy` uploads and runs it). It installs spares, creates the host with your account, and sets up a systemd service, swap, the sandbox renders run in (bubblewrap) and Tailscale's HTTPS.
 
 The server never builds anything or downloads from GitHub, so it needs neither the memory to compile spares nor IPv4.
 
 ## What you need first
 
 On the laptop:
+0. **A spares host with your account**, running: `spares host init --user <you>`, then `spares_server`, and `spares login` (see Getting Started).
 1. **Tailscale**, logged in: `brew install tailscale && sudo brew services start tailscale && sudo tailscale up`, then open the link it prints.
 2. **The cross-compiling tools:** `brew install zig && cargo install --locked cargo-zigbuild`. `spares deploy` adds the Rust target itself.
 3. **bun**, which builds the web app (already needed for development).
@@ -67,43 +68,41 @@ If ssh says root isn't allowed, open <https://login.tailscale.com/admin/acls>, a
 
 ## 4. Deploy
 
-Start your local server (`spares_server` or `spares_serve`), then run, from the repo:
+Start your local host (`spares_server`), then run, from the repo:
 ```sh
 spares deploy init spares --no-latex
 ```
 It takes 10–15 minutes. What it does, and what it asks:
 
-1. **Backs up your database** to `~/.local/share/spares/spares-main.before-deploy-<time>.sqlite`.
+1. **Backs up your database** next to it, in your collection's directory (`<SPARES_ROOT>/users/<you>/`).
 2. **Builds** spares for the server and the web app, and uploads them with `setup_vps.sh` (about 50 MB) to `~/.cache/spares-bundle` on the server. It keeps that copy, so later deploys send only what changed.
-3. **Sets up the server** as root: your user (who can use `sudo` on the server without a password), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS.
+3. **Sets up the server** as root: your user (who can use `sudo` on the server without a password), the laptop's time zone, swap, the `spares` service, and Tailscale's HTTPS. It creates a host at the same root as your laptop's, with your account, and **asks for the account's password there**.
    - **The first time on a tailnet**, Tailscale prints a link to enable HTTPS (`https://login.tailscale.com/f/serve?node=...`) and waits. Open it and enable **HTTPS**. **Don't enable Funnel**, which would put the server on the public internet.
-4. **Sets up the laptop:**
-   - stores the server's API key in the Keychain (service `spares-sync`);
-   - asks **how often to sync in the background** (Enter keeps 15 minutes);
-   - sets `remote_host`, `url` and `interval_minutes` in the `[sync]` table of `~/.config/spares/config.toml` (keeping the old one as `config.toml.bak` if it changed);
-   - offers to add `SPARES_REPLICA=0`, `SPARES_SYNC_ROLE=client` and `SPARES_SYNC_API_KEY` to `~/.config/spares/spares.zsh`. Say **yes**.
-5. **Waits for you to restart the local server**, so it picks up the new settings. Stop it, open a new terminal (or `source ~/.config/spares/spares.zsh`), start it again, and press Enter. If your local server has an API key (`spares_serve`), the script reads it from the Keychain (`spares-api-key`) or asks for it.
+4. **Sets up the laptop:** asks **how often to sync in the background** (Enter keeps 15 minutes), and sets `remote_host` and `interval_minutes` in the `[sync]` table of your collection's `config.toml` (keeping the old one as `config.toml.bak` if it changed).
+5. **Logs your laptop's host in to the server** (`spares sync login`), with the password you just gave it: it gets a sync-only token there and keeps replica `0`.
 6. **Uploads your database** after you confirm, then shows the note, card and review counts on both sides. They should match.
 7. **Syncs once**, the normal two-way way.
 8. **Offers to close the public ports** with `ufw`, so only Tailscale gets in. Say **yes**. If Tailscale ever breaks, Vultr's **View Console** still works.
 
-Running `init` again is safe if something fails partway: it keeps the server's API key and doesn't duplicate settings.
+Running `init` again is safe if something fails partway: it keeps the server's host and doesn't duplicate settings.
 
 ## 5. Log in on the phone
 
 With Tailscale on, open the address `init` printed, e.g. `https://spares.tail6814bc.ts.net`, and log in:
 - **Server URL:** that same address.
-- **API key:** the server's key. To show it on the laptop: `security find-generic-password -s spares-sync -w`.
+- **Name** and **Password:** your account on the server.
 - **Scheduler:** leave it empty for the server's default, unless you use another one on the laptop.
 
-To review without a connection, add the page to the home screen (see [Reviewing offline](./getting_started.md#reviewing-offline)).
+The session lasts a year from its last use, so the phone asks again about as often as it is new.
+
+To use spares on the phone without a connection, add the page to the home screen, open it from there, and in **Settings → This Device** choose **Keep a Copy on This Device** (see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device)).
 
 ## Day to day
 
-- **Run the local server as before.** `spares_server` (or `spares_serve`) syncs with the VPS when it starts, when the laptop wakes, every `sync.interval_minutes`, and 30 seconds after you stop reviewing or editing (`sync.push_delay_seconds`), so you can close the laptop and carry on on your phone. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
-- **Sync now:** `spares sync cloud`. This also copies your templates, `config.toml` and the files your notes read to the server.
-- **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`.
-- **Update the server** after changing spares: `spares deploy update`, then restart the local server, so both run the same version. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
+- **Run your local host as before.** `spares_server` syncs with the VPS when it starts, when the laptop wakes, every `sync.interval_minutes`, and 30 seconds after you stop reviewing or editing (`sync.push_delay_seconds`), so you can close the laptop and carry on on your phone. While it is stopped the laptop doesn't sync, and phone reviews wait on the server.
+- **Sync now:** `spares sync cloud`. Before syncing, this also copies your templates, settings and the files your notes read to the server, after checking that `remote_host` reaches the collection the server serves. `spares sync cloud --dry-run` lists what it would copy.
+- **Conflicts** (both sides changed the same lines of a note) are tagged `sync-conflict`; go through them with `spares sync conflicts`, or on the Conflicts page of the web app on the machine or phone whose sync found them.
+- **Update the server** after changing spares: `spares deploy update`, then restart the local host, so both run the same version. You never log in to the server yourself: it reaches it over SSH (Tailscale's), and installs there with `sudo`. The first update after hosts also moves a server set up before them into a host: it asks here for the password of your account on the server, imports its collection, and logs your laptop's host in to it (`spares sync login`). A phone that keeps a copy loads the new web app the next time it opens it online, before it syncs. It compiles only what changed, builds the web app and connects to the server meanwhile, and uploads only the files that differ from the last deploy (mostly part of the binary), so it takes a minute or two. It runs unattended, and sets the server's time zone to the laptop's again, e.g. after you move.
 - **Log in to the server:** `ssh spares` (your user) or `ssh root@spares`. The service is `spares`: `sudo systemctl status spares`, `sudo journalctl -u spares -f`.
 
 ## On the server
@@ -112,10 +111,11 @@ To review without a connection, add the page to the home screen (see [Reviewing 
 |---|---|
 | spares | `/usr/local/bin/spares_server`, service `spares` |
 | Web app | `/opt/spares/frontend` |
-| Settings (API key, replica, role) | `/etc/spares/spares.env` |
+| The host's root (`SPARES_ROOT`) | `/etc/spares/spares.env`; the same path as on the laptop (`/Users/<you>` links to `/home/<you>`) |
+| Its settings and accounts | `host.toml` and `accounts.sqlite` in the root; manage with `SPARES_ROOT=<root> spares_server host --help` |
+| Your collection | `users/<you>/` in the root |
 | `setup_vps.sh`'s arguments, the URL | `/etc/spares/setup.conf`, `/etc/spares/url` |
-| Database and data | the same path as on the laptop (`/Users/<you>` links to `/home/<you>`) |
-| `config.toml` (copied from the laptop) | `~/.config/spares/config.toml` |
+| `config.toml` (copied from the laptop) | `users/<you>/config/config.toml` |
 | The last deploy's build, which the next one updates | `~/.cache/spares-bundle` |
 
 Spares uses about 15 MB of memory idle and 30 MB while sending the whole database, so 512 MB is plenty. `setup_vps.sh` adds 1 GB of swap for `apt`.
@@ -123,7 +123,8 @@ Spares uses about 15 MB of memory idle and 30 MB while sending the whole databas
 ## Troubleshooting
 
 - **The first `update` is slower**: it compiles only after connecting, as it doesn't know the server's architecture yet. `spares deploy` keeps that, the pandoc package and the time of each step in `~/.cache/spares-deploy`. If `~/.cache/spares-bundle` on the server is gone, the next deploy uploads everything again.
-- **"No spares server answers at 127.0.0.1:8080"**: the local server isn't running yet (it compiles first), or listens elsewhere (`SPARES_SOCKET_ADDRESS`).
+- **"No spares host answers at 127.0.0.1:8080"**: the local host isn't running yet (it compiles first), or listens elsewhere (`bind` in its `host.toml`).
 - **The phone shows other streaks, or reviews on the wrong day of the heatmap, than the laptop**: the server is in another time zone (VPSs start in UTC), and spares counts days in the server's. Run `spares deploy update` to set it to the laptop's; `timedatectl` on the server shows it.
 - **The local server can't reach the VPS**: check that `tailscale status` on the laptop lists `spares`, and that Tailscale is running (`sudo brew services start tailscale`).
-- **`spares sync cloud` is refused (401) by your local server**: it was started with an API key (`spares_serve`); the `spares` CLI sends `SPARES_API_KEY`, so set it (the `spares` function in `spares.zsh` does).
+- **`spares sync cloud` is refused (401) by your local host**: the CLI has no token for it; run `spares login`.
+- **The sync is refused (401) by the server**: the laptop host's token there was revoked; run `spares sync logout`, then `spares sync login` again.

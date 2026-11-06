@@ -1,5 +1,5 @@
-//! `spares sync cloud` with two-way sync (`sync.url` set), and `spares sync conflicts`. The local
-//! server does the syncing (`POST /api/sync/run`); see `spares_core::sync`.
+//! `spares sync cloud`, which syncs the collection with its upstream (`sync.url`), and `spares sync
+//! conflicts`. The host does the syncing (`POST /api/sync/run`); see `spares_core::sync`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -20,10 +20,10 @@ use spares_core::sync::run::SyncMode;
 use spares_core::sync::run::SyncReport;
 
 use super::cloud::push_files;
-use super::cloud::push_to_remote_host;
 
-/// Syncs with the server, asking which way to go if only a full sync is possible, then copies the
-/// files the server cannot generate itself to `sync.remote_host`.
+/// Copies the files the server cannot generate itself to `sync.remote_host`, then syncs with the
+/// server, asking which way to go if only a full sync is possible, then has the server render
+/// what the files changed.
 pub(crate) async fn sync_cloud(
     base_url: &str,
     client: &Client,
@@ -31,11 +31,11 @@ pub(crate) async fn sync_cloud(
 ) -> Result<(), String> {
     let config = read_external_config().map_err(|e| e.to_string())?;
     if config.sync.url.is_none() {
-        println!(
-            "{}",
-            "`sync.url` is not set, so this replaces the server's database (one-way).".yellow()
+        return Err(
+            "This collection has no upstream to sync with. Give it one with `spares sync login \
+             <url>`."
+                .to_string(),
         );
-        return push_to_remote_host().await;
     }
     if !notes_vcs::enabled() {
         println!(
@@ -45,6 +45,14 @@ pub(crate) async fn sync_cloud(
                 .yellow()
         );
     }
+    // Before the sync, so the notes the server renders after it are rendered with the templates and
+    // files sent here: after a full upload, it renders every note.
+    let pushed = match (&config.sync.remote_host, &config.sync.url) {
+        (Some(remote_host), Some(url)) => {
+            Some(push_files(remote_host, url, config.sync.token.clone()).await?)
+        }
+        _ => None,
+    };
     let mut mode = mode;
     let report = loop {
         println!("Syncing ({})...", mode_name(mode));
@@ -84,9 +92,27 @@ pub(crate) async fn sync_cloud(
         };
     };
     print_report(&report);
-    if let Some(remote_host) = &config.sync.remote_host {
-        push_files(remote_host, &config.sync.remote_rendered_dir).await?;
+    // A full upload has the server render every note anyway.
+    if let Some(pushed) = pushed
+        && report.mode != Some(SyncMode::FullUpload)
+    {
+        pushed.render_if_changed().await?;
     }
+    Ok(())
+}
+
+/// `spares sync cloud --dry-run`: checks where the files would go and lists what would be copied
+/// or removed, without syncing or changing anything.
+pub(crate) async fn preview_sync_cloud() -> Result<(), String> {
+    let config = read_external_config().map_err(|e| e.to_string())?;
+    let (Some(remote_host), Some(url)) = (&config.sync.remote_host, &config.sync.url) else {
+        return Err(
+            "Nothing to copy: `sync.remote_host` or `sync.url` is not set in config.toml."
+                .to_string(),
+        );
+    };
+    super::cloud::preview_files(remote_host, url, config.sync.token.clone()).await?;
+    println!("Would then sync the database. Nothing was copied or synced.");
     Ok(())
 }
 

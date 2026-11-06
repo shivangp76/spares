@@ -23,6 +23,16 @@ The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:aae/1] at ab
 
 Here the new card inherits from note `aae`'s first card. The rules are on `inherit` in `spares_core::parsers::ClozeGroupingSettings`.
 
+## Merging notes
+
+`inh:` copies, so the source card keeps its reviews, and if you then delete its note, those reviews stay behind with no card and are still counted in the history next to the copies. To merge notes, use `mv:` instead, which takes the same `NOTE_ID/ORDER` but moves the source card itself into the new cloze's place, with its id, scheduling and review history:
+
+```md
+A crankshaft's webs carry {{[o:1] counterweights}}, opposite {{[mv:bxd/1] the rod journals}}.
+```
+
+Write the merged note, give each cloze brought in from another note `mv:` in place of its `o:` (`spares card get -n NOTE_ID` lists a note's orders), and push. Once the cards have moved, the source notes have no cards left for those clozes, so delete their files or remove those clozes from them, in the same push or a later one. A push imports the notes it takes cards from after the moves, so their cards are still there to move. A cloze takes `inh:` or `mv:`, not both; no two clozes may move the same card; and one undo puts the moved cards back.
+
 ## CLI cards
 
 A CLI card is reviewed by running a command, such as a test suite, rather than by flipping a rendered document. Its syntax and how its score becomes a rating are documented on `spares_core::parsers::cli`.
@@ -39,6 +49,32 @@ spares import --to-parser="markdown" aaa.tex aab.tex
 ```
 
 See `spares import --help` for converting notes kept in a git or jj repository.
+
+## Sharing notes
+
+Notes can be shared like Anki's shared decks. Export the ones matching a query to share:
+```sh
+spares note export 'tag=oceans' --share -o shared
+```
+This writes one file per parser into `shared` (such as `shared/export.md`), using the parser's export template. Each note keeps its tags and keywords, so links between the shared notes still work. What is private or only means something in your collection is left out (see `spares_core::api::note::export`):
+- Notes tagged `private`, or a tag under it such as `private:health`. The tag is `private_tag_name` in `config.toml`.
+- The notes' ids, so they are imported as new notes.
+- The tags that say how a note is doing rather than what it is about: the flagged and leech tags, `sync-conflict`, and the `live:` tags of live notes.
+- Custom data, and clozes' `id:` keys.
+- Scheduling and review history.
+
+The images, audio clips and image occlusions the notes name go with them, into `shared/media`, and the notes name them there. Importing the file uploads them to the recipient's host, and names them by their paths there. Only files in your collection's media directory go with them, so that on a host no one can export another account's files. A path the export found no such file at, such as one with a space or one elsewhere on your computer, is left as it is, and printed: check that it names nothing private before you share the file. See `spares_core::api::note::shared_media`.
+
+The recipient adds the parser if their collection doesn't have it yet (`spares parser add -n markdown`), then imports the file, which adds the notes as new ones:
+```sh
+spares import --parser markdown shared/export.md
+```
+
+In the web app, select the notes on the Notes page and choose **Export…**, then **To share**. It says how many notes and files it holds, which private notes it leaves out and which paths have no file, then downloads `shared.zip`. **To edit and import back** downloads the files as without `--share`. The recipient imports a zip, or a file of shared notes, with **Import** on the Notes page, which also adds the parsers their collection doesn't have. On a phone that keeps a copy of the collection, the server exports and imports them, and the copy syncs afterwards.
+
+To send one file from the command line, add `--zip`: `spares note export 'tag=oceans' --share --zip -o oceans.zip` writes the notes' files and their media into `oceans.zip`, which `spares import --parser markdown oceans.zip` imports the same way (see `spares_core::api::note::share_bundle`).
+
+Without `--share`, the file names each note by its id in your collection, so importing it updates those notes. That is for editing notes in bulk and importing them back, and another collection's import fails on those ids.
 
 ## Putting cards off until after an exam
 
@@ -99,7 +135,7 @@ spares note list --limit=9999 --graph
 
 Spares can keep your note files in a git repository, so you can branch them, let an LLM edit them, review the result with any tool, and keep or discard it. The database acts as the remote:
 
-- `notes-spares/` in the data directory is spares' copy. Only the spares server writes to it, and it commits every change, so its `main` describes the database.
+- `notes.git/` in your collection's directory (`<SPARES_ROOT>/users/<id>/`) is spares' copy. Only the spares server writes to it, and it commits every change, so its `main` describes the database.
 - `notes/` (and the `~/notes` symlink) becomes your clone of it.
 - **Fetch** to get changes made in spares: web edits, `spares note edit`, undo, tag renames, renders.
 - **Push to `main`** to import your changes into spares.
@@ -155,9 +191,9 @@ git commit -am "…" && git push origin HEAD:main  # like it: imports it into sp
 - A note's parser cannot be changed in place; to move a note to another parser, delete its file and create it anew, which loses its reviews.
 - The linked-notes section is regenerated by spares, so edits to it are ignored.
 - Only `main` and `anki` (see [Syncing notes with Anki](workflows.md#syncing-notes-with-anki)) can be pushed, and not both in one push.
-- Never edit `notes-spares/` by hand (a PDF viewer's inverse search may open files there). Spares rewrites such files from the database, saving what it overwrites (see [Files spares overwrote](workflows.md#files-spares-overwrote)).
+- Never edit `notes.git/` by hand (a PDF viewer's inverse search may open files there). Spares rewrites such files from the database, saving what it overwrites (see [Files spares overwrote](workflows.md#files-spares-overwrote)).
 
-A push is imported in the order deletes, edits, creations, and completely or not at all: a single `spares undo` reverts all of it. After a push, spares may commit the notes as it writes them (for example with renumbered clozes) and render them, so pull before editing the same notes again. If what you pushed was already written the way spares writes it, there is nothing to pull.
+A push is imported in the order deletes, edits, creations, except that notes another pushed note takes cards from with `mv:` are edited and deleted last, once their cards have moved. It is imported completely or not at all: a single `spares undo` reverts all of it. After a push, spares may commit the notes as it writes them (for example with renumbered clozes) and render them, so pull before editing the same notes again. If what you pushed was already written the way spares writes it, there is nothing to pull.
 
 ### Rejected pushes
 
@@ -183,7 +219,7 @@ The reason a push was rejected is printed on lines starting with `spares:` (pref
 
 ### Files spares overwrote
 
-Before spares overwrites or removes a file in `notes-spares/` that it did not write, it saves a copy to `notes-spares/.git/spares-overwritten/<time>/<path>`. The navbar then shows **Overwritten files saved**, and the server warns of them when it starts. Each copy is marked with whether the current file has the same contents. If it does (as when the same edit was pushed afterwards), nothing in it is lost. If it differs, the copy may hold an edit that is nowhere else: diff it with your clone's file, and copy what you want to keep into your clone and push it. Once you have checked them, delete the copies from the navbar's notice. Spares never deletes them itself.
+Before spares overwrites or removes a file in `notes.git/` that it did not write, it saves a copy to `notes.git/.git/spares-overwritten/<time>/<path>`. The navbar then shows **Overwritten files saved**, and the server warns of them when it starts. Each copy is marked with whether the current file has the same contents. If it does (as when the same edit was pushed afterwards), nothing in it is lost. If it differs, the copy may hold an edit that is nowhere else: diff it with your clone's file, and copy what you want to keep into your clone and push it. Once you have checked them, delete the copies from the navbar's notice. Spares never deletes them itself.
 
 While a push is being imported, other changes to notes (the web UI, the CLI) wait for it, for at most 30 seconds, and are then refused with a message to retry. Nothing is lost.
 

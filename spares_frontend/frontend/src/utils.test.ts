@@ -7,8 +7,6 @@ test('noteChangedSince is true only once the note was changed after the card was
   expect(noteChangedSince(card, { updated_at: '2026-10-21T10:00:05Z' })).toBe(true);
   // Fetched since, e.g. by a refresh that raced the check
   expect(noteChangedSince(card, { updated_at: '2026-10-21T09:59:00Z' })).toBe(false);
-  // A card downloaded for offline review before the field was added
-  expect(noteChangedSince({}, { updated_at: '2026-10-21T10:00:05Z' })).toBe(false);
 });
 
 test('imageUploadName keeps a supported extension', () => {

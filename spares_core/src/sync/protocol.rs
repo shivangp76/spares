@@ -1,10 +1,13 @@
 //! Requests and responses between the client and the server (`/api/sync/*`).
 //!
-//! There is no chunking, since there are only two replicas. A normal sync:
+//! There is no chunking: there are a few replicas (the laptop, the server and up to three browsers,
+//! see [More replicas](super#more-replicas)), and a normal sync sends only what changed. A normal
+//! sync:
 //!
 //! 1. **`meta`**. The client refuses to sync if the clocks differ by more than 5 minutes, the
-//!    schema versions differ, both sides have the same replica number, or the roles aren't one
-//!    `client` and one `server`. It requires a full sync (412, with the reason) if it has never
+//!    schema versions differ, both sides have the same replica number, or the server speaks
+//!    another [protocol version](SYNC_PROTOCOL_VERSION). The server refuses a replica that isn't
+//!    enrolled ([`super::devices`]). It requires a full sync (412, with the reason) if it has never
 //!    synced, `needs_full_sync` is set, the server's epoch changed (another full upload replaced
 //!    it), its last usn is ahead of the server's (server restored from a backup), or behind what
 //!    `sync_client` recorded for it (client restored from a backup).
@@ -26,7 +29,44 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::records::Changes;
-use crate::config::SyncRole;
+
+/// The version of this protocol. Every request sends it in [`SYNC_PROTOCOL_HEADER`], and the host
+/// refuses another, so a device and a host of different spares versions say so instead of
+/// misreading each other.
+///
+/// - `1`: a server and clients, set by environment variables, with API keys.
+/// - `2`: hosts and their devices, with device tokens or sessions; every replica but the root's is
+///   enrolled, and a host with an upstream relays its devices' requests to it.
+pub const SYNC_PROTOCOL_VERSION: u32 = 2;
+/// The header that carries [`SYNC_PROTOCOL_VERSION`].
+pub const SYNC_PROTOCOL_HEADER: &str = "x-spares-sync-protocol";
+/// The header listing the hosts a sync request has come through, as their [`host_id`]s separated
+/// by commas. A host refuses a request that names it: its upstream leads back to itself (a root
+/// whose `[sync] url` is its own address, say), and relaying it on would loop until it ran out of
+/// connections.
+pub const SYNC_VIA_HEADER: &str = "x-spares-sync-via";
+
+/// The id in [`SYNC_VIA_HEADER`] of the current collection's copy here: random for each run of
+/// the process, and different for each collection it has open, so two hosts in one process (as
+/// in tests) are told apart.
+#[cfg(not(target_family = "wasm"))]
+pub fn host_id() -> String {
+    use rand::RngExt;
+    static RUN: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut rng = rand::rng();
+        (0..16)
+            .map(|_| char::from(b'a' + rng.random_range(0..26u8)))
+            .collect()
+    });
+    let copy = crate::collection::current().map_or(0, |collection| {
+        std::sync::Arc::as_ptr(&collection.state).addr()
+    });
+    format!("{}-{copy:x}", *RUN)
+}
+
+fn version_1() -> u32 {
+    1
+}
 
 /// `GET /api/sync/meta?replica=N`: what the client needs to decide how to sync.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -41,17 +81,13 @@ pub struct MetaResponse {
     /// The newest database migration the server has run.
     pub schema_version: i64,
     pub replica: u8,
-    pub role: String,
+    /// The server's [`SYNC_PROTOCOL_VERSION`]. Version 1 had none.
+    #[serde(default = "version_1")]
+    pub protocol_version: u32,
     /// Whether the server has no notes, as on the first sync.
     pub empty: bool,
     /// The usn the asking replica last synced at, as the server recorded it.
     pub client_last_usn: Option<i64>,
-}
-
-impl MetaResponse {
-    pub fn is_server(&self) -> bool {
-        self.role == SyncRole::Server.to_string()
-    }
 }
 
 /// `POST /api/sync/pull`
@@ -60,6 +96,10 @@ pub struct PullRequest {
     /// The server's usn at the client's last sync.
     pub since: i64,
     pub replica: u8,
+    /// A device's: the [digest](RenderAssets::digest) of its render assets, so the pull brings the
+    /// server's if they differ. Other clients have their own, and send none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_assets_digest: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -68,16 +108,46 @@ pub struct PullResponse {
     pub usn: i64,
     /// Rows changed since `since`, with every card of each changed note.
     pub changes: Changes,
+    /// The server's render assets, for a device whose differ, which it replaces its own with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_assets: Option<RenderAssets>,
 }
 
-/// A `render_asset` row: the client sends all of them on every push, since assets are only
-/// added on the laptop and their files are copied separately.
+/// A `render_asset` row. Assets are found on the laptop, which sends all of them on every push,
+/// so the server drops those it no longer sends (see [`super::server::push`]), and their files are
+/// copied separately. A device gets them from the server (see
+/// [`PullResponse::render_assets`]), and sends none, so its copies never replace newer ones.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
 pub struct RenderAssetRecord {
     pub path: String,
     pub hash: String,
     pub mtime: i64,
     pub size: i64,
+}
+
+/// Every `render_asset` row, by path, and every `render_package` spec, sorted.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct RenderAssets {
+    pub assets: Vec<RenderAssetRecord>,
+    pub packages: Vec<String>,
+}
+
+impl RenderAssets {
+    /// A hash of all of it, the same on both sides for the same rows.
+    pub fn digest(&self) -> String {
+        let json = serde_json::to_vec(self).expect("render assets serialize");
+        blake3::hash(&json).to_hex().to_string()
+    }
+}
+
+/// An `id_counter` row of the pushing replica: the largest id it ever handed out for `tbl`. The
+/// server keeps the larger of its own and this, so a full download passes it on to the next device
+/// enrolled under the same number, which then never hands out an id this one did (see
+/// [`crate::ids`]).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, sqlx::FromRow)]
+pub struct IdCounterRecord {
+    pub tbl: String,
+    pub last: i64,
 }
 
 /// `POST /api/sync/push`
@@ -93,6 +163,9 @@ pub struct PushRequest {
     pub render_assets: Vec<RenderAssetRecord>,
     #[serde(default)]
     pub render_packages: Vec<String>,
+    /// The client's own `id_counter` rows
+    #[serde(default)]
+    pub id_counters: Vec<IdCounterRecord>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

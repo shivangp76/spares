@@ -1,26 +1,19 @@
 //! `spares deploy init`: the first deployment, and setting up this machine to sync with it.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str::FromStr;
 
 use colored::Colorize;
 use inquire::CustomType;
-use inquire::Password;
-use inquire::PasswordDisplayMode;
 use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
 use reqwest::StatusCode;
 use serde_json::Value;
-use spares_core::config::EnvironmentConfig;
-use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
 use spares_core::config::get_external_config_file;
-use spares_core::config::local_api_key;
 use spares_core::config::read_external_config;
 use spares_core::config::set_sync_values;
 use spares_core::sync::run::SyncMode;
@@ -37,19 +30,14 @@ use super::repo_dir;
 use super::shell::Ssh;
 use super::shell::command_exists;
 use super::shell::confirm;
-use super::shell::output;
 use super::shell::pause;
 use super::shell::quote;
 use super::shell::run;
 use super::shell::warn;
 use super::upload;
+use crate::local::LocalEnv as EnvironmentConfig;
 use crate::sync::sync_cloud;
 use crate::utils::local_timezone;
-
-/// Where the local server's own API key is kept, if it has one and `SPARES_API_KEY` is not set
-const LOCAL_KEYCHAIN_SERVICE: &str = "spares-api-key";
-/// The Keychain item holding the server's API key
-const KEYCHAIN_SERVICE: &str = "spares-sync";
 
 pub(super) struct InitOptions {
     pub(super) server: String,
@@ -77,11 +65,12 @@ pub(super) async fn init(
     let db = database_path(&env_config.database_url)?;
     if !db.is_file() {
         return Err(miette!(
-            "No database at {}. Set SPARES_DATA_DIR if it is elsewhere.",
+            "No database at {}. Create a host with `spares host init`.",
             db.display()
         ));
     }
-    for command in ["ssh", "scp", "rsync", "security"] {
+    let (host_root, account_id, account) = crate::local::account().await?;
+    for command in ["ssh", "scp", "rsync"] {
         if !command_exists(command) {
             return Err(miette!("{command} is needed."));
         }
@@ -163,8 +152,12 @@ pub(super) async fn init(
     let mut args = vec![
         "--user".to_string(),
         user.clone(),
-        "--data-dir".to_string(),
-        data_dir.to_string_lossy().into_owned(),
+        "--root".to_string(),
+        host_root.to_string_lossy().into_owned(),
+        "--account".to_string(),
+        account.clone(),
+        "--account-id".to_string(),
+        account_id.clone(),
         "--local-home".to_string(),
         home.clone(),
     ];
@@ -193,37 +186,37 @@ pub(super) async fn init(
     progress.run(command, None)?;
 
     let url = ssh.output(&root, "cat /etc/spares/url")?;
-    let api_key = ssh.output(
-        &root,
-        "sed -n 's/^SPARES_API_KEY=//p' /etc/spares/spares.env",
-    )?;
-    let Some(host) = url.strip_prefix("https://").filter(|_| !api_key.is_empty()) else {
-        return Err(miette!("Could not read the server's address and API key."));
+    let Some(host) = url.strip_prefix("https://") else {
+        return Err(miette!("Could not read the server's address."));
     };
     let host = host.to_string();
     println!("The server is at {url}");
 
     progress.step("Setting up this machine", "");
-    run(Command::new("security").args([
-        "add-generic-password",
-        "-U",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        &me,
-        "-w",
-        &api_key,
-    ]))?;
-    println!("Stored the server's API key in the Keychain (service \"{KEYCHAIN_SERVICE}\").");
-    let interval = set_up_config(&user, &host, &url)?;
-    set_up_shell_file(&url)?;
+    let interval = set_up_config(&user, &host)?;
 
-    progress.step("Restarting the local server", "");
-    println!("Restart spares_serve in a new terminal, so it picks up the new settings.");
-    let local_address = env_config.socket_address.replace("0.0.0.0", "127.0.0.1");
-    let base_url = format!("http://{local_address}");
-    let local_key = wait_for_local_server(&base_url, &me, &url).await?;
-    let client = crate::client_with_key(local_key.as_deref())?;
+    progress.step("Logging in to the server", "");
+    let base_url = spares_core::config::host_client().base_url;
+    let client = crate::local_client()?;
+    wait_for_local_host(&base_url, &client).await?;
+    let status: Value = client
+        .get(format!("{base_url}/api/sync/status"))
+        .send()
+        .await
+        .into_diagnostic()?
+        .json()
+        .await
+        .into_diagnostic()?;
+    if status["sync_url"].as_str() == Some(url.as_str())
+        && status["sync_token_set"].as_bool() == Some(true)
+    {
+        println!("This host's copy syncs with {url} already.");
+    } else {
+        println!("Log in as {account}, with the password you gave the server.");
+        crate::sync::upstream_login(&base_url, &client, &url, &account, None)
+            .await
+            .map_err(|e| miette!("{e}"))?;
+    }
 
     progress.step("Uploading the database", "");
     let user_host = format!("{user}@{host}");
@@ -241,7 +234,8 @@ pub(super) async fn init(
         .fetch_one(&pool)
         .await
         .map_err(|e| miette!("{e}"))?;
-    let server_db = get_data_dir().join("spares-main.sqlite");
+    // The same path as here: the host there has the same root
+    let server_db = spares_core::collection::paths().database();
     let there = ssh.output(
         &user_host,
         &format!(
@@ -285,8 +279,8 @@ pub(super) async fn init(
 
     progress.end_step();
     println!(
-        "\n{}\nOn your phone, with Tailscale on, open {url}, log in with the API key
-(security find-generic-password -s {KEYCHAIN_SERVICE} -w) and add it to the home screen.
+        "\n{}\nOn your phone, with Tailscale on, open {url}, log in as {account} and add it to the home
+screen.
 
   spares sync cloud       sync both ways and copy files (sync.interval_minutes = {interval}
                           syncs in the background, without copying files)
@@ -311,9 +305,9 @@ fn database_path(database_url: &str) -> Result<PathBuf, Error> {
     Ok(PathBuf::from(path.split('?').next().unwrap_or(path)))
 }
 
-/// Sets `remote_host`, `url` and `interval_minutes` (asked) in the [sync] table of config.toml.
-/// Returns the interval.
-fn set_up_config(user: &str, host: &str, url: &str) -> Result<u64, Error> {
+/// Sets `remote_host` and `interval_minutes` (asked) in the [sync] table of config.toml. Returns
+/// the interval.
+fn set_up_config(user: &str, host: &str) -> Result<u64, Error> {
     let config = read_external_config().map_err(|e| miette!("{e}"))?;
     // 0, the default, means never, so it is only kept once syncing was set up
     let default = if config.sync.url.is_some() {
@@ -334,7 +328,6 @@ fn set_up_config(user: &str, host: &str, url: &str) -> Result<u64, Error> {
         &old,
         [
             ("remote_host", format!("{user}@{host}").into()),
-            ("url", url.into()),
             #[allow(clippy::cast_possible_wrap)]
             ("interval_minutes", (interval as i64).into()),
         ],
@@ -347,7 +340,7 @@ fn set_up_config(user: &str, host: &str, url: &str) -> Result<u64, Error> {
         }
         fs::write(&file, new).into_diagnostic()?;
         println!(
-            "Set remote_host, url and interval_minutes in the [sync] table of {}.",
+            "Set remote_host and interval_minutes in the [sync] table of {}.",
             file.display()
         );
         if had_file {
@@ -357,130 +350,21 @@ fn set_up_config(user: &str, host: &str, url: &str) -> Result<u64, Error> {
     Ok(interval)
 }
 
-/// Offers to add what the local server needs in its environment to spares.zsh.
-fn set_up_shell_file(url: &str) -> Result<(), Error> {
-    let shell_file = get_config_dir().join("spares.zsh");
-    let contents = fs::read_to_string(&shell_file).unwrap_or_default();
-    let missing: Vec<String> = [
-        ("SPARES_REPLICA=", "export SPARES_REPLICA=0".to_string()),
-        (
-            "SPARES_SYNC_ROLE=",
-            "export SPARES_SYNC_ROLE=client".to_string(),
-        ),
-        (
-            "SPARES_SYNC_API_KEY=",
-            format!(
-                "export SPARES_SYNC_API_KEY=\"$(security find-generic-password -s \
-                 {KEYCHAIN_SERVICE} -w 2>/dev/null)\""
-            ),
-        ),
-    ]
-    .into_iter()
-    .filter(|(name, _)| !contents.contains(name))
-    .map(|(_, line)| line)
-    .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    println!("The local server needs these where it starts:");
-    for line in &missing {
-        println!("  {line}");
-    }
-    if confirm(&format!("Add them to {}?", shell_file.display()))? {
-        let mut new = contents;
-        let _ = write!(
-            new,
-            "\n# Two-way sync with the server ({url}). This machine is replica 0; the key is in the \
-             Keychain.\n{}\n",
-            missing.join("\n")
-        );
-        fs::write(&shell_file, new).into_diagnostic()?;
-    } else {
-        println!("Add them yourself, then continue.");
-    }
-    Ok(())
-}
-
-/// Waits until the local server runs as the client of the server at `url`. Returns the local
-/// server's API key, if it wants one.
-async fn wait_for_local_server(
-    base_url: &str,
-    me: &str,
-    url: &str,
-) -> Result<Option<String>, Error> {
-    let mut key = local_api_key();
-    let mut tried_keychain = false;
-    let mut wait = true;
+/// Waits until this machine's host answers, which `spares host init` set up.
+async fn wait_for_local_host(base_url: &str, client: &reqwest::Client) -> Result<(), Error> {
     loop {
-        if wait {
-            pause("Press Enter once it is running. ")?;
-        }
-        wait = true;
-        let client = crate::client_with_key(key.as_deref())?;
-        let response = client
-            .get(format!("{base_url}/api/sync/status"))
-            .send()
-            .await;
-        let Ok(response) = response else {
-            warn(&format!("No spares server answers at {base_url}."));
-            continue;
-        };
-        if response.status() == StatusCode::UNAUTHORIZED {
-            if !tried_keychain
-                && let Ok(found) = output(
-                    Command::new("security")
-                        .args([
-                            "find-generic-password",
-                            "-a",
-                            me,
-                            "-s",
-                            LOCAL_KEYCHAIN_SERVICE,
-                            "-w",
-                        ])
-                        .stderr(std::process::Stdio::null()),
-                )
-            {
-                println!(
-                    "Using the local server's API key from the Keychain (service \
-                     \"{LOCAL_KEYCHAIN_SERVICE}\")."
-                );
-                key = Some(found);
-            } else {
-                warn("The local server wants its API key (its SPARES_API_KEY).");
-                let pasted = without_footer(|| {
-                    Password::new("Paste it here:")
-                        .without_confirmation()
-                        .with_display_mode(PasswordDisplayMode::Hidden)
-                        .prompt()
-                })
-                .map_err(|e| miette!("{e}"))?;
-                key = Some(pasted.split_whitespace().collect());
-            }
-            tried_keychain = true;
-            wait = false;
-            continue;
-        }
-        let status: Value = match response.error_for_status() {
-            Ok(response) => response.json().await.unwrap_or_default(),
-            Err(_) => Value::Null,
-        };
-        let field = |name: &str| status.get(name).cloned().unwrap_or_default();
-        match (field("role").as_str(), field("sync_url").as_str()) {
-            (None, _) => warn(&format!("No spares server answers at {base_url}.")),
-            (Some(role), _) if role != "client" => {
+        match client.get(format!("{base_url}/api/me")).send().await {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            Ok(response) if response.status() == StatusCode::UNAUTHORIZED => {
                 warn(&format!(
-                    "It runs as the {role}, not the client. Check SPARES_SYNC_ROLE."
+                    "The host at {base_url} doesn't know this machine's CLI. Run `spares login`."
                 ));
             }
-            (_, sync_url) if sync_url != Some(url) => warn(&format!(
-                "Its sync_url is \"{}\", not {url}.",
-                sync_url.unwrap_or_default()
+            _ => warn(&format!(
+                "No spares host answers at {base_url}. Start it (`spares_server`)."
             )),
-            _ if field("sync_api_key_set") != Value::Bool(true) => {
-                warn("It has no SPARES_SYNC_API_KEY. Start it from a new terminal.");
-            }
-            _ => return Ok(key),
         }
+        pause("Press Enter once it is running. ")?;
     }
 }
 

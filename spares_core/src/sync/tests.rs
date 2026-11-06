@@ -5,10 +5,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use chrono::Duration;
 use chrono::Utc;
+use futures::future::BoxFuture;
 use serde_json::Map;
 use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
@@ -44,7 +47,6 @@ use crate::api::note::update_notes;
 use crate::api::parser::create_parser;
 use crate::api::review::submit_study_action;
 use crate::config::Replica;
-use crate::config::SyncRole;
 use crate::config::with_test_replica;
 use crate::model::CardId;
 use crate::model::NoteId;
@@ -67,7 +69,15 @@ const SERVER: Replica = Replica::new_unchecked(1);
 
 /// Runs `f` as the server.
 async fn on_server<F: std::future::Future>(f: F) -> F::Output {
-    with_test_replica(SERVER, SyncRole::Server, f).await
+    with_test_replica(SERVER, f).await
+}
+
+/// Enrolls a device with the server, which gives out numbers as the root.
+async fn on_server_enroll(
+    server: &SqlitePool,
+    request: super::devices::EnrollRequest,
+) -> Result<super::devices::EnrollResponse, Error> {
+    on_server(super::devices::enroll(server, request)).await
 }
 
 struct Replicas {
@@ -102,10 +112,24 @@ impl Replicas {
         std::fs::create_dir_all(&dir).unwrap();
         let laptop = open_db(&dir.join("laptop.sqlite")).await;
         let server = open_db(&dir.join("server.sqlite")).await;
+        // The laptop's host enrolled with the root, keeping its number.
+        on_server_enroll(
+            &server,
+            super::devices::EnrollRequest {
+                name: "laptop".to_string(),
+                host: true,
+                replica: Some(0),
+            },
+        )
+        .await
+        .unwrap();
         Self {
             remote: InProcess {
                 pool: server.clone(),
                 after_pull: Mutex::new(None),
+                during_push: Mutex::new(None),
+                lose_push_answer: AtomicBool::new(false),
+                fail_push: AtomicBool::new(false),
             },
             dir,
             laptop,
@@ -198,7 +222,15 @@ struct InProcess {
     pool: SqlitePool,
     /// Runs on the server right after the next pull, as a phone edit during a sync would.
     after_pull: Mutex<Option<String>>,
+    /// Runs on the client during the next push, before the server applies it.
+    during_push: Mutex<Option<DuringPush>>,
+    /// Loses the answer to the next push, after the server applied it.
+    lose_push_answer: AtomicBool,
+    /// Fails the next push before the server sees it.
+    fail_push: AtomicBool,
 }
+
+type DuringPush = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 
 #[async_trait]
 impl SyncRemote for InProcess {
@@ -219,9 +251,21 @@ impl SyncRemote for InProcess {
     }
 
     async fn push(&self, request: PushRequest) -> Result<PushResponse, Error> {
-        on_server(server::push(&self.pool, request))
+        let during = self.during_push.lock().unwrap().take();
+        if let Some(during) = during {
+            during().await;
+        }
+        if self.fail_push.swap(false, Ordering::SeqCst) {
+            return Err(Error::Sync("cannot reach the server".to_string()));
+        }
+        let response = on_server(server::push(&self.pool, request))
             .await
-            .map(|(response, _)| response)
+            .map(|(response, _)| response);
+        if self.lose_push_answer.swap(false, Ordering::SeqCst) {
+            response?;
+            return Err(Error::Sync("the connection dropped".to_string()));
+        }
+        response
     }
 
     async fn download(&self, path: &Path) -> Result<(), Error> {
@@ -242,7 +286,7 @@ async fn contents(
     Vec<TagRecord>,
 ) {
     let mut conn = pool.acquire().await.unwrap();
-    let all = Selection::After(-2);
+    let all = Selection::After(i64::MIN);
     (
         read_notes(&mut conn, all).await.unwrap(),
         read_cards(&mut conn, all).await.unwrap(),
@@ -877,6 +921,31 @@ async fn clozes_added_on_both_sides_keep_their_cards() {
 }
 
 #[tokio::test]
+async fn the_same_edit_on_both_sides_merges_with_one_card_per_cloze() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    let before = cards_of(&replicas.laptop, ids[0]).await;
+    let synced = data(&replicas.laptop, ids[0]).await.unwrap();
+    // A cloze without its order, which each side gives a card of its own
+    let text = synced.replace("Line three", "Line three {{ new }}");
+    edit(&replicas.laptop, ids[0], &text).await;
+    on_server(edit(&replicas.server, ids[0], &text)).await;
+    let report = replicas.sync().await;
+    assert!(report.conflicts.is_empty(), "{report:?}");
+    replicas.assert_converged().await;
+    assert_eq!(
+        tags_of(&replicas.laptop, ids[0]).await,
+        Vec::<String>::new()
+    );
+    let after = cards_of(&replicas.laptop, ids[0]).await;
+    assert_eq!(after.len(), 2, "{after:?}");
+    assert_eq!(after[0], before[0]);
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await,
+        data(&replicas.server, ids[0]).await
+    );
+}
+
+#[tokio::test]
 async fn a_server_change_during_the_sync_restarts_it() {
     let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
     edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
@@ -927,15 +996,15 @@ async fn row_count_mismatch_needs_a_full_sync() {
     edit(&replicas.laptop, ids[0], "A {{ one }} edited").await;
     let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
     assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
-    // It is remembered, and nothing was committed on the laptop.
+    // It is remembered. The push reached the server, so the note is stamped.
     let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
     assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
-    let dirty: i64 = sqlx::query_scalar("SELECT usn FROM note WHERE id = ?")
+    let usn: i64 = sqlx::query_scalar("SELECT usn FROM note WHERE id = ?")
         .bind(ids[0])
         .fetch_one(&replicas.laptop)
         .await
         .unwrap();
-    assert_eq!(dirty, -1);
+    assert!(usn > 0, "{usn}");
     replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
     replicas.sync().await;
 }
@@ -954,31 +1023,174 @@ async fn a_schema_mismatch_is_refused() {
     );
 }
 
+async fn undo(pool: &SqlitePool) -> Result<(), Error> {
+    crate::api::undo::undo_event(
+        pool,
+        crate::schema::undo::UndoEventRequest {
+            event_id: None,
+            undo_group: false,
+        },
+    )
+    .await
+    .map(|undone| assert!(undone.is_some(), "nothing to undo"))
+}
+
+async fn redo(pool: &SqlitePool) -> Result<(), Error> {
+    crate::api::undo::redo_event(
+        pool,
+        crate::schema::undo::RedoEventRequest {
+            event_id: None,
+            redo_group: false,
+        },
+    )
+    .await
+    .map(|redone| assert!(redone.is_some(), "nothing to redo"))
+}
+
+async fn review_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM review_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
-async fn undo_stops_at_the_last_sync() {
-    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
-    edit(&replicas.laptop, ids[0], "A {{ one }} before").await;
+async fn an_edit_can_be_undone_after_a_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} edited").await;
     replicas.sync().await;
-    let undo = || {
-        crate::api::undo::undo_event(
-            &replicas.laptop,
-            crate::schema::undo::UndoEventRequest {
-                event_id: None,
-                undo_group: false,
-            },
-        )
-    };
-    let err = undo().await.unwrap_err();
-    assert!(err.to_string().contains("before the last sync"), "{err}");
-    // A change made after the sync can be undone.
-    edit(&replicas.laptop, ids[0], "A {{ one }} after").await;
-    undo().await.unwrap().unwrap();
-    assert!(
-        data(&replicas.laptop, ids[0])
-            .await
-            .unwrap()
-            .ends_with("before")
+    // The server changing another note doesn't stop it
+    on_server(edit(&replicas.server, ids[1], "B {{ two }} there")).await;
+    replicas.sync().await;
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
     );
+    replicas.assert_converged().await;
+    redo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }} edited"
+    );
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn the_server_can_undo_its_own_edit_after_a_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    on_server(rate(&replicas.server, card, 3, Utc::now())).await;
+    on_server(edit(&replicas.server, ids[0], "A {{ one }} there")).await;
+    // The pull stamps both with its usn, which isn't a change from the laptop
+    replicas.sync().await;
+    on_server(undo(&replicas.server)).await.unwrap();
+    on_server(undo(&replicas.server)).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
+    );
+    assert_eq!(review_count(&replicas.laptop).await, 0);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn undo_stops_at_a_sync_that_changed_the_same_note() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}\n\nLine two\n"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} here\n\nLine two\n").await;
+    replicas.sync().await;
+    on_server(edit(
+        &replicas.server,
+        ids[0],
+        "A {{ one }} here\n\nLine two there\n",
+    ))
+    .await;
+    replicas.sync().await;
+    let err = undo(&replicas.laptop).await.unwrap_err();
+    assert!(
+        err.to_string().contains(&format!(
+            "\"Edit note {}\" can no longer be undone, since a sync has changed the same notes or \
+             cards since",
+            ids[0].letters()
+        )),
+        "{err}"
+    );
+    // A change made after that sync can be undone.
+    edit(
+        &replicas.laptop,
+        ids[0],
+        "A {{ one }} after\n\nLine two there\n",
+    )
+    .await;
+    undo(&replicas.laptop).await.unwrap();
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        "A {{[o:1] one }} here\n\nLine two there\n"
+    );
+}
+
+#[tokio::test]
+async fn undoing_a_synced_review_deletes_it_everywhere() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    rate(&replicas.laptop, card, 3, Utc::now()).await;
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 1);
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 0);
+    let state: i64 = sqlx::query_scalar("SELECT state FROM card WHERE id = ?")
+        .bind(card)
+        .fetch_one(&replicas.server)
+        .await
+        .unwrap();
+    assert_eq!(state, 0, "the card is new again");
+    replicas.assert_converged().await;
+    // And redone: the review comes back under its id
+    redo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.server).await, 1);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn a_review_undone_on_the_server_goes_on_the_laptop() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    on_server(rate(&replicas.server, card, 3, Utc::now())).await;
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.laptop).await, 1);
+    on_server(undo(&replicas.server)).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(review_count(&replicas.laptop).await, 0);
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn a_synced_delete_undone_brings_the_note_back_with_its_reviews() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let card = cards_of(&replicas.laptop, ids[0]).await[0];
+    rate(&replicas.laptop, card, 3, Utc::now()).await;
+    replicas.sync().await;
+    delete(&replicas.laptop, ids[0]).await;
+    replicas.sync().await;
+    assert_eq!(data(&replicas.server, ids[0]).await, None);
+    undo(&replicas.laptop).await.unwrap();
+    replicas.sync().await;
+    assert_eq!(
+        data(&replicas.server, ids[0]).await.unwrap(),
+        "A {{[o:1] one }}"
+    );
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM review_log WHERE card_id = ?")
+        .bind(card)
+        .fetch_one(&replicas.server)
+        .await
+        .unwrap();
+    assert_eq!(linked, 1, "the review has its card again");
+    replicas.assert_converged().await;
 }
 
 #[tokio::test]
@@ -1076,6 +1288,473 @@ async fn the_note_change_number_moves_on_after_syncs() {
     assert!(latest(replicas.laptop.clone()).await > after_full);
 }
 
+// More replicas: a browser that keeps a copy of the collection (replica 2, a client), enrolled
+// with the server, besides the laptop.
+
+const DEVICE: Replica = Replica::new_unchecked(2);
+
+/// Runs `f` as the device.
+async fn on_device<F: std::future::Future>(f: F) -> F::Output {
+    with_test_replica(DEVICE, f).await
+}
+
+impl Replicas {
+    /// A third database, enrolled as replica 2, with a full download of the server's.
+    async fn device(&self) -> SqlitePool {
+        let enrolled = on_server_enroll(
+            &self.server,
+            super::devices::EnrollRequest {
+                name: "phone".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(enrolled.replica, DEVICE.number());
+        let device = open_db(&self.dir.join("device.sqlite")).await;
+        self.sync_device(&device, SyncMode::FullDownload)
+            .await
+            .unwrap();
+        device
+    }
+
+    async fn sync_device(&self, device: &SqlitePool, mode: SyncMode) -> Result<SyncReport, Error> {
+        on_device(sync(device, &self.remote, mode, &self.dir)).await
+    }
+}
+
+/// Each `render_asset` row as `(path, hash)`, and each `render_package` spec.
+async fn render_assets(pool: &SqlitePool) -> (Vec<(String, String)>, Vec<String>) {
+    let assets = sqlx::query_as("SELECT path, hash FROM render_asset ORDER BY path")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    let packages = sqlx::query_scalar("SELECT spec FROM render_package ORDER BY spec")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    (assets, packages)
+}
+
+/// A device gets the laptop's render assets from the server at each sync where they changed, and
+/// never sends its own, which could be older than the laptop's.
+#[tokio::test]
+async fn a_device_follows_the_render_assets_and_never_sends_them() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    exec(
+        &replicas.laptop,
+        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/template.typ', '1111111111111111111111111111111111111111111111111111111111111111', 1, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/a:0.1.0')",
+    )
+    .await;
+    replicas.sync().await;
+    let device = replicas.device().await;
+    let first = (
+        vec![(
+            "/t/template.typ".to_string(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        )],
+        vec!["@preview/a:0.1.0".to_string()],
+    );
+    assert_eq!(render_assets(&device).await, first);
+
+    // The template changed on the laptop, and moved
+    exec(
+        &replicas.laptop,
+        "UPDATE render_asset SET hash = '2222222222222222222222222222222222222222222222222222222222222222', mtime = 2 WHERE path = '/t/template.typ';
+         INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/u/template.typ', '3333333333333333333333333333333333333333333333333333333333333333', 2, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/b:0.2.0')",
+    )
+    .await;
+    replicas.sync().await;
+    on_device(edit(&device, ids[0], "A {{ one }} phone")).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    let second = (
+        vec![
+            (
+                "/t/template.typ".to_string(),
+                "2222222222222222222222222222222222222222222222222222222222222222".to_string(),
+            ),
+            (
+                "/u/template.typ".to_string(),
+                "3333333333333333333333333333333333333333333333333333333333333333".to_string(),
+            ),
+        ],
+        vec![
+            "@preview/a:0.1.0".to_string(),
+            "@preview/b:0.2.0".to_string(),
+        ],
+    );
+    assert_eq!(render_assets(&device).await, second);
+    assert_eq!(render_assets(&replicas.server).await, second);
+
+    // Rows a device has, however old, stay there: the server keeps the laptop's
+    exec(
+        &device,
+        "UPDATE render_asset SET hash = '1111111111111111111111111111111111111111111111111111111111111111', mtime = 1 WHERE path = '/t/template.typ'",
+    )
+    .await;
+    on_device(edit(&device, ids[0], "A {{ one }} phone again")).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    assert_eq!(render_assets(&replicas.server).await, second);
+    // And the pull brought the server's back
+    assert_eq!(render_assets(&device).await, second);
+
+    // A client's older row doesn't replace a newer one either
+    exec(
+        &replicas.laptop,
+        "UPDATE render_asset SET hash = 'h0', mtime = 0 WHERE path = '/t/template.typ'",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await, second);
+}
+
+/// The laptop sends every render asset it has, so the server removes those it no longer sends,
+/// unless another host syncs with it, whose notes may read them.
+#[tokio::test]
+async fn the_server_drops_render_assets_the_laptop_no_longer_has() {
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    exec(
+        &replicas.laptop,
+        "INSERT INTO render_asset (path, hash, mtime, size) VALUES ('/t/kept.typ', 'k', 1, 1), ('/t/gone.typ', 'g', 1, 1);
+         INSERT INTO render_package (spec) VALUES ('@preview/kept:0.1.0'), ('@preview/gone:0.1.0')",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await.0.len(), 2);
+
+    exec(
+        &replicas.laptop,
+        "DELETE FROM render_asset WHERE path = '/t/gone.typ';
+         DELETE FROM render_package WHERE spec = '@preview/gone:0.1.0'",
+    )
+    .await;
+    // Another host that syncs with the server keeps them
+    exec(
+        &replicas.server,
+        "INSERT INTO sync_client (replica, last_usn, last_sync_at) VALUES (5, 0, 0)",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(render_assets(&replicas.server).await.0.len(), 2);
+
+    exec(
+        &replicas.server,
+        "DELETE FROM sync_client WHERE replica = 5",
+    )
+    .await;
+    replicas.sync().await;
+    assert_eq!(
+        render_assets(&replicas.server).await,
+        (
+            vec![("/t/kept.typ".to_string(), "k".to_string())],
+            vec!["@preview/kept:0.1.0".to_string()]
+        )
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines, reason = "one scenario")]
+async fn a_device_has_to_enroll_and_its_number_is_its_own() {
+    use super::devices::EnrollRequest;
+    use super::devices::UnenrollRequest;
+    use super::devices::list;
+    use super::devices::unenroll;
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    let device = open_db(&replicas.dir.join("device.sqlite")).await;
+    let err = replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotEnrolled(2)), "{err}");
+
+    let name = |name: &str| EnrollRequest {
+        name: name.to_string(),
+        ..Default::default()
+    };
+    assert!(on_server_enroll(&replicas.server, name(" ")).await.is_err());
+    assert_eq!(
+        on_server_enroll(&replicas.server, name("phone"))
+            .await
+            .unwrap()
+            .replica,
+        2
+    );
+    assert_eq!(
+        on_server_enroll(&replicas.server, name("tablet"))
+            .await
+            .unwrap()
+            .replica,
+        3
+    );
+    replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap();
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    let devices = list(&replicas.server).await.unwrap();
+    assert_eq!(
+        devices
+            .iter()
+            .map(|d| (d.replica, d.name.as_str()))
+            .collect::<Vec<_>>(),
+        [(0, "laptop"), (2, "phone"), (3, "tablet")]
+    );
+    let devices: Vec<_> = devices.into_iter().filter(|d| d.replica != 0).collect();
+
+    // A host claims the number it has, unless another device has it, and gets a device's number
+    // when the laptop's is taken.
+    let host = |name: &str, replica: Option<u8>| EnrollRequest {
+        name: name.to_string(),
+        host: true,
+        replica,
+    };
+    for taken in [0, 1, 2, 8] {
+        assert!(
+            on_server_enroll(&replicas.server, host("another host", Some(taken)))
+                .await
+                .is_err(),
+            "{taken}"
+        );
+    }
+
+    // A laptop full upload keeps the numbers taken, and when each device last synced, but the
+    // device has to full sync.
+    let last_sync_at = |devices: &[super::devices::Device]| -> Vec<Option<i64>> {
+        devices.iter().map(|d| d.last_sync_at).collect()
+    };
+    let before = last_sync_at(&devices);
+    assert!(before[0].is_some() && before[1].is_none(), "{before:?}");
+    replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
+    let after: Vec<_> = list(&replicas.server)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.replica != 0)
+        .collect();
+    assert_eq!(last_sync_at(&after), before);
+    let err = replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::FullSyncRequired(_)), "{err}");
+    assert_eq!(
+        on_server_enroll(&replicas.server, host("laptop 2", None))
+            .await
+            .unwrap()
+            .replica,
+        4
+    );
+
+    // Unenrolled, the device can no longer sync, and its number goes to the next device.
+    assert!(
+        unenroll(&replicas.server, UnenrollRequest { replica: 2 })
+            .await
+            .unwrap()
+    );
+    let err = replicas
+        .sync_device(&device, SyncMode::FullDownload)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotEnrolled(2)), "{err}");
+    assert_eq!(
+        on_server_enroll(&replicas.server, name("new phone"))
+            .await
+            .unwrap()
+            .replica,
+        2
+    );
+    // Unenrolled, the laptop's number goes to the next host that asks.
+    unenroll(&replicas.server, UnenrollRequest { replica: 0 })
+        .await
+        .unwrap();
+    assert_eq!(
+        on_server_enroll(&replicas.server, host("new laptop", None))
+            .await
+            .unwrap()
+            .replica,
+        0
+    );
+}
+
+#[tokio::test]
+async fn a_device_under_a_freed_number_never_hands_out_its_ids_again() {
+    use super::devices::EnrollRequest;
+    use super::devices::UnenrollRequest;
+    use super::devices::enroll;
+    use super::devices::unenroll;
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    let device = replicas.device().await;
+    let made = on_device(create(&device, &["B {{ phone }}", "C {{ phone }}"], &[])).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    // Its newest note is gone everywhere, so no table remembers its id.
+    on_device(delete(&device, made[1])).await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+
+    unenroll(&replicas.server, UnenrollRequest { replica: 2 })
+        .await
+        .unwrap();
+    let enrolled = enroll(
+        &replicas.server,
+        EnrollRequest {
+            name: "new phone".to_string(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(enrolled.replica, DEVICE.number());
+    let new_device = open_db(&replicas.dir.join("new-device.sqlite")).await;
+    replicas
+        .sync_device(&new_device, SyncMode::FullDownload)
+        .await
+        .unwrap();
+    let next = on_device(create(&new_device, &["D {{ new phone }}"], &[])).await;
+    assert_eq!(
+        [made[1].letters(), next[0].letters()],
+        ["aaai", "aaaj"],
+        "the deleted note's id came back"
+    );
+}
+
+#[tokio::test]
+async fn the_laptop_server_and_a_device_converge() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}", "C {{ three }}"]).await;
+    let device = replicas.device().await;
+    // Each side edits a note and creates one, while out of sync.
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    on_server(edit(&replicas.server, ids[1], "B {{ two }} web")).await;
+    on_device(edit(&device, ids[2], "C {{ three }} phone")).await;
+    let on_laptop = create(&replicas.laptop, &["D {{ laptop }}"], &[]).await;
+    let on_web = on_server(create(&replicas.server, &["E {{ web }}"], &[])).await;
+    let on_phone = on_device(create(
+        &device,
+        &["F {{ phone }}", "G {{ phone }}"],
+        &["phone"],
+    ))
+    .await;
+    // Each follows the newest laptop note it has seen, `aac`: the web's and the phone's with letters
+    // of their own, and the laptop's next note takes the next laptop id.
+    assert_eq!(on_laptop[0].letters(), "aad");
+    assert_eq!(on_web[0].letters(), "aaca");
+    assert_eq!(
+        on_phone.iter().map(|id| id.letters()).collect::<Vec<_>>(),
+        ["aach", "aaci"]
+    );
+    let all: std::collections::BTreeSet<NoteId> = [&on_laptop[..], &on_web, &on_phone]
+        .concat()
+        .into_iter()
+        .collect();
+    assert_eq!(all.len(), 4, "ids collided: {all:?}");
+
+    replicas.sync().await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(
+        contents(&device).await.0,
+        contents(&replicas.server).await.0
+    );
+    assert!(
+        data(&replicas.laptop, ids[2])
+            .await
+            .unwrap()
+            .ends_with("phone")
+    );
+    assert!(data(&device, ids[0]).await.unwrap().ends_with("laptop"));
+    assert!(data(&device, ids[1]).await.unwrap().ends_with("web"));
+    assert_eq!(tags_of(&replicas.laptop, on_phone[1]).await, ["phone"]);
+
+    // Reviews on the device go in under its residue, and reach the laptop.
+    let card = cards_of(&device, ids[0]).await[0];
+    on_device(rate(&device, card, 3, Utc::now())).await;
+    let log: i64 = sqlx::query_scalar("SELECT MAX(id) FROM review_log")
+        .fetch_one(&device)
+        .await
+        .unwrap();
+    assert_eq!(log % crate::ids::ID_STEP, 2);
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas.assert_converged().await;
+}
+
+#[tokio::test]
+async fn the_laptop_and_a_device_editing_one_note_merge() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    let device = replicas.device().await;
+    let laptop_edit = LINES.replacen("Line one", "Line one laptop", 1);
+    edit(&replicas.laptop, ids[0], &laptop_edit).await;
+    on_device(edit(
+        &device,
+        ids[0],
+        &LINES.replacen("Line four", "Line four phone", 1),
+    ))
+    .await;
+    // The device syncs first, then the laptop merges both.
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.sync().await;
+    replicas
+        .sync_device(&device, SyncMode::Normal)
+        .await
+        .unwrap();
+    replicas.assert_converged().await;
+    let merged = data(&device, ids[0]).await.unwrap();
+    assert!(
+        merged.contains("Line one laptop") && merged.contains("Line four phone"),
+        "{merged}"
+    );
+}
+
+#[test]
+fn a_device_gets_the_config_and_every_template() {
+    let config_dir = crate::config::get_config_dir();
+    let template = config_dir.join("typst/templates/spares-test-device-config/card.typ");
+    std::fs::create_dir_all(template.parent().unwrap()).unwrap();
+    std::fs::write(&template, "#let card = 1").unwrap();
+    std::fs::write(template.with_file_name("binary.png"), [0xff, 0xfe]).unwrap();
+    let config = super::devices::device_config();
+    std::fs::remove_dir_all(template.parent().unwrap()).unwrap();
+    let config = config.unwrap();
+    assert_eq!(
+        config.files["typst/templates/spares-test-device-config/card.typ"],
+        "#let card = 1"
+    );
+    assert!(!config.files.keys().any(|path| path.ends_with("binary.png")));
+    let toml = &config.files["config.toml"];
+    assert!(toml.contains("render_browser_parsers = false"), "{toml}");
+    assert!(!toml.contains("[sync]"), "{toml}");
+    assert_eq!(config.image_dir, crate::api::image::get_image_directory());
+    assert_eq!(
+        config.image_occlusion_dir,
+        crate::parsers::image_occlusion::get_image_occlusion_directory()
+    );
+}
+
 /// A browser's pool has one connection. A full download used to wait on a second one, which
 /// never came, until the pool timed out.
 #[tokio::test]
@@ -1101,4 +1780,157 @@ async fn a_full_download_works_on_a_single_connection() {
     .await
     .unwrap();
     assert_eq!(report.notes_changed.len(), 1);
+}
+
+/// A single connection, as a browser's copy has, that has done its first sync
+async fn single_connection(replicas: &Replicas) -> SqlitePool {
+    let path = replicas.dir.join("one-connection.sqlite");
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+        .unwrap()
+        .create_if_missing(true)
+        .with_regexp();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sync(
+        &pool,
+        &replicas.remote,
+        SyncMode::FullDownload,
+        &replicas.dir,
+    )
+    .await
+    .unwrap();
+    pool
+}
+
+/// How many rows are dirty or being pushed
+async fn unsynced(pool: &SqlitePool) -> i64 {
+    super::dirty_count(pool).await.unwrap()
+}
+
+/// The note's base, as `sync_base` keeps it
+async fn base_data(pool: &SqlitePool, id: NoteId) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT json_extract(snapshot, '$.data') FROM sync_base WHERE kind = 'note' AND oid = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// The push holds no transaction, so the copy keeps answering while the server takes its time.
+#[tokio::test]
+async fn a_single_connection_answers_during_the_push() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    let pool = single_connection(&replicas).await;
+    edit(&pool, ids[0], "A {{ one }} device").await;
+    let during = pool.clone();
+    *replicas.remote.during_push.lock().unwrap() = Some(Box::new(move || {
+        Box::pin(async move {
+            let notes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+                .fetch_one(&during)
+                .await
+                .unwrap();
+            assert_eq!(notes, 1);
+        })
+    }));
+    let report = sync(&pool, &replicas.remote, SyncMode::Normal, &replicas.dir)
+        .await
+        .unwrap();
+    assert!(report.pushed > 0, "{report:?}");
+    assert_eq!(unsynced(&pool).await, 0);
+    assert!(
+        on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("device")
+    );
+}
+
+/// A note edited while its earlier edit is pushed stays dirty, with the pushed text as its base,
+/// so a server edit to another line afterwards merges without a conflict.
+#[tokio::test]
+async fn a_write_during_the_push_syncs_the_next_time() {
+    let (replicas, ids) = Replicas::synced(&[LINES]).await;
+    edit(
+        &replicas.laptop,
+        ids[0],
+        &LINES.replacen("Line three", "Line three laptop", 1),
+    )
+    .await;
+    // With the card's order, which the edit put in
+    let pushed = data(&replicas.laptop, ids[0]).await.unwrap();
+    let during = replicas.laptop.clone();
+    let id = ids[0];
+    let later = pushed.replacen("Line four", "Line four laptop", 1);
+    let written = later.clone();
+    *replicas.remote.during_push.lock().unwrap() = Some(Box::new(move || {
+        Box::pin(async move { edit(&during, id, &written).await })
+    }));
+    replicas.sync().await;
+    assert_eq!(
+        on_server(data(&replicas.server, ids[0])).await.unwrap(),
+        pushed
+    );
+    assert_eq!(base_data(&replicas.laptop, ids[0]).await.unwrap(), pushed);
+    assert!(unsynced(&replicas.laptop).await > 0);
+
+    let phone = pushed.replacen("Line one", "Line one phone", 1);
+    on_server(edit(&replicas.server, ids[0], &phone)).await;
+    let report = replicas.sync().await;
+    assert!(report.conflicts.is_empty(), "{report:?}");
+    replicas.assert_converged().await;
+    assert_eq!(
+        data(&replicas.laptop, ids[0]).await.unwrap(),
+        later.replacen("Line one", "Line one phone", 1)
+    );
+}
+
+/// A push the server applied but whose answer never came is finished by the next sync, which
+/// would otherwise take the server for one restored from a backup.
+#[tokio::test]
+async fn a_lost_push_answer_is_finished_by_the_next_sync() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}", "B {{ two }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    replicas
+        .remote
+        .lose_push_answer
+        .store(true, Ordering::SeqCst);
+    let err = replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
+    assert!(matches!(err, Error::Sync(_)), "{err}");
+    assert!(
+        on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("laptop")
+    );
+    // Changed again before the next sync
+    edit(&replicas.laptop, ids[1], "B {{ two }} laptop").await;
+
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(unsynced(&replicas.laptop).await, 0);
+}
+
+/// A push the server refused, or never received, is sent again by the next sync.
+#[tokio::test]
+async fn a_push_that_never_arrived_is_sent_again() {
+    let (replicas, ids) = Replicas::synced(&["A {{ one }}"]).await;
+    edit(&replicas.laptop, ids[0], "A {{ one }} laptop").await;
+    replicas.remote.fail_push.store(true, Ordering::SeqCst);
+    replicas.sync_mode(SyncMode::Normal).await.unwrap_err();
+    assert!(
+        !on_server(data(&replicas.server, ids[0]))
+            .await
+            .unwrap()
+            .ends_with("laptop")
+    );
+    replicas.sync().await;
+    replicas.assert_converged().await;
+    assert_eq!(unsynced(&replicas.laptop).await, 0);
 }
