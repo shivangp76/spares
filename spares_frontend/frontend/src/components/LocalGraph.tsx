@@ -48,9 +48,9 @@ export default function LocalGraph({ noteId, onOpenNote }: { noteId: number; onO
             </label>
             <Link to={`/graph?q=${encodeURIComponent(query)}&depth=${depth}&down=${depth}`} style={{ marginLeft: 'auto' }}>Open in Graph</Link>
           </div>
-          {error && <div style={{ fontSize: 13, color: 'var(--error)' }}>{error}</div>}
+          {error && <div className='error-text-small'>{error}</div>}
           {graph && graph.nodes.length <= 1 && !error ? (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            <div className='hint'>
               {graph.links_generated ? 'No notes link to this note, and it links to none.' : "Links between notes haven't been found yet."}
             </div>
           ) : graph && (

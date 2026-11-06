@@ -25,6 +25,7 @@ import { useSavedSearches } from '../hooks/useSavedSearches';
 import { selectedCount, type IdsOrQuery } from '../selection';
 import type { CardMatch, CardResponse, UpdateCardsRequest } from '../types/spares';
 import { errorMessage, formatDate, formatDateTime, formatNoteId, tagList, td, th, withPage, withSearch } from '../utils';
+import PageTitle from '../components/PageTitle';
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
@@ -399,7 +400,7 @@ export default function CardsPage() {
       `}</style>
 
       <NavbarHelp help={keys} />
-      <h2 style={{ marginBottom: 16 }}>Cards</h2>
+      <PageTitle>Cards</PageTitle>
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, so it is unchanged when going back to it */}
@@ -489,7 +490,7 @@ export default function CardsPage() {
 
           {!loading && !queueOrder && (
             <div className="table-scroll">
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <table className='data-table'>
                 <thead>
                   <tr>
                     <th style={{ ...th, width: 1, paddingRight: 0 }}>

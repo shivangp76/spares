@@ -115,9 +115,7 @@ function RenderedFile({
   }, [error, onReady]);
 
   if (error)
-    return (
-      <div style={{ color: "var(--error)" }}>Error loading card: {error}</div>
-    );
+    return <div className="error-text">Error loading card: {error}</div>;
   if (url === null) return <div className="loading-delayed">Loading…</div>;
   return <PdfViewer url={url} onReady={onReady} />;
 }
@@ -273,9 +271,7 @@ function PendingRender({
   }
   if ("error" in current)
     return (
-      <div style={{ color: "var(--error)" }}>
-        Error loading card: {current.error}
-      </div>
+      <div className="error-text">Error loading card: {current.error}</div>
     );
   return (
     <>

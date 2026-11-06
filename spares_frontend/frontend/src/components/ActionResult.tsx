@@ -57,10 +57,10 @@ export default function ActionResult({ outcome, onReverted }: { outcome: ActionO
 
   const label = undone ? (busy ? 'Redoing…' : 'Redo') : (busy ? 'Undoing…' : 'Undo');
   return (
-    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="status-line" style={{ marginTop: 8 }}>
       <span>{outcome.message}</span>
       {eventIds.length > 0 && (
-        <button onClick={revert} disabled={busy} style={{ padding: '2px 8px', fontSize: 12 }}>
+        <button onClick={revert} disabled={busy} className='button-small'>
           {undone ? <RedoIcon /> : <UndoIcon />}{label}
         </button>
       )}

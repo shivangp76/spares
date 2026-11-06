@@ -101,6 +101,7 @@ import {
   noteChangedSince,
   sectionLabel,
 } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -1554,13 +1555,7 @@ export default function ReviewPage() {
       className={splitNote ? "review-note-split" : undefined}
       style={splitNote ? undefined : { marginTop: 16, scrollMarginTop: 16 }}
     >
-      <Suspense
-        fallback={
-          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            Loading note…
-          </div>
-        }
-      >
+      <Suspense fallback={<div className="hint">Loading note…</div>}>
         <NoteDetail
           key={panelNote.id}
           note={panelNote}
@@ -1590,7 +1585,9 @@ export default function ReviewPage() {
           marginBottom: isNarrow ? 8 : 0,
         }}
       >
-        <h2 style={isNarrow ? { margin: 0 } : { marginBottom: 16 }}>Review</h2>
+        <PageTitle style={isNarrow ? { margin: 0 } : undefined}>
+          Review
+        </PageTitle>
         {/* The session's actions, out of the way of the card's at the top right */}
         {cardShown && (
           <div
@@ -2635,7 +2632,7 @@ export default function ReviewPage() {
                   <button onClick={forget} style={toned(TONES.red)}>
                     Forget Card
                   </button>
-                  <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  <span className="hint">
                     Starts the card again as new; its review log is kept.
                   </span>
                 </ActionGroup>

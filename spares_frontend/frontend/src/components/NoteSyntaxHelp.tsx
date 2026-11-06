@@ -17,9 +17,8 @@ export default function NoteSyntaxButton({ parserId, onInsert, tips }: {
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
-        className="button-tool tool-teal"
+        className="button-tool tool-teal button-small"
         title={parserId === null ? 'Select a parser first' : 'How to write clozes and the rest of a note, with the cards each makes'}
-        style={{ padding: '2px 8px', fontSize: 12 }}
       >
         <span aria-hidden="true">📖</span> Syntax
       </button>
@@ -36,13 +35,13 @@ export default function NoteSyntaxButton({ parserId, onInsert, tips }: {
         >
           {close => (
             <>
-              {error && <div style={{ color: 'var(--error)', fontSize: 13 }}>{error}</div>}
+              {error && <div className='error-text-small'>{error}</div>}
               {!examples && !error && <div style={{ fontSize: 13 }}>Loading…</div>}
               {examples?.map(example => (
                 <section key={example.title} className="syntax-example">
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
                     <strong style={{ fontSize: 14 }}>{example.title}</strong>
-                    <button type="button" onClick={() => { close(); onInsert(example.source); }} style={{ padding: '2px 8px', fontSize: 12 }}>
+                    <button type="button" onClick={() => { close(); onInsert(example.source); }} className='button-small'>
                       Insert
                     </button>
                   </div>

@@ -154,7 +154,7 @@ export default function NewNoteForm({ onCreated, onCancel, ref }: { onCreated: (
           {saving ? 'Creating…' : 'Create'}
         </button>
         <button onClick={cancel} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
-        {error && <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>}
+        {error && <span className='error-text-small'>{error}</span>}
       </div>
     </div>
   );

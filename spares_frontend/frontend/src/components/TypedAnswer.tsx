@@ -74,7 +74,7 @@ export function TypedAnswerInputs({ info, answers, onChange, onSubmit }: {
         );
         return (
           <label key={i} data-blank={i} style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-            {label && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</span>}
+            {label && <span className='secondary-text'>{label}</span>}
             {vimEnabled ? (
               // The plain box stands in while the editor loads
               <Suspense fallback={input}>
@@ -129,7 +129,7 @@ export function TypedAnswerResult({ info, answers }: { info: TypedAnswerInfo; an
               {label && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 2 }}>{label}</div>}
               {manual ? (
                 <div>
-                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>You typed: </span>
+                  <span className='secondary-text'>You typed: </span>
                   {typed.trim() ? <span style={answerText}>{typed.trim()}</span> : <em style={{ color: 'var(--text-muted)' }}>nothing</em>}
                 </div>
               ) : (

@@ -14,6 +14,7 @@ import { useTableWidths } from '../hooks/useTableWidths';
 import { setTagsPageSize, useTagsPageSize } from '../preferences';
 import type { TagResponse, UpdateTagRequest } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
+import PageTitle from '../components/PageTitle';
 
 const PAGE_SIZE = 500;
 const input: React.CSSProperties = { padding: '6px 10px', fontSize: 14, border: '1px solid var(--border-strong)', borderRadius: 4 };
@@ -437,7 +438,7 @@ export default function TagsPage() {
   return (
     <div className="page" style={{ maxWidth: 'max(1000px, var(--page-max-width))' }}>
       <NavbarHelp help={keys.help} />
-      <h2 style={{ marginBottom: 16 }}>Tags</h2>
+      <PageTitle>Tags</PageTitle>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         <input ref={filterInput} value={filter} onChange={e => { setFilter(e.target.value); pages.pagination.goToPage(1); }} placeholder="Filter by name…" style={{ ...input, flex: 1, maxWidth: 300 }} />
@@ -487,7 +488,7 @@ export default function TagsPage() {
       {tags && view === 'table' && (
         <>
           <div className="table-scroll">
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <table className='data-table'>
               <thead>
                 <tr>
                   <ResizableHeader widths={widths} column="id" label="ID" className="hide-narrow" />

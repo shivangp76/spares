@@ -277,7 +277,7 @@ export default function Navbar({
             <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />
           )}
           {status && (
-            <div className="navbar-status">
+            <div className="navbar-status status-line">
               <span>{status}</span>
               {lastUndoId !== null && (
                 <button onClick={redoLast} className="button-small">

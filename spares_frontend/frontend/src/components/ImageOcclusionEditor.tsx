@@ -206,7 +206,7 @@ export default function ImageOcclusionEditor(props: Props) {
             />
           </label>
         )}
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+        <span className='hint'>
           {!bridge
             ? 'Loading editor…'
             : mode === 'new' && !image
@@ -215,7 +215,7 @@ export default function ImageOcclusionEditor(props: Props) {
                 ? 'Loading image occlusion…'
                 : 'Shapes on the Clozes layer become clozes. Set a cloze\'s settings in its Cloze Settings field.'}
         </span>
-        {error && <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>}
+        {error && <span className='error-text-small'>{error}</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button onClick={close} disabled={saving} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>Cancel</button>
           <button onClick={save} disabled={saving || !loaded} className="touch-target-small" style={{ padding: '5px 14px', fontSize: 13 }}>

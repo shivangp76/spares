@@ -45,7 +45,7 @@ export default function Backlinks({ noteId, version, onOpenNote }: {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={label}>Linked From</div>
-      {error && <div style={{ fontSize: 13, color: 'var(--error)' }}>{error}</div>}
+      {error && <div className='error-text-small'>{error}</div>}
       {backlinks && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
           {backlinks.notes.map(({ node, edge }) => (
@@ -53,8 +53,7 @@ export default function Backlinks({ noteId, version, onOpenNote }: {
               key={node.id}
               onClick={() => onOpenNote(node.id)}
               title={`Links to this note's keyword "${edge.keyword}"`}
-              className="button-link"
-              style={{ padding: '4px 10px', fontSize: 12 }}
+              className="button-link button-small"
             >
               {node.keywords.length > 0 ? `${node.keywords[0]} (${formatNoteId(node.id)})` : formatNoteId(node.id)}
             </button>

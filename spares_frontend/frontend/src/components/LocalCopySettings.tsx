@@ -300,10 +300,7 @@ export default function LocalCopySettings() {
             : "Keep a Copy on This Device"}
         </button>
         {step && (
-          <span
-            role="status"
-            style={{ fontSize: 13, color: "var(--text-secondary)" }}
-          >
+          <span role="status" className="secondary-text">
             {(step !== "Registering this device" && describeDownload(local)) ||
               step}
             …

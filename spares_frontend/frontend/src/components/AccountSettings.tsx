@@ -99,7 +99,7 @@ export default function AccountSettings() {
         </button>
         <button
           disabled={busy}
-          style={{ color: "var(--error)" }}
+          className="error-text"
           onClick={() => {
             const password = window.prompt(
               "This deletes your account and your whole collection on this host. Type your password to delete it.",

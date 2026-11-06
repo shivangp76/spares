@@ -13,6 +13,7 @@ import { useTableWidths } from '../hooks/useTableWidths';
 import { setKeywordsPageSize, useKeywordsPageSize, type PageSize } from '../preferences';
 import type { MatchedKeywordResponse, NoteLink, NoteResponse, UnmatchedKeywordResponse } from '../types/spares';
 import { errorMessage, formatNoteId, keepShown, td } from '../utils';
+import PageTitle from '../components/PageTitle';
 
 type Tab = 'all' | 'search' | 'unmatched' | 'duplicate' | 'links';
 
@@ -61,7 +62,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const widths = useTableWidths('keywords');
   const uniquePages = useKeywordPages(unique);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
+  if (error) return <div className='error-text'>{error}</div>;
   if (!keywords) return <div>Loading…</div>;
 
   return (
@@ -76,7 +77,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
           <input type="checkbox" checked={short} onChange={e => setShort(e.target.checked)} style={{ marginRight: 6 }} />
           Unique keywords only
         </label>
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{short ? unique.length : shown.length} shown</span>
+        <span className='hint'>{short ? unique.length : shown.length} shown</span>
       </div>
       {short ? (
         <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.7 }}>
@@ -84,7 +85,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
         </ul>
       ) : (
         <div className="table-scroll">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <table className='data-table'>
             <thead><tr><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="keyword" label="Keyword" /></tr></thead>
             <tbody>
               {rowPages.shown.map(([id, k], i) => (
@@ -138,14 +139,14 @@ function KeywordSearch({ onOpen }: { onOpen: (id: number) => void }) {
         <button onClick={() => search()} className="touch-target-small">Search</button>
       </div>
       <RecentSearches recent={recent} onSelect={search} onRemove={removeRecent} style={{ marginBottom: 12 }} />
-      {error && <div style={{ color: 'var(--error)' }}>{error}</div>}
+      {error && <div className='error-text'>{error}</div>}
       {results && (results.matches.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>No matching keyword found for “{results.keyword}”.</p>
       ) : (
         <>
           <p style={hint}>Ranked best first; the first row is what a link to “{results.keyword}” resolves to.</p>
           <div className="table-scroll">
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <table className='data-table'>
               <thead><tr><ResizableHeader widths={widths} column="rank" label="#" /><ResizableHeader widths={widths} column="matched" label="Matched keyword" /><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="score" label="Score" /></tr></thead>
               <tbody>
                 {pages.shown.map((m, i) => (
@@ -177,13 +178,13 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     getUnmatchedKeywords().then(setRows, e => setError(errorMessage(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
+  if (error) return <div className='error-text'>{error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
       <p style={hint}>Keywords that notes link to, but that no note has.</p>
       <div className="table-scroll">
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <table className='data-table'>
           <thead><tr><ResizableHeader widths={widths} column="note" label="Note" /><ResizableHeader widths={widths} column="searched" label="Searched keyword" /></tr></thead>
           <tbody>
             {pages.shown.map((r, i) => (
@@ -212,13 +213,13 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
     getDuplicateKeywords().then(setRows, e => setError(errorMessage(e)));
   }, []);
 
-  if (error) return <div style={{ color: 'var(--error)' }}>{error}</div>;
+  if (error) return <div className='error-text'>{error}</div>;
   if (!rows) return <div>Loading…</div>;
   return (
     <>
       <p style={hint}>Keywords on more than one note.</p>
       <div className="table-scroll">
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <table className='data-table'>
           <thead><tr><ResizableHeader widths={widths} column="keyword" label="Keyword" /><ResizableHeader widths={widths} column="notes" label="Notes" /></tr></thead>
           <tbody>
             {pages.shown.map(([k, ids]) => (
@@ -277,11 +278,11 @@ function NoteLinks({ onOpen }: { onOpen: (id: number) => void }) {
         </label>
         <button onClick={load}>List</button>
       </div>
-      {error && <div style={{ color: 'var(--error)' }}>{error}</div>}
+      {error && <div className='error-text'>{error}</div>}
       {links && (
         <>
           <div className="table-scroll">
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <table className='data-table'>
               <thead>
                 <tr>
                   <ResizableHeader widths={widths} column="note" label="Note" />
@@ -337,7 +338,7 @@ export default function KeywordsPage() {
 
   return (
     <div className="page-wide">
-      <h2 style={{ marginBottom: 16 }}>Keywords</h2>
+      <PageTitle>Keywords</PageTitle>
 
       <div className="split">
         {/* Hidden rather than unmounted on phones, since the tabs keep their own results */}

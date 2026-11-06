@@ -120,7 +120,7 @@ export default function AudioRecorder({ parserId, onInserted, onClose }: {
       <div className="audio-recorder-content">
         <h3 id="audio-recorder-title" style={{ margin: '0 0 12px' }}>Record audio</h3>
         {!supported ? (
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          <p className='secondary-text'>
             This browser can't record audio here. Microphones are only available on pages served over HTTPS or from localhost.
           </p>
         ) : (
@@ -147,8 +147,8 @@ export default function AudioRecorder({ parserId, onInserted, onClose }: {
                   Recording {formatElapsed(elapsed)}
                 </span>
               )}
-              {state === 'starting' && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Waiting for the microphone…</span>}
-              {state === 'idle' && !error && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>The clip is inserted as a link at the cursor.</span>}
+              {state === 'starting' && <span className='hint'>Waiting for the microphone…</span>}
+              {state === 'idle' && !error && <span className='hint'>The clip is inserted as a link at the cursor.</span>}
             </div>
             {recordingUrl && state !== 'recording' && (
               <audio src={recordingUrl} controls style={{ width: '100%', marginTop: 12 }} />

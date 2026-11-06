@@ -13,9 +13,8 @@ export default function InsertImageButton({ parserId, view }: { parserId: number
       <button
         onClick={() => input.current?.click()}
         disabled={parserId === null}
-        className="button-tool tool-teal"
+        className="button-tool tool-teal button-small"
         title={parserId === null ? 'Select a parser first' : 'Choose images or take a photo, and insert them at the cursor'}
-        style={{ padding: '2px 8px', fontSize: 12 }}
       >
         <span aria-hidden="true">📷</span> Insert image
       </button>

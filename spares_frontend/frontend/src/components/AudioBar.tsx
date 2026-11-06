@@ -35,7 +35,7 @@ export default function AudioBar({ audio, flipped, player }: { audio: CardAudio;
           Replay <span className="key-hint">(r)</span>
         </button>
       )}
-      {player.error && <span style={{ fontSize: 13, color: 'var(--error)' }}>{player.error}</span>}
+      {player.error && <span className='error-text-small'>{player.error}</span>}
     </div>
   );
 }

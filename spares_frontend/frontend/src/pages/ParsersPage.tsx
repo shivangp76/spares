@@ -10,6 +10,7 @@ import { useRowKeys } from '../hooks/useRowKeys';
 import { useTableWidths } from '../hooks/useTableWidths';
 import type { ParserResponse } from '../types/spares';
 import { errorMessage, td, th } from '../utils';
+import PageTitle from '../components/PageTitle';
 
 // Enough to list every parser on one page
 const PARSERS_LIMIT = 1000;
@@ -97,7 +98,7 @@ export default function ParsersPage() {
   return (
     <div className="page">
       <NavbarHelp help={keys.help} />
-      <h2 style={{ marginBottom: 16 }}>Parsers</h2>
+      <PageTitle>Parsers</PageTitle>
 
       <div className="search-row" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input
@@ -122,7 +123,7 @@ export default function ParsersPage() {
 
       {parsers && (
         <div className="table-scroll">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <table className='data-table'>
             <thead>
               <tr>
                 <ResizableHeader widths={widths} column="id" label="ID" />

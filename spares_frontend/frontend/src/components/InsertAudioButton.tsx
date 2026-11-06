@@ -9,9 +9,8 @@ export default function InsertAudioButton({ parserId, onInsert }: { parserId: nu
       <button
         onClick={() => setOpen(true)}
         disabled={parserId === null}
-        className="button-tool tool-orange"
+        className="button-tool tool-orange button-small"
         title={parserId === null ? 'Select a parser first' : 'Record an audio clip and insert it at the cursor'}
-        style={{ padding: '2px 8px', fontSize: 12 }}
       >
         <span aria-hidden="true">🎙️</span> Record audio
       </button>

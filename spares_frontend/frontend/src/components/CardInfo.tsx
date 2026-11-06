@@ -48,9 +48,9 @@ export default function CardInfo({ cardId, version = 0 }: Props) {
     return () => { cancelled = true; };
   }, [entries]);
 
-  if (!current) return <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</div>;
-  if ('error' in current) return <div style={{ color: 'var(--error)', fontSize: 13 }}>{current.error}</div>;
-  if (current.entries.length === 0) return <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>This card has not been reviewed yet.</div>;
+  if (!current) return <div className='hint'>Loading…</div>;
+  if ('error' in current) return <div className='error-text-small'>{current.error}</div>;
+  if (current.entries.length === 0) return <div className='hint'>This card has not been reviewed yet.</div>;
 
   const ratingLabel = (entry: CardReviewEntry) =>
     ratingsByScheduler[entry.scheduler_name]?.find(r => r.id === entry.rating)?.description;
