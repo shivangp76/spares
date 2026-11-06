@@ -127,7 +127,7 @@ pub struct NoteSettingsKeys {
     pub custom_data: ReadWriteValue,
     /// A global setting that makes the notes after it live notes of the named sync group: they are
     /// matched to the database by their position in the file, so a file can be edited and imported
-    /// again. See "Live notes" in the docs of `spares_cli::import`.
+    /// again. See "Live notes" in the docs of `spares_core::api::note::import`.
     pub live_sync_name: ReadWriteValue,
     /// Speaks the note's text. It is stored in the note's custom data, under
     /// [`TtsSetting::KEY`]. See [`crate::parsers::tts`].
