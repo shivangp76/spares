@@ -15,6 +15,8 @@ use spares_core::schema::note::NotesSelector;
 use spares_core::schema::note::RenderNotesRequest;
 use sqlx::SqlitePool;
 
+use crate::utils::with_spinner;
+
 #[derive(Args, Debug)]
 pub(crate) struct MigrateArgs {
     #[arg(short, long)]
@@ -81,7 +83,6 @@ fn migration_func(
 }
 
 async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result<(), String> {
-    println!("Rendering notes...");
     let start = Instant::now();
     let url = format!("{}/api/notes/generate_files", base_url);
     let request = RenderNotesRequest {
@@ -94,10 +95,7 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
         force_generate_rendered: false,
     };
     if run {
-        let response = client
-            .post(url)
-            .json(&request)
-            .send()
+        let response = with_spinner("Rendering notes", client.post(url).json(&request).send())
             .await
             .map_err(|e| format!("{}", e))?;
         let status = response.status();

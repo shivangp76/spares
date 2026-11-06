@@ -234,15 +234,17 @@ pub(crate) async fn handle(
                 share: export_args.share,
             };
             let url = format!("{}/api/notes/export", base_url);
-            let response = client
-                .post(url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let result: ExportNotesResponse =
-                response.json().await.map_err(|e| miette!("{}", e))?;
+            let result: ExportNotesResponse = with_spinner("Exporting notes", async {
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                response.json().await.map_err(|e| miette!("{}", e))
+            })
+            .await?;
             if result.private_notes_left_out > 0 {
                 println!("Left out {} private notes", result.private_notes_left_out);
             }

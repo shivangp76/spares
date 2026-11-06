@@ -30,6 +30,8 @@ use spares_core::api::note::shared_media::bundled_media_references;
 use spares_core::parsers::Parseable;
 use spares_core::parsers::get_all_parsers;
 
+use crate::utils::with_spinner;
+
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
     // NOTE: To write note files from the database, refer to `spares note generate`
@@ -363,8 +365,12 @@ where
         dry_run,
         strip_liveness,
     };
-    let outcome =
-        spares_core::api::note::import::import_files(adapter, &files, options, Utc::now()).await?;
+    let import = spares_core::api::note::import::import_files(adapter, &files, options, Utc::now());
+    let outcome = if quiet {
+        import.await?
+    } else {
+        with_spinner("Importing notes", import).await?
+    };
     print_outcome(&outcome, quiet, dry_run);
 
     // Written only after the database changed, so a crash in between leaves the file as it was
