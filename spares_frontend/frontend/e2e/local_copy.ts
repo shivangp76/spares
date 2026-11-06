@@ -598,7 +598,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       ),
     );
   }
-  // Confirmations, e.g. of Undo last change and Stop Keeping a Copy
+  // Confirmations, e.g. of Stop Keeping a Copy
   page.on("dialog", (dialog) => dialog.accept());
   try {
     await page.goto(`${ORIGIN}/login`);
@@ -769,7 +769,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       "typst",
       `Undone in ${engine}: #cl[Bern] is in #cl[Switzerland].`,
     );
-    await page.getByRole("button", { name: "Undo last change" }).click();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
     await see(page, /Undone:/);
     check("undid a note offline", true);
 
@@ -1015,7 +1015,8 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await context.setOffline(false);
 
     // Logging out keeps the copy and its files, and logging back in starts it again
-    await page.getByRole("button", { name: "Logout" }).click();
+    await page.getByRole("button", { name: "Account" }).click();
+    await page.getByRole("menuitem", { name: "Log out" }).click();
     await page.getByLabel("Server URL").fill(ORIGIN);
     await page.getByLabel("Name").fill(USER);
     await page.getByLabel("Password").fill(PASSWORD);

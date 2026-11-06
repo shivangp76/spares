@@ -4,7 +4,8 @@ import { describeReverted, redoEvent, undoEvent } from "../api/client";
 import { PAGE_HELP } from "../help/pages";
 import type { Keybinding } from "../help/shortcuts";
 import { dialogOpen, keyName, takesKeys } from "../keys";
-import { NAV_LINKS } from "../navLinks";
+import { NAV_LINKS, isOnPage, type NavPlace } from "../navLinks";
+import NavMenu from "./NavMenu";
 import { RedoIcon, UndoIcon } from "./Icons";
 import OfflineIndicator from "./OfflineIndicator";
 import PageHelp from "./PageHelp";
@@ -163,13 +164,20 @@ export default function Navbar({
     }
   }
 
+  const linksIn = (place: NavPlace) =>
+    NAV_LINKS.filter((l) => l.place === place);
+  const currentMore = linksIn("more").find((l) => isOnPage(pathname, l.to));
+  const onAccountPage = linksIn("account").some((l) =>
+    isOnPage(pathname, l.to),
+  );
+
   return (
     <PageHelpContext.Provider value={setPageHelpOpener}>
       <div className="app-navbar">
         <nav className="navbar">
           <div className="navbar-links">
-            {NAV_LINKS.map(({ to, label }) =>
-              pathname === to || pathname.startsWith(`${to}/`) ? (
+            {linksIn("main").map(({ to, label }) =>
+              isOnPage(pathname, to) ? (
                 <span
                   key={to}
                   ref={currentLinkRef}
@@ -184,39 +192,56 @@ export default function Navbar({
                 </Link>
               ),
             )}
+            {/* The pages used less often, named after the one shown when it is one of them */}
+            <span ref={currentMore ? currentLinkRef : undefined}>
+              <NavMenu
+                label={currentMore?.label ?? "More"}
+                className="navbar-link"
+                current={!!currentMore}
+                title="Tags, parsers, keywords, image occlusion and the manual"
+              >
+                {linksIn("more").map((link) => (
+                  <MenuLink key={link.to} link={link} pathname={pathname} />
+                ))}
+              </NavMenu>
+            </span>
           </div>
           <div className="navbar-actions">
             <UpdateIndicator />
             <OfflineIndicator />
             <SavedCopiesNotice />
             <SyncButton onStatus={showStatus} />
-            <button
-              onClick={undoLatest}
-              className="navbar-button"
-              title="Undo the most recent change"
-            >
-              <UndoIcon />
-              Undo last change
-            </button>
-            {pathname !== "/history" && (
-              <Link
-                to="/history"
-                className="navbar-button"
-                title="Every change, to undo or redo any of them"
-              >
-                History
-              </Link>
-            )}
-            {lastUndoId !== null && (
+            <span className="navbar-split">
               <button
-                onClick={redoLast}
+                onClick={undoLatest}
                 className="navbar-button"
-                title="Redo the change just undone"
+                title="Undo the most recent change, of any kind, including one made from the CLI"
               >
-                <RedoIcon />
-                Redo last undo
+                <UndoIcon />
+                Undo
               </button>
-            )}
+              <NavMenu
+                label={
+                  <span className="visually-hidden">Redo and history</span>
+                }
+                title="Redo, and the history of every change"
+                className="navbar-button navbar-split-end"
+                align="right"
+              >
+                <button
+                  className="nav-menu-item"
+                  role="menuitem"
+                  onClick={redoLast}
+                  disabled={lastUndoId === null}
+                >
+                  <RedoIcon />
+                  Redo last undo
+                </button>
+                {linksIn("undo").map((link) => (
+                  <MenuLink key={link.to} link={link} pathname={pathname} />
+                ))}
+              </NavMenu>
+            </span>
             {pageHelp && (
               <button
                 onClick={() =>
@@ -230,30 +255,37 @@ export default function Navbar({
                 Help <span className="key-hint">(?)</span>
               </button>
             )}
-            <button onClick={onLogout} className="navbar-button">
-              Logout
-            </button>
+            <NavMenu
+              label="Account"
+              current={onAccountPage}
+              title="Settings, and logging out"
+              align="right"
+            >
+              {linksIn("account").map((link) => (
+                <MenuLink key={link.to} link={link} pathname={pathname} />
+              ))}
+              <button
+                className="nav-menu-item"
+                role="menuitem"
+                onClick={onLogout}
+              >
+                Log out
+              </button>
+            </NavMenu>
           </div>
           {helpOpenOn === pathname && !pageHelpOpener && pageHelp && (
             <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />
           )}
           {status && (
-            <div
-              style={{
-                flexBasis: "100%",
-                marginTop: 4,
-                fontSize: 13,
-                color: "var(--text-secondary)",
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-              }}
-            >
+            <div className="navbar-status">
               <span>{status}</span>
-              <button
-                onClick={() => setStatus(null)}
-                style={{ padding: "2px 8px", fontSize: 12 }}
-              >
+              {lastUndoId !== null && (
+                <button onClick={redoLast} className="button-small">
+                  <RedoIcon />
+                  Redo
+                </button>
+              )}
+              <button onClick={() => setStatus(null)} className="button-small">
                 Dismiss
               </button>
             </div>
@@ -262,5 +294,27 @@ export default function Navbar({
       </div>
       {children}
     </PageHelpContext.Provider>
+  );
+}
+
+/** A page's link in a navbar menu, marked when it is the page shown. */
+function MenuLink({
+  link: { to, label, key },
+  pathname,
+}: {
+  link: { to: string; label: string; key: string };
+  pathname: string;
+}) {
+  const current = isOnPage(pathname, to);
+  return (
+    <Link
+      to={to}
+      role="menuitem"
+      className="nav-menu-item"
+      aria-current={current ? "page" : undefined}
+    >
+      {label}
+      <span className="key-hint nav-menu-key">g {key}</span>
+    </Link>
   );
 }
