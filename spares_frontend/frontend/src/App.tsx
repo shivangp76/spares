@@ -7,6 +7,7 @@ import { useAuth } from "./hooks/useAuth";
 const CardsPage = lazy(() => import("./pages/CardsPage"));
 const ConflictsPage = lazy(() => import("./pages/ConflictsPage"));
 const GraphPage = lazy(() => import("./pages/GraphPage"));
+const HistoryPage = lazy(() => import("./pages/HistoryPage"));
 const ImageOcclusionPage = lazy(() => import("./pages/ImageOcclusionPage"));
 const KeywordsPage = lazy(() => import("./pages/KeywordsPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/statistics" element={<StatisticsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/conflicts" element={<ConflictsPage />} />
+          <Route path="/history" element={<HistoryPage />} />
           <Route path="/manual/:page?" element={<ManualPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/review" replace />} />

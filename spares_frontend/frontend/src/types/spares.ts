@@ -319,6 +319,23 @@ export interface EventSummary {
   description: string;
 }
 
+/** `spares_core::schema::undo::EventEntry`: an event of the history, or a group of them, which undo and redo revert together. */
+export interface EventEntry {
+  /** The event's, or the group's first event's: the one to undo or redo it by */
+  id: number;
+  /** `spares_core::model::EventType`, e.g. `CreateNotes` */
+  kind: string;
+  action: "Do" | "Undo" | "Redo";
+  created_at: string;
+  /** For a group, by its note events, with how many other changes it made */
+  description: string;
+  group_size: number;
+  /** All of it was undone (or redone, for an undo) */
+  reverted: boolean;
+  /** Made by spares itself, like the daily unbury; a plain undo skips it */
+  automatic: boolean;
+}
+
 export interface UndoEventResponse {
   undone_events: EventSummary[];
   /** The undo events that were appended, oldest first. Pass one to `redoEvent`. */

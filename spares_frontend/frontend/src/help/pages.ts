@@ -239,6 +239,15 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       { label: "Deploying a sync server", file: "deploying.md" },
     ],
   },
+  "/history": {
+    title: "History",
+    about: [
+      "Every change to the collection, newest first. Undo last change in the navbar only undoes the latest; here any change can be undone, or an undo redone, unless a later change depends on it. A group, such as an import, is undone as one.",
+      "Automatic changes, such as the daily unbury and a reschedule, are skipped by Undo last change, but can be undone here. Ratings are hidden unless Show ratings is checked.",
+    ],
+    shortcuts: [],
+    docs: [],
+  },
   "/conflicts": {
     title: "Conflicts",
     about: [

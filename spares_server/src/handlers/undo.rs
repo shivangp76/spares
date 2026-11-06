@@ -1,13 +1,16 @@
 use axum::Json;
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use spares_core::api::undo::get_latest_note_event_id;
 use spares_core::api::undo::group_events;
+use spares_core::api::undo::list_events;
 use spares_core::api::undo::redo_event;
 use spares_core::api::undo::undo_event;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::schema::undo::GroupEventsRequest;
 use spares_core::schema::undo::LatestEventResponse;
+use spares_core::schema::undo::ListEventsRequest;
 use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::RedoEventResponse;
 use spares_core::schema::undo::UndoEventRequest;
@@ -23,6 +26,17 @@ pub(crate) async fn get_latest_note_event_id_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(LatestEventResponse { latest_event_id }))
+}
+
+/// `GET /api/events?before=&limit=&ratings=`: a page of the history of changes, newest first.
+pub(crate) async fn list_events_handler(
+    Coll(data): Coll,
+    Query(request): Query<ListEventsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let entries = list_events(&data.db, request)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(entries))
 }
 
 pub(crate) async fn undo_event_handler(

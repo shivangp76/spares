@@ -167,6 +167,7 @@ use crate::handlers::tag::rename_tags_handler;
 use crate::handlers::tag::update_tag_handler;
 use crate::handlers::undo::get_latest_note_event_id_handler;
 use crate::handlers::undo::group_events_handler;
+use crate::handlers::undo::list_events_handler;
 use crate::handlers::undo::redo_event_handler;
 use crate::handlers::undo::undo_event_handler;
 
@@ -481,6 +482,7 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/undo", post(undo_event_handler))
         .route("/api/redo", post(redo_event_handler))
         .route("/api/undo/group", post(group_events_handler))
+        .route("/api/events", get(list_events_handler))
         .merge(shared_media_routes())
         .route(
             "/api/render-assets/packages",
