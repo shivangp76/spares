@@ -591,6 +591,7 @@ export default function GraphPage() {
               onSubmit={search}
               placeholder="Notes to show, with the notes they build on, e.g. tag=calculus"
               ariaLabel="Notes to show"
+              items="Notes"
               error={searchError}
               style={{ maxWidth: "none" }}
               inputStyle={{ fontSize: 15, padding: "8px 12px" }}
@@ -807,6 +808,7 @@ export default function GraphPage() {
                   ))}
                 </select>
                 <SearchInput
+                  items="Notes"
                   value={group.query}
                   onChange={(q) =>
                     setGroupDrafts(

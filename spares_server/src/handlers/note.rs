@@ -148,6 +148,23 @@ pub(crate) async fn search_fields_handler() -> impl IntoResponse {
     Json(spares_core::search::fields())
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct ExplainRequest {
+    query: String,
+    /// What the query is run for, which changes the SQL
+    item: spares_core::search::QueryReturnItemType,
+}
+
+/// `POST /api/search/explain`: how `query` was parsed and the SQL it runs, as `spares note search
+/// --explain` prints them.
+pub(crate) async fn search_explain_handler(
+    Json(body): Json<ExplainRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let explanation =
+        spares_core::search::explain(&body.query, body.item).map_err(error_to_response)?;
+    Ok(Json(serde_json::json!({ "explanation": explanation })))
+}
+
 pub(crate) async fn search_examples_handler() -> impl IntoResponse {
     Json(spares_core::search::examples())
 }
