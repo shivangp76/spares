@@ -193,6 +193,13 @@ fn media_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 crate::handlers::share::IMPORT_BODY_LIMIT,
             )),
         )
+        // Imports render the notes, and store the media that zips bundle
+        .route(
+            "/api/notes/import",
+            post(crate::handlers::share::import_files_handler).layer(DefaultBodyLimit::max(
+                crate::handlers::share::IMPORT_BODY_LIMIT,
+            )),
+        )
 }
 
 /// Images and audio added to notes, and image occlusions. A browser's copy stores the files it
@@ -611,6 +618,7 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .route("/api/notes/share/summary", post(needs_server))
         .route("/api/notes/share/bundle", post(needs_server))
         .route("/api/notes/share/import", post(needs_server))
+        .route("/api/notes/import", post(needs_server))
         .route("/api/notes/vcs/status", get(needs_server))
         .route("/api/notes/vcs/saved-copies/remove", post(needs_server))
         .route("/api/sync/devices", get(needs_server))
@@ -756,6 +764,7 @@ mod tests {
             ("POST", "/api/notes/share/summary"),
             ("POST", "/api/notes/share/bundle"),
             ("POST", "/api/notes/share/import?name=a.zip"),
+            ("POST", "/api/notes/import"),
             ("GET", "/api/notes/vcs/status"),
             ("POST", "/api/notes/vcs/saved-copies/remove"),
             ("GET", "/api/sync/devices"),
