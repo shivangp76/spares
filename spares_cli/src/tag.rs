@@ -12,6 +12,7 @@ use crate::tree::build_tree;
 use crate::tree::tree_to_string;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
+use crate::utils::with_spinner;
 
 #[expect(clippy::too_many_lines)]
 pub(crate) async fn handle(
@@ -73,8 +74,11 @@ pub(crate) async fn handle(
                     tag_response.id
                 };
                 let url = format!("{}/api/tags/{}/rebuild", base_url, tag_id);
-                let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
-                let _ = ensure_ok(response).await?;
+                with_spinner("Rebuilding the tag", async {
+                    let response = client.get(url).send().await.map_err(|e| miette!("{}", e))?;
+                    ensure_ok(response).await
+                })
+                .await?;
                 println!("Done");
             } else {
                 let tag_to_modify = if let Some(tag_id) = tag_id_opt {
