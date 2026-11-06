@@ -47,3 +47,9 @@ tower = { version = "0.5.3", features = ["util"] }
 
 [lints]
 workspace = true
+
+[features]
+default = ["typst-render"]
+# See spares_core's `typst-render`. Build with `--no-default-features` to leave Typst out: Typst
+# notes then render with the `typst` CLI.
+typst-render = ["spares_core/typst-render"]

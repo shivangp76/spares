@@ -51,6 +51,8 @@ use sync::sync_notes;
 
 #[tokio::main]
 async fn main() {
+    // A Typst worker serves renders and exits (see `spares_core::render::init_typst_workers`).
+    spares_core::render::init_typst_workers();
     // Answers shell completion requests (COMPLETE=zsh) and exits.
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     env_logger::init();

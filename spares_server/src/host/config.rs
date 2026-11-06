@@ -207,6 +207,10 @@ signups = "closed"
 # cpu_seconds = 120
 # memory_mb = 2048          # Linux only
 # renders_at_once = 4       # per user
+# typst_in_process = true   # Typst renders in workers with Typst built in, not one `typst` per file
+# Fonts for Typst, besides its own and (unless turned off) the system's
+# typst_font_dirs = ["/Users/me/Library/Fonts"]
+# typst_system_fonts = true
 # Put each rendered note here too (a hard link), by parser, e.g. where an editor writes the PDFs
 # it compiles. For a host with one user.
 # [render.copy_notes_to]

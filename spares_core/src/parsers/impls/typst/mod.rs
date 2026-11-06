@@ -41,6 +41,8 @@ use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
+#[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+pub(crate) mod worker;
 
 /// Separates notes in a note file, and the metadata from the card data in a card file.
 /// Code and comments, where audio links are not found and text is not spoken.
@@ -415,13 +417,30 @@ impl Parseable for TypstParser {
             })
         };
         let output_text_filepath = to_absolute(output_text_filepath)?;
+        #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+        if let Some(result) = worker::render(
+            &output_text_filepath,
+            &to_absolute(output_rendered_filepath)?,
+        ) {
+            let (output, dependencies) = result?;
+            return Ok(RenderedFile {
+                output,
+                dependencies: summarize_dependency_paths(dependencies, &output_text_filepath),
+            });
+        }
         // Read right after, then removed
         let raw_dependencies_filepath =
             to_absolute(output_rendered_filepath)?.with_extension("deps.raw.json");
+        let config = crate::render::config();
         let mut command = Command::new("typst");
+        command.arg("compile").arg("--no-pdf-tags"); // To reduce output filesize
+        for dir in &config.typst_font_dirs {
+            command.arg("--font-path").arg(dir);
+        }
+        if !config.typst_system_fonts {
+            command.arg("--ignore-system-fonts");
+        }
         command
-            .arg("compile")
-            .arg("--no-pdf-tags") // To reduce output filesize
             .arg("--root")
             .arg(typst_root_dir)
             // Typst writes dependencies relative to the working directory.
@@ -484,9 +503,19 @@ fn summarize_dependencies(
 ) -> Result<RenderDependencies, String> {
     let raw = read_to_string(raw_dependencies_filepath).map_err(|e| e.to_string())?;
     let TypstDependencies { inputs } = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    // Relative to the working directory, `/`
+    let inputs = inputs.into_iter().map(|input| Path::new("/").join(input));
+    Ok(summarize_dependency_paths(inputs, main_filepath))
+}
+
+/// The files `inputs` (absolute paths) that a render of `main_filepath` read, as
+/// [`RenderDependencies`]: packages by their spec, other files by path
+fn summarize_dependency_paths(
+    inputs: impl IntoIterator<Item = PathBuf>,
+    main_filepath: &Path,
+) -> RenderDependencies {
     let mut dependencies = RenderDependencies::default();
     for input in inputs {
-        let input = Path::new("/").join(input);
         if input == main_filepath {
             continue;
         }
@@ -497,7 +526,7 @@ fn summarize_dependencies(
             None => dependencies.files.push(input),
         }
     }
-    Ok(dependencies)
+    dependencies
 }
 
 /// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid
