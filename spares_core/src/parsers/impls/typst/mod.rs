@@ -272,27 +272,10 @@ impl Parseable for TypstParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let card_data_str =
+                // The note's id, keywords and tags are shown beside the card instead of in it, so
+                // changing them leaves the card's render up to date.
+                let card_file_data =
                     construct_card_data(self, card_order, card_data, side, *note_id);
-                let mut lines = vec![format!(
-                    "- note-id{} {}",
-                    settings_key_value_delim,
-                    note_id.letters()
-                )];
-                if !keywords_str.is_empty() {
-                    lines.push(format!(
-                        "- keywords{} {}",
-                        settings_key_value_delim, keywords_str
-                    ));
-                }
-                lines.extend(vec![
-                    format!("- tags{} {}", settings_key_value_delim, tags_str),
-                    String::new(),
-                    SEPARATOR.to_string(),
-                    String::new(),
-                    card_data_str,
-                ]);
-                let card_file_data = lines.join("\n");
                 card_file_data
             }
         }

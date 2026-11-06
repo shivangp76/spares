@@ -398,10 +398,8 @@ fn construct_file_data(
                 // parser.construct_setting("spares: start"),
                 "\n".to_string(),
                 "\n".to_string(),
-                // parser.construct_setting(action_string.as_str()),
-                parser.construct_setting(&note_id_string),
-                parser.construct_setting(&keywords_string),
-                parser.construct_setting(&tags_string),
+                // The note's id, keywords and tags are shown beside the card instead of in it, so
+                // changing them leaves the card's render up to date.
                 // custom_data_str,
                 "\\begin{mdframed}".to_string(),
                 "\n".to_string(),
