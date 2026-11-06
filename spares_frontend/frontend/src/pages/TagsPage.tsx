@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDataVersion } from '../dataVersion';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, createTag, deleteTag, listTags, rebuildTag, renameTags, updateTag } from '../api/client';
 import { NavbarHelp } from '../components/Navbar';
@@ -341,10 +342,12 @@ export default function TagsPage() {
     listAllTags().then(setTags, e => setError(errorMessage(e)));
   }, []);
 
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     load();
-  }, [credentials, navigate, load]);
+  }, [credentials, navigate, load, dataVersion]);
 
   async function remove(tag: TagResponse) {
     if (!window.confirm(`Delete tag \`${tag.name}\`?`)) return;

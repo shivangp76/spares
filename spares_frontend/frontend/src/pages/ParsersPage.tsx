@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDataVersion } from '../dataVersion';
 import { useNavigate } from 'react-router-dom';
 import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
 import { NavbarHelp } from '../components/Navbar';
@@ -26,12 +27,14 @@ export default function ParsersPage() {
   // The parsers spares has code for. Null until fetched, or if that failed, so no parser is flagged.
   const [known, setKnown] = useState<string[] | null>(null);
   const widths = useTableWidths('parsers');
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
     listParsers(1, PARSERS_LIMIT).then(setParsers, e => setError(errorMessage(e)));
     getKnownParserNames().then(setKnown, () => {});
-  }, [credentials, navigate]);
+  }, [credentials, navigate, dataVersion]);
 
   // The known parsers not added yet, which are the ones worth adding
   const addable = known?.filter(name => !parsers?.some(p => p.name === name)) ?? [];

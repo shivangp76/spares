@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, getNote, getNoteGraph } from "../api/client";
 import { NavbarHelp } from "../components/Navbar";
@@ -361,6 +362,8 @@ export default function GraphPage() {
   } = useRecentSearches("spares_graph_recent_searches");
   const { saved: savedSearches, remove: removeSavedSearch } =
     useSavedSearches();
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
 
   const setParam = (key: string, value: string | null) =>
     setSearchParams((prev) => {
@@ -419,6 +422,7 @@ export default function GraphPage() {
     descendantDepth,
     groups,
     saveRecent,
+    dataVersion,
   ]);
 
   const shown = useMemo(() => {

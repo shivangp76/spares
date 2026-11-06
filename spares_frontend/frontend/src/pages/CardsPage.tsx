@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDataVersion } from '../dataVersion';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, cachedCardsPage, countCards, forgetCard, getCard, getQueuePositions, isNetworkError, listCards, listManualTagNames, modifyNoteTags, searchCards, searchCardsPage, updateCards } from '../api/client';
 import BulkActionBar, { Checkbox, type BulkAction, type BulkActionBarHandle } from '../components/BulkActionBar';
@@ -206,6 +207,8 @@ export default function CardsPage() {
   const [browse, setBrowse] = useState<{ cards: CardResponse[]; index: number } | null>(null);
   // Bumped after a bulk action, to refetch the cards it may have changed
   const [reloadCount, setReloadCount] = useState(0);
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
   // Whether the next search refetches it after a bulk action, so keeps the card shown
   const reloading = useRef(false);
   const tableBody = useRef<HTMLTableSectionElement>(null);
@@ -236,7 +239,7 @@ export default function CardsPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch, sortField, sortDescending]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, dataVersion, listBySearch, sortField, sortDescending]);
 
   useEffect(() => {
     if (!credentials) { navigate('/login'); return; }
@@ -260,7 +263,7 @@ export default function CardsPage() {
       .catch(e => { if (!cancelled) setError(errorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, listBySearch]);
+  }, [credentials, navigate, page, pageSize, searchQuery, reloadCount, dataVersion, listBySearch]);
 
   const { recent: recentSearches, save: saveRecentSearch, remove: removeRecentSearch } = useRecentSearches('spares_cards_recent_searches');
   // Bumped by each search so searching the same query again refetches it
@@ -293,7 +296,7 @@ export default function CardsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, saveRecentSearch, sortField, sortDescending]);
+  }, [credentials, searchQuery, page, pageSize, searchCount, reloadCount, dataVersion, saveRecentSearch, sortField, sortDescending]);
 
   function handleSearch(q = query) {
     if (!q.trim()) return;
@@ -348,7 +351,7 @@ export default function CardsPage() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showQueue, shownCardIds, reloadCount]);
+  }, [showQueue, shownCardIds, reloadCount, dataVersion]);
   const selected = browse ? browse.cards[browse.index] : null;
 
   /** Shows what a bulk action, or undoing it, changed. */
