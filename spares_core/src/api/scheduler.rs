@@ -11,6 +11,7 @@ use crate::schema::review::CardState;
 use crate::schema::review::OptimizeRequest;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
+use crate::schema::review::RescheduleResponse;
 
 pub fn get_scheduler_ratings(scheduler_name: &str) -> Result<Vec<Rating>, Error> {
     let scheduler = get_scheduler_from_string(scheduler_name)?;
@@ -39,10 +40,11 @@ pub async fn reschedule_scheduler(
     db: &SqlitePool,
     scheduler_name: &str,
     at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<RescheduleResponse, Error> {
     let scheduler = get_scheduler_from_string(scheduler_name)?;
     let config = read_external_config()?;
-    reschedule_all_cards(db, scheduler.as_ref(), &config, at).await
+    let event_id = reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
+    Ok(RescheduleResponse { event_id })
 }
 
 /// Fits the scheduler's parameters to the review history. With `apply`, saves them if they
@@ -60,7 +62,7 @@ pub async fn optimize_scheduler(
         write_fsrs_parameters(&response.optimized_parameters)?;
         // Read back rather than patched in memory, so the reschedule sees exactly what was saved.
         let config = read_external_config()?;
-        reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
+        response.event_id = reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
         response.applied = true;
     }
     Ok(response)

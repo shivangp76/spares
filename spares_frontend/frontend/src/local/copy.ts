@@ -270,6 +270,29 @@ export async function syncLocalCopy(
   return report;
 }
 
+/**
+ * Runs `action`, a request only the server answers (`needs_server`), for a device that keeps a
+ * copy of the collection: syncs first, so the server has the copy's changes, and afterwards, so
+ * the copy gets what `action` changed. `local` says whether it did; a failure of the second sync
+ * is in `syncError`. The server's events aren't synced, so the copy can't undo what `action` did.
+ */
+export async function runOnServer<T>(
+  action: () => Promise<T>,
+): Promise<{ result: T; local: boolean; syncError: string | null }> {
+  const local = usesLocalCopy(getCredentials().serverUrl);
+  if (local) await syncLocalCopy();
+  const result = await action();
+  let syncError: string | null = null;
+  if (local) {
+    try {
+      await syncLocalCopy();
+    } catch (e) {
+      syncError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return { result, local, syncError };
+}
+
 handleInCopyTab("sync", syncHere);
 
 /** `syncLocalCopy` in the tab with the copy */
