@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate } from "react-router-dom";
 import {
   listSyncConflicts,
@@ -164,6 +165,8 @@ export default function ConflictsPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
   const load = useCallback(() => {
     listSyncConflicts().then(setConflicts, (e) => setError(errorMessage(e)));
   }, []);
@@ -174,7 +177,7 @@ export default function ConflictsPage() {
       return;
     }
     load();
-  }, [credentials, navigate, load]);
+  }, [credentials, navigate, load, dataVersion]);
 
   async function resolve(
     conflict: SyncConflict,

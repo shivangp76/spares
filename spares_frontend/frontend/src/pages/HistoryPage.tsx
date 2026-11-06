@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
 import {
   describeReverted,
@@ -39,6 +40,8 @@ export default function HistoryPage() {
 
   // Bumped to fetch the first page again, after an undo or redo
   const [version, setVersion] = useState(0);
+  // And after the navbar's, or a sync
+  const dataVersion = useDataVersion();
 
   useEffect(() => {
     if (!credentials) {
@@ -60,7 +63,7 @@ export default function HistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, navigate, ratings, version]);
+  }, [credentials, navigate, ratings, version, dataVersion]);
 
   /** The next page, older than the entries shown */
   async function loadOlder() {

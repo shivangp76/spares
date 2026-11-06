@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
 import {
   advanceCards,
@@ -1282,6 +1283,8 @@ export default function StatisticsPage() {
   const loading = loadedKey !== requestKey;
   // Bumped to refetch after an action changes the schedule
   const [reloadCount, setReloadCount] = useState(0);
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
   const [scheduleOutcome, setScheduleOutcome] = useState<{
     seq: number;
@@ -1352,7 +1355,7 @@ export default function StatisticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, navigate, date, view, reloadCount]);
+  }, [credentials, navigate, date, view, reloadCount, dataVersion]);
 
   function applyQuery(query = queryInput) {
     const q = query.trim();

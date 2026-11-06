@@ -12,6 +12,7 @@ import SavedCopiesNotice from "./SavedCopiesNotice";
 import SyncButton from "./SyncButton";
 import UpdateIndicator from "./UpdateIndicator";
 import { errorMessage } from "../utils";
+import { dataChanged } from "../dataVersion";
 
 /** The help of a page that opens it itself, with `?`, and has shortcuts of its own. */
 interface Help {
@@ -107,13 +108,13 @@ export default function Navbar({
       window.removeEventListener("keydown", handleKey, { capture: true });
   }, [navigate, pathname]);
 
-  // What the last undo, redo or sync did, and whether it changed what pages show
-  const [status, setStatus] = useState<{
-    message: string;
-    changed: boolean;
-  } | null>(null);
-  const showStatus = (message: string, changed = false) =>
-    setStatus({ message, changed });
+  // What the last undo, redo or sync did
+  const [status, setStatus] = useState<string | null>(null);
+  /** Shows `message`, and if the action `changed` what pages show, has them fetch it again. */
+  const showStatus = (message: string, changed = false) => {
+    setStatus(message);
+    if (changed) dataChanged();
+  };
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);
   const currentLinkRef = useRef<HTMLSpanElement>(null);
@@ -251,16 +252,7 @@ export default function Navbar({
                 alignItems: "center",
               }}
             >
-              <span>{status.message}</span>
-              {/* Pages don't know what the undone or redone event, or the sync, changed, so offer to refetch everything */}
-              {status.changed && (
-                <button
-                  onClick={() => window.location.reload()}
-                  style={{ padding: "2px 8px", fontSize: 12 }}
-                >
-                  Reload page
-                </button>
-              )}
+              <span>{status}</span>
               <button
                 onClick={() => setStatus(null)}
                 style={{ padding: "2px 8px", fontSize: 12 }}

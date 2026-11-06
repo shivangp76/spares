@@ -22,10 +22,10 @@ function ago(unixSeconds: number): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
-/** Shows `message` under the navbar, with a button to reload the page when `changed`. */
+/** Shows `message` under the navbar, and has the page fetch what it shows again when `changed`. */
 type OnStatus = (message: string, changed?: boolean) => void;
 
-/** Whether a sync changed what pages show, which they show once reloaded. */
+/** Whether a sync changed what pages show, so they fetch it again. */
 function changedHere(report: SyncReport): boolean {
   return report.mode === "full_download" || report.pulled > 0;
 }

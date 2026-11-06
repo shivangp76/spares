@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { onDataChanged } from "../dataVersion";
 import {
   ApiError,
   cachedReviewHistory,
@@ -631,6 +632,30 @@ export default function ReviewPage() {
   useEffect(() => {
     if (phase === "done") refreshStatistics();
   }, [phase, refreshStatistics]);
+
+  // After an undo, redo or sync from the navbar, which may have changed the card to show (e.g.
+  // undone a rating) and the day's statistics, fetch them again. Not while a note is open in the
+  // panel, whose unsaved edits loading a card would discard.
+  const reloadState = useRef({ panelNote, phase, activeFilter });
+  useEffect(() => {
+    reloadState.current = { panelNote, phase, activeFilter };
+  }, [panelNote, phase, activeFilter]);
+  useEffect(
+    () =>
+      onDataChanged(() => {
+        const { panelNote, phase, activeFilter } = reloadState.current;
+        refreshStatistics();
+        if (
+          panelNote === null &&
+          (phase === "front" ||
+            phase === "back" ||
+            phase === "waiting" ||
+            phase === "done")
+        )
+          loadCard(activeFilter);
+      }),
+    [refreshStatistics, loadCard],
+  );
 
   async function startReview(mode: FilterMode, rawInput: string) {
     setError(null);
