@@ -1707,6 +1707,44 @@ pub mod undo {
     pub struct LatestEventResponse {
         pub latest_event_id: i64,
     }
+
+    /// `GET /api/events`: a page of the history of changes, newest first.
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct ListEventsRequest {
+        /// Only entries older than this one's id, for the next page
+        #[serde(default)]
+        pub before: Option<i64>,
+        /// At most this many entries (default 30, at most 200)
+        #[serde(default)]
+        pub limit: Option<u32>,
+        /// Ratings too, which are left out by default since there are so many of them
+        #[serde(default)]
+        pub ratings: bool,
+    }
+
+    /// An entry of the history of changes: an event, or a group of them (an import, say), which
+    /// undo and redo revert together.
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EventEntry {
+        /// The event's id, or the group's first event's: the one to undo or redo it by
+        pub id: i64,
+        pub kind: crate::model::EventType,
+        /// Whether it is an action, or the undo or redo of one
+        pub action: crate::model::EventAction,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        /// What it did, as undo and redo describe it. A group is described by its events that add,
+        /// edit or delete notes (else its first event), and how many other changes it made, e.g.
+        /// an import's "Create note abc (and 1 more change)" for the tag it created too.
+        pub description: String,
+        /// How many events are in its group, 1 for an event in none
+        pub group_size: i64,
+        /// Whether all of it was reverted, i.e. undone (or redone, for an undo), so it can't be
+        /// undone (or redone) again
+        pub reverted: bool,
+        /// Whether spares made it by itself, like the daily unbury (see
+        /// [`EventType::AUTOMATIC`](crate::model::EventType::AUTOMATIC))
+        pub automatic: bool,
+    }
 }
 
 pub mod saved_search {

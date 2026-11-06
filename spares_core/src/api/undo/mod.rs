@@ -49,8 +49,10 @@ use crate::model::EventAction;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::notes_vcs;
+use crate::schema::undo::EventEntry;
 use crate::schema::undo::EventSummary;
 use crate::schema::undo::GroupEventsRequest;
+use crate::schema::undo::ListEventsRequest;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
 use crate::schema::undo::UndoEventRequest;
@@ -244,6 +246,136 @@ pub async fn group_events(db: &SqlitePool, body: GroupEventsRequest) -> Result<(
         join_event_group(db, leader, other).await?;
     }
     Ok(())
+}
+
+/// The kinds of events that add, edit or delete notes, which describe a group best: an import's
+/// group also creates the tags its notes name, and moves live notes' cards. An undo of them is one
+/// of these kinds too.
+const NOTE_KINDS: [EventType; 3] = [
+    EventType::CreateNotes,
+    EventType::UpdateNotes,
+    EventType::DeleteNotes,
+];
+
+/// How the history describes `event`, an `action`, with the rest of its group if `group_size` is
+/// more than 1: by the group's note events if it has any, such as an import's, else by `event`,
+/// followed by how many other changes the group made.
+async fn describe_entry(
+    db: &SqlitePool,
+    event: &Event,
+    action: EventAction,
+    group_size: i64,
+) -> Result<String, Error> {
+    if group_size <= 1 {
+        return Ok(describe::summarize_as(db, event, action).await?.description);
+    }
+    let members: Vec<Event> = sqlx::query_as(r"SELECT * FROM event WHERE group_id = ? ORDER BY id")
+        .bind(event.id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let mut described = members
+        .iter()
+        .filter(|member| NOTE_KINDS.contains(&member.kind))
+        .collect::<Vec<_>>();
+    if described.is_empty() {
+        described.push(event);
+    }
+    let mut parts = Vec::with_capacity(described.len());
+    // A group's events are all actions, or all undos or redos of them
+    for member in &described {
+        parts.push(
+            describe::summarize_as(db, member, action)
+                .await?
+                .description,
+        );
+    }
+    let description = parts.join("; ");
+    let others = group_size - i64::try_from(described.len()).unwrap_or(i64::MAX);
+    if others <= 0 {
+        return Ok(description);
+    }
+    let plural = if others == 1 { "" } else { "s" };
+    Ok(format!("{description} (and {others} more change{plural})"))
+}
+
+/// A page of the history of changes, newest first: each event, or each group as one entry, by its
+/// first event, as undo and redo revert it. Ratings are left out unless `ratings`.
+pub async fn list_events(
+    db: &SqlitePool,
+    request: ListEventsRequest,
+) -> Result<Vec<EventEntry>, Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        event: Event,
+        group_size: i64,
+        reverted: bool,
+    }
+    let limit = request.limit.unwrap_or(30).clamp(1, 200);
+    let ratings = [EventType::RateCard, EventType::UnrateCard]
+        .iter()
+        .map(|kind| (*kind as u8).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    // A group's id is its first event's (see `create_event_group`). It is reverted once all of its
+    // events are.
+    let rows: Vec<Row> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT e.*,
+             CASE WHEN e.group_id IS NULL THEN 1
+                  ELSE (SELECT COUNT(*) FROM event g WHERE g.group_id = e.id) END AS group_size,
+             NOT EXISTS (
+                 SELECT 1 FROM event m
+                 WHERE (m.id = e.id OR m.group_id = e.id)
+                   AND NOT EXISTS (SELECT 1 FROM event r WHERE r.reverts_event_id = m.id)
+             ) AS reverted
+         FROM event e
+         WHERE (e.group_id IS NULL OR e.group_id = e.id)
+           AND (? IS NULL OR e.id < ?)
+           AND (? OR e.kind NOT IN ({ratings}))
+         ORDER BY e.id DESC LIMIT ?"
+    )))
+    .bind(request.before)
+    .bind(request.before)
+    .bind(request.ratings)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let mut entries = Vec::with_capacity(rows.len());
+    for Row {
+        event,
+        group_size,
+        reverted,
+    } in rows
+    {
+        // An undo reverts an action or a redo, and a redo an undo, so the action alternates along
+        // the chain of reverted events. Walked here rather than looked up in the `event_action`
+        // view, which goes through every event.
+        let mut depth = 0;
+        let mut reverts = event.reverts_event_id;
+        while let Some(id) = reverts {
+            depth += 1;
+            reverts = fetch_event(db, id).await?.and_then(|e| e.reverts_event_id);
+        }
+        let action = match depth {
+            0 => EventAction::Do,
+            d if d % 2 == 1 => EventAction::Undo,
+            _ => EventAction::Redo,
+        };
+        let description = describe_entry(db, &event, action, group_size).await?;
+        entries.push(EventEntry {
+            id: event.id,
+            kind: event.kind,
+            action,
+            created_at: event.created_at,
+            description,
+            group_size,
+            reverted,
+            automatic: event.kind.is_automatic(),
+        });
+    }
+    Ok(entries)
 }
 
 /// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone, other

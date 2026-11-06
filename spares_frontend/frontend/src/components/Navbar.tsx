@@ -200,6 +200,15 @@ export default function Navbar({
               <UndoIcon />
               Undo last change
             </button>
+            {pathname !== "/history" && (
+              <Link
+                to="/history"
+                className="navbar-button"
+                title="Every change, to undo or redo any of them"
+              >
+                History
+              </Link>
+            )}
             {lastUndoId !== null && (
               <button
                 onClick={redoLast}

@@ -6,6 +6,7 @@ import type {
   CreateNoteRequest,
   CreateTagRequest,
   Credentials,
+  EventEntry,
   EventSummary,
   ForgetCardResponse,
   GetReviewCardResponse,
@@ -727,6 +728,18 @@ export async function undoEvent(
     method: "POST",
     body: JSON.stringify({ event_id: eventId, undo_group: true }),
   });
+}
+
+/** A page of the history of changes, newest first, before the entry `before` (`GET /api/events`). Ratings only with `ratings`. */
+export async function listEvents(
+  before: number | null,
+  ratings: boolean,
+  limit = 30,
+): Promise<EventEntry[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before !== null) params.set("before", String(before));
+  if (ratings) params.set("ratings", "true");
+  return apiFetch("History fetch", `/api/events?${params}`);
 }
 
 /** A file spares saved before overwriting it in its notes repository, since it did not write it. */

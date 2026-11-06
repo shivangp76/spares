@@ -1,4 +1,5 @@
 mod card;
+mod history;
 mod ids;
 mod move_cards;
 mod note;
