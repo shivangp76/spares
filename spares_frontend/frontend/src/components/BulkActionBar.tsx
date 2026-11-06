@@ -35,11 +35,6 @@ export interface BulkAction {
   /** Whether it acts on a search rather than on rows, so needs the whole of one selected. */
   wholeSearch?: boolean;
   /**
-   * The question confirmed before running, given how many rows it acts on and what was asked for.
-   * Without one, it runs straight away, as for an action that changes nothing.
-   */
-  confirm?: (count: number, value: string[]) => string;
-  /**
    * Runs the action on `selector`, which has `count` rows. `value` holds the tags asked for, or the
    * one value typed or chosen.
    */
@@ -277,7 +272,6 @@ export default function BulkActionBar({
         return;
       }
     }
-    if (action.confirm && !window.confirm(action.confirm(count, value))) return;
     setBusy(true);
     setError(null);
     try {
