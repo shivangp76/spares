@@ -75,10 +75,11 @@ pub(crate) async fn delete_tag_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
-    run_exclusive(async move { delete_tag(&db, id, true).await })
+    let event_id = run_exclusive(async move { delete_tag(&db, id, true).await })
         .await
         .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    // The event to undo the delete with
+    Ok(Json(serde_json::json!({ "event_id": event_id })))
 }
 
 pub(crate) async fn list_tags_handler(
