@@ -517,6 +517,10 @@ input[type="checkbox"] {
   box-sizing: border-box;
 }
 
+.audio-recorder.import-dialog {
+  width: min(720px, calc(100% - 32px));
+}
+
 .audio-recorder::backdrop {
   background: rgb(0 0 0 / 0.4);
 }

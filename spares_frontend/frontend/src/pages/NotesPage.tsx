@@ -7,9 +7,7 @@ import {
   countNotes,
   deleteNotes,
   exportNotes,
-  getCredentials,
   getNote,
-  importShared,
   shareBundle,
   shareSummary as fetchShareSummary,
   isNetworkError,
@@ -32,13 +30,12 @@ import BulkActionBar, {
   type BulkAction,
 } from "../components/BulkActionBar";
 import { FILTERED_TAG_ACTION } from "../components/bulkActions";
+import ImportDialog from "../components/ImportDialog";
 import { NavbarHelp } from "../components/Navbar";
 import RecentSearches from "../components/RecentSearches";
 import SearchInput, { type SearchInputError } from "../components/SearchInput";
 import type { IdsOrQuery, RowSelection } from "../selection";
 import NewNoteForm from "../components/NewNoteForm";
-import { syncLocalCopy } from "../local/copy";
-import { usesLocalCopy } from "../local/transport";
 import NoteDetail, { type NotePaneHandle } from "../components/NoteDetail";
 import Pagination from "../components/Pagination";
 import {
@@ -56,11 +53,7 @@ import {
 } from "../components/tableColumns";
 import { useTableSort } from "../hooks/useTableSort";
 import { useTableWidths } from "../hooks/useTableWidths";
-import type {
-  ImportSharedResponse,
-  NoteResponse,
-  ShareSummary,
-} from "../types/spares";
+import type { NoteResponse, ShareSummary } from "../types/spares";
 import {
   SYNC_CONFLICT_TAG,
   downloadBlob,
@@ -104,24 +97,6 @@ function shareSummary(summary: ShareSummary, count: number): string {
     );
   }
   return lines.join("\n");
-}
-
-/** What importing shared notes did, in a sentence or a few. */
-function importSummary(imported: ImportSharedResponse, name: string): string {
-  const parts = [
-    `Imported ${imported.note_count} note(s) from ${name}, with ${imported.media_count} image, audio and image occlusion file(s).`,
-  ];
-  if (imported.parsers_added.length > 0)
-    parts.push(`Added the parser(s) ${tagList(imported.parsers_added)}.`);
-  if (imported.missing_media.length > 0)
-    parts.push(
-      `The zip has none of ${imported.missing_media.join(", ")}, which the notes name.`,
-    );
-  if (imported.skipped_files.length > 0)
-    parts.push(
-      `Left out ${imported.skipped_files.join(", ")}, which no parser reads.`,
-    );
-  return parts.join(" ");
 }
 
 /** A query that finds the notes `selector` picks, for an endpoint that only takes a query. */
@@ -294,14 +269,12 @@ export default function NotesPage() {
   // contents are still there when New note is clicked again
   const [hasDraft, setHasDraft] = useState(false);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
-  // What the last import of shared notes did, numbered so each gets a fresh Undo button
+  // What the last import did, numbered so each gets a fresh Undo button
   const [imported, setImported] = useState<{
     seq: number;
     outcome: ActionOutcome;
   } | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const importInput = useRef<HTMLInputElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
   // Bumped after a bulk action, to refetch the notes it may have changed
   const [reloadCount, setReloadCount] = useState(0);
   // Bumped when the shown note is changed by a bulk action, so its editor starts again from it
@@ -686,36 +659,6 @@ export default function NotesPage() {
     },
   ];
 
-  /** Adds the shared notes in `file`, a file of them or a zip with their media, as new notes. */
-  async function importFile(file: File) {
-    setImporting(true);
-    setImportError(null);
-    try {
-      const result = await importShared(file);
-      let message = importSummary(result, file.name);
-      let eventIds = result.event_ids;
-      // The server added them, so this device's copy has them once it syncs. The server's events
-      // aren't synced, so the copy can't undo them.
-      if (usesLocalCopy(getCredentials().serverUrl)) {
-        eventIds = [];
-        try {
-          await syncLocalCopy();
-        } catch (e) {
-          message += ` They reach this device at its next sync (${errorMessage(e)}).`;
-        }
-      }
-      setImported((prev) => ({
-        seq: (prev?.seq ?? 0) + 1,
-        outcome: { message, eventIds },
-      }));
-      afterBulkAction();
-    } catch (e) {
-      setImportError(errorMessage(e));
-    } finally {
-      setImporting(false);
-    }
-  }
-
   /** Shows what a bulk action, or undoing it, changed. */
   function afterBulkAction() {
     rows.reset();
@@ -855,41 +798,29 @@ export default function NotesPage() {
               Graph
             </Link>
             <button
-              onClick={() => importInput.current?.click()}
-              disabled={importing}
+              onClick={() => setImportOpen(true)}
               className="touch-target-small"
               style={{ marginLeft: "auto" }}
-              title="Add shared notes, from a zip exported to share or a file of notes"
+              title="Import files of notes, or zips of shared notes"
             >
-              {importing ? "Importing…" : "Import"}
+              Import
             </button>
-            <input
-              ref={importInput}
-              type="file"
-              accept=".zip,.md,.typ,.tex"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void importFile(file);
-              }}
-            />
+            {importOpen && (
+              <ImportDialog
+                onImported={(outcome) => {
+                  setImported((prev) => ({
+                    seq: (prev?.seq ?? 0) + 1,
+                    outcome,
+                  }));
+                  afterBulkAction();
+                }}
+                onClose={() => setImportOpen(false)}
+              />
+            )}
             <button onClick={startNewNote} className="touch-target-small">
               New note
             </button>
           </div>
-          {importError && (
-            <div
-              style={{
-                color: "var(--error)",
-                fontSize: 13,
-                marginBottom: 8,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {importError}
-            </div>
-          )}
           {imported && (
             <ActionResult
               key={imported.seq}
