@@ -127,14 +127,11 @@ export default function Navbar({
     });
   }, [pathname]);
 
-  /** `spares event undo`: undoes the latest change of any kind, with the rest of its group. */
+  /**
+   * `spares event undo`: undoes the latest change of any kind, with the rest of its group. It isn't
+   * confirmed first, as Redo is offered right after, and the status says what was undone.
+   */
   async function undoLatest() {
-    if (
-      !window.confirm(
-        "Undo the most recent change? This can be any kind of change (a review, card, note or tag edit), including one made from the CLI.",
-      )
-    )
-      return;
     try {
       const res = await undoEvent(null);
       showStatus(

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useDataVersion } from '../dataVersion';
+import { dataChanged, useDataVersion } from '../dataVersion';
 import { useNavigate } from 'react-router-dom';
 import { createParser, deleteParser, getKnownParserNames, listParsers, updateParser } from '../api/client';
+import ActionResult, { type ActionOutcome } from '../components/ActionResult';
 import { NavbarHelp } from '../components/Navbar';
 import { ResizableHeader } from '../components/tableColumns';
 import { useAuth } from '../hooks/useAuth';
@@ -21,7 +22,8 @@ export default function ParsersPage() {
   const navigate = useNavigate();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // What the last action did, numbered so each gets a fresh Undo button
+  const [result, setResult] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
   const [newName, setNewName] = useState('');
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
   // The parsers spares has code for. Null until fetched, or if that failed, so no parser is flagged.
@@ -39,9 +41,15 @@ export default function ParsersPage() {
   // The known parsers not added yet, which are the ones worth adding
   const addable = known?.filter(name => !parsers?.some(p => p.name === name)) ?? [];
 
-  async function run(action: () => Promise<string>) {
+  /** Shows `message`, with Undo for `eventIds`, numbered so each gets a fresh Undo button. */
+  const setStatus = (message: string, eventIds: number[] = []) =>
+    setResult(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: { message, eventIds } }));
+
+  async function run(action: () => Promise<string | ActionOutcome>) {
     try {
-      setStatus(await action());
+      const outcome = await action();
+      if (typeof outcome === 'string') setStatus(outcome);
+      else setStatus(outcome.message, outcome.eventIds);
     } catch (e) {
       setStatus(errorMessage(e));
     }
@@ -71,11 +79,10 @@ export default function ParsersPage() {
   }
 
   function remove(parser: ParserResponse) {
-    if (!window.confirm(`Delete parser \`${parser.name}\`?`)) return;
     run(async () => {
-      await deleteParser(parser.id);
+      const eventId = await deleteParser(parser.id);
       setParsers(prev => prev?.filter(p => p.id !== parser.id) ?? prev);
-      return `Parser \`${parser.name}\` deleted.`;
+      return { message: `Parser \`${parser.name}\` deleted.`, eventIds: eventId === null ? [] : [eventId] };
     });
   }
 
@@ -84,7 +91,7 @@ export default function ParsersPage() {
     count: parsers?.length ?? 0,
     body: tableBody,
     edit: { description: 'Rename the highlighted parser', run: i => setRenaming({ id: parsers![i].id, name: parsers![i].name }) },
-    remove: { description: 'Delete the highlighted parser, after asking', run: i => remove(parsers![i]) },
+    remove: { description: 'Delete the highlighted parser, with Undo after', run: i => remove(parsers![i]) },
   });
 
   return (
@@ -105,7 +112,11 @@ export default function ParsersPage() {
         <button onClick={add} disabled={!newName.trim()} className="touch-target-small">Add</button>
       </div>
 
-      {status && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{status}</div>}
+      {result && (
+        <div style={{ marginBottom: 12 }}>
+          <ActionResult key={result.seq} outcome={result.outcome} onReverted={dataChanged} />
+        </div>
+      )}
       {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>{error}</div>}
       {!parsers && !error && <div>Loading…</div>}
 

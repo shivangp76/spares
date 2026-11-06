@@ -1177,11 +1177,26 @@ export async function createNotes(
   return body.notes;
 }
 
-export async function deleteNotes(selector: NotesSelector): Promise<void> {
-  await apiSend("Delete notes", "/api/notes", {
-    method: "DELETE",
-    body: JSON.stringify({ selector }),
-  });
+/**
+ * The `event_id` a delete answers with, to undo it with. Null from a server, or a local copy, that
+ * answers with an empty body as before it returned the event.
+ */
+async function undoEventOf(res: Response): Promise<number | null> {
+  const text = await res.text();
+  if (!text) return null;
+  return (JSON.parse(text) as { event_id?: number | null }).event_id ?? null;
+}
+
+/** Deletes the notes `selector` picks. Returns the event to undo it with, if any were deleted. */
+export async function deleteNotes(
+  selector: NotesSelector,
+): Promise<number | null> {
+  return undoEventOf(
+    await apiSend("Delete notes", "/api/notes", {
+      method: "DELETE",
+      body: JSON.stringify({ selector }),
+    }),
+  );
 }
 
 /** Changes the parser the notes `selector` picks are written for. Their text must be valid for it. */
@@ -1456,8 +1471,11 @@ export async function renameTags(
   });
 }
 
-export async function deleteTag(id: number): Promise<void> {
-  await apiSend("Delete tag", `/api/tags/${id}`, { method: "DELETE" });
+/** Deletes the tag `id`. Returns the event to undo it with. */
+export async function deleteTag(id: number): Promise<number | null> {
+  return undoEventOf(
+    await apiSend("Delete tag", `/api/tags/${id}`, { method: "DELETE" }),
+  );
 }
 
 /** Rebuilds a filtered tag's membership from its query. */
@@ -1505,8 +1523,11 @@ export async function updateParser(
   });
 }
 
-export async function deleteParser(id: number): Promise<void> {
-  await apiSend("Delete parser", `/api/parsers/${id}`, { method: "DELETE" });
+/** Deletes the parser `id`. Returns the event to undo it with. */
+export async function deleteParser(id: number): Promise<number | null> {
+  return undoEventOf(
+    await apiSend("Delete parser", `/api/parsers/${id}`, { method: "DELETE" }),
+  );
 }
 
 // Keywords and links

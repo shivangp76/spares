@@ -130,7 +130,6 @@ export default function CardTools({ onOpenCard }: {
     run(async () => {
       const ids = await resolveCardIds(forgetMode, forgetValue);
       if (!ids.length) return { message: 'No cards matched.', eventIds: [] };
-      if (!window.confirm(`Forget ${ids.length} card(s)? Their scheduling is reset; review logs are kept.`)) return null;
       const eventIds: number[] = [];
       for (const id of ids) {
         const res = await forgetCard(id);
@@ -165,7 +164,6 @@ export default function CardTools({ onOpenCard }: {
         count = (await searchCards(query)).length;
       }
       if (!count) return { message: 'No cards matched.', eventIds: [] };
-      if (!window.confirm(`Edit ${count} card(s)?`)) return null;
       const res = await updateCards({ selector, ...req });
       return { message: `Edited ${res.cards.length} card(s).`, eventIds: res.event_id === null ? [] : [res.event_id] };
     }, editMode === 'query' ? { box: 'edit', query: editValue.trim() } : undefined);

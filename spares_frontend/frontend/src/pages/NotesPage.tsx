@@ -270,11 +270,13 @@ export default function NotesPage() {
   // contents are still there when New note is clicked again
   const [hasDraft, setHasDraft] = useState(false);
   const [paneStatus, setPaneStatus] = useState<string | null>(null);
-  // What the last import did, numbered so each gets a fresh Undo button
-  const [imported, setImported] = useState<{
+  // What the last import or delete did, numbered so each gets a fresh Undo button
+  const [lastOutcome, setLastOutcome] = useState<{
     seq: number;
     outcome: ActionOutcome;
   } | null>(null);
+  const showOutcome = (outcome: ActionOutcome) =>
+    setLastOutcome((prev) => ({ seq: (prev?.seq ?? 0) + 1, outcome }));
   const [importOpen, setImportOpen] = useState(false);
   // Bumped after a bulk action, to refetch the notes it may have changed
   const [reloadCount, setReloadCount] = useState(0);
@@ -532,9 +534,8 @@ export default function NotesPage() {
   async function deleteSelected() {
     if (!selectedNote) return;
     const id = selectedNote.id;
-    if (!window.confirm(`Delete note ${id} and its cards?`)) return;
     try {
-      await deleteNotes({ Ids: [id] });
+      const eventId = await deleteNotes({ Ids: [id] });
       setNotes((prev) => prev.filter((n) => n.id !== id));
       if (searchResults?.some((n) => n.id === id))
         setSearchTotal((total) => total - 1);
@@ -544,7 +545,10 @@ export default function NotesPage() {
         prev ? prev.filter((n) => n.id !== id) : prev,
       );
       setSelectedNote(null);
-      setPaneStatus(`Note ${id} deleted.`);
+      showOutcome({
+        message: `Deleted note ${id} and its cards.`,
+        eventIds: eventId === null ? [] : [eventId],
+      });
     } catch (e) {
       setPaneStatus(errorMessage(e));
     }
@@ -584,7 +588,6 @@ export default function NotesPage() {
     {
       label: "Add tags",
       input: { kind: "tags", suggestions: listManualTagNames },
-      confirm: (count, tags) => `Add ${tagList(tags)} to ${count} note(s)?`,
       run: (selector, tags) => tagNotes(selector, tags, []),
     },
     {
@@ -593,8 +596,6 @@ export default function NotesPage() {
         kind: "tags",
         suggestions: async () => tagsByUse(await selectedNotes(rows.selection)),
       },
-      confirm: (count, tags) =>
-        `Remove ${tagList(tags)} from ${count} note(s)?`,
       run: (selector, tags) => tagNotes(selector, [], tags),
     },
     {
@@ -607,8 +608,6 @@ export default function NotesPage() {
             label: p.name,
           })),
       },
-      confirm: (count, [name]) =>
-        `Change the parser of ${count} note(s) to ${name}? Their text must be valid for it, and cards it no longer makes are deleted.`,
       run: async (selector, [name]) => {
         const parser = (await listParsers(1, 1_000)).find(
           (p) => p.name === name,
@@ -656,11 +655,12 @@ export default function NotesPage() {
     {
       label: "Delete",
       danger: true,
-      confirm: (count) => `Delete ${count} note(s) and their cards?`,
       run: async (selector, _, count) => {
-        await deleteNotes(selector);
-        // The server doesn't return the event it records, so no Undo is offered
-        return { message: `Deleted ${count} note(s).`, eventIds: [] };
+        const eventId = await deleteNotes(selector);
+        return {
+          message: `Deleted ${count} note(s).`,
+          eventIds: eventId === null ? [] : [eventId],
+        };
       },
     },
   ];
@@ -815,10 +815,7 @@ export default function NotesPage() {
             {importOpen && (
               <ImportDialog
                 onImported={(outcome) => {
-                  setImported((prev) => ({
-                    seq: (prev?.seq ?? 0) + 1,
-                    outcome,
-                  }));
+                  showOutcome(outcome);
                   afterBulkAction();
                 }}
                 onClose={() => setImportOpen(false)}
@@ -828,10 +825,10 @@ export default function NotesPage() {
               New note
             </button>
           </div>
-          {imported && (
+          {lastOutcome && (
             <ActionResult
-              key={imported.seq}
-              outcome={imported.outcome}
+              key={lastOutcome.seq}
+              outcome={lastOutcome.outcome}
               onReverted={afterBulkAction}
             />
           )}

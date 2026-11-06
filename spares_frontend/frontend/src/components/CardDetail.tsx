@@ -153,12 +153,6 @@ export default function CardDetail({
   }
 
   function forget() {
-    if (
-      !window.confirm(
-        `Forget card ${card.id}? Its scheduling is reset; review logs are kept.`,
-      )
-    )
-      return;
     run(async () => {
       const res = await forgetCard(card.id);
       onCardChanged(res.card);
