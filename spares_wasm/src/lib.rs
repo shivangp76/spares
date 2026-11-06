@@ -20,6 +20,7 @@
 //! audio and image occlusions, and keeps the server's image occlusions, which notes are parsed with
 //! ([`media`]). It writes no note or card files and renders nothing (see
 //! [`spares_core::platform`]): the server does that once a sync brings it the device's changes.
+//! It matches the links between notes itself, since links aren't synced ([`match_links`]).
 //! Only the images of image occlusions in Typst cards, which the web app compiles, and in Markdown
 //! cards, which it shows from their source until the server renders them, are made here
 //! ([`media_file`]), so they show offline and as soon as a note changes.
@@ -73,6 +74,29 @@ fn core_error(e: &Error) -> JsValue {
         let _ = js_sys::Reflect::set(&error, &flag.into(), &JsValue::TRUE);
     }
     error.into()
+}
+
+/// Held while the links between notes are matched, so that a request waits for them instead of
+/// reading half-matched ones.
+static MATCHING_LINKS: futures::lock::Mutex<()> = futures::lock::Mutex::new(());
+
+/// Matches the links between notes if a change since they were last matched may have changed
+/// them ([`spares_core::api::note::match_note_links`]). [`handle`] starts it once it has answered
+/// a request, so saving a note doesn't wait for it, and waits for it before answering the next
+/// one, which may read links: a page, the review queue (`new_after_linked_notes`) or a search with
+/// `link:`. A request that changes no notes leaves nothing to match, so it only reads a flag.
+async fn match_links(db: &sqlx::SqlitePool) -> Result<(), JsValue> {
+    let _matching = MATCHING_LINKS.lock().await;
+    spares_core::api::note::match_note_links(db)
+        .await
+        .map_err(|e| core_error(&e))
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// `console.error`, for work that has no caller to return an error to.
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(error: &JsValue);
 }
 
 /// A serializable value as a JS one, through JSON
@@ -131,6 +155,7 @@ pub async fn handle(
     body: Option<Vec<u8>>,
 ) -> Result<JsValue, JsValue> {
     let opened = opened()?;
+    match_links(&opened.db).await?;
     let router = opened.router.clone();
     let mut request = axum::http::Request::builder()
         .method(method.as_str())
@@ -153,6 +178,13 @@ pub async fn handle(
         .await
         .map_err(|e| js_error(&format!("{method} {uri}: {e}")))?;
     media::save_written(&opened.device).await?;
+    // A note it changed may have changed the links: match them once the response is on its way
+    let db = opened.db.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = match_links(&db).await {
+            console_error(&e);
+        }
+    });
     let headers = js_sys::Array::new();
     for (name, value) in &parts.headers {
         if let Ok(value) = value.to_str() {
@@ -221,6 +253,9 @@ pub async fn sync(server: String, key: Option<String>, mode: String) -> Result<J
     let config = remote.0.device_config().await.map_err(|e| core_error(&e))?;
     storage::save_config(&opened.device, &config).await?;
     media::download(&opened.device, &remote.0).await?;
+    // Links aren't synced, so the device matches them for the notes the sync brought, in the
+    // background like the sync, before the next page reads them
+    match_links(&opened.db).await?;
     to_js(&report)
 }
 
