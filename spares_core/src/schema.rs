@@ -952,7 +952,12 @@ pub mod review {
         #[serde(default)]
         pub note_updated_at: DateTime<Utc>,
         pub parser_name: String,
+        /// The note's keywords and tags, which clients show beside the card, as its rendered files
+        /// leave them out.
         pub keywords: Vec<String>,
+        /// See [`Self::keywords`]. In name order. Empty from a server older than this field.
+        #[serde(default)]
+        pub tags: Vec<String>,
         /// Present iff this card is a CLI card.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub cli: Option<CliReviewInfo>,
