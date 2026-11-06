@@ -40,6 +40,7 @@ use crate::statistics::print_statistics;
 use crate::steps::print_steps_stats;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
+use crate::utils::with_spinner;
 use crate::view::view_cards;
 
 #[expect(clippy::too_many_lines)]
@@ -244,14 +245,16 @@ pub(crate) async fn handle(
                 }
             }
             let url = format!("{}/api/scheduler/{}/reschedule", base_url, scheduler_name);
-            let response = client
-                .post(&url)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let rescheduled: RescheduleResponse =
-                response.json().await.map_err(|e| miette!("{}", e))?;
+            let rescheduled: RescheduleResponse = with_spinner("Rescheduling cards", async {
+                let response = client
+                    .post(&url)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                response.json().await.map_err(|e| miette!("{}", e))
+            })
+            .await?;
             print_rescheduled(rescheduled.event_id);
         }
         CardCommands::Optimize(OptimizeArgs {
@@ -266,17 +269,21 @@ pub(crate) async fn handle(
                     return Ok(());
                 }
             }
-            println!("Optimizing. This can take a minute on a large collection.");
             let url = format!("{}/api/scheduler/{}/optimize", base_url, scheduler_name);
-            let response = client
-                .post(&url)
-                .json(&OptimizeRequest { apply })
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let optimized: OptimizeResponse =
-                response.json().await.map_err(|e| miette!("{}", e))?;
+            let optimized: OptimizeResponse = with_spinner(
+                "Optimizing. This can take a minute on a large collection.",
+                async {
+                    let response = client
+                        .post(&url)
+                        .json(&OptimizeRequest { apply })
+                        .send()
+                        .await
+                        .map_err(|e| miette!("{}", e))?;
+                    let response = ensure_ok(response).await?;
+                    response.json().await.map_err(|e| miette!("{}", e))
+                },
+            )
+            .await?;
             print_optimize_response(&optimized, apply);
         }
         CardCommands::Steps(args @ StepsArgs { .. }) => {
