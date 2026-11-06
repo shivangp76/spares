@@ -28,7 +28,7 @@ spares host init --user <your name>
 spares_server
 spares login            # in another terminal: the CLI's device token for this host
 ```
-Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
+Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. Settings in the web app lists the devices logged in with `spares login`, and logs out one you lost (as `spares logout` on it would). `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
 
 ### Running on a remote server (optional)
 

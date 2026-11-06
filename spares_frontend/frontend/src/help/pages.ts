@@ -224,6 +224,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     about: [
       "These settings are kept in this browser. Scheduling, the daily limits and the presets are set in the server's `config.toml`.",
       "This Device can keep a copy of the whole collection in this browser, so every page works offline. It syncs with the server like the laptop does.",
+      "Account lists the devices logged in with `spares login`, and logs out one you lost.",
     ],
     shortcuts: [],
     docs: [
