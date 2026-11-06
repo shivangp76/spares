@@ -677,4 +677,53 @@ mod tests {
             }
         }
     }
+
+    /// A card's file leaves out its note's id, keywords and tags, which are shown beside it, so
+    /// changing them doesn't make the card render again.
+    #[test]
+    fn test_card_file_data_leaves_out_note_settings() {
+        let note_id: crate::model::NoteId = "aak".parse().unwrap();
+        let card = CardData {
+            order: Some(1),
+            previous_order: None,
+            grouping: ClozeGrouping::Custom("1".to_string()),
+            is_suspended: None,
+            front_conceal: FrontConceal::OnlyGrouping,
+            back_reveal: BackReveal::FullNote,
+            back_emphasis: false,
+            back_type: BackType::NoteFilePath,
+            type_answer: None,
+            inherit: None,
+            cloze_uid: None,
+            data: vec![NotePart::SurroundingData("front text".to_string())],
+        };
+        let request = |keywords: &[&str], tags: &[&str]| GenerateNoteFilesRequest {
+            note_id,
+            keywords: keywords.iter().map(ToString::to_string).collect(),
+            tags: tags.iter().map(ToString::to_string).collect(),
+            linked_notes: None,
+            note_data: "front text".to_string(),
+            custom_data: CustomData::default(),
+        };
+        let before = request(&["first keyword"], &["first tag"]);
+        let after = request(&["other keyword"], &["other tag", "second tag"]);
+        for parser_fn in get_all_parsers() {
+            let parser = parser_fn();
+            let name = parser.get_parser_name();
+            for side in [CardSide::Front, CardSide::Back] {
+                let data = |request| {
+                    parser.construct_full_file_data(
+                        &[(ConstructFileDataType::Card(1, &card, side), request)],
+                        &NoteImportAction::Update(note_id),
+                    )
+                };
+                let data_before = data(&before);
+                assert!(data_before.contains("front text"), "{name}: {data_before}");
+                for left_out in ["note-id", "aak", "keyword", "tag"] {
+                    assert!(!data_before.contains(left_out), "{name}: {data_before}");
+                }
+                assert_eq!(data_before, data(&after), "{name}");
+            }
+        }
+    }
 }

@@ -75,12 +75,8 @@ use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
 
-/// Between a card's header and body. Explicit raw blocks, since `\hrulefill` cannot be converted
-/// to `MathML`, so as math it would make every card's HTML lose content. HTML drops the LaTeX block
-/// without counting it as lost (see [`is_content_loss`]).
 /// Comments, code and math, where audio links are not found and text is not spoken.
 const UNSPOKEN_REGEX: &str = r"(?s)<!--.*?-->|```.*?```|`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$";
-const CARD_SEPARATOR: &str = "```{=latex}\n\\hrulefill\n```\n\n```{=html}\n<hr>\n```";
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
@@ -312,28 +308,11 @@ impl Parseable for MarkdownParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let card_data_str = without_cloze_delimiters(&construct_card_data(
+                // The note's id, keywords and tags are shown beside the card instead of in it, so
+                // changing them leaves the card's render up to date.
+                let card_file_data = without_cloze_delimiters(&construct_card_data(
                     self, card_order, card_data, side, *note_id,
                 ));
-                let mut lines = vec![format!(
-                    "- note-id{} {}",
-                    settings_key_value_delim,
-                    note_id.letters()
-                )];
-                if !keywords_str.is_empty() {
-                    lines.push(format!(
-                        "- keywords{} {}",
-                        settings_key_value_delim, keywords_str
-                    ));
-                }
-                lines.extend(vec![
-                    format!("- tags{} {}", settings_key_value_delim, tags_str),
-                    String::new(),
-                    CARD_SEPARATOR.to_string(),
-                    String::new(),
-                    card_data_str,
-                ]);
-                let card_file_data = lines.join("\n");
                 card_file_data
             }
         }
@@ -1065,7 +1044,6 @@ pub mod tests {
         use std::fs::write;
         use std::path::PathBuf;
 
-        use super::super::CARD_SEPARATOR;
         use super::super::MarkdownParser;
         use super::super::PandocLogMessage;
         use super::super::content_loss;
@@ -1193,17 +1171,6 @@ pub mod tests {
             assert!(html.contains("<math"));
             // The image is recorded so sync copies it to the server
             assert!(dependencies.files.contains(&image));
-        }
-
-        #[test]
-        fn test_render_web_file_card_separator() {
-            let (result, html) = render(
-                "separator",
-                &format!("- note-id: 1\n\n{CARD_SEPARATOR}\n\nFront"),
-                WebRenderMode::Auto,
-            );
-            result.unwrap();
-            assert!(read_to_string(html).unwrap().contains("<hr"));
         }
 
         /// A note's file keeps its clozes as written, which the HTML shows as their text.
